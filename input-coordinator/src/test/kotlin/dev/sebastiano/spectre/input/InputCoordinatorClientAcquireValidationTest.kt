@@ -99,6 +99,87 @@ class InputCoordinatorClientAcquireValidationTest {
         }
     }
 
+    @Test
+    fun `interrupt after grant cancels or the caller closes the published lease`() {
+        val directory = Files.createTempDirectory("spc-ig-")
+        val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))
+        val codec = CoordinatorWireCodec()
+        val listener = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+        listener.bind(UnixDomainSocketAddress.of(endpoint.socketPath))
+        val grantWritten = CountDownLatch(1)
+        val followUp = CompletableFuture<CoordinatorWireKind>()
+        val serverThread =
+            Thread.ofVirtual().name("coordinator-interrupt-after-grant-test").start {
+                val session = listener.accept()
+                assertEquals(CoordinatorWireKind.SESSION_OPEN, codec.read(session).kind)
+                codec.write(
+                    session,
+                    CoordinatorWireMessage(
+                        kind = CoordinatorWireKind.RESPONSE,
+                        coordinatorEpoch = EPOCH,
+                    ),
+                )
+
+                listener.accept().use { acquireChannel ->
+                    val acquire = codec.read(acquireChannel)
+                    codec.write(
+                        acquireChannel,
+                        CoordinatorWireMessage(
+                            kind = CoordinatorWireKind.RESPONSE,
+                            requestId = acquire.requestId,
+                            coordinatorEpoch = EPOCH,
+                            leaseId = LEASE_ID,
+                            resourceKey = acquire.resourceKey,
+                            fence = 1,
+                        ),
+                    )
+                    grantWritten.countDown()
+                }
+                listener.accept().use { followUpChannel ->
+                    val message = codec.read(followUpChannel)
+                    followUp.complete(message.kind)
+                    codec.write(
+                        followUpChannel,
+                        CoordinatorWireMessage(kind = CoordinatorWireKind.RESPONSE),
+                    )
+                }
+                session.close()
+            }
+        val client =
+            LocalInputCoordinatorClient.connect(
+                endpoint,
+                DesktopResourceKey("test/interrupt-after-grant"),
+                "interrupt-after-grant-test",
+                codec,
+            )
+        try {
+            val published = CompletableFuture<CoordinatedInputLease?>()
+            val acquireThread =
+                Thread.ofVirtual().name("interrupt-after-grant-acquire").start {
+                    published.complete(
+                        runCatching { client.acquire(Duration.ofSeconds(2), "discarded") }
+                            .getOrNull()
+                    )
+                }
+            assertTrue(grantWritten.await(2, TimeUnit.SECONDS))
+            acquireThread.interrupt()
+            acquireThread.join(2_000)
+            published.get(2, TimeUnit.SECONDS)?.close()
+
+            val kind = followUp.get(2, TimeUnit.SECONDS)
+            assertTrue(
+                kind == CoordinatorWireKind.CANCEL || kind == CoordinatorWireKind.RELEASE,
+                "expected CANCEL or RELEASE after an interrupted grant, was $kind",
+            )
+        } finally {
+            client.close()
+            listener.close()
+            serverThread.join(2_000)
+            Files.deleteIfExists(endpoint.socketPath)
+            Files.deleteIfExists(directory)
+        }
+    }
+
     private companion object {
         const val EPOCH: String = "epoch"
         const val LEASE_ID: String = "lease"

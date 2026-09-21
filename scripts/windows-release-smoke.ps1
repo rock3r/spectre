@@ -1041,7 +1041,8 @@ try {
             # CliLaunchTimeoutSeconds (default 300) must stay above that product budget.
             # Prefer UP-TO-DATE :agent-test-fixture classes (agent e2e above usually ensures this).
             $gradlew = Join-Path $repoRoot "gradlew.bat"
-            Invoke-Native -FilePath $gradlew -WorkingDirectory $repoRoot -TimeoutSeconds 60 -LogName "gradle-stop-before-cli" -Arguments @(
+            $gradleStopMinTimeoutSeconds = 30
+            Invoke-Native -FilePath $gradlew -WorkingDirectory $repoRoot -TimeoutSeconds ([Math]::Max($gradleStopMinTimeoutSeconds, 60)) -LogName "gradle-stop-before-cli" -Arguments @(
                 "--stop"
             )
             $spectre = Get-PackagedSpectre -RepoRoot $repoRoot

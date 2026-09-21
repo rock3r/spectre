@@ -13,6 +13,8 @@ Test ergonomics for Spectre.
   resolution for `ComposeAutomator` test method parameters.
 - `AutomatorFactory` — typealias for the `() -> ComposeAutomator` lambda the rule and extension
   use to build their per-test instances.
+- `assertMatchesGold` — opt-in PNG gold assertion. Off unless a test calls it; see
+  [Screenshot golds](../docs/guide/junit.md#screenshot-golds).
 
 Both wrappers default to `ComposeAutomator.inProcess()`, which defaults to synthetic AWT
 input. Tests that need a stub for headless CI or focused unit testing can pass a custom
@@ -32,7 +34,10 @@ fun `clicking increment bumps the counter`(): Unit = runSpectreTest {
 
 `junit:junit` and `org.junit.jupiter:junit-jupiter-api` are both `compileOnly`. Consumers pick
 whichever JUnit they're already using and pull in the matching test dependency themselves; the
-testing module never forces both onto the test classpath.
+testing module never forces both onto the test classpath. The name-only `assertMatchesGold`
+overloads live on `ScreenshotGoldKt` with no `TestInfo` descriptor; pass the executing
+`Class` when a JUnit 4 `@Test` is inherited or the host is a non-final Java class. The JUnit 5 `TestInfo` overloads live on
+`ScreenshotGoldJunit5` so JUnit 4-only Java callers can resolve the name-only method.
 
 ## Cross-boundary contracts
 

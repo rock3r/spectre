@@ -10,6 +10,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -27,8 +28,9 @@ class DaemonServerTest {
         val client = SocketChannel.open(java.net.StandardProtocolFamily.UNIX)
 
         try {
+            val clientThreadsBefore = daemonClientThreads()
             client.connect(java.net.UnixDomainSocketAddress.of(socketPath))
-            Thread.sleep(100)
+            awaitRegisteredClient(clientThreadsBefore)
 
             assertFalse(server.closeIfIdle(timeoutMillis = 1))
             assertTrue(Files.exists(socketPath))
@@ -694,6 +696,29 @@ class DaemonServerTest {
 
     // endregion
 }
+
+/**
+ * [DaemonServer.closeIfIdle] closes the server when no client is registered yet, so a fixed sleep
+ * after [SocketChannel.connect] races the accept thread (Windows CI). The client handler thread is
+ * started only after the accepted channel is added to `activeClients`.
+ */
+private fun awaitRegisteredClient(
+    clientThreadsBefore: Set<Thread>,
+    timeoutMillis: Long = REGISTERED_CLIENT_TIMEOUT_MILLIS,
+) {
+    val deadlineNs = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+    while (System.nanoTime() < deadlineNs) {
+        if (daemonClientThreads().any { it !in clientThreadsBefore }) return
+        Thread.sleep(REGISTERED_CLIENT_POLL_MILLIS)
+    }
+    throw AssertionError("Daemon did not register the connected client within ${timeoutMillis}ms")
+}
+
+private fun daemonClientThreads(): Set<Thread> =
+    Thread.getAllStackTraces().keys.filter { it.name == "spectre-daemon-client" }.toSet()
+
+private const val REGISTERED_CLIENT_TIMEOUT_MILLIS = 5_000L
+private const val REGISTERED_CLIENT_POLL_MILLIS = 10L
 
 /**
  * Windows requires Developer Mode or SeCreateSymbolicLinkPrivilege for [Files.createSymbolicLink].

@@ -178,13 +178,16 @@ internal fun nativeWindowCaptureBounds(
  * Returns true when still/window capture should use the Linux Wayland/portal path.
  *
  * Mirrors [dev.sebastiano.spectre.recording.FfmpegBackend.detectWaylandSession] (recording cannot
- * depend on core and core cannot depend on recording — keep both in lockstep; #397).
+ * depend on core and core cannot depend on recording — keep both in lockstep). Screenshot gold OS
+ * keys in `:testing` also call this function so committed golds follow the same session detection
+ * as window capture.
  *
  * Order: explicit `SPECTRE_CAPTURE_BACKEND` → pure-X11 DISPLAY (Xvfb) wins over inherited Wayland
  * env → session type / WAYLAND_DISPLAY → residual wayland-* socket only when DISPLAY is unset.
  */
+@InternalSpectreApi
 @Suppress("ReturnCount")
-internal fun isWaylandSession(
+public fun isWaylandSession(
     getenv: (String) -> String? = System::getenv,
     runtimeDirHasWaylandSocket: (Path) -> Boolean = ::runtimeDirHasWaylandSocket,
     displayIsPureX11: (String) -> Boolean = ::defaultDisplayIsPureX11,

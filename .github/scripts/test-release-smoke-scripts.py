@@ -664,6 +664,34 @@ class SmokeLibSchemaTest(unittest.TestCase):
             self.assertIn("timeout", detail)
             self.assertTrue(log.is_file())
 
+    def test_remaining_command_timeout_clips_to_overall_deadline(self):
+        now = 1_000.0
+        remaining = smoke_lib.remaining_command_timeout(
+            120, overall_deadline=now + 1.9, now=now
+        )
+        self.assertEqual(1, remaining)
+
+    def test_remaining_command_timeout_floors_gradle_stop(self):
+        now = 1_000.0
+        remaining = smoke_lib.remaining_command_timeout(
+            smoke_lib.GRADLE_STOP_TIMEOUT_SECONDS,
+            overall_deadline=now + 1.9,
+            floor=smoke_lib.GRADLE_STOP_MIN_TIMEOUT_SECONDS,
+            now=now,
+        )
+        self.assertEqual(smoke_lib.GRADLE_STOP_MIN_TIMEOUT_SECONDS, remaining)
+        self.assertGreaterEqual(remaining, 30)
+
+    def test_remaining_command_timeout_expired_deadline_is_zero(self):
+        now = 1_000.0
+        remaining = smoke_lib.remaining_command_timeout(
+            120,
+            overall_deadline=now - 1,
+            floor=smoke_lib.GRADLE_STOP_MIN_TIMEOUT_SECONDS,
+            now=now,
+        )
+        self.assertEqual(0, remaining)
+
     def test_detect_display_mode_linux_xvfb(self):
         # Force Linux path without mutating real platform for other tests.
         old_display = os.environ.pop("DISPLAY", None)
@@ -1764,6 +1792,34 @@ class MacOsTccPreflightTest(unittest.TestCase):
         self.assertTrue(blank.defined)
         self.assertIsNone(blank.path)
 
+    def test_tokenize_jvm_options_preserves_windows_path_separators(self):
+        """POSIX shlex treats \\ as escape; Windows -D and @argfile paths must keep it."""
+        tokens = smoke_lib.tokenize_jvm_options(
+            r"-Duser.home=C:\Users\RUNNER~1\tmp -Xmx2g"
+        )
+        self.assertEqual(
+            [r"-Duser.home=C:\Users\RUNNER~1\tmp", "-Xmx2g"],
+            tokens,
+        )
+
+    def test_tokenize_jvm_options_preserves_single_quoted_backslashes(self):
+        """Java keeps a quoted backslash; doubling it before shlex would invent a second one."""
+        tokens = smoke_lib.tokenize_jvm_options("-Duser.home='/tmp/a\\b'")
+        self.assertEqual([r"-Duser.home=/tmp/a\b"], tokens)
+        tokens = smoke_lib.tokenize_jvm_options(r'-Duser.home="C:\Users\RUNNER~1\tmp"')
+        self.assertEqual([r"-Duser.home=C:\Users\RUNNER~1\tmp"], tokens)
+
+    def test_jvm_path_is_absolute_accepts_posix_and_windows_forms(self):
+        from pathlib import PureWindowsPath
+
+        self.assertTrue(smoke_lib.jvm_path_is_absolute(Path("/tmp/helper")))
+        self.assertTrue(smoke_lib.jvm_path_is_absolute(PureWindowsPath("/tmp/helper")))
+        self.assertTrue(smoke_lib.jvm_path_is_absolute(PureWindowsPath(r"C:\helpers")))
+        self.assertTrue(smoke_lib.jvm_path_is_absolute(PureWindowsPath(r"\\server\share\h")))
+        self.assertFalse(smoke_lib.jvm_path_is_absolute(Path("tools/helper")))
+        self.assertFalse(smoke_lib.jvm_path_is_absolute(PureWindowsPath("tools/helper")))
+        self.assertFalse(smoke_lib.jvm_path_is_absolute(PureWindowsPath(r"  C:\helpers  ")))
+
     def test_unparseable_helper_dir_property_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2631,6 +2687,7 @@ class ReleaseSmokeMacOsTccWiringTest(unittest.TestCase):
             self.assertIn("--stop", command)
             seen["timeout"] = kwargs.get("timeout")
             seen["overall_deadline"] = kwargs.get("overall_deadline")
+            seen["floor"] = kwargs.get("floor")
             seen["now"] = time.monotonic()
             return 0, "", str(kwargs.get("log_path") or "")
 
@@ -2647,6 +2704,7 @@ class ReleaseSmokeMacOsTccWiringTest(unittest.TestCase):
         started = float(seen["now"])  # type: ignore[arg-type]
         self.assertGreater(timeout, 0)
         self.assertLessEqual(timeout, smoke_lib.GRADLE_STOP_TIMEOUT_SECONDS)
+        self.assertEqual(smoke_lib.GRADLE_STOP_MIN_TIMEOUT_SECONDS, seen.get("floor"))
         self.assertLessEqual(deadline, started + 60 + 1)
         self.assertGreater(deadline, started)
 

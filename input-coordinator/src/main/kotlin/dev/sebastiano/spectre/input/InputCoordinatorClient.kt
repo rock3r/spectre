@@ -176,6 +176,19 @@ private constructor(
             }
         response.requireSuccess()
         return try {
+            // Socket I/O can finish a grant after the caller thread is interrupted. Treat that
+            // as an unobserved acquire: cancel/release the exact request instead of returning
+            // a lease the cancelled caller will drop.
+            if (Thread.currentThread().isInterrupted) {
+                failAmbiguousAcquire(
+                    requestId,
+                    InterruptedIOException(
+                        "Input coordinator acquisition was interrupted after grant"
+                    ),
+                    ::cancelAcquire,
+                    ::close,
+                )
+            }
             val token =
                 LeaseToken(
                     coordinatorEpoch = requireNotNull(response.coordinatorEpoch),

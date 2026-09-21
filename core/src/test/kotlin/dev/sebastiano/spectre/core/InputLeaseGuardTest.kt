@@ -33,6 +33,8 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -510,6 +512,10 @@ class InputLeaseGuardTest {
 
             discarded.cancel()
             discarded.join()
+            // STATUS seeing a grant does not mean the Deferred is still cancellable. The client
+            // may already have returned the lease; cancel() is then a no-op and the holder
+            // stays until this caller closes it. Close a published result before waiting.
+            closeIfPublished(discarded)
 
             awaitCoordinatorStatus(endpoint, resource, "the discarded lease to be released") {
                 it.holder == null
@@ -697,6 +703,20 @@ class InputLeaseGuardTest {
         awaitCoordinatorStatus(endpoint, resource, "a granted lease") { status ->
             status.holder != null
         }
+    }
+
+    /**
+     * Closes a lease that [Deferred.cancel] could not discard because acquire had already
+     * completed.
+     *
+     * The production cancel path covers the in-flight grant-before-keep window. Once the Deferred
+     * holds the result, this test is the caller and must close it or STATUS will keep seeing a
+     * holder until the poll budget expires.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun closeIfPublished(deferred: Deferred<CoordinatedInputLease>) {
+        if (deferred.isCancelled) return
+        deferred.getCompleted().close()
     }
 
     /**

@@ -300,6 +300,185 @@ Do not rely on UI-element mode for clipboard-backed `pasteText`; that path still
 through macOS clipboard services outside the synthetic key-event path. Run recording tests
 as a separate, foreground-capable task while establishing Screen Recording TCC grants.
 
+## Screenshot golds
+
+Opt-in visual assertions against committed PNG golds. This is **not** automatic: nothing
+compares golds unless a test calls `assertMatchesGold`. It is also not a substitute for
+[failure artifacts](#failure-artifacts) (diagnostics on any failure) or
+[failure video](#failure-video).
+
+Prefer a window-scoped `automator.screenshot(windowIndex = …)` when `spectre-recording`
+and the OS helper are on the test runtime classpath. Region and node stills can clip or
+include occlusion; Linux X11 window capture is frontmost-window; embedded Swing/Jewel
+panels may not have a native window handle. Settle the UI first
+(`waitForVisualIdle()`).
+
+```kotlin
+import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.testing.ScreenshotTolerance
+import dev.sebastiano.spectre.testing.assertMatchesGold
+import dev.sebastiano.spectre.testing.runSpectreTest
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInfo
+
+@Test
+fun homeMatchesGold(testInfo: TestInfo, automator: ComposeAutomator): Unit = runSpectreTest {
+    automator.waitForVisualIdle()
+    assertMatchesGold(
+        testInfo = testInfo,
+        name = "main-window",
+        image = automator.screenshot(windowIndex = 0),
+        tolerance = ScreenshotTolerance(), // strict: channel delta 0, no differing pixels
+    )
+}
+```
+
+Pass JUnit 5 `TestInfo` when the body runs inside `runSpectreTest` (it executes on a
+worker dispatcher). That overload lives on the `ScreenshotGoldJunit5` facade so the
+name-only `ScreenshotGoldKt.assertMatchesGold(name, image)` method has no `TestInfo`
+descriptor — JUnit 4-only Java callers can resolve it without `junit-jupiter-api`.
+The name-only overload infers the test from the calling thread and is for JUnit
+methods that call it directly. It recognizes `@Test`, `@ParameterizedTest`,
+`@RepeatedTest`, and other annotations meta-annotated with JUnit's `@Testable` /
+`@TestTemplate` (including composed ones).
+
+`@ParameterizedTest`, `@RepeatedTest`, JUnit 5 `@ParameterizedClass` /
+`@ClassTemplate`, and JUnit 4 `@RunWith(Parameterized)` invocations that share a
+screenshot name must not share a gold. The `TestInfo` facade keys method-level
+invocations from the JUnit display name only when the annotation `name` pattern
+includes a true invocation index (`{index}` on ParameterizedTest, `{currentRepetition}`
+on RepeatedTest) *and* the resolved display looks unique (`[1] dark`,
+`repetition 1 of 2`). ParameterizedTest's omitted default (`{default_display_name}`)
+counts because it includes `{index}`; RepeatedTest's default already includes
+`{currentRepetition}`. RepeatedTest `{index}` stays literal. Argument
+placeholders such as `{0}` or `{arguments}` are not unique when values repeat.
+Display names that include `Any.toString()` identity-hash text (`Foo@4a12bc`) keep
+only the stable `[index]` or `repetition N of M` token so the gold path does not
+change between JVM runs. Constant custom names such as
+`@ParameterizedTest(name = "theme")` or `@ParameterizedTest(name = "[1] theme")`,
+and argument-only patterns such as `@ParameterizedTest(name = "[{0}] theme")`,
+require an explicit `invocationKey`. The name-only overload cannot see the
+invocation — including JUnit 4 Parameterized and JUnit 5 `@ParameterizedClass` /
+`@ClassTemplate` hosts, which re-run ordinary `@Test` methods once per argument
+set — so it always requires `invocationKey` and fails closed without one.
+`TestInfo.displayName` on those ordinary methods is the method name, not the class
+invocation, so the TestInfo facade also requires `invocationKey` there. A
+`@ParameterizedTest` or `@RepeatedTest` inside a `@ParameterizedClass` still needs
+an explicit `invocationKey`: each outer argument set repeats the same method-level
+`[1]` / `repetition 1` index. Identity resolution keeps the `Class` from `TestInfo`
+or `StackWalker` (or reloads the name with the context / child loader) so a plugin
+class loader cannot hide a parameterized host from Spectre's defining loader.
+
+The default `scaleKey` prefers the captured window's display scale when a showing AWT
+window's outer, client, content-pane, or *showing* embedded ComposePanel size matches
+the still (or every showing window shares one density). On Linux X11 the capture PNG
+is the client area, so the decorated outer window is not a scale candidate. Cropped
+stills use the same edge rounding as window capture, so a fractional-DPI client or
+panel crop is not missed by one pixel. Crop size uses the predicted capture PNG
+(`round(captureAwt × displayScale)`), then the same `imageWidth / captureAwtWidth`
+ratio as a real crop — not the nominal display scale — so an 801-DP capture at 1.25×
+(1001 px) still matches a 202-DP panel. On Linux X11, native capture starts at the
+client origin, so those regions are offset before rounding. Hidden panels are ignored,
+and that geometry is read on the EDT. Otherwise it uses the primary/default screen transform. Pass
+`scaleKey = ScreenshotGoldPaths.scaleKey(configuration)` when several densities are
+visible and you already have the window's `GraphicsConfiguration`.
+Explicit `invocationKey` values keep surrounding whitespace so `"foo"` and `" foo "`
+cannot share a gold; whitespace-only keys are treated as absent.
+
+Defaults are strict (max channel delta 0, differing-pixel count/fraction 0). Equal
+dimensions are required; there is no auto-scale. Loosen `maxChannelDelta` (0..255;
+values above 255 are rejected) and/or `maxDifferingPixels` /
+`maxDifferingPixelFraction` when font AA or chrome noise is expected. There is no
+SSIM or perceptual matcher.
+
+### Gold layout
+
+Committed files:
+
+```text
+src/test/resources/spectre-golds/
+  <test-class>/
+    <test-method>/
+      <name>/
+        [<invocation>/]       # stable display / [index] / repetition, or invocationKey
+        <os>/                 # macos | windows | linux-x11 | linux-wayland
+          scale-<sx>x<sy>/    # captured window display; else default screen; or pass scaleKey
+            gold.png
+```
+
+The method segment is the inferred JUnit method (or `TestInfo`). Every identity includes
+an explicit parameter list: no-arg tests use `name()`, and overloads append `(fqcn,…)`.
+That keeps `@Test render()`, a zero-arg method literally named `render(int)`, and
+`@Test render(value: Int)` on distinct golds. Parameterized and repeated
+invocations add an extra `<invocation>` segment so they cannot overwrite each other.
+Tests inherited from an abstract class or interface, inherited methods, and any
+non-final declaring class (ordinary Java tests, `open` Kotlin bases) cannot infer
+the concrete running class from the stack — a frame names the declaring class, not
+the receiver. Pass `TestInfo` or `assertMatchesGold(getClass(), name, image)` so
+those golds key by the running class. Method names that
+contain `(` are matched by the full generated identity, not by cutting at the first
+parenthesis.
+
+The default root is `src/test/resources/spectre-golds/` (the main JUnit source set). Linux
+keys follow the same session detection as window capture: `SPECTRE_CAPTURE_BACKEND`,
+pure-X11/`Xvfb` `DISPLAY`, then `XDG_SESSION_TYPE` / `WAYLAND_DISPLAY`. A seated Wayland
+desktop that also exports `DISPLAY` (XWayland) still keys as `linux-wayland`, so those
+golds are not mixed with Xvfb `SOFTWARE_COMPAT` stills. Theme, Skiko render API, JDK, and
+font AA are **not** extra path keys — pin the runner (see [Running on CI](ci.md)) or
+loosen tolerance.
+
+On mismatch, the assertion writes `actual.png` and a copy of the expected `gold.png`
+under:
+
+```text
+build/reports/spectre-screenshots/<class>/<method>/<name>[/<invocation>]/
+```
+
+When dimensions match, it also writes `diff.png` (magenta highlight on black). Size
+mismatches omit the diff and delete any stale `diff.png` left from a prior equal-size run. Class, method, name, and invocation segments are sanitized (path
+separators, reserved Windows device names) and truncated to 255 UTF-8 bytes so long
+parameterized display names stay inside filesystem component limits. Rewritten
+segments get a short stable suffix so distinct names such as `foo/bar` and `foo_bar`,
+`NUL` and `NUL_`, `Main` and `main`, Greek `σ` and `ς`, or Hangul `가` and Jamo `가`,
+cannot share a gold or report path. A later passing run, update-mode write, missing-gold
+failure, or unreadable gold deletes leftover report PNGs from a prior mismatch so CI
+does not upload stale failures. CI upload:
+
+```yaml
+- name: Upload Spectre screenshot gold failures
+  if: failure()
+  uses: actions/upload-artifact@v4
+  with:
+    name: spectre-screenshot-golds
+    path: "**/build/reports/spectre-screenshots/**"
+    if-no-files-found: ignore
+```
+
+Keep that glob **separate** from `**/build/reports/spectre/**` (failure stills).
+
+### Update mode
+
+Off by default. Rewrite the **current** OS + scale gold (not every matrix cell):
+
+| Knob | Effect |
+| --- | --- |
+| `SPECTRE_UPDATE_SCREENSHOT_GOLDS=true` | Environment; read by the test JVM |
+| `-Pspectre.updateScreenshotGolds=true` | Gradle property; Spectre's `:testing` test task forwards it as `-Ddev.sebastiano.spectre.testing.updateScreenshotGolds=true` |
+
+When both are set, the Gradle/system property **wins**, including an explicit `false`
+that disables a true environment variable. Unset property falls back to the environment
+variable. Consumers who use `-P` on their own `Test` task must forward it the same way
+(or set the environment variable, which needs no forwarding).
+
+The environment variable is read only after a test JVM starts. Spectre's own test
+tasks already force a rerun when update mode is on; consuming builds do not. If you
+rely on `SPECTRE_UPDATE_SCREENSHOT_GOLDS=true` alone, force execution with
+`./gradlew test --rerun-tasks` (or the equivalent `outputs.upToDateWhen { false }` /
+`outputs.cacheIf { false }` on that `Test` task). Otherwise Gradle can skip the worker
+and no golds are rewritten.
+
+Update mode must run on the OS and scale that owns that gold file.
+
 ## Failure artifacts
 
 When a Spectre-driven test **fails**, `ComposeAutomatorExtension` and `ComposeAutomatorRule`

@@ -212,9 +212,15 @@ class SpectreMcpStdioIntegrationTest {
          * protocol stall.
          */
         private const val PROTOCOL_TIMEOUT_MILLIS: Long = 15_000
-        // Windows hosted runners can take longer than the usual process startup window to
-        // initialize the JVM before observing closed stdin.
-        private const val PROCESS_EXIT_TIMEOUT_SECONDS: Long = 15
+        /**
+         * Hang guard for process exit after stdin close, not a performance assertion.
+         *
+         * Windows hosted runners can take longer than a local startup window to initialize the JVM
+         * and observe closed stdin (#455). The sibling [CONNECT_TIMEOUT_MILLIS] is already 60s for
+         * that cold-start cost on `windows-latest` while Gradle compiles other modules on the same
+         * two cores; this budget matches it so the stdin-close test does not flake there.
+         */
+        private const val PROCESS_EXIT_TIMEOUT_SECONDS: Long = 60
         private const val INITIALIZE_REQUEST: String =
             """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"spectre-test","version":"1"}}}"""
     }

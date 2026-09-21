@@ -27,6 +27,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.ThreadContextElement
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -454,9 +455,16 @@ internal class ProductionInputLeaseCoordinator(
         val acquired = AtomicReference<CoordinatedInputLease?>()
         return try {
             runInterruptible(ioDispatcher) {
-                    acquireBlocking(options, currentOperation).also(acquired::set)
-                }
-                .also { acquired.set(null) }
+                acquireBlocking(options, currentOperation).also(acquired::set)
+            }
+            val lease = requireNotNull(acquired.get())
+            // Keep [acquired] until the cancellable continuation accepts the value.
+            // ensureActive() + getAndSet(null) transferred ownership after a point-in-time
+            // check; a cancelled Deferred can then discard the result while finally sees null.
+            suspendCancellableCoroutine { cont ->
+                cont.resume(lease) { _, _, _ -> acquired.getAndSet(null)?.close() }
+            }
+                .also { acquired.compareAndSet(lease, null) }
         } finally {
             acquired.getAndSet(null)?.close()
         }

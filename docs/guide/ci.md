@@ -243,6 +243,13 @@ jobs:
           name: spectre-failure-artifacts
           path: "**/build/reports/spectre/**"
           if-no-files-found: ignore
+      - name: Upload Spectre screenshot gold failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spectre-screenshot-golds
+          path: "**/build/reports/spectre-screenshots/**"
+          if-no-files-found: ignore
 ```
 
 ```kotlin
@@ -277,6 +284,32 @@ suite:
 `if-no-files-found: ignore` keeps the step green when every test passed or opt-out produced
 no files. Prefer a multi-module glob (`**/build/reports/spectre/**`) over a single module path
 when several projects run Spectre tests in one job.
+
+## Screenshot gold failures
+
+Opt-in [screenshot golds](junit.md#screenshot-golds) write mismatch PNGs under
+`build/reports/spectre-screenshots/`. Upload that tree **separately** from failure
+artifacts — the `**/build/reports/spectre/**` glob does not include it:
+
+```yaml
+- name: Upload Spectre screenshot gold failures
+  if: failure()
+  uses: actions/upload-artifact@v4
+  with:
+    name: spectre-screenshot-golds
+    path: "**/build/reports/spectre-screenshots/**"
+    if-no-files-found: ignore
+```
+
+Gold rewrite is off by default. `SPECTRE_UPDATE_SCREENSHOT_GOLDS=true` is read by the
+test JVM with no Gradle forwarding. `-Pspectre.updateScreenshotGolds=true` only reaches
+forked workers if the `Test` task forwards it as
+`-Ddev.sebastiano.spectre.testing.updateScreenshotGolds=true` (Spectre's `:testing` tests
+already do). The Gradle/system property wins over the environment variable, including an
+explicit `false`. Consuming builds that set only the environment variable must also
+force the `Test` task to run (`--rerun-tasks`, or `outputs.upToDateWhen { false }` /
+`outputs.cacheIf { false }`); Spectre's repo-local update-mode helper is not applied to
+downstream `Test` tasks, so an `UP-TO-DATE` or `FROM-CACHE` skip never starts a JVM.
 
 ## Failure video uploads
 

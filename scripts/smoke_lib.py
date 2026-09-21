@@ -21,7 +21,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, Callable, Mapping, MutableMapping, Sequence
 
 # Bump only when report field names/semantics change incompatibly (rename/remove a field,
@@ -334,6 +334,10 @@ STAGE_PREBUILT_MAC_HELPER_TASK = ":recording:stagePrebuiltMacHelper"
 STAGE_STUB_MAC_HELPER_TASK = ":recording:stageStubMacHelper"
 ASSEMBLE_SCREENCAPTURE_HELPER_TIMEOUT_SECONDS = 180
 GRADLE_STOP_TIMEOUT_SECONDS = 120
+# overall_deadline can clip a just-started --stop to 1s (int truncation / #520
+# remaining budget). Gradle daemon stop needs a real floor or preflight fails
+# closed and every later cell is blocked N/A.
+GRADLE_STOP_MIN_TIMEOUT_SECONDS = 30
 GRADLE_PROJECT_UNIVERSAL_HELPER = "universalHelper"
 GRADLE_PROJECT_NOTARIZE_HELPER = "notarizeScreenCaptureKitHelper"
 GRADLE_PROJECT_PREBUILT_MAC_HELPER = "prebuiltMacHelperPath"
@@ -690,6 +694,41 @@ class ScreencaptureHelperDirSetting:
     path: Path | None = None
 
 
+def jvm_path_is_absolute(path: PurePath) -> bool:
+    """True for host-absolute paths and Unix-style /... paths on Windows.
+
+    Windows pathlib maps `/tmp/foo` to rooted-relative `\\tmp\\foo`, which
+    `Path.is_absolute()` rejects. JVM -D values and the #520 unit fixtures use
+    both POSIX and Windows absolute forms.
+    """
+    return path.is_absolute() or path.as_posix().startswith("/")
+
+
+def _preserve_windows_path_separators_for_shlex(text: str) -> str:
+    """Double unquoted backslashes so POSIX shlex keeps Windows path separators.
+
+    Single-quoted regions are left alone: shlex already treats those backslashes
+    as literals, matching the Java launcher (`-Duser.home='/tmp/a\\b'`).
+    """
+    out: list[str] = []
+    in_single = False
+    in_double = False
+    for char in text:
+        if char == "'" and not in_double:
+            in_single = not in_single
+            out.append(char)
+            continue
+        if char == '"' and not in_single:
+            in_double = not in_double
+            out.append(char)
+            continue
+        if char == "\\" and not in_single:
+            out.append("\\\\")
+            continue
+        out.append(char)
+    return "".join(out)
+
+
 def _strip_hotspot_argfile_comments(text: str) -> str:
     """Drop unquoted # comments, matching JDK 21/25 launcher argument-file rules.
 
@@ -734,7 +773,9 @@ def _strip_hotspot_argfile_comments(text: str) -> str:
 def tokenize_jvm_options(text: str, *, expand_argfiles: bool = False) -> list[str]:
     """Split JVM option text; optionally expand JDK_JAVA_OPTIONS @argument files."""
     try:
-        tokens = shlex.split(text, posix=True)
+        tokens = shlex.split(
+            _preserve_windows_path_separators_for_shlex(text), posix=True
+        )
     except ValueError as error:
         raise InvalidScreencaptureHelperDir(
             f"JVM options cannot be parsed: {error}"
@@ -752,7 +793,7 @@ def tokenize_jvm_options(text: str, *, expand_argfiles: bool = False) -> list[st
             expanded.append(token)
             continue
         path = Path(token[1:])
-        if not path.is_absolute():
+        if not jvm_path_is_absolute(path):
             raise InvalidScreencaptureHelperDir(
                 f"JVM @argument file must be an absolute path (got {token!r}). "
                 "Relative files resolve against different working directories "
@@ -822,7 +863,7 @@ def macos_screencapture_configured_helper_dir(
             continue
         if parsed.path is None:
             return None
-        if not parsed.path.is_absolute():
+        if not jvm_path_is_absolute(parsed.path):
             raise InvalidScreencaptureHelperDir(
                 f"{SCREENCAPTURE_HELPER_DIR_PROPERTY} must be an absolute path "
                 f"(got {str(parsed.path)!r} from {name}). Relative values resolve "
@@ -848,7 +889,7 @@ def macos_screencapture_jvm_user_home(
         )
         if not parsed.defined:
             continue
-        if parsed.path is None or not parsed.path.is_absolute():
+        if parsed.path is None or not jvm_path_is_absolute(parsed.path):
             raise InvalidScreencaptureHelperDir(
                 f"user.home must be an absolute path (got {parsed.path!r} from {name})"
             )
@@ -866,7 +907,7 @@ def parse_java_show_settings_property(text: str, name: str) -> Path | None:
         if not value:
             return None
         path = Path(value)
-        if not path.is_absolute():
+        if not jvm_path_is_absolute(path):
             raise InvalidScreencaptureHelperDir(
                 f"{name} from java -XshowSettings:properties must be absolute "
                 f"(got {value!r})"
@@ -922,10 +963,10 @@ def macos_screencapture_override_path(
     # HelperBinaryExtractor.resolveOverrideExecutable accepts a relative Path.of()
     # value, but smoke CWD (repo root) and Gradle JavaExec CWD (module dir) differ.
     # Fail closed instead of probing a different helper than later capture cells.
-    if not override.is_absolute():
+    if not jvm_path_is_absolute(override):
         raise InvalidScreencaptureHelperOverride(
             f"{SCREENCAPTURE_HELPER_OVERRIDE_ENV} must be an absolute path "
-            f"(got {raw!r}). Relative values resolve against different working "
+            f"(got '{raw}'). Relative values resolve against different working "
             f"directories in smoke vs Gradle. Point it at {SCREENCAPTURE_HELPER_NAME} "
             f"or {SCREENCAPTURE_HELPER_APP_NAME}, or unset it."
         )
@@ -1630,6 +1671,30 @@ def kill_process_tree(proc: subprocess.Popen[Any]) -> None:
         pass
 
 
+def remaining_command_timeout(
+    timeout: int,
+    overall_deadline: float | None = None,
+    *,
+    floor: int = 0,
+    now: float | None = None,
+) -> int:
+    """Seconds a command may run, clipped by [overall_deadline].
+
+    Returns 0 when the overall deadline has already expired. Otherwise [floor]
+    wins over a positive but tiny leftover budget so ``gradle --stop`` cannot
+    be clipped to 1s.
+    """
+    remaining = max(0, timeout)
+    if overall_deadline is not None:
+        budget_left = int(overall_deadline - (now if now is not None else time.monotonic()))
+        if budget_left <= 0:
+            return 0
+        remaining = min(remaining, budget_left)
+    if floor > 0 and remaining > 0:
+        remaining = max(remaining, floor)
+    return remaining
+
+
 def run_command(
     command: Sequence[str],
     *,
@@ -1638,6 +1703,7 @@ def run_command(
     log_path: Path,
     env: Mapping[str, str] | None = None,
     overall_deadline: float | None = None,
+    floor: int = 0,
 ) -> tuple[int, str, str]:
     """Run command with timeout and process-group cleanup.
 
@@ -1653,14 +1719,13 @@ def run_command(
             if key in env and value == "":
                 del merged_env[key]
 
-    remaining = timeout
-    if overall_deadline is not None:
-        budget_left = int(overall_deadline - time.monotonic())
-        if budget_left <= 0:
-            message = "overall smoke deadline exceeded before step start"
-            log_path.write_text(message + "\n", encoding="utf-8")
-            return 124, message, str(log_path)
-        remaining = min(remaining, budget_left)
+    remaining = remaining_command_timeout(
+        timeout, overall_deadline, floor=floor
+    )
+    if remaining <= 0:
+        message = "overall smoke deadline exceeded before step start"
+        log_path.write_text(message + "\n", encoding="utf-8")
+        return 124, message, str(log_path)
 
     # start_new_session creates a new process group on POSIX so killpg works.
     popen_kwargs: dict[str, Any] = {

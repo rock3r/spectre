@@ -1,0 +1,293 @@
+package dev.sebastiano.spectre.testing
+
+import java.lang.StackWalker
+import java.lang.invoke.MethodType
+import java.lang.reflect.Method
+import java.lang.reflect.Modifier
+
+internal fun inferTestIdentity(executingClass: Class<*>? = null): GoldTestIdentity =
+    StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE).walk { frames ->
+        frames.iterator().asSequence().firstNotNullOfOrNull { frame ->
+            testIdentityFromWalkerFrame(frame, executingClass)
+        }
+    }
+        ?: error(
+            "assertMatchesGold could not infer the calling test method; pass TestInfo explicitly"
+        )
+
+internal fun testIdentityFromWalkerFrame(
+    frame: StackWalker.StackFrame,
+    executingClass: Class<*>? = null,
+): GoldTestIdentity? {
+    val cls = frame.declaringClass
+    if (
+        GOLD_FACADE_CLASSES.any { facade ->
+            cls.name == facade || cls.name.startsWith(facade + "$")
+        }
+    ) {
+        return null
+    }
+    val method =
+        resolveJunitTestMethod(
+            emptyArray(),
+            frame.methodName,
+            frame.methodType,
+            hierarchyRoot = cls,
+        ) ?: return null
+    return identityFromResolved(cls, method, executingClass)
+}
+
+internal fun testIdentityFromFrame(frame: StackTraceElement): GoldTestIdentity? {
+    val className = frame.className
+    // Skip gold facade frames, not other types whose names happen to start with
+    // ScreenshotGold (e.g. ScreenshotGoldAssertTest).
+    if (
+        GOLD_FACADE_CLASSES.any { facade ->
+            className == facade || className.startsWith(facade + "$")
+        }
+    ) {
+        return null
+    }
+    val cls = loadTestClass(className) ?: return null
+    val method =
+        resolveJunitTestMethod(emptyArray(), frame.methodName, hierarchyRoot = cls) ?: return null
+    return identityFromResolved(cls, method)
+}
+
+internal fun junitMethodIdentity(method: Method): String = buildString {
+    append(method.name)
+    append('(')
+    append(method.parameterTypes.joinToString(",") { it.name })
+    append(')')
+}
+
+internal fun resolveJunitTestMethod(
+    methods: Array<Method>,
+    methodName: String,
+    methodType: MethodType? = null,
+    hierarchyRoot: Class<*>? = null,
+): Method? {
+    val declaredSets: Sequence<Array<Method>> =
+        if (hierarchyRoot == null) {
+            sequenceOf(methods)
+        } else {
+            generateSequence(hierarchyRoot) { current ->
+                    current.superclass?.takeUnless { it == Any::class.java }
+                }
+                .flatMap { host ->
+                    sequenceOf(host.declaredMethods) +
+                        host.interfaces.asSequence().map { it.declaredMethods }
+                }
+        }
+    for (declared in declaredSets) {
+        val candidates = declared.filter { it.name == methodName && it.isJunitTestMethod() }
+        if (candidates.isEmpty()) continue
+        val match =
+            if (methodType != null) {
+                candidates.firstOrNull { methodMatchesType(it, methodType) }
+            } else {
+                candidates.singleOrNull()
+            }
+        if (match != null) return match
+    }
+    return null
+}
+
+/**
+ * True for JUnit 4 `@Test`, JUnit 5 `@Test` / `@TestTemplate` / `@TestFactory`, the platform
+ * `@Testable` meta-annotation, and composed annotations that meta-annotate those (including
+ * `@ParameterizedTest` and `@RepeatedTest`).
+ */
+internal fun Method.isJunitTestMethod(): Boolean = annotations.any {
+    annotationMetaNamed(it.annotationClass.java, JUNIT_TEST_ANNOTATION_NAMES)
+}
+
+internal fun Method.isJunitTestTemplate(): Boolean = annotations.any {
+    annotationMetaNamed(it.annotationClass.java, JUNIT_TEMPLATE_ANNOTATION_NAMES)
+}
+
+internal fun resolveInvocationKey(
+    testClassName: String,
+    testMethodName: String,
+    invocationKey: String?,
+    derivedInvocationKey: String? = null,
+    testClass: Class<*>? = null,
+): String? {
+    val explicit = invocationKey?.takeIf { it.isNotBlank() }
+    if (explicit != null) return explicit
+    val cls = testClass ?: loadTestClass(testClassName)
+    // Class-template hosts repeat method-level indexes ([1], repetition 1) once per outer
+    // argument set. A TestInfo-derived method key is not unique across those invocations.
+    if (cls != null && isJunit5ClassTemplateHost(cls)) {
+        error(
+            "assertMatchesGold on a parameterized or repeated test requires invocationKey " +
+                "or a unique TestInfo display name so each invocation gets its own gold"
+        )
+    }
+    val derived = derivedInvocationKey?.takeIf { it.isNotBlank() }
+    if (derived != null) return derived
+    if (cls != null && requiresExplicitInvocationKey(cls, testMethodName)) {
+        error(
+            "assertMatchesGold on a parameterized or repeated test requires invocationKey " +
+                "or a unique TestInfo display name so each invocation gets its own gold"
+        )
+    }
+    return null
+}
+
+private fun identityFromResolved(
+    cls: Class<*>,
+    method: Method,
+    executingClass: Class<*>? = null,
+): GoldTestIdentity {
+    val host = executingClass ?: cls
+    // A stack frame names the declaring class, not the receiver. Non-final concrete
+    // hosts (ordinary Java classes, open Kotlin bases) can be subclassed, so name-only
+    // inference cannot tell a direct run from an inherited one. Require TestInfo or the
+    // executing-class overload unless the declaring class is final.
+    val abstractOrInterface = host.isInterface || Modifier.isAbstract(host.modifiers)
+    val inherited = method.declaringClass != host
+    val inheritableHost = !Modifier.isFinal(host.modifiers)
+    if (executingClass == null && (abstractOrInterface || inherited || inheritableHost)) {
+        error(
+            "assertMatchesGold cannot infer the concrete test class from ${cls.name}; " +
+                "pass TestInfo or the executing test class so inherited tests key golds " +
+                "by the running class"
+        )
+    }
+    if (executingClass != null && abstractOrInterface) {
+        error(
+            "assertMatchesGold cannot infer the concrete test class from ${host.name}; " +
+                "pass TestInfo or the executing test class so inherited tests key golds " +
+                "by the running class"
+        )
+    }
+    return GoldTestIdentity(host, junitMethodIdentity(method))
+}
+
+internal data class GoldTestIdentity(val testClass: Class<*>, val testMethodName: String) {
+    val testClassName: String
+        get() = testClass.name
+}
+
+private fun requiresExplicitInvocationKey(cls: Class<*>, testMethodName: String): Boolean {
+    if (isJunit4ParameterizedHost(cls)) return true
+    if (isJunit5ClassTemplateHost(cls)) return true
+    // Walk superclasses and the full interface hierarchy, including transitive parents.
+    // A Java `Child implements Mid extends Grandparent` host does not redeclare the
+    // grandparent default method, so a direct-interfaces-only scan misses @RepeatedTest.
+    val seen = mutableSetOf<Class<*>>()
+    val pending = ArrayDeque<Class<*>>()
+    pending.add(cls)
+    while (pending.isNotEmpty()) {
+        val type = pending.removeFirst()
+        if (type == Any::class.java || !seen.add(type)) continue
+        val found =
+            type.declaredMethods.any { method ->
+                method.isJunitTestTemplate() &&
+                    (junitMethodIdentity(method) == testMethodName || method.name == testMethodName)
+            }
+        if (found) return true
+        type.superclass?.let(pending::add)
+        pending.addAll(type.interfaces)
+    }
+    return false
+}
+
+/**
+ * Reloads [className] with the context or supplied loader before Spectre's defining loader. Plugin
+ * and child test loaders are often invisible to one-argument `Class.forName`.
+ */
+private fun loadTestClass(className: String, hint: ClassLoader? = null): Class<*>? {
+    val loaders = listOfNotNull(hint, Thread.currentThread().contextClassLoader).distinct()
+    for (loader in loaders) {
+        runCatching { Class.forName(className, false, loader) }
+            .getOrNull()
+            ?.let {
+                return it
+            }
+    }
+    return runCatching { Class.forName(className) }.getOrNull()
+}
+
+/**
+ * JUnit 5.14 `@ParameterizedClass` (and `@ClassTemplate`) re-runs ordinary `@Test` methods once per
+ * class invocation. Detect the class-level template — including meta-annotations, `@Inherited`
+ * declarations, and enclosing *non-static* nested-test hosts — without resolving
+ * `ParameterizedClass` so consumers that omit `junit-jupiter-params` stay intact. A static Java
+ * nested class or Kotlin nested (not `inner`) class is independently runnable and does not inherit
+ * the outer template's invocationKey requirement.
+ */
+private fun isJunit5ClassTemplateHost(cls: Class<*>): Boolean =
+    generateSequence(cls) { current ->
+            if (Modifier.isStatic(current.modifiers)) null
+            else current.enclosingClass?.takeUnless { it == Any::class.java }
+        }
+        .any { host ->
+            host.annotations.any {
+                annotationMetaNamed(it.annotationClass.java, JUNIT_CLASS_TEMPLATE_ANNOTATION_NAMES)
+            }
+        }
+
+/**
+ * JUnit 4 `@RunWith(Parameterized)` executes each parameter set as an ordinary `@Test`. Detect that
+ * runner (including subclasses and `@Inherited` declarations) without resolving `Parameterized` at
+ * class-load time so JUnit 5-only consumers stay intact.
+ */
+private fun isJunit4ParameterizedHost(cls: Class<*>): Boolean {
+    // getAnnotations() includes @Inherited @RunWith from a superclass.
+    val runWith =
+        cls.annotations.firstOrNull { it.annotationClass.java.name == JUNIT4_RUN_WITH }
+            ?: return false
+    val runner =
+        runCatching {
+            runWith.annotationClass.java.getMethod("value").invoke(runWith) as? Class<*>
+        }
+            .getOrNull() ?: return false
+    return generateSequence(runner) { current ->
+            current.superclass?.takeUnless { it == Any::class.java }
+        }
+        .any { it.name == JUNIT4_PARAMETERIZED_RUNNER }
+}
+
+private fun methodMatchesType(method: Method, methodType: MethodType): Boolean =
+    method.returnType == methodType.returnType() &&
+        method.parameterTypes.contentEquals(methodType.parameterArray())
+
+private const val JUNIT4_RUN_WITH = "org.junit.runner.RunWith"
+private const val JUNIT4_PARAMETERIZED_RUNNER = "org.junit.runners.Parameterized"
+
+private val GOLD_FACADE_CLASSES =
+    setOf(
+        "dev.sebastiano.spectre.testing.ScreenshotGoldKt",
+        "dev.sebastiano.spectre.testing.ScreenshotGoldJunit5",
+        "dev.sebastiano.spectre.testing.ScreenshotGoldIdentityKt",
+    )
+
+private val JUNIT_TEST_ANNOTATION_NAMES =
+    setOf(
+        "org.junit.jupiter.api.Test",
+        "org.junit.jupiter.api.TestTemplate",
+        "org.junit.jupiter.api.TestFactory",
+        "org.junit.platform.commons.annotation.Testable",
+        "org.junit.Test",
+    )
+
+private val JUNIT_TEMPLATE_ANNOTATION_NAMES =
+    setOf("org.junit.jupiter.api.TestTemplate", "org.junit.jupiter.api.TestFactory")
+
+private val JUNIT_CLASS_TEMPLATE_ANNOTATION_NAMES = setOf("org.junit.jupiter.api.ClassTemplate")
+
+private fun annotationMetaNamed(
+    annotationType: Class<out Annotation>,
+    names: Set<String>,
+    visited: MutableSet<String> = mutableSetOf(),
+): Boolean {
+    val name = annotationType.name
+    if (!visited.add(name)) return false
+    if (name in names) return true
+    if (name.startsWith("java.") || name.startsWith("kotlin.")) return false
+    return annotationType.annotations.any { meta ->
+        annotationMetaNamed(meta.annotationClass.java, names, visited)
+    }
+}

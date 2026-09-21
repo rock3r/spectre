@@ -158,6 +158,104 @@ public final class dev/sebastiano/spectre/testing/RunSpectreTestKt {
 	public static synthetic fun runSpectreTest-dWUq8MI$default (Lkotlin/coroutines/CoroutineContext;JLkotlinx/coroutines/CoroutineDispatcher;Lkotlin/jvm/functions/Function2;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
+public final class dev/sebastiano/spectre/testing/ScreenshotCompareResult {
+	public fun <init> (ZIIIIIZLjava/awt/image/BufferedImage;)V
+	public final fun component1 ()Z
+	public final fun component2 ()I
+	public final fun component3 ()I
+	public final fun component4 ()I
+	public final fun component5 ()I
+	public final fun component6 ()I
+	public final fun component7 ()Z
+	public final fun component8 ()Ljava/awt/image/BufferedImage;
+	public final fun copy (ZIIIIIZLjava/awt/image/BufferedImage;)Ldev/sebastiano/spectre/testing/ScreenshotCompareResult;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/testing/ScreenshotCompareResult;ZIIIIIZLjava/awt/image/BufferedImage;ILjava/lang/Object;)Ldev/sebastiano/spectre/testing/ScreenshotCompareResult;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getActualHeight ()I
+	public final fun getActualWidth ()I
+	public final fun getDiff ()Ljava/awt/image/BufferedImage;
+	public final fun getDifferingPixels ()I
+	public final fun getExpectedHeight ()I
+	public final fun getExpectedWidth ()I
+	public final fun getMatches ()Z
+	public final fun getSizeMismatch ()Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/testing/ScreenshotComparer {
+	public static final field DIFF_HIGHLIGHT_RGB I
+	public static final field INSTANCE Ldev/sebastiano/spectre/testing/ScreenshotComparer;
+	public final fun compare (Ljava/awt/image/BufferedImage;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;)Ldev/sebastiano/spectre/testing/ScreenshotCompareResult;
+	public static synthetic fun compare$default (Ldev/sebastiano/spectre/testing/ScreenshotComparer;Ljava/awt/image/BufferedImage;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;ILjava/lang/Object;)Ldev/sebastiano/spectre/testing/ScreenshotCompareResult;
+}
+
+public final class dev/sebastiano/spectre/testing/ScreenshotGoldJunit5 {
+	public static final fun assertMatchesGold (Lorg/junit/jupiter/api/TestInfo;Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;Ljava/lang/String;Ljava/lang/String;)V
+	public static synthetic fun assertMatchesGold$default (Lorg/junit/jupiter/api/TestInfo;Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
+}
+
+public final class dev/sebastiano/spectre/testing/ScreenshotGoldKt {
+	public static final fun assertMatchesGold (Ljava/lang/Class;Ljava/lang/String;Ljava/awt/image/BufferedImage;)V
+	public static final fun assertMatchesGold (Ljava/lang/Class;Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;)V
+	public static final fun assertMatchesGold (Ljava/lang/Class;Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;Ljava/lang/String;)V
+	public static final fun assertMatchesGold (Ljava/lang/Class;Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;Ljava/lang/String;Ljava/lang/String;)V
+	public static final fun assertMatchesGold (Ljava/lang/String;Ljava/awt/image/BufferedImage;)V
+	public static final fun assertMatchesGold (Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;)V
+	public static final fun assertMatchesGold (Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;Ljava/lang/String;)V
+	public static final fun assertMatchesGold (Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;Ljava/lang/String;Ljava/lang/String;)V
+	public static synthetic fun assertMatchesGold$default (Ljava/lang/Class;Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
+	public static synthetic fun assertMatchesGold$default (Ljava/lang/String;Ljava/awt/image/BufferedImage;Ldev/sebastiano/spectre/testing/ScreenshotTolerance;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
+}
+
+public final class dev/sebastiano/spectre/testing/ScreenshotGoldPaths {
+	public static final field DEFAULT_GOLD_ROOT Ljava/lang/String;
+	public static final field DEFAULT_REPORTS_ROOT Ljava/lang/String;
+	public static final field INSTANCE Ldev/sebastiano/spectre/testing/ScreenshotGoldPaths;
+	public final fun defaultGoldRoot ()Ljava/nio/file/Path;
+	public final fun defaultReportsRoot ()Ljava/nio/file/Path;
+	public final fun goldFile (Ljava/nio/file/Path;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/nio/file/Path;
+	public static synthetic fun goldFile$default (Ldev/sebastiano/spectre/testing/ScreenshotGoldPaths;Ljava/nio/file/Path;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Ljava/nio/file/Path;
+	public final fun osKey (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+	public static synthetic fun osKey$default (Ldev/sebastiano/spectre/testing/ScreenshotGoldPaths;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Ljava/lang/String;
+	public final fun reportDirectory (Ljava/nio/file/Path;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/nio/file/Path;
+	public static synthetic fun reportDirectory$default (Ldev/sebastiano/spectre/testing/ScreenshotGoldPaths;Ljava/nio/file/Path;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Ljava/nio/file/Path;
+	public final fun scaleKey (DD)Ljava/lang/String;
+	public final fun scaleKey (Ljava/awt/GraphicsConfiguration;)Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/testing/ScreenshotTolerance {
+	public static final field Companion Ldev/sebastiano/spectre/testing/ScreenshotTolerance$Companion;
+	public static final field MAX_CHANNEL_DELTA I
+	public fun <init> ()V
+	public fun <init> (ILjava/lang/Integer;Ljava/lang/Double;)V
+	public synthetic fun <init> (ILjava/lang/Integer;Ljava/lang/Double;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()I
+	public final fun component2 ()Ljava/lang/Integer;
+	public final fun component3 ()Ljava/lang/Double;
+	public final fun copy (ILjava/lang/Integer;Ljava/lang/Double;)Ldev/sebastiano/spectre/testing/ScreenshotTolerance;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/testing/ScreenshotTolerance;ILjava/lang/Integer;Ljava/lang/Double;ILjava/lang/Object;)Ldev/sebastiano/spectre/testing/ScreenshotTolerance;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMaxChannelDelta ()I
+	public final fun getMaxDifferingPixelFraction ()Ljava/lang/Double;
+	public final fun getMaxDifferingPixels ()Ljava/lang/Integer;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/sebastiano/spectre/testing/ScreenshotTolerance$Companion {
+	public final fun getStrict ()Ldev/sebastiano/spectre/testing/ScreenshotTolerance;
+}
+
+public final class dev/sebastiano/spectre/testing/ScreenshotUpdateMode {
+	public static final field ENV Ljava/lang/String;
+	public static final field GRADLE_PROPERTY Ljava/lang/String;
+	public static final field INSTANCE Ldev/sebastiano/spectre/testing/ScreenshotUpdateMode;
+	public static final field SYSTEM_PROPERTY Ljava/lang/String;
+	public final fun isEnabled (Ljava/lang/String;Ljava/lang/String;)Z
+	public static synthetic fun isEnabled$default (Ldev/sebastiano/spectre/testing/ScreenshotUpdateMode;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Z
+}
+
 public final class dev/sebastiano/spectre/testing/contract/AutomatorContractCorpus {
 	public static final field INSTANCE Ldev/sebastiano/spectre/testing/contract/AutomatorContractCorpus;
 	public final fun run (Ldev/sebastiano/spectre/testing/contract/AutomatorContractDriver;)Ldev/sebastiano/spectre/testing/contract/AutomatorContractCorpus$RunResult;
