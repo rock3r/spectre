@@ -158,11 +158,10 @@ internal constructor(
 
     private object SystemProcessFactory : ProcessFactory {
         override fun start(argv: List<String>): Process =
-            ProcessBuilder(argv)
-                .redirectOutput(ProcessBuilder.Redirect.PIPE)
-                .redirectError(ProcessBuilder.Redirect.INHERIT)
-                .redirectInput(ProcessBuilder.Redirect.PIPE)
-                .start()
+            startPumpedHelperProcess(argv) {
+                redirectOutput(ProcessBuilder.Redirect.PIPE)
+                redirectInput(ProcessBuilder.Redirect.PIPE)
+            }
     }
 
     private companion object {
@@ -179,8 +178,11 @@ internal constructor(
                 } catch (e: java.util.concurrent.TimeoutException) {
                     process.destroyForcibly()
                     throw IllegalStateException(
-                        "Timed out waiting for spectre-window-capture to start recording. " +
-                            "Argv: $argv",
+                        appendHelperStderr(
+                            "Timed out waiting for spectre-window-capture to start recording. " +
+                                "Argv: $argv",
+                            helperFailureDetail(process),
+                        ),
                         e,
                     )
                 }
@@ -196,8 +198,11 @@ internal constructor(
                     -1
                 }
             error(
-                messageForWindowsGraphicsCaptureHelperExit(exit, argv) +
-                    if (line == null) "" else " First stdout line: $line"
+                appendHelperStderr(
+                    messageForWindowsGraphicsCaptureHelperExit(exit, argv) +
+                        if (line == null) "" else " First stdout line: $line",
+                    helperFailureDetail(process),
+                )
             )
         }
     }
@@ -283,8 +288,10 @@ private class WindowsGraphicsCaptureRecordingHandle(
         }
         val exit = process.exitValue()
         check(exit == 0 || sentTerminationOurselves) {
-            messageForWindowsGraphicsCaptureHelperExit(exit, argv) +
-                " The helper may also have been terminated externally after stop was requested."
+            appendHelperStderr(
+                messageForWindowsGraphicsCaptureHelperExit(exit, argv),
+                helperFailureDetail(process),
+            ) + " The helper may also have been terminated externally after stop was requested."
         }
     }
 

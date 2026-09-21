@@ -9,6 +9,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
 import kotlin.system.exitProcess
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -25,7 +26,9 @@ import kotlinx.coroutines.runBlocking
  *    coordinator, establishes the driver's client session, and focuses the field — every slow,
  *    variable step is spent here, *before* the barrier, so what the barrier releases is two
  *    processes that are one lease acquisition away from typing.
- * 2. **Signal readiness**, then park on the parent's gate file.
+ * 2. **Signal readiness**, then park on the parent's gate file. While parked, a nudge file holding
+ *    `x y` is one more click at those screen coordinates. The parent writes it when the shared
+ *    field is still unfocused; the click is outside the measured `typeText` lease.
  * 3. **Type one block in a single `typeText` call.** One call is deliberate: `RobotDriver` holds
  *    one lease for a whole `typeText`, so a block is the unit the coordinator is allowed to
  *    serialise. Splitting it across calls would take a fresh lease per call and interleaving
@@ -35,11 +38,13 @@ import kotlinx.coroutines.runBlocking
  *    than assuming it. `currentTimeMillis`, not `nanoTime`: the two are only comparable across
  *    processes as wall clock.
  *
- * Usage: `<screenX> <screenY> <character> <blockLength> <readyFile> <goFile> <outputFile>`
+ * Usage: `<screenX> <screenY> <character> <blockLength> <readyFile> <goFile> <nudgeFile>
+ * <outputFile>`
  */
 public fun main(arguments: Array<String>) {
     require(arguments.size == EXPECTED_ARGUMENT_COUNT) {
-        "Usage: <screenX> <screenY> <character> <blockLength> <readyFile> <goFile> <outputFile>"
+        "Usage: <screenX> <screenY> <character> <blockLength> <readyFile> <goFile> " +
+            "<nudgeFile> <outputFile>"
     }
     val screenX = arguments[0].toInt()
     val screenY = arguments[1].toInt()
@@ -47,11 +52,21 @@ public fun main(arguments: Array<String>) {
     val blockLength = arguments[3].toInt()
     val readyFile = Path.of(arguments[4])
     val goFile = Path.of(arguments[5])
-    val outputFile = Path.of(arguments[6])
+    val nudgeFile = Path.of(arguments[6])
+    val outputFile = Path.of(arguments[7])
 
     try {
         runBlocking {
-            typeOneBlock(screenX, screenY, character, blockLength, readyFile, goFile, outputFile)
+            typeOneBlock(
+                screenX,
+                screenY,
+                character,
+                blockLength,
+                readyFile,
+                goFile,
+                nudgeFile,
+                outputFile,
+            )
         }
     } catch (failure: Throwable) {
         System.err.println(
@@ -71,6 +86,7 @@ private suspend fun typeOneBlock(
     blockLength: Int,
     readyFile: Path,
     goFile: Path,
+    nudgeFile: Path,
     outputFile: Path,
 ) {
     RobotDriver(InputLeasePolicy.Required).use { driver ->
@@ -80,7 +96,7 @@ private suspend fun typeOneBlock(
         driver.click(screenX, screenY)
 
         Files.writeString(readyFile, "ready\n")
-        awaitGate(goFile)
+        awaitGate(goFile, nudgeFile, driver)
 
         val requestedAt = System.currentTimeMillis()
         driver.typeText(character.toString().repeat(blockLength))
@@ -93,15 +109,30 @@ private suspend fun typeOneBlock(
     }
 }
 
-private fun awaitGate(goFile: Path) {
+private suspend fun awaitGate(goFile: Path, nudgeFile: Path, driver: RobotDriver) {
     val deadline = System.nanoTime() + Duration.ofSeconds(GATE_TIMEOUT_SECONDS).toNanos()
+    var consumedNudge = false
     while (System.nanoTime() < deadline) {
         if (Files.exists(goFile)) return
-        Thread.sleep(GATE_POLL_MILLIS)
+        consumedNudge = applyNudge(nudgeFile, driver, consumedNudge)
+        delay(GATE_POLL_MILLIS)
     }
     error("parent never opened the contention gate at $goFile")
 }
 
-private const val EXPECTED_ARGUMENT_COUNT: Int = 7
+private suspend fun applyNudge(
+    nudgeFile: Path,
+    driver: RobotDriver,
+    alreadyConsumed: Boolean,
+): Boolean {
+    if (!Files.isRegularFile(nudgeFile)) return false
+    if (alreadyConsumed) return true
+    val text = runCatching { Files.readString(nudgeFile) }.getOrNull() ?: return false
+    val target = parseNudgeTarget(text) ?: return false
+    driver.click(target.first, target.second)
+    return true
+}
+
+private const val EXPECTED_ARGUMENT_COUNT: Int = 8
 private const val GATE_TIMEOUT_SECONDS: Long = 120
 private const val GATE_POLL_MILLIS: Long = 5

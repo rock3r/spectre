@@ -50,13 +50,21 @@ internal constructor(
                     output.toFile().deleteOnExit()
                 }
                 error(
-                    "Timed out after ${SCREENSHOT_TIMEOUT_MILLIS}ms waiting for " +
-                        "spectre-window-capture to capture a window. " +
-                        "Argv: $argv"
+                    appendHelperStderr(
+                        "Timed out after ${SCREENSHOT_TIMEOUT_MILLIS}ms waiting for " +
+                            "spectre-window-capture to capture a window. " +
+                            "Argv: $argv",
+                        helperFailureDetail(process),
+                    )
                 )
             }
             val exit = process.exitValue()
-            check(exit == 0) { messageForWindowsGraphicsCaptureHelperExit(exit, argv) }
+            check(exit == 0) {
+                appendHelperStderr(
+                    messageForWindowsGraphicsCaptureHelperExit(exit, argv),
+                    helperFailureDetail(process),
+                )
+            }
             return ImageIO.read(output.toFile())
                 ?: error("spectre-window-capture did not produce a readable PNG at $output")
         } catch (e: InterruptedException) {
@@ -81,10 +89,7 @@ internal constructor(
 
     private object SystemProcessFactory : ProcessFactory {
         override fun start(argv: List<String>): Process =
-            ProcessBuilder(argv)
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                .redirectError(ProcessBuilder.Redirect.INHERIT)
-                .start()
+            startPumpedHelperProcess(argv) { redirectOutput(ProcessBuilder.Redirect.DISCARD) }
     }
 
     private companion object {

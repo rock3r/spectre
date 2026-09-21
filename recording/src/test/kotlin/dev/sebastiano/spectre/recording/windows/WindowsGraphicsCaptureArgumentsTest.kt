@@ -5,6 +5,7 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class WindowsGraphicsCaptureArgumentsTest {
 
@@ -126,6 +127,44 @@ class WindowsGraphicsCaptureArgumentsTest {
         assertEquals("40", argv[argv.indexOf("--crop-y") + 1])
         assertEquals("640", argv[argv.indexOf("--crop-width") + 1])
         assertEquals("480", argv[argv.indexOf("--crop-height") + 1])
+    }
+
+    @Test
+    fun `windows args file launch writes tokens and passes one response file`() {
+        val helper = Path.of("C:/Program Files/spectre/spectre-window-capture.exe")
+        val output =
+            Path.of("C:/Users/Mattone User/AppData/Local/Temp/spectre-wgc-region-smoke.mp4")
+        val logical =
+            WindowsGraphicsCaptureArguments(
+                    mode = WindowsGraphicsCaptureMode.Recording,
+                    source = WindowsGraphicsCaptureSource.Region,
+                    region = Rectangle(160, 160, 360, 180),
+                    output = output,
+                    fps = 30,
+                    captureCursor = true,
+                )
+                .toArgv(helper)
+        val argsFile = Path.of("/tmp/spectre-wgc-args.txt")
+        val written = mutableListOf<List<String>>()
+
+        val launch =
+            windowsHelperProcessArgv(logical, useArgsFile = true) { tokens ->
+                written += tokens
+                argsFile
+            }
+
+        assertEquals(listOf(helper.toString(), "@${argsFile.toAbsolutePath()}"), launch)
+        assertEquals(logical.drop(1), written.single())
+        assertTrue(written.single().none { it == helper.toString() })
+    }
+
+    @Test
+    fun `direct launch keeps the logical argv`() {
+        val logical = listOf("helper.exe", "--mode", "recording", "--output", "out.mp4")
+        assertEquals(
+            logical,
+            windowsHelperProcessArgv(logical, useArgsFile = false) { error("no args file") },
+        )
     }
 
     @Test

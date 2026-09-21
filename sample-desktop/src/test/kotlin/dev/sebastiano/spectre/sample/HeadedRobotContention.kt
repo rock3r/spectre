@@ -103,6 +103,41 @@ private fun quoted(text: String): String =
         "\"${text.take(QUOTED_TEXT_LIMIT)}\"... (${text.length} characters)"
     }
 
+/**
+ * Gate decision for the headed contention proof.
+ *
+ * [Release] only when both probes are parked and the shared field is focused, so the measured
+ * `typeText` calls are not aimed at an unfocused window. [Nudge] is a fresh click, and it happens
+ * before the gate opens, outside the measured lease. [Hold] covers "not ready yet" and the grace
+ * after the warmup click, so a focus event that is already in flight is not immediately re-nudged.
+ */
+internal enum class ContentionBarrier {
+    Hold,
+    Nudge,
+    Release,
+}
+
+internal fun contentionBarrier(
+    bothProbesReady: Boolean,
+    textFieldFocused: Boolean,
+    focusGraceElapsed: Boolean,
+): ContentionBarrier =
+    when {
+        !bothProbesReady -> ContentionBarrier.Hold
+        textFieldFocused -> ContentionBarrier.Release
+        !focusGraceElapsed -> ContentionBarrier.Hold
+        else -> ContentionBarrier.Nudge
+    }
+
+/** Parses a parent-written `"x y"` nudge. Anything else is not a click target. */
+internal fun parseNudgeTarget(text: String): Pair<Int, Int>? {
+    val parts = text.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    if (parts.size != 2) return null
+    val x = parts[0].toIntOrNull() ?: return null
+    val y = parts[1].toIntOrNull() ?: return null
+    return x to y
+}
+
 /** One run per probe: any more is interleaving, any fewer means a block never landed. */
 private const val EXPECTED_RUN_COUNT: Int = 2
 

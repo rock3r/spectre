@@ -58,6 +58,7 @@ class HeadedRobotContentionTest {
 
     private val workDirectory: Path = Files.createTempDirectory("spectre-headed-contention-")
     private val goFile: Path = workDirectory.resolve("go")
+    private val nudgeFile: Path = workDirectory.resolve("nudge")
     private val children = mutableListOf<Process>()
     private var frame: JFrame? = null
 
@@ -103,6 +104,7 @@ class HeadedRobotContentionTest {
         start(second, target)
 
         awaitReady(first, second)
+        awaitFocusedField(state)
         Files.writeString(goFile, "go\n")
 
         assertEquals(0, waitForExit(first), "the '${first.character}' probe JVM exited non-zero")
@@ -185,6 +187,7 @@ class HeadedRobotContentionTest {
                     BLOCK_LENGTH.toString(),
                     probe.readyFile.toString(),
                     goFile.toString(),
+                    nudgeFile.toString(),
                     probe.outputFile.toString(),
                 )
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
@@ -209,7 +212,55 @@ class HeadedRobotContentionTest {
         return process.exitValue()
     }
 
-    /** Blocks until both probes are connected, focused on the field, and parked on the gate. */
+    /**
+     * Blocks until both probes are parked and Compose reports the shared field focused.
+     *
+     * A warmup click that missed the field leaves Windows dropping the later keystrokes. The gate
+     * stays shut until focus is real; probes re-click a fresh screen point before `typeText`.
+     */
+    private suspend fun awaitFocusedField(state: SmokeState) {
+        val graceDeadline = System.nanoTime() + FOCUS_GRACE_MS * NANOS_PER_MILLI
+        val deadline = System.nanoTime() + FOCUS_TIMEOUT_SECONDS * NANOS_PER_SECOND
+        while (System.nanoTime() < deadline) {
+            when (
+                contentionBarrier(
+                    bothProbesReady = true,
+                    textFieldFocused = state.textFieldFocused,
+                    focusGraceElapsed = System.nanoTime() >= graceDeadline,
+                )
+            ) {
+                ContentionBarrier.Release -> {
+                    delay(POST_CLICK_SETTLE_MS.milliseconds)
+                    return
+                }
+                ContentionBarrier.Hold -> delay(FOCUS_POLL_MILLIS.milliseconds)
+                ContentionBarrier.Nudge -> nudgeField(state)
+            }
+        }
+        error(
+            "the shared text field never reported focus, so the probes would type into an " +
+                "unfocused window; expected '$FIRST_BLOCK_CHARACTER'x$BLOCK_LENGTH and " +
+                "'$SECOND_BLOCK_CHARACTER'x$BLOCK_LENGTH"
+        )
+    }
+
+    private suspend fun nudgeField(state: SmokeState) {
+        invokeOnEdt {
+            val frame = state.frame ?: return@invokeOnEdt
+            frame.toFront()
+            frame.requestFocus()
+        }
+        val target =
+            requireNotNull(awtCenter(state, state.textFieldBounds)) {
+                "cannot re-aim a focus nudge: the text field has no screen bounds"
+            }
+        Files.writeString(nudgeFile, "${target.x} ${target.y}\n")
+        delay(NUDGE_WAIT_MS.milliseconds)
+        Files.deleteIfExists(nudgeFile)
+        delay(NUDGE_SETTLE_MS.milliseconds)
+    }
+
+    /** Blocks until both probes are connected and parked on the gate. */
     private suspend fun awaitReady(vararg probes: ProbeHandle) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(READY_TIMEOUT_SECONDS)
         while (System.nanoTime() < deadline) {
@@ -283,5 +334,11 @@ class HeadedRobotContentionTest {
         const val FIELD_SETTLE_TIMEOUT_MS: Long = 15_000
         const val FIELD_POLL_MILLIS: Long = 50
         const val NANOS_PER_MILLI: Long = 1_000_000
+        const val NANOS_PER_SECOND: Long = 1_000_000_000
+        const val FOCUS_GRACE_MS: Long = 750
+        const val FOCUS_TIMEOUT_SECONDS: Long = 30
+        const val FOCUS_POLL_MILLIS: Long = 25
+        const val NUDGE_WAIT_MS: Long = 1_500
+        const val NUDGE_SETTLE_MS: Long = 500
     }
 }
