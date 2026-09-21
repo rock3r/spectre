@@ -473,13 +473,9 @@ internal class GoldIdentitySignatureHost {
 
 @Disabled("reflective fixture for parenthesized zero-arg gold identity")
 internal class GoldIdentityParenNameCollisionHost {
-    @Test fun `render(int)`(): GoldTestIdentity = inferTestIdentity()
+    @Suppress("unused") fun `render(int)`(): GoldTestIdentity = inferTestIdentity()
 
-    @Test
-    fun render(value: Int): GoldTestIdentity {
-        assertEquals(0, value)
-        return inferTestIdentity()
-    }
+    @Suppress("unused") fun render(value: Int): GoldTestIdentity = inferTestIdentity()
 }
 
 internal abstract class GoldIdentityInheritedBase {
