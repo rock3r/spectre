@@ -10,19 +10,27 @@ import java.nio.file.LinkOption
 import java.nio.file.Path
 
 /**
- * POSIX HotSpot attach sockets at the well-known `.java_pid<pid>` path.
+ * Same-namespace POSIX HotSpot attach sockets at the well-known `.java_pid<pid>` path.
  *
  * The Linux/macOS attach provider treats that path as a ready listener: if the file exists it
  * connects and never creates `.attach_pid` or sends SIGQUIT. A leftover owner-only socket therefore
  * fails every `VirtualMachine.attach` with `Connection refused` until the path is removed. Windows
- * uses a named pipe and is a no-op here.
+ * uses a named pipe and is a no-op here. Container `/proc/<pid>/root/tmp` namespace remapping is
+ * out of scope.
  */
 internal object HotSpotAttachSocket {
+
+    internal const val ATTACH_FAILURE_PREFIX: String = "virtualmachine.attach("
+    internal const val CONNECTION_REFUSED: String = "connection refused"
 
     internal fun wellKnownPaths(pid: Long): List<Path> {
         val name = ".java_pid$pid"
         val paths = linkedSetOf<Path>()
         paths.add(Path.of("/tmp", name))
+        val tmpdirEnv = System.getenv("TMPDIR")?.trim().orEmpty()
+        if (tmpdirEnv.isNotEmpty()) {
+            paths.add(Path.of(tmpdirEnv).toAbsolutePath().normalize().resolve(name))
+        }
         val tmpdir = System.getProperty("java.io.tmpdir")?.trim().orEmpty()
         if (tmpdir.isNotEmpty()) {
             paths.add(Path.of(tmpdir).toAbsolutePath().normalize().resolve(name))
@@ -41,7 +49,7 @@ internal object HotSpotAttachSocket {
         causeMessage: String?,
     ) {
         val msg = (message.orEmpty() + " " + causeMessage.orEmpty()).lowercase()
-        if ("virtualmachine.attach(" in msg && "connection refused" in msg) {
+        if (ATTACH_FAILURE_PREFIX in msg && CONNECTION_REFUSED in msg) {
             clearStaleOrphan(pid)
         }
     }
@@ -70,7 +78,9 @@ internal object HotSpotAttachSocket {
     internal fun removeIfOrphanSocket(path: Path): Boolean {
         if (!isWellKnownAttachSocketName(path)) return false
         if (!isUnixDomainSocket(path)) return false
+        val identity = unixIdentity(path) ?: return false
         if (!isConnectRefused(path)) return false
+        if (unixIdentity(path) != identity) return false
         return try {
             Files.deleteIfExists(path)
         } catch (_: IOException) {
@@ -93,6 +103,19 @@ internal object HotSpotAttachSocket {
             mode and FILE_TYPE_MASK == UNIX_SOCKET_FILE_TYPE
         } catch (_: IOException) {
             false
+        }
+    }
+
+    private fun unixIdentity(path: Path): Pair<Long, Long>? {
+        if ("unix" !in path.fileSystem.supportedFileAttributeViews()) return null
+        return try {
+            val dev =
+                (Files.getAttribute(path, "unix:dev", LinkOption.NOFOLLOW_LINKS) as Number).toLong()
+            val ino =
+                (Files.getAttribute(path, "unix:ino", LinkOption.NOFOLLOW_LINKS) as Number).toLong()
+            dev to ino
+        } catch (_: IOException) {
+            null
         }
     }
 

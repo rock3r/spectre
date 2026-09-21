@@ -235,8 +235,10 @@ internal object LaunchReadiness {
                     cause = ex,
                 )
             } catch (ex: SpectreAttachException) {
-                // Instantaneous death check before retry; slower "still exiting" is reclassified
-                // later so retries stay fast.
+                // Cheap instantaneous check ahead of retry: an already-dead process has nothing
+                // left to retry against. The grace-aware reclassification in
+                // bootstrapFailureOrProcessExit covers the slower "still exiting" case and is
+                // deliberately not on this path so retries stay fast.
                 rethrowIfProcessDied(process, gradleish, stdoutPath, stderrPath)
                 lastAttachFailure = ex
                 if (
@@ -299,7 +301,8 @@ internal object LaunchReadiness {
             "no such process" in msg ||
             // Require Spectre's openVirtualMachine prefix so post-loadAgent UDS /
             // loadAgent "Connection refused" is not retried (those already bound the agent).
-            ("virtualmachine.attach(" in msg && "connection refused" in msg)
+            (HotSpotAttachSocket.ATTACH_FAILURE_PREFIX in msg &&
+                HotSpotAttachSocket.CONNECTION_REFUSED in msg)
     }
 
     /**

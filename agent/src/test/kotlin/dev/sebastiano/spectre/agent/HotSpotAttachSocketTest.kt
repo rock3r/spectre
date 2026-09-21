@@ -45,7 +45,7 @@ class HotSpotAttachSocketTest {
 
     @Test
     fun `removeIfOrphanSocket deletes an owner-only orphan and leaves a live listener`() {
-        val dir = Files.createTempDirectory("spectre-java-pid-orphan-")
+        val dir = Files.createTempDirectory(Path.of("/tmp"), "sp-jp-")
         val orphan = dir.resolve(".java_pid1001")
         val live = dir.resolve(".java_pid1002")
         val regular = dir.resolve(".java_pid1003")
@@ -120,11 +120,11 @@ class HotSpotAttachSocketTest {
     @Test
     fun `clearing an orphan on a live JVM lets VirtualMachine attach trigger`() {
         spawnBareJvm().use { child ->
-            val socket = Path.of("/tmp", ".java_pid${child.pid}")
+            val socket =
+                HotSpotAttachSocket.wellKnownPaths(child.pid).firstOrNull {
+                    Files.exists(it, LinkOption.NOFOLLOW_LINKS)
+                } ?: HotSpotAttachSocket.wellKnownPaths(child.pid).first()
             try {
-                // Wait until vm_start has finished. HotSpot unlinks leftover .java_pid during
-                // startup, so planting earlier is a race that either deletes the orphan or
-                // lets attach take the SIGQUIT path and succeed.
                 val attachReady = waitUntilAttachable(child.pid)
                 assertTrue(child.isAlive, "stock idle JVM died before attach")
                 assumeTrue(
@@ -173,13 +173,15 @@ class HotSpotAttachSocketTest {
             Files.isRegularFile(Paths.get(javacBin)),
             "javac is required to spawn a stock idle JVM",
         )
-        val dir = Files.createTempDirectory("spectre-idle-jvm-")
+        val dir = Files.createTempDirectory(Path.of("/tmp"), "sp-idle-")
         val src = dir.resolve("SpectreIdleJvm.java")
         Files.writeString(
             src,
             """
             public class SpectreIdleJvm {
               public static void main(String[] args) throws Exception {
+                System.out.println("READY");
+                System.out.flush();
                 Thread.sleep(Long.MAX_VALUE);
               }
             }
@@ -195,7 +197,14 @@ class HotSpotAttachSocketTest {
             "javac SpectreIdleJvm failed: ${compile.inputStream.bufferedReader().readText()}"
         }
         val process =
-            ProcessBuilder(javaBin, "-Xmx32m", "-cp", dir.toString(), "SpectreIdleJvm")
+            ProcessBuilder(
+                    javaBin,
+                    "-Xmx32m",
+                    "-XX:+StartAttachListener",
+                    "-cp",
+                    dir.toString(),
+                    "SpectreIdleJvm",
+                )
                 .redirectErrorStream(true)
                 .start()
         var attempts = 0
@@ -204,6 +213,9 @@ class HotSpotAttachSocketTest {
             attempts++
         }
         check(process.isAlive) { "stock idle JVM exited immediately" }
+        check(waitForReadyLine(process)) {
+            "stock idle JVM never printed READY (alive=${process.isAlive})"
+        }
         return BareJvm(process, dir)
     }
 
@@ -230,6 +242,18 @@ private fun plantOrphanOwnerOnlySocket(path: Path) {
     }
     check(Files.exists(path, LinkOption.NOFOLLOW_LINKS)) { "failed to plant orphan at $path" }
     Files.setPosixFilePermissions(path, ownerOnly)
+}
+
+private fun waitForReadyLine(process: Process, timeoutMs: Long = 10_000): Boolean {
+    val reader = process.inputReader()
+    val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+    while (System.nanoTime() < deadline && process.isAlive) {
+        if (reader.ready()) {
+            return reader.readLine() == "READY"
+        }
+        Thread.sleep(10)
+    }
+    return false
 }
 
 private data class AttachProbe(val ok: Boolean, val error: Throwable? = null)
