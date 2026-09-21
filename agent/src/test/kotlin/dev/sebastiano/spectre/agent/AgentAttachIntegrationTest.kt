@@ -84,7 +84,8 @@ import org.junit.jupiter.api.condition.OS
  *   still tolerates a CI-only loss of OS keyboard focus on any platform (see
  *   `typeTextOrSkipCiFocusLoss`).
  * - Attach itself retries the pre-`loadAgent` HotSpot handshake race via
- *   `attachRetryingHandshakeRace` (#443); no other attach failure is retried.
+ *   `attachRetryingHandshakeRace` (#443), including Linux attach-socket `Connection refused`; no
+ *   other attach failure is retried.
  */
 @EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class AgentAttachIntegrationTest {
@@ -434,10 +435,11 @@ class AgentAttachIntegrationTest {
      *
      * HotSpot opens the attach handshake a few hundred milliseconds after the JVM becomes visible,
      * so an attach that arrives too early fails with `AttachNotSupportedException: state is not
-     * ready to participate in attach handshake`. [LaunchReadiness.awaitAgentBootstrap] already
-     * retries exactly this failure for the launch path; this suite calls [AgentAttach.attach]
-     * directly, so it retries against the same [LaunchReadiness.isPreLoadAttachRetryable]
-     * definition rather than a second copy of the rule.
+     * ready to participate in attach handshake` (macOS) or `IOException: Connection refused` on
+     * `VirtualMachine.attach` (Linux `.java_pid` listener not accepting yet).
+     * [LaunchReadiness.awaitAgentBootstrap] already retries exactly these failures for the launch
+     * path; this suite calls [AgentAttach.attach] directly, so it retries against the same
+     * [LaunchReadiness.isPreLoadAttachRetryable] definition rather than a second copy of the rule.
      *
      * Every other failure — including the dynamic-agent-loading refusal that `attach explains when
      * the target JVM disables dynamic agent loading` asserts on — propagates from the first

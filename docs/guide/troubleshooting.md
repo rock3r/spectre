@@ -38,6 +38,9 @@ caveats. Prefer a prod-like launch (`java -jar`, installDist) when you control t
 
 The target JVM was found but the agent did not bind its UDS in time, bootstrap
 could not find or inject `ComposeAutomator`, or the target has no Compose host.
+On Linux, a first `VirtualMachine.attach` can fail with `Connection refused` while
+the `.java_pid` listener is still opening; launch-and-attach retries that pre-load
+race inside the `AGENT_BOOTSTRAP` budget.
 Prefer a `spectre-core` dependency on the app (instrumented attach). If the target
 is Compose-only, current `spectre-agent-runtime` jars inject nested
 `META-INF/spectre/inject-runtime.jar` automatically — a missing core dependency is

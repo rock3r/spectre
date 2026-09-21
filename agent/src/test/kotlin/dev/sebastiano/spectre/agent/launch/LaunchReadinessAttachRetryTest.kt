@@ -13,7 +13,8 @@ import kotlin.test.assertTrue
  *
  * The predicate must stay narrow. HotSpot reuses `AttachNotSupportedException` for its own attach
  * socket timeout (~10s), and retrying after that terminal timeout would start another full
- * handshake and blow the caller's budget.
+ * handshake and blow the caller's budget. Linux `Connection refused` is retryable only when it
+ * comes from `VirtualMachine.attach`, not from a later UDS connect after `loadAgent`.
  */
 class LaunchReadinessAttachRetryTest {
     @Test
@@ -34,6 +35,22 @@ class LaunchReadinessAttachRetryTest {
             LaunchReadiness.isPreLoadAttachRetryable(
                 message = "attach failed: No such process",
                 causeMessage = null,
+            )
+        )
+    }
+
+    @Test
+    fun `Linux attach socket Connection refused is retryable`() {
+        // Gradle / process-tree discovery can surface a JVM before HotSpot's
+        // /tmp/.java_pid<pid> listener is accepting. VirtualMachine.attach then
+        // fails immediately with IOException: Connection refused — the Linux
+        // counterpart of the macOS "state is not ready…" handshake race. Must
+        // retry: treating it as terminal blows AGENT_BOOTSTRAP on the first poll
+        // (0.7.0 Linux smoke NO-GO on LaunchAndAttachGradleIntegrationTest).
+        assertTrue(
+            LaunchReadiness.isPreLoadAttachRetryable(
+                message = "VirtualMachine.attach(18421) failed: IOException: Connection refused",
+                causeMessage = "Connection refused",
             )
         )
     }
@@ -73,6 +90,15 @@ class LaunchReadinessAttachRetryTest {
                 message =
                     "VirtualMachine.attach(4321) failed: AttachNotSupportedException: not attachable",
                 causeMessage = "not attachable",
+            )
+        )
+        // Post-loadAgent UDS connect failures reuse "Connection refused" but have
+        // already bound the agent socket. Retrying those would loadAgent again.
+        assertFalse(
+            LaunchReadiness.isPreLoadAttachRetryable(
+                message =
+                    "Failed to connect to agent's UDS at /tmp/sp-a-1/agent.sock: Connection refused",
+                causeMessage = "Connection refused",
             )
         )
     }
