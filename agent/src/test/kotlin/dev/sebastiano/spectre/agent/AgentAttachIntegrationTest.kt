@@ -471,16 +471,14 @@ class AgentAttachIntegrationTest {
         val focusedTextField =
             waitForFocusedTextField(textFieldKey, iteration = iteration) ?: return
         val editableTextBefore = focusedTextField.editableText.orEmpty()
-        // This is a real keyboard event path. Do not call typeText until a refreshed semantics
-        // snapshot proves the fixture text field owns Compose focus; the in-target handler also
-        // checks that this JVM owns OS keyboard focus before dispatching Robot key events.
-        if (typeTextOrSkipCiFocusLoss(iteration = iteration)) {
-            waitForTextFieldToReceiveTypedCharacterOrSkipCi(
-                textFieldKey = textFieldKey,
-                previousEditableText = editableTextBefore,
-                iteration = iteration,
-            )
-        }
+        // Retry typeText on each poll, matching waitForFocusedTextField's click retry. AWT can
+        // report focus while X11 still delivers the first keystroke elsewhere (0.7.0 Linux smoke
+        // agent-attach-core: typeText returned Ok, the field stayed unchanged).
+        waitForTextFieldToReceiveTypedCharacterOrSkipCi(
+            textFieldKey = textFieldKey,
+            previousEditableText = editableTextBefore,
+            iteration = iteration,
+        )
     }
 
     private fun spawnComposeFixture(dynamicAgentLoadingEnabled: Boolean = true): FixtureProcess {
@@ -638,6 +636,7 @@ class AgentAttachIntegrationTest {
         }
         var lastText: String? = null
         while (System.nanoTime() < deadline) {
+            if (!typeTextOrSkipCiFocusLoss(iteration = iteration)) return null
             val match = findByTestTag(TAG_TEXT_FIELD).firstOrNull { it.key == textFieldKey }
             lastText = match?.editableText
             if (

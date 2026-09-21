@@ -80,7 +80,7 @@ fun main() {
     SwingUtilities.invokeAndWait {
         val frame =
             JFrame(SPECTRE_FIXTURE_WINDOW_TITLE).apply {
-                defaultCloseOperation = WindowConstants.EXIT_ON_CLOSE
+                defaultCloseOperation = FIXTURE_DEFAULT_CLOSE_OPERATION
                 size = Dimension(FIXTURE_WIDTH_PX, FIXTURE_HEIGHT_PX)
                 setLocationRelativeTo(null)
                 // Keep the fixture above the spawning terminal so the agent's real java.awt.Robot
@@ -192,6 +192,13 @@ fun main() {
     // Idle until the parent kills us. Swing's EDT keeps the JVM alive in the background.
     Thread.currentThread().join()
 }
+
+/**
+ * Parent-owned lifetime: the fixture blocks on the main thread until the spawning test destroys the
+ * process. [WindowConstants.EXIT_ON_CLOSE] would [System.exit] on a close-box or WM close and look
+ * like "exited after READY" during a shared-display `./gradlew check`.
+ */
+public const val FIXTURE_DEFAULT_CLOSE_OPERATION: Int = WindowConstants.DO_NOTHING_ON_CLOSE
 
 /** Sentinel the parent integration test scans `stdout` for to confirm the window is up. */
 public const val READY_SENTINEL: String = "SPECTRE-FIXTURE-READY"
