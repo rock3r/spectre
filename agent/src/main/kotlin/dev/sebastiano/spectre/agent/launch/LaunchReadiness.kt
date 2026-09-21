@@ -145,11 +145,12 @@ internal object LaunchReadiness {
      *
      * **UDS path is pinned** for the whole stage: once `loadAgent` has bound an agent to a socket,
      * a second attempt with a different path would wait forever (Codex P1). Retries are limited to
-     * pre-load failures where HotSpot refuses attach — the macOS "state is not ready…" handshake
-     * race, and Linux `VirtualMachine.attach` `IOException: Connection refused` while
-     * `/tmp/.java_pid<pid>` exists but the listener is not accepting yet. Both happen when
-     * discovery (list / process tree) surfaces a JVM a few hundred ms before the attach handshake
-     * is open. Those retries never reach `loadAgent`, so the pinned path stays safe.
+     * pre-load failures where HotSpot refuses attach — "state is not ready…" while the handshake is
+     * still opening, and `VirtualMachine.attach` `IOException: Connection refused` when a leftover
+     * `/tmp/.java_pid<pid>` is still on disk (pid reuse after a force-kill, or a new JVM that has
+     * not yet replaced that file in `vm_start`). Discovery can list the JVM before that file is
+     * gone. A live target unlinks the stale socket and starts a real listener, so the retry
+     * converges. Those retries never reach `loadAgent`, so the pinned path stays safe.
      */
     fun awaitAgentBootstrap(
         process: Process,
@@ -287,8 +288,9 @@ internal object LaunchReadiness {
      * Deliberately does **not** treat every `AttachNotSupportedException` as retryable: HotSpot
      * also uses that type for its independent attach-socket wait timeout (~10s). Retrying after
      * that terminal timeout would start another full JDK handshake and blow the stage budget. Only
-     * the documented "state is not ready…" race, Linux attach-socket `Connection refused` on
-     * `VirtualMachine.attach`, and "no such process" pid churn retry.
+     * the documented "state is not ready…" race, attach-socket `Connection refused` on
+     * `VirtualMachine.attach` (POSIX leftover `.java_pid<pid>`), and "no such process" pid churn
+     * retry.
      *
      * #454's dying-target taxonomy is **not** absorbed here. A terminal
      * `AttachNotSupportedException` / `AgentLoadException` means no live agent was obtained, which
@@ -302,9 +304,9 @@ internal object LaunchReadiness {
         val msg = (message.orEmpty() + " " + causeMessage.orEmpty()).lowercase()
         return "not ready to participate in attach handshake" in msg ||
             "no such process" in msg ||
-            // Linux: require VirtualMachine.attach in the blob so a post-loadAgent UDS
-            // "Connection refused" is not retried (that path already bound the agent).
-            ("virtualmachine.attach" in msg && "connection refused" in msg)
+            // Require Spectre's openVirtualMachine prefix so post-loadAgent UDS /
+            // loadAgent "Connection refused" is not retried (those already bound the agent).
+            ("virtualmachine.attach(" in msg && "connection refused" in msg)
     }
 
     /**

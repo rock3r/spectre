@@ -84,8 +84,8 @@ import org.junit.jupiter.api.condition.OS
  *   still tolerates a CI-only loss of OS keyboard focus on any platform (see
  *   `typeTextOrSkipCiFocusLoss`).
  * - Attach itself retries the pre-`loadAgent` HotSpot handshake race via
- *   `attachRetryingHandshakeRace` (#443), including Linux attach-socket `Connection refused`; no
- *   other attach failure is retried.
+ *   `attachRetryingHandshakeRace` (#443), including attach-socket `Connection refused`; no other
+ *   attach failure is retried.
  */
 @EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class AgentAttachIntegrationTest {
@@ -435,8 +435,8 @@ class AgentAttachIntegrationTest {
      *
      * HotSpot opens the attach handshake a few hundred milliseconds after the JVM becomes visible,
      * so an attach that arrives too early fails with `AttachNotSupportedException: state is not
-     * ready to participate in attach handshake` (macOS) or `IOException: Connection refused` on
-     * `VirtualMachine.attach` (Linux `.java_pid` listener not accepting yet).
+     * ready to participate in attach handshake` or `IOException: Connection refused` on
+     * `VirtualMachine.attach` (leftover POSIX `.java_pid<pid>`).
      * [LaunchReadiness.awaitAgentBootstrap] already retries exactly these failures for the launch
      * path; this suite calls [AgentAttach.attach] directly, so it retries against the same
      * [LaunchReadiness.isPreLoadAttachRetryable] definition rather than a second copy of the rule.

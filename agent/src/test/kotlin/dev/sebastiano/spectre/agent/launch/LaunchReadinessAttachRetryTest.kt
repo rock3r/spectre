@@ -13,8 +13,8 @@ import kotlin.test.assertTrue
  *
  * The predicate must stay narrow. HotSpot reuses `AttachNotSupportedException` for its own attach
  * socket timeout (~10s), and retrying after that terminal timeout would start another full
- * handshake and blow the caller's budget. Linux `Connection refused` is retryable only when it
- * comes from `VirtualMachine.attach`, not from a later UDS connect after `loadAgent`.
+ * handshake and blow the caller's budget. `Connection refused` is retryable only when it comes from
+ * `VirtualMachine.attach`, not from `loadAgent` or a later UDS connect.
  */
 class LaunchReadinessAttachRetryTest {
     @Test
@@ -40,13 +40,13 @@ class LaunchReadinessAttachRetryTest {
     }
 
     @Test
-    fun `Linux attach socket Connection refused is retryable`() {
-        // Gradle / process-tree discovery can surface a JVM before HotSpot's
-        // /tmp/.java_pid<pid> listener is accepting. VirtualMachine.attach then
-        // fails immediately with IOException: Connection refused — the Linux
-        // counterpart of the macOS "state is not ready…" handshake race. Must
-        // retry: treating it as terminal blows AGENT_BOOTSTRAP on the first poll
-        // (0.7.0 Linux smoke NO-GO on LaunchAndAttachGradleIntegrationTest).
+    fun `attach socket Connection refused is retryable`() {
+        // Discovery can list a JVM while a leftover /tmp/.java_pid<pid> is still
+        // on disk (pid reuse, or before the new JVM replaces that file).
+        // VirtualMachine.attach then fails immediately with IOException:
+        // Connection refused. Must retry: treating it as terminal blows
+        // AGENT_BOOTSTRAP on the first poll (0.7.0 Linux smoke NO-GO on
+        // LaunchAndAttachGradleIntegrationTest).
         assertTrue(
             LaunchReadiness.isPreLoadAttachRetryable(
                 message = "VirtualMachine.attach(18421) failed: IOException: Connection refused",
@@ -92,12 +92,19 @@ class LaunchReadinessAttachRetryTest {
                 causeMessage = "not attachable",
             )
         )
-        // Post-loadAgent UDS connect failures reuse "Connection refused" but have
-        // already bound the agent socket. Retrying those would loadAgent again.
+        // Post-loadAgent failures reuse "Connection refused" but have already
+        // bound the agent socket. Retrying those would loadAgent again.
         assertFalse(
             LaunchReadiness.isPreLoadAttachRetryable(
                 message =
                     "Failed to connect to agent's UDS at /tmp/sp-a-1/agent.sock: Connection refused",
+                causeMessage = "Connection refused",
+            )
+        )
+        assertFalse(
+            LaunchReadiness.isPreLoadAttachRetryable(
+                message =
+                    "VirtualMachine.loadAgent(agent.jar) failed: IOException: Connection refused",
                 causeMessage = "Connection refused",
             )
         )
