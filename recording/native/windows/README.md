@@ -67,9 +67,8 @@ slot 7. `GraphicsCaptureItem.As<IInspectable>()` throws `PlatformNotSupportedExc
 If DisplayId capture fails, the helper falls back to `IGraphicsCaptureItemInterop.CreateForMonitor`
 with the `EnumDisplayMonitors` HMONITOR. A `MonitorFromRect` value that is not that handle is
 ignored (`0x2680A25` on the Mattone host was rejected as `E_INVALIDARG`). DisplayId candidates are
-the WinUI `GetDisplayIdFromMonitor` token and the HMONITOR bits. If monitor capture still fails,
-region capture uses `CreateForWindow` on the smallest visible top-level window that contains the
-rectangle and crops inside it.
+the WinUI `GetDisplayIdFromMonitor` token and the HMONITOR bits. If those screen-scoped paths still
+fail, region capture exits 5. It does not fall back to window capture.
 The rectangle must intersect a monitor; a one-pixel DPI overshoot is clamped to that monitor
 instead of failing the capture. The helper sets per-monitor DPI awareness V2 before enumerating
 displays so those rectangles stay in the same pixel space as a DPI-aware JVM. `--cursor true|false` is parsed as those two literals. Setting

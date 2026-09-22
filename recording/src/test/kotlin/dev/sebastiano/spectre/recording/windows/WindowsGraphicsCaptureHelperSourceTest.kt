@@ -39,9 +39,13 @@ class WindowsGraphicsCaptureHelperSourceTest {
                 "HMONITOR bits",
         )
         assertTrue(
-            "WindowRegionTarget" in source && "CreateForWindow" in source,
-            "when monitor capture returns E_INVALIDARG, region capture uses the window " +
-                "that covers the rectangle",
+            "StartWindowRegion" !in source && "WindowRegionTarget" !in source,
+            "a screen-region request must not fall back to CreateForWindow",
+        )
+        assertTrue(
+            "does not fall back to window capture" in source,
+            "when DisplayId and CreateForMonitor both fail, region capture must fail " +
+                "instead of recording a window",
         )
     }
 

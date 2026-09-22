@@ -218,8 +218,8 @@ internal static class Program
 
     private static void EnsurePerMonitorDpiAwareness()
     {
-        // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2. EnumDisplayMonitors / GetWindowRect then
-        // match a per-monitor-aware JVM, and WGC sees the same HMONITORs as the interactive desktop.
+        // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2. EnumDisplayMonitors then matches a
+        // per-monitor-aware JVM, and WGC sees the same HMONITORs as the interactive desktop.
         const int PerMonitorAwareV2 = -4;
         if (!SetProcessDpiAwarenessContext(new IntPtr(PerMonitorAwareV2)))
         {
@@ -229,12 +229,6 @@ internal static class Program
 
     [DllImport("user32.dll")]
     private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
-
-    [DllImport("user32.dll")]
-    private static extern bool IsWindowVisible(IntPtr hwnd);
-
-    [DllImport("user32.dll")]
-    private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
 
     private static IntPtr FindWindowByTitleAndOwnerPid(string title, long ownerPid)
     {
@@ -525,10 +519,11 @@ internal static class Program
             }
             catch (InvalidOperationException monitorFailure)
             {
-                Console.Error.WriteLine(
-                    $"monitor capture failed ({monitorFailure.GetType().Name}: {monitorFailure.Message}); " +
-                    "trying the window that covers the region.");
-                return StartWindowRegion(region, captureCursor, monitorFailure);
+                throw new InvalidOperationException(
+                    "Screen-region capture failed. DisplayId and CreateForMonitor did not produce a " +
+                    "monitor item, and region capture does not fall back to window capture. " +
+                    monitorFailure.Message,
+                    monitorFailure);
             }
         }
 
@@ -547,40 +542,6 @@ internal static class Program
             Console.Error.WriteLine(
                 $"region {region.X},{region.Y} {region.Width}x{region.Height} " +
                 $"monitor=0x{placed.Value.Monitor.ToInt64():X} " +
-                $"crop={crop.X},{crop.Y} {crop.Width}x{crop.Height} " +
-                $"item={item.Size.Width}x{item.Size.Height} cursor={captureCursor}");
-            return Start(
-                canvasDevice,
-                item,
-                captureCursor,
-                crop,
-                (Even(crop.Width), Even(crop.Height)));
-        }
-
-        private static WgcFrameSource StartWindowRegion(
-            CaptureRect region,
-            bool captureCursor,
-            Exception monitorFailure)
-        {
-            var window = FindWindowCovering(region);
-            if (window is null)
-            {
-                throw new InvalidOperationException(
-                    $"Region {region.X},{region.Y} {region.Width}x{region.Height} does not cover a " +
-                    $"visible window after monitor capture failed: {monitorFailure.Message}",
-                    monitorFailure);
-            }
-
-            var canvasDevice = new CanvasDevice();
-            var hwnd = window.Value.Hwnd;
-            var item = GraphicsCaptureItemInterop.CreateForWindow(hwnd);
-            var crop = ClampCropToItemSize(
-                WindowRegionTarget.Crop(window.Value, region),
-                item.Size.Width,
-                item.Size.Height);
-            Console.Error.WriteLine(
-                $"region {region.X},{region.Y} {region.Width}x{region.Height} " +
-                $"window=0x{hwnd.ToInt64():X} " +
                 $"crop={crop.X},{crop.Y} {crop.Width}x{crop.Height} " +
                 $"item={item.Size.Width}x{item.Size.Height} cursor={captureCursor}");
             return Start(
@@ -828,25 +789,6 @@ internal static class Program
 
             var handle = MonitorCaptureSelection.PreferEnumeratedHandle(match.Handle, fresh);
             return new PlacedMonitor(handle, placed.Value.Crop);
-        }
-
-        private static WindowRect? FindWindowCovering(CaptureRect region)
-        {
-            var windows = new List<WindowRect>();
-            bool Callback(IntPtr hwnd, IntPtr data)
-            {
-                if (!IsWindowVisible(hwnd) || !GetWindowRect(hwnd, out var bounds))
-                {
-                    return true;
-                }
-
-                windows.Add(
-                    new WindowRect(hwnd, bounds.Left, bounds.Top, bounds.Right, bounds.Bottom));
-                return true;
-            }
-
-            EnumWindows(Callback, IntPtr.Zero);
-            return WindowRegionTarget.Choose(windows, region);
         }
 
         private static IntPtr FreshMonitorHandle(PlacedRegion placed, IntPtr enumerated)
