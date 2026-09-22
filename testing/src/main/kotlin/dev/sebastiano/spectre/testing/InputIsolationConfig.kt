@@ -38,6 +38,9 @@ public data class InputIsolationConfig(
     public val mode: InputIsolationMode = InputIsolationMode.PerInteraction,
     public val acquireTimeout: Duration = 30.seconds,
 ) {
+    /** Creates per-interaction isolation with the default timeout. */
+    public constructor() : this(mode = InputIsolationMode.PerInteraction)
+
     public companion object {
         public fun auto(acquireTimeout: Duration = 30.seconds): InputIsolationConfig =
             InputIsolationConfig(InputIsolationMode.Auto, acquireTimeout)

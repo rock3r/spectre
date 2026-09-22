@@ -5,6 +5,17 @@ typically Jewel tool windows or `ComposePanel` instances embedded in plugin
 UIs. The setup differs from a standalone Compose Desktop app in important
 ways.
 
+## Match the IDE's dependencies
+
+Use Spectre 0.7.1 rather than 0.7.0 with the stable IDEA 2026.2.3 baseline.
+Version 0.7.0 calls coroutine JVM methods missing from the IDE's 1.10.2 fork;
+excluding its transitive coroutines cannot fix that compiled bytecode.
+Version 0.7.1 compiles against the stable IDE's shared-dependency baseline.
+Keep the IDE-provided libraries and exclude duplicate plugin dependencies;
+do not replace the IDE's coroutine fork or bypass `runSpectreTest` checks.
+See the [dependency compatibility table](https://spectre.sebastiano.dev/guide/intellij/#dependency-compatibility)
+for the pinned versions.
+
 ## Use the synthetic driver
 
 `ComposeAutomator.inProcess()` already defaults to synthetic AWT events.

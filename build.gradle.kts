@@ -340,6 +340,37 @@ subprojects {
     group = rootProject.group
     version = rootProject.version
 
+    // Compile shared libraries against the stable IDE baseline even when a transitive
+    // dependency requests a newer version. Do not constrain consumers or build-tool classpaths.
+    // The CLI runs in its own JVM and does not share the IDE's dependency classloaders.
+    if (name != "cli") {
+        val kotlinVersion = rootProject.libs.versions.kotlin.get()
+        val coroutinesVersion = rootProject.libs.versions.kotlinx.coroutines.get()
+        val serializationVersion = rootProject.libs.versions.kotlinx.serialization.get()
+        val ktorVersion = rootProject.libs.versions.ktor.get()
+        configurations
+            .matching {
+                it.name.endsWith("CompileClasspath", ignoreCase = true) ||
+                    it.name.endsWith("RuntimeClasspath", ignoreCase = true)
+            }
+            .configureEach {
+                resolutionStrategy.eachDependency {
+                    when {
+                        requested.group == "org.jetbrains.kotlin" &&
+                            (requested.name.startsWith("kotlin-stdlib") ||
+                                requested.name == "kotlin-reflect") -> useVersion(kotlinVersion)
+                        requested.group == "org.jetbrains.kotlinx" &&
+                            requested.name.startsWith("kotlinx-coroutines-") ->
+                            useVersion(coroutinesVersion)
+                        requested.group == "org.jetbrains.kotlinx" &&
+                            requested.name.startsWith("kotlinx-serialization-") ->
+                            useVersion(serializationVersion)
+                        requested.group == "io.ktor" -> useVersion(ktorVersion)
+                    }
+                }
+            }
+    }
+
     // Runtime matrix (#216 / epic #215): modules keep `jvmToolchain(21)` for compile, but
     // matrix cells must *execute* Test / JavaExec workers on the provisioned JBR/Temurin.
     // When SPECTRE_MATRIX_JAVA_HOME is set (by `.github/workflows/runtime-matrix.yml`), force
