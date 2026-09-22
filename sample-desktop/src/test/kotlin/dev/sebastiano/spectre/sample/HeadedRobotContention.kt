@@ -139,6 +139,26 @@ internal fun fixtureWindowIsInFront(
 internal fun foregroundBelongsToFrame(frameHwnd: Long, foregroundRoot: Long): Boolean =
     frameHwnd != 0L && foregroundRoot != 0L && frameHwnd == foregroundRoot
 
+/**
+ * True when the fixture is in front and the shared field still does not hold Compose focus.
+ *
+ * An active AWT frame is not enough to open the gate. This asks the composition to focus the editor
+ * while the Robot nudge is in flight.
+ */
+internal fun shouldRequestTextFieldFocus(
+    textFieldFocused: Boolean,
+    windowInFront: Boolean,
+): Boolean = windowInFront && !textFieldFocused
+
+/**
+ * True when the text field's own node or its inner editor holds Compose focus.
+ *
+ * `onFocusChanged` / `isFocused` stays false when BasicTextField focuses a child node. `hasFocus`
+ * is the subtree signal the gate has to read.
+ */
+internal fun textFieldFocusedFromFocusState(isFocused: Boolean, hasFocus: Boolean): Boolean =
+    isFocused || hasFocus
+
 internal fun contentionBarrier(
     bothProbesReady: Boolean,
     textFieldFocused: Boolean,
