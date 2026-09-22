@@ -1,41 +1,50 @@
 /// <summary>
-/// Picks the HMONITOR and DisplayId values region capture is allowed to hand to Windows Graphics
-/// Capture.
+/// Chooses the DisplayId and HMONITOR values region capture may hand to Windows Graphics Capture.
 ///
-/// MonitorFromRect on the Mattone Win11 host returned <c>0x2680A25</c>, which is not
-/// an enumerated monitor handle. <c>CreateForMonitor</c> then failed with <c>E_INVALIDARG</c>, and
-/// <c>TryCreateFromDisplayId</c> returned <c>S_OK</c> with a null item for that same value.
+/// On the Mattone Win11 host, <c>TryCreateFromDisplayId(0x2680A25)</c> returned <c>S_OK</c> with a
+/// null item and <c>CreateForMonitor</c> returned <c>E_INVALIDARG</c> for that same value. That
+/// value is the GDI HMONITOR from <c>EnumDisplayMonitors</c> / <c>MonitorFromRect</c>, not a
+/// <c>Windows.Graphics.DisplayId</c>. A display id is only attempted when WinUI returns it.
 /// </summary>
 internal static class MonitorCaptureSelection
 {
-    public static IntPtr PreferEnumeratedHandle(IntPtr enumerated, IntPtr fromMonitorFromRect)
+    public static ulong[] DisplayIds(ulong displayAreaId, ulong fromMonitorApi)
     {
-        if (fromMonitorFromRect != IntPtr.Zero && fromMonitorFromRect == enumerated)
+        if (displayAreaId != 0 && fromMonitorApi != 0 && displayAreaId != fromMonitorApi)
         {
-            return enumerated;
+            return new[] { displayAreaId, fromMonitorApi };
         }
 
-        return enumerated;
-    }
-
-    public static ulong[] DisplayIdCandidates(ulong winUiDisplayId, IntPtr monitor)
-    {
-        var bits = unchecked((ulong)monitor.ToInt64());
-        if (winUiDisplayId != 0 && bits != 0 && bits != winUiDisplayId)
+        if (displayAreaId != 0)
         {
-            return new[] { winUiDisplayId, bits };
+            return new[] { displayAreaId };
         }
 
-        if (winUiDisplayId != 0)
+        if (fromMonitorApi != 0)
         {
-            return new[] { winUiDisplayId };
-        }
-
-        if (bits != 0)
-        {
-            return new[] { bits };
+            return new[] { fromMonitorApi };
         }
 
         return Array.Empty<ulong>();
+    }
+
+    public static IntPtr[] MonitorHandles(IntPtr fromDisplayId, IntPtr enumerated)
+    {
+        if (fromDisplayId != IntPtr.Zero && enumerated != IntPtr.Zero && fromDisplayId != enumerated)
+        {
+            return new[] { fromDisplayId, enumerated };
+        }
+
+        if (fromDisplayId != IntPtr.Zero)
+        {
+            return new[] { fromDisplayId };
+        }
+
+        if (enumerated != IntPtr.Zero)
+        {
+            return new[] { enumerated };
+        }
+
+        return Array.Empty<IntPtr>();
     }
 }
