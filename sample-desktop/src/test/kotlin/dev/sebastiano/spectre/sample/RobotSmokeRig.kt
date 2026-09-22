@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -20,7 +21,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
-import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -59,6 +62,7 @@ internal class SmokeState {
     @Volatile var counterBounds: Rect = Rect.Zero
     @Volatile var textFieldBounds: Rect = Rect.Zero
     @Volatile var textFieldFocused: Boolean = false
+    var textFieldFocusRequest by mutableIntStateOf(0)
     @Volatile var colorPatchBounds: Rect = Rect.Zero
 }
 
@@ -66,6 +70,13 @@ internal class SmokeState {
 internal fun SmokeContent(state: SmokeState) {
     var localCount by remember { mutableIntStateOf(0) }
     var localText by remember { mutableStateOf(TextFieldValue("")) }
+    val textFieldFocus = remember { FocusRequester() }
+    val focusRequest = state.textFieldFocusRequest
+    LaunchedEffect(focusRequest) {
+        if (focusRequest > 0) {
+            runCatching { textFieldFocus.requestFocus() }
+        }
+    }
     Column(
         modifier =
             Modifier.fillMaxWidth().background(Color.White).padding(16.dp).onPreviewKeyEvent { event
@@ -117,7 +128,14 @@ internal fun SmokeContent(state: SmokeState) {
                     .onGloballyPositioned { coords ->
                         state.textFieldBounds = coords.boundsInWindow()
                     }
-                    .onFocusChanged { state.textFieldFocused = it.isFocused },
+                    .focusRequester(textFieldFocus)
+                    .onFocusEvent { focus ->
+                        state.textFieldFocused =
+                            textFieldFocusedFromFocusState(
+                                isFocused = focus.isFocused,
+                                hasFocus = focus.hasFocus,
+                            )
+                    },
         )
         BasicText("textValue = \"${state.textValue.text}\"")
         BasicText("shortcutFiredCount = ${state.shortcutFiredCount}")

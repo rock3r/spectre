@@ -228,11 +228,12 @@ class HeadedRobotContentionTest {
         val graceDeadline = System.nanoTime() + FOCUS_GRACE_MS * NANOS_PER_MILLI
         val deadline = System.nanoTime() + FOCUS_TIMEOUT_SECONDS * NANOS_PER_SECOND
         while (System.nanoTime() < deadline) {
+            val windowInFront = invokeOnEdt { fixtureIsInFront(state.frame) }
             when (
                 contentionBarrier(
                     bothProbesReady = true,
                     textFieldFocused = state.textFieldFocused,
-                    windowFocused = invokeOnEdt { fixtureIsInFront(state.frame) },
+                    windowFocused = windowInFront,
                     focusGraceElapsed = System.nanoTime() >= graceDeadline,
                 )
             ) {
@@ -241,7 +242,17 @@ class HeadedRobotContentionTest {
                     return
                 }
                 ContentionBarrier.Hold -> delay(FOCUS_POLL_MILLIS.milliseconds)
-                ContentionBarrier.Nudge -> nudgeField(state)
+                ContentionBarrier.Nudge -> {
+                    if (
+                        shouldRequestTextFieldFocus(
+                            textFieldFocused = state.textFieldFocused,
+                            windowInFront = windowInFront,
+                        )
+                    ) {
+                        invokeOnEdt { state.textFieldFocusRequest += 1 }
+                    }
+                    nudgeField(state)
+                }
             }
         }
         error(

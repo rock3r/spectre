@@ -28,6 +28,25 @@ class WindowsGraphicsCaptureHelperSourceTest {
             "IGraphicsCaptureItemInterop" in source && "CreateForMonitor" in source,
             "CreateForMonitor remains the fallback when DisplayId capture fails",
         )
+        assertTrue(
+            "MonitorCaptureSelection.PreferEnumeratedHandle" in source,
+            "CreateForMonitor must use the EnumDisplayMonitors HMONITOR, not an " +
+                "unlisted MonitorFromRect value such as 0x2680A25",
+        )
+        assertTrue(
+            "MonitorCaptureSelection.DisplayIdCandidates" in source,
+            "TryCreateFromDisplayId must be attempted with the WinUI DisplayId and the " +
+                "HMONITOR bits",
+        )
+        assertTrue(
+            "StartWindowRegion" !in source && "WindowRegionTarget" !in source,
+            "a screen-region request must not fall back to CreateForWindow",
+        )
+        assertTrue(
+            "does not fall back to window capture" in source,
+            "when DisplayId and CreateForMonitor both fail, region capture must fail " +
+                "instead of recording a window",
+        )
     }
 
     private fun helperSource(): Path {

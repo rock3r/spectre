@@ -81,6 +81,34 @@ class HeadedRobotContentionAnalysisTest {
     }
 
     @Test
+    fun `an active frame without Compose text-field focus is not released`() {
+        // Mattone: textFieldFocused=false while isFocused/isActive were true. That is a nudge,
+        // not a release — keystrokes need the Compose field, not only an active AWT frame.
+        assertEquals(
+            ContentionBarrier.Nudge,
+            contentionBarrier(
+                bothProbesReady = true,
+                textFieldFocused = false,
+                windowFocused = true,
+                focusGraceElapsed = true,
+            ),
+        )
+        assertTrue(
+            shouldRequestTextFieldFocus(textFieldFocused = false, windowInFront = true),
+            "an in-front window with an unfocused field asks Compose to focus the editor",
+        )
+        assertTrue(!shouldRequestTextFieldFocus(textFieldFocused = true, windowInFront = true))
+        assertTrue(!shouldRequestTextFieldFocus(textFieldFocused = false, windowInFront = false))
+    }
+
+    @Test
+    fun `inner editor focus counts when the outer node is not the focus target`() {
+        assertTrue(textFieldFocusedFromFocusState(isFocused = false, hasFocus = true))
+        assertTrue(textFieldFocusedFromFocusState(isFocused = true, hasFocus = true))
+        assertTrue(!textFieldFocusedFromFocusState(isFocused = false, hasFocus = false))
+    }
+
+    @Test
     fun `barrier stays closed until the field is focused`() {
         assertEquals(
             ContentionBarrier.Hold,
