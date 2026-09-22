@@ -139,6 +139,8 @@ automator.pressEnter()
 val img: BufferedImage = automator.screenshot()         // full virtual screen
 val img = automator.screenshot(windowIndex = 0)         // native single-window capture; needs recording + platform helper
 val img = automator.screenshot(node)                    // native window capture; needs recording + platform helper
+// Multi-window composite stills: automator.screenshotWindows(listOf(0, 1)) → scene.composite
+// Opt-in JUnit golds: assertMatchesGold + ScreenshotTolerance — see long skill references/junit.md
 ```
 
 `typeText` dispatches key press/release pairs and does not touch the clipboard. Use `pasteText` for large strings or arbitrary Unicode.
@@ -184,9 +186,11 @@ Switch drivers only when needed:
 - `RobotDriver()` — real `java.awt.Robot` input; moves the actual cursor and takes OS focus.
 - `RobotDriver.synthetic(rootWindow = window)` — same synthetic path as the default, pinned to a window.
 - `RobotDriver.headless()` — read-only; every input or screenshot call throws `UnsupportedOperationException`. Semantics-tree reads still work.
-- `ComposeAutomator.http(security, host = "localhost", port = 7654)` — authenticated cross-JVM
-  HTTPS; requires matching `SpectreHttpSecurity` and the `:server` module in the target process.
-  Plaintext requires the explicit loopback-only test escape hatch.
+- `ComposeAutomator.http(security, host = "localhost", port = 7654)` — experimental authenticated
+  cross-JVM HTTPS (bearer required); deliberate **subset** of in-process (windows/nodes/input/
+  screenshots; no live idling resources / `withTracing`). Needs matching `SpectreHttpSecurity`
+  and `:server` in the target. Plaintext requires the explicit loopback-only test escape hatch.
+  See <https://spectre.sebastiano.dev/guide/cross-jvm/>.
 - `AgentAttach.attach(pid)` — attach to a **running** Compose JVM. The target does **not** need `spectre-core` preinstalled: when core is absent, the agent runtime injects nested `META-INF/spectre/inject-runtime.jar`. Prefer a `spectre-core` dependency when you control the target build. The attacher needs `spectre-agent` plus `spectre-agent-runtime`.
 
 ---

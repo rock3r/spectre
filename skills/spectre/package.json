@@ -1,0 +1,9 @@
+{
+  "name": "spectre",
+  "version": "0.1.1",
+  "description": "Agent skill for Spectre Compose Desktop UI automation (semantics, input, waits, screenshots, JUnit, recording, HTTP, agent attach)",
+  "keywords": ["claude-skill", "spectre", "compose-desktop", "ui-automation", "kotlin", "junit"],
+  "author": "Sebastiano Poggi <poggos@gmail.com>",
+  "license": "Apache-2.0",
+  "files": ["SKILL.md", "references"]
+}

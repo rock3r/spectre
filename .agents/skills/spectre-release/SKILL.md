@@ -92,8 +92,10 @@ The read-only validation checks:
 
 Publishing is intentionally not automatic.
 
-Prefer the Central Portal UI for the first few releases. If the API path is used, run the
-script's `publish` command only after `validate` is green:
+Prefer the script path: run `scripts/central_portal_check.py validate` first, then
+`publish` only after validate is green (credentials from the 1Password item
+`Spectre Maven Central Portal`, or the env vars documented above). The Central Portal UI
+remains a fallback when the API path is unavailable:
 
 ```bash
 scripts/central_portal_check.py publish \
@@ -110,11 +112,31 @@ publish <deployment-id> <version>
 Do not pass `--yes` unless the user explicitly asks for non-interactive publishing in the
 current task.
 
-## Capture schema skill
+## Consumer agent skills (every release)
 
-If the release changes `CaptureDocument.SCHEMA_VERSION` / `capture.json`, bump the
-**`spectre-capture`** skill (`skills/spectre-capture/SKILL.md` + `package.json`) and the
-user-guide page `docs/guide/capture.md` in the same release.
+Before tagging (or as part of the manual promotion checklist after the tag workflow is
+green), review the published/consumer agent skills against **that tag’s** user-guide
+pages under `docs/guide/`:
+
+| Skill tree | npm package / versioning |
+| --- | --- |
+| `skill/` | `spectre-ui-automation` (`package.json`) |
+| `skills/spectre/` | `spectre` (`package.json`; includes `references/`) |
+| `skills/spectre-capture/` | `spectre-capture` (`package.json`) |
+
+Update skills for new or changed **agent-facing** APIs (selectors, waits, screenshots,
+JUnit helpers, HTTP caveats, recording entry points agents need to call correctly). Do
+**not** dump release-smoke / TCC / WGC DisplayId ops into consumer skills unless required
+for correct test APIs. When a skill’s markdown changes, bump that skill’s `package.json`
+(feature docs → minor; tiny clarifications → patch). Slash style in prose: `a/b`, never
+`a / b`.
+
+### Capture schema skill
+
+If the release changes `CaptureDocument.SCHEMA_VERSION` / `capture.json`, **always** bump
+the **`spectre-capture`** skill (`skills/spectre-capture/SKILL.md` + `package.json`) and
+the user-guide page `docs/guide/capture.md` in the **same** release — even when the
+broader skill review found no other capture markdown edits.
 
 ## macOS helper bundle signing (#191)
 

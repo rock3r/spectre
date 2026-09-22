@@ -83,6 +83,13 @@ before debugging TCC; Robot screenshot diagnostics check `IOConsoleLocked` for t
 
 ## Linux Wayland caveats
 
+On a seated GNOME/Mutter desktop, Spectre uses **one** long-lived
+`spectre-wayland-helper` session for monitor capture and real OS input: the first
+run shows Share + Remember / Allow remote interaction; later Spectre processes on
+that seat reconnect to `$XDG_RUNTIME_DIR/spectre/wayland-session.sock` instead of
+opening a new portal. Window-targeted ScreenCast remains a separate grant bound to
+the picked window. Do not claim other compositors beyond best-effort.
+
 Window-targeted Wayland recording throws `IllegalStateException` if:
 
 - `xprop` is not on PATH.
@@ -92,6 +99,8 @@ Window-targeted Wayland recording throws `IllegalStateException` if:
 
 If a test must run on those compositors, use `startRegion(...)` with a fixed
 `Rectangle`.
+
+User guide: [Linux Wayland consent](https://spectre.sebastiano.dev/guide/recording/).
 
 ## HiDPI and coordinates
 

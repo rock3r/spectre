@@ -286,14 +286,31 @@ try {
 
 ## Screenshots
 
-`automator.screenshot()` returns a `BufferedImage`. Three forms:
+`automator.screenshot()` returns a `BufferedImage` (or a multi-window scene — see below):
 
 ```kotlin
+import dev.sebastiano.spectre.core.WindowScreenshotResult
+
 automator.screenshot()                  // full desktop
 automator.screenshot(region = Rectangle(x, y, w, h))
 automator.screenshot(node)              // node bounds
 automator.screenshot(windowIndex = 0)   // a tracked window
+
+// several physical windows (back→front painter order), e.g. owner then dialog/popup
+val scene = automator.screenshotWindows(listOf(0, 1))
+scene.windows.forEachIndexed { index, result ->
+    if (result is WindowScreenshotResult.Success) {
+        // result.image, bounds, density, capture order
+    }
+}
+scene.composite?.let { /* union canvas of successful captures; null if any window failed */ }
 ```
+
+`screenshotWindows` is for heavyweight popup renderers (Swing/Jewel dialogs, menus,
+tooltips). Index list is painter's order — put the owner before its popups. The composite
+uses the union of requested bounds so a popup that extends past the owner is not clipped.
+If any requested window fails, that entry is `WindowScreenshotResult.Failure` and
+`composite` is null; successful per-window images remain available.
 
 Always `waitForVisualIdle()` immediately before screenshotting — otherwise
 you may capture a mid-animation frame.
@@ -316,7 +333,10 @@ API. This is separate from video recording:
   newer, .NET 8 Desktop Runtime, and Windows App Runtime 1.8 at runtime, plus .NET 8 SDK
   when building from source / CI.
 - Linux X11: Linux helper (`ximagesrc`) for stills; the target must be visible/frontmost.
-- Linux Wayland: Linux portal helper for stills and window-targeted video.
+- Linux Wayland: Linux portal helper for stills and window-targeted video. On a seated
+  session, monitor capture and real OS input share **one** long-lived
+  `spectre-wayland-helper` portal grant (later processes reuse the seat socket); see
+  `references/recording.md`.
 
 ## Recording, JUnit, IntelliJ-hosted Compose
 
@@ -329,7 +349,8 @@ touches that area*; they are not needed for the common case.
   frame-drop and HiDPI traps.
 - **JUnit 4 vs JUnit 5 integration** → `references/junit.md` —
   `ComposeAutomatorExtension`, `ComposeAutomatorRule`, parameter resolution,
-  lifecycle.
+  lifecycle, and opt-in **screenshot golds** (`assertMatchesGold`,
+  `ScreenshotTolerance`, JUnit 5 `TestInfo` / `ScreenshotGoldJunit5`).
 - **Experimental desktop input coordination** → `references/input-coordination.md` — real-input
   contention across JVMs, `InputLeasePolicy`, JUnit `InputIsolationConfig`, runtime dependency,
   exact revoke, and unsafe forced recovery.
@@ -370,8 +391,11 @@ touches that area*; they are not needed for the common case.
 - It is **not** `compose-test` / `runComposeUiTest` / `onNodeWithTag`. Don't
   mix those APIs into a Spectre test.
 - It does **not** capture audio. Recording is video-only.
-- The cross-JVM **HTTP server is experimental** and security-caveated — do
-  not recommend it for general use without flagging that.
+- The cross-JVM **HTTP transport is experimental**: bearer + HTTPS by default,
+  a deliberate **subset** of in-process (data-oriented windows/nodes/input/
+  screenshots; no live idling-resource registration or `withTracing`), and
+  privileged desktop automation — do not recommend it for general use without
+  those caveats. User guide: <https://spectre.sebastiano.dev/guide/cross-jvm/>.
 - Desktop input coordination is experimental, cooperative, and opt-in. Do not call it an OS input
   grab, imply `RobotDriver()` coordinates by default, or suggest `--force` without its
   `unsafeTakeover=true` overlap warning.
