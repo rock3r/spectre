@@ -29,14 +29,22 @@ class WindowsGraphicsCaptureHelperSourceTest {
             "CreateForMonitor remains the fallback when DisplayId capture fails",
         )
         assertTrue(
-            "MonitorCaptureSelection.PreferEnumeratedHandle" in source,
-            "CreateForMonitor must use the EnumDisplayMonitors HMONITOR, not an " +
-                "unlisted MonitorFromRect value such as 0x2680A25",
+            "MonitorCaptureSelection.MonitorHandles" in source,
+            "CreateForMonitor must try the WinUI GetMonitorFromDisplayId handle before " +
+                "the enumerated HMONITOR",
         )
         assertTrue(
-            "MonitorCaptureSelection.DisplayIdCandidates" in source,
-            "TryCreateFromDisplayId must be attempted with the WinUI DisplayId and the " +
-                "HMONITOR bits",
+            "MonitorCaptureSelection.DisplayIds" in source,
+            "TryCreateFromDisplayId must use a WinUI DisplayId, not an HMONITOR bit-cast",
+        )
+        assertTrue(
+            "DisplayArea.GetFromRect" in source,
+            "region capture must resolve the display token from the WinUI display topology",
+        )
+        assertTrue(
+            "CreateForMonitorVtableSlot" in source && "interop.CreateForMonitor" !in source,
+            "CreateForMonitor must use the activation-factory vtable, not " +
+                "GraphicsCaptureItem.As<IGraphicsCaptureItemInterop>()",
         )
         assertTrue(
             "StartWindowRegion" !in source && "WindowRegionTarget" !in source,

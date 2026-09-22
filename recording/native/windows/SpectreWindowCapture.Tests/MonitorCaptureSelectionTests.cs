@@ -5,35 +5,35 @@ namespace SpectreWindowCapture.Tests;
 public sealed class MonitorCaptureSelectionTests
 {
     [Fact]
-    public void UnlistedMonitorFromRectHandleIsNotUsed()
+    public void DisplayIdsPreferTheDisplayAreaToken()
     {
-        var enumerated = new IntPtr(0x10052);
-        var garbage = new IntPtr(0x2680A25);
-
+        // 0x2680A25 is the Mattone GDI HMONITOR. TryCreateFromDisplayId returned S_OK and a
+        // null item for that value, so it is only attempted when a WinUI API actually
+        // returned it — never synthesized from the handle.
         Assert.Equal(
-            enumerated,
-            MonitorCaptureSelection.PreferEnumeratedHandle(enumerated, garbage));
-        Assert.Equal(
-            enumerated,
-            MonitorCaptureSelection.PreferEnumeratedHandle(enumerated, IntPtr.Zero));
-        Assert.Equal(
-            enumerated,
-            MonitorCaptureSelection.PreferEnumeratedHandle(enumerated, enumerated));
+            new ulong[] { 0xABC, 0x2680A25 },
+            MonitorCaptureSelection.DisplayIds(0xABC, 0x2680A25));
+        Assert.Equal(new ulong[] { 0xABC }, MonitorCaptureSelection.DisplayIds(0xABC, 0xABC));
+        Assert.Equal(new ulong[] { 0xABC }, MonitorCaptureSelection.DisplayIds(0xABC, 0));
+        Assert.Equal(new ulong[] { 0x2680A25 }, MonitorCaptureSelection.DisplayIds(0, 0x2680A25));
+        Assert.Empty(MonitorCaptureSelection.DisplayIds(0, 0));
     }
 
     [Fact]
-    public void DisplayIdCandidatesIncludeTheWinUiTokenAndTheHmonitorBits()
+    public void MonitorHandlesPreferTheDisplayIdMapping()
     {
-        var monitor = new IntPtr(0x10052);
+        var fromDisplay = new IntPtr(0x10052);
+        var enumerated = new IntPtr(0x2680A25);
 
         Assert.Equal(
-            new ulong[] { 0xABC, 0x10052 },
-            MonitorCaptureSelection.DisplayIdCandidates(0xABC, monitor));
+            new[] { fromDisplay, enumerated },
+            MonitorCaptureSelection.MonitorHandles(fromDisplay, enumerated));
         Assert.Equal(
-            new ulong[] { 0x10052 },
-            MonitorCaptureSelection.DisplayIdCandidates(0x10052, monitor));
+            new[] { enumerated },
+            MonitorCaptureSelection.MonitorHandles(IntPtr.Zero, enumerated));
         Assert.Equal(
-            new ulong[] { 0x10052 },
-            MonitorCaptureSelection.DisplayIdCandidates(0, monitor));
+            new[] { fromDisplay },
+            MonitorCaptureSelection.MonitorHandles(fromDisplay, fromDisplay));
+        Assert.Empty(MonitorCaptureSelection.MonitorHandles(IntPtr.Zero, IntPtr.Zero));
     }
 }
