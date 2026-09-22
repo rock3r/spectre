@@ -28,6 +28,8 @@ class ScreenCaptureKitRecorderTest {
         val factory = RecordingProcessFactory(process)
         val extractor =
             HelperBinaryExtractor(
+                envLookup = { null },
+                sysPropLookup = { null },
                 materialLocator = {
                     helperAppBundleMaterial(
                         executable = byteArrayOf(0x01),

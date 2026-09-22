@@ -1681,7 +1681,234 @@ class MacOsTccPreflightTest(unittest.TestCase):
             self.assertEqual(smoke_lib.TCC_UNKNOWN, status)
             self.assertEqual([], invoked)
 
-    def test_valid_override_ignores_invalid_helper_dir(self):
+    def test_helper_dir_setting_distinguishes_unset_blank_and_path(self):
+        prop = smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY
+        unset = smoke_lib.macos_screencapture_helper_dir_setting({})
+        self.assertFalse(unset.defined)
+        self.assertIsNone(unset.path)
+        blank = smoke_lib.macos_screencapture_helper_dir_setting(
+            {"JAVA_TOOL_OPTIONS": f"-D{prop}="}
+        )
+        self.assertTrue(blank.defined)
+        self.assertIsNone(blank.path)
+        # Kotlin isNotBlank(): a whitespace-only property is blank, not a path.
+        spaces = smoke_lib.macos_screencapture_helper_dir_setting(
+            {"JAVA_TOOL_OPTIONS": f'-D{prop}="  "'}
+        )
+        self.assertTrue(spaces.defined)
+        self.assertIsNone(spaces.path)
+        explicit = smoke_lib.macos_screencapture_helper_dir_setting(
+            {"JAVA_TOOL_OPTIONS": f"-D{prop}=/tmp/helpers"}
+        )
+        self.assertTrue(explicit.defined)
+        self.assertEqual(Path("/tmp/helpers"), explicit.path)
+        self.assertIsNone(smoke_lib.macos_screencapture_configured_helper_dir({}))
+        self.assertIsNone(
+            smoke_lib.macos_screencapture_configured_helper_dir(
+                {"JAVA_TOOL_OPTIONS": f"-D{prop}="}
+            )
+        )
+
+    def test_nonblank_helper_dir_beats_env_override(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            override = Path(tmp) / "override-helper"
+            override.write_text("#!/bin/sh\noverride\n", encoding="utf-8")
+            override.chmod(0o755)
+            helper_dir = Path(tmp) / "custom-helper-dir"
+            configured = (
+                helper_dir
+                / smoke_lib.SCREENCAPTURE_HELPER_APP_NAME
+                / "Contents"
+                / "MacOS"
+                / smoke_lib.SCREENCAPTURE_HELPER_NAME
+            )
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            calls: list[int] = []
+            invoked: list[str] = []
+
+            def assemble() -> int:
+                staged.parent.mkdir(parents=True)
+                staged.write_text("#!/bin/sh\nbundled\n", encoding="utf-8")
+                staged.chmod(0o755)
+                calls.append(1)
+                return 0
+
+            env = {
+                "SPECTRE_SCREENCAPTURE_HELPER": str(override),
+                "JAVA_TOOL_OPTIONS": (
+                    f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}={helper_dir}"
+                ),
+            }
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                self.assertEqual(
+                    [configured],
+                    smoke_lib.macos_screencapture_helper_candidates(root, home=home),
+                )
+                self.assertIsNone(
+                    smoke_lib.macos_screencapture_helper_path(root, home=home)
+                )
+                found = smoke_lib.ensure_macos_screencapture_helper(
+                    root, assemble=assemble, home=home
+                )
+                self.assertEqual(
+                    configured,
+                    smoke_lib.macos_screencapture_helper_path(root, home=home),
+                )
+                status = smoke_lib.probe_macos_screen_recording(
+                    root=root,
+                    ensure_helper=lambda: found,
+                    invoke_helper=lambda argv: invoked.append(argv[0])
+                    or (0, '{"granted": true}\n'),
+                )
+            self.assertEqual(configured, found)
+            self.assertNotEqual(override, found)
+            self.assertEqual([1], calls)
+            self.assertEqual(smoke_lib.TCC_GRANTED, status)
+            self.assertEqual([str(configured)], invoked)
+
+    def test_blank_helper_dir_ignores_env_override(self):
+        self._assert_blank_helper_dir_uses_default(f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}=")
+
+    def test_whitespace_helper_dir_ignores_env_override(self):
+        prop = smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY
+        self._assert_blank_helper_dir_uses_default(f'-D{prop}="  "')
+
+    def _assert_blank_helper_dir_uses_default(self, java_tool_options: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            override = Path(tmp) / "override-helper"
+            override.write_text("#!/bin/sh\noverride\n", encoding="utf-8")
+            override.chmod(0o755)
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            default_runtime = smoke_lib.macos_screencapture_runtime_helper(home)
+            calls: list[int] = []
+            invoked: list[str] = []
+
+            def assemble() -> int:
+                staged.parent.mkdir(parents=True)
+                staged.write_text("#!/bin/sh\nbundled\n", encoding="utf-8")
+                staged.chmod(0o755)
+                calls.append(1)
+                return 0
+
+            env = {
+                "SPECTRE_SCREENCAPTURE_HELPER": str(override),
+                "JAVA_TOOL_OPTIONS": java_tool_options,
+            }
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                self.assertEqual(
+                    [default_runtime],
+                    smoke_lib.macos_screencapture_helper_candidates(root, home=home),
+                )
+                self.assertIsNone(
+                    smoke_lib.macos_screencapture_helper_path(root, home=home)
+                )
+                found = smoke_lib.ensure_macos_screencapture_helper(
+                    root, assemble=assemble, home=home
+                )
+                self.assertEqual(
+                    default_runtime,
+                    smoke_lib.macos_screencapture_helper_path(root, home=home),
+                )
+                status = smoke_lib.probe_macos_screen_recording(
+                    root=root,
+                    ensure_helper=lambda: found,
+                    invoke_helper=lambda argv: invoked.append(argv[0])
+                    or (0, '{"granted": true}\n'),
+                )
+            self.assertEqual(default_runtime, found)
+            self.assertNotEqual(override, found)
+            self.assertEqual([1], calls)
+            self.assertEqual(smoke_lib.TCC_GRANTED, status)
+            self.assertEqual([str(default_runtime)], invoked)
+
+    def test_invalid_env_override_ignored_when_helper_dir_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            helper_dir = Path(tmp) / "custom-helper-dir"
+            configured = (
+                helper_dir
+                / smoke_lib.SCREENCAPTURE_HELPER_APP_NAME
+                / "Contents"
+                / "MacOS"
+                / smoke_lib.SCREENCAPTURE_HELPER_NAME
+            )
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            invoked: list[str] = []
+
+            def assemble() -> int:
+                staged.parent.mkdir(parents=True)
+                staged.write_text("#!/bin/sh\nbundled\n", encoding="utf-8")
+                staged.chmod(0o755)
+                return 0
+
+            env = {
+                "SPECTRE_SCREENCAPTURE_HELPER": str(Path(tmp) / "missing-helper"),
+                "JAVA_TOOL_OPTIONS": (
+                    f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}={helper_dir}"
+                ),
+            }
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                self.assertEqual(
+                    [configured],
+                    smoke_lib.macos_screencapture_helper_candidates(root, home=home),
+                )
+                found = smoke_lib.ensure_macos_screencapture_helper(
+                    root, assemble=assemble, home=home
+                )
+                status = smoke_lib.probe_macos_screen_recording(
+                    root=root,
+                    ensure_helper=lambda: found,
+                    invoke_helper=lambda argv: invoked.append(argv[0])
+                    or (0, '{"granted": true}\n'),
+                )
+            self.assertEqual(configured, found)
+            self.assertEqual(smoke_lib.TCC_GRANTED, status)
+            self.assertEqual([str(configured)], invoked)
+
+    def test_blank_helper_dir_ignores_invalid_env_override(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            default_runtime = smoke_lib.macos_screencapture_runtime_helper(home)
+            invoked: list[str] = []
+
+            def assemble() -> int:
+                staged.parent.mkdir(parents=True)
+                staged.write_text("#!/bin/sh\nbundled\n", encoding="utf-8")
+                staged.chmod(0o755)
+                return 0
+
+            env = {
+                "SPECTRE_SCREENCAPTURE_HELPER": str(Path(tmp) / "missing-helper"),
+                "JAVA_TOOL_OPTIONS": (
+                    f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}="
+                ),
+            }
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                self.assertEqual(
+                    [default_runtime],
+                    smoke_lib.macos_screencapture_helper_candidates(root, home=home),
+                )
+                found = smoke_lib.ensure_macos_screencapture_helper(
+                    root, assemble=assemble, home=home
+                )
+                status = smoke_lib.probe_macos_screen_recording(
+                    root=root,
+                    ensure_helper=lambda: found,
+                    invoke_helper=lambda argv: invoked.append(argv[0])
+                    or (0, '{"granted": true}\n'),
+                )
+            self.assertEqual(default_runtime, found)
+            self.assertEqual(smoke_lib.TCC_GRANTED, status)
+            self.assertEqual([str(default_runtime)], invoked)
+
+    def test_unset_helper_dir_honours_env_override(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             home = Path(tmp) / "home"
@@ -1689,15 +1916,21 @@ class MacOsTccPreflightTest(unittest.TestCase):
             override.write_text("#!/bin/sh\noverride\n", encoding="utf-8")
             override.chmod(0o755)
             invoked: list[str] = []
-            env = {
-                "SPECTRE_SCREENCAPTURE_HELPER": str(override),
-                "JAVA_TOOL_OPTIONS": (
-                    f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}=tools/helper"
-                ),
-            }
+            calls: list[int] = []
+            env = {"SPECTRE_SCREENCAPTURE_HELPER": str(override)}
             with unittest.mock.patch.dict(os.environ, env, clear=False):
+                self.assertEqual(
+                    [override],
+                    smoke_lib.macos_screencapture_helper_candidates(root, home=home),
+                )
+                self.assertEqual(
+                    override,
+                    smoke_lib.macos_screencapture_helper_path(root, home=home),
+                )
                 found = smoke_lib.ensure_macos_screencapture_helper(
-                    root, assemble=lambda: 0, home=home
+                    root,
+                    assemble=lambda: calls.append(1) or 0,
+                    home=home,
                 )
                 status = smoke_lib.probe_macos_screen_recording(
                     root=root,
@@ -1706,8 +1939,50 @@ class MacOsTccPreflightTest(unittest.TestCase):
                     or (0, '{"granted": true}\n'),
                 )
             self.assertEqual(override, found)
+            self.assertEqual([], calls)
             self.assertEqual(smoke_lib.TCC_GRANTED, status)
             self.assertEqual([str(override)], invoked)
+
+    def test_relative_helper_dir_fails_closed_despite_env_override(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = Path(tmp) / "home"
+            override = Path(tmp) / "override-helper"
+            override.write_text("#!/bin/sh\noverride\n", encoding="utf-8")
+            override.chmod(0o755)
+            staged = smoke_lib.macos_screencapture_staged_helper(root)
+            staged.parent.mkdir(parents=True)
+            staged.write_text("#!/bin/sh\n", encoding="utf-8")
+            staged.chmod(0o755)
+            invoked: list[list[str]] = []
+            env = {
+                "SPECTRE_SCREENCAPTURE_HELPER": str(override),
+                "JAVA_TOOL_OPTIONS": (
+                    f"-D{smoke_lib.SCREENCAPTURE_HELPER_DIR_PROPERTY}=tools/helper"
+                ),
+            }
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                with self.assertRaises(smoke_lib.InvalidScreencaptureHelperDir):
+                    smoke_lib.macos_screencapture_configured_helper_dir()
+                self.assertEqual(
+                    [],
+                    smoke_lib.macos_screencapture_helper_candidates(root, home=home),
+                )
+                self.assertIsNone(
+                    smoke_lib.macos_screencapture_helper_path(root, home=home)
+                )
+                found = smoke_lib.ensure_macos_screencapture_helper(
+                    root, assemble=lambda: 0, home=home
+                )
+                status = smoke_lib.probe_macos_screen_recording(
+                    root=root,
+                    ensure_helper=lambda: found,
+                    invoke_helper=lambda argv: invoked.append(argv)
+                    or (0, '{"granted": true}\n'),
+                )
+            self.assertIsNone(found)
+            self.assertEqual(smoke_lib.TCC_UNKNOWN, status)
+            self.assertEqual([], invoked)
 
     def test_override_bare_child_helper_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -39,7 +39,14 @@ class ScreenCaptureKitHelperContractTest {
             System.getProperty("os.name").orEmpty().lowercase().contains("mac"),
             "Helper binary is only bundled on macOS hosts",
         )
-        helper = HelperBinaryExtractor().extract()
+        // Ignore a developer-shell SPECTRE_SCREENCAPTURE_HELPER / helperDir so this
+        // contract runs the bundled helper, not the machine's Application Support install.
+        helper =
+            HelperBinaryExtractor(
+                    envLookup = { null },
+                    sysPropLookup = { null },
+                )
+                .extract()
         output = Files.createTempFile("spectre-helper-contract-", ".mov")
         // Delete the placeholder createTempFile leaves behind so paths-that-don't-exist tests
         // start from a clean slate.

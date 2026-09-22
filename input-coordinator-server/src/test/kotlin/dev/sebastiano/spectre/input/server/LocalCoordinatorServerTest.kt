@@ -387,7 +387,12 @@ class LocalCoordinatorServerTest {
 
     @Test
     fun `closing a reentrant lease preserves heartbeats for the outer lease`() {
-        startServer(heartbeatTimeout = Duration.ofMillis(1_500))
+        // The client heartbeats on a 1s fixed delay. A 1.5s server timeout leaves about
+        // 500ms of slack, which the Windows `check` host missed: expiry fenced the outer
+        // lease and checkpoint threw InputCoordinatorException. The timeout still has to
+        // be shorter than the sleep, or a stopped heartbeat would also pass.
+        val heartbeatTimeout = Duration.ofSeconds(4)
+        startServer(heartbeatTimeout = heartbeatTimeout)
         val client = client("reentrant")
         val outer = client.acquire(Duration.ofSeconds(2), "outer transaction")
         resources += outer
@@ -395,7 +400,8 @@ class LocalCoordinatorServerTest {
 
         assertEquals(outer.token, nested.token)
         nested.close()
-        Thread.sleep(2_500)
+        outer.checkpoint()
+        Thread.sleep(heartbeatTimeout.toMillis() + 1_000)
 
         outer.checkpoint()
         assertTrue(outer.isValid())

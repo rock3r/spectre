@@ -392,6 +392,11 @@ systemProperty(
 
 Then grant Screen Recording to `<helperDir>/SpectreCaptureHelper.app` instead.
 
+A non-blank `helperDir` wins over `SPECTRE_SCREENCAPTURE_HELPER`. A blank `helperDir`
+ignores that environment variable and uses the default per-user directory above. The
+environment variable applies only when `helperDir` is unset, and then it points at an
+existing helper instead of extracting the bundled app.
+
 `apple.awt.UIElement=true` helper/test JVMs are useful with `RobotDriver.synthetic(...)`
 for focus-safe per-character `typeText`, but clipboard-backed `pasteText` and recording
 still go through macOS services outside Spectre's synthetic key path. Prefer a normal
