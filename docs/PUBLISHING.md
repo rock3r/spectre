@@ -144,10 +144,16 @@ Do not treat green `main` alone as “ready to tag.”
 
 Manual promotion checklist (after the tag workflow is green):
 
+- Review consumer agent skills against **this tag’s** user-guide pages
+  (`docs/guide/`): `skill/` (`spectre-ui-automation`), `skills/spectre/` (`spectre`,
+  including `references/`), and `skills/spectre-capture/` (`spectre-capture`). Update for
+  new or changed agent-facing APIs; bump each skill’s `package.json` when its content
+  changes (feature docs → minor; tiny clarifications → patch).
 - If this release changes the atomic capture schema (`CaptureDocument.SCHEMA_VERSION` /
-  `capture.json`), bump the **`spectre-capture`** agent skill
+  `capture.json`), **always** bump the **`spectre-capture`** agent skill
   (`skills/spectre-capture/SKILL.md` + `package.json`) and the capture user-guide page in the
-  same release.
+  same release (keep this even when the broader skill review above found no other capture
+  edits).
 
 - Confirm the tag points at the intended, already-reviewed `main` SHA that completed
   [release smoke](RELEASE-SMOKE.md) (results table on file).
@@ -168,9 +174,11 @@ Manual promotion checklist (after the tag workflow is green):
   deps.json (see `WindowsGraphicsCaptureHelperPackagingContract` in `buildSrc`).
 - Confirm `spectre-agent-runtime-<version>.jar` exists and its manifest declares
   `Agent-Class: dev.sebastiano.spectre.agent.runtime.SpectreAgent`.
-- Run the Central Portal deployment checker:
-  `scripts/central_portal_check.py validate --deployment-id <id> --version <version>`.
-- Promote the Central staging deployment from the Central Portal UI.
+- Run the Central Portal deployment checker, then promote with the script (UI is a
+  fallback):
+  `scripts/central_portal_check.py validate --deployment-id <id> --version <version>`,
+  then `scripts/central_portal_check.py publish --deployment-id <id> --version <version>`
+  after validate is green.
 - Confirm the GitHub release notes link to Maven Central for artifacts instead
   of attaching a partial library jar set, and that it includes the Linux x64/Linux arm64,
   macOS x64/macOS arm64 (signed and stapled), and Windows x64 CLI bundles.

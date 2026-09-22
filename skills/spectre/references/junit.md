@@ -138,6 +138,56 @@ ComposeAutomatorExtension(
 )
 ```
 
+## Screenshot golds
+
+Opt-in visual assertions against committed PNG golds. **Nothing compares golds
+unless a test calls `assertMatchesGold`.** Not a substitute for failure artifacts
+or failure video. Prefer `automator.screenshot(windowIndex = …)` when
+`spectre-recording` and the OS helper are on the test runtime classpath; settle
+with `waitForVisualIdle()` first.
+
+```kotlin
+import dev.sebastiano.spectre.testing.ScreenshotTolerance
+import dev.sebastiano.spectre.testing.assertMatchesGold
+import org.junit.jupiter.api.TestInfo
+
+@Test
+fun homeMatchesGold(testInfo: TestInfo, automator: ComposeAutomator): Unit =
+    runSpectreTest {
+        automator.waitForVisualIdle()
+        assertMatchesGold(
+            testInfo = testInfo,
+            name = "main-window",
+            image = automator.screenshot(windowIndex = 0),
+            tolerance = ScreenshotTolerance(), // strict: channel delta 0, no differing pixels
+        )
+    }
+```
+
+- Pass JUnit 5 `TestInfo` when the body runs inside `runSpectreTest` (worker
+  dispatcher). That overload is on the `ScreenshotGoldJunit5` facade so the
+  name-only `assertMatchesGold(name, image)` has no `TestInfo` descriptor
+  (JUnit 4-only Java callers can resolve without `junit-jupiter-api`).
+- Name-only overload infers the test from the calling thread; use it only from
+  JUnit methods that call it directly.
+- Defaults are strict (equal dimensions required; no auto-scale / SSIM). Loosen
+  `maxChannelDelta` and/or `maxDifferingPixels` / `maxDifferingPixelFraction`
+  when font AA or chrome noise is expected.
+- Gold layout:
+  `src/test/resources/spectre-golds/<class>/<method>/<name>/[<invocation>/]<os>/scale-<sx>x<sy>/gold.png`
+  (`macos` | `windows` | `linux-x11` | `linux-wayland`). Linux keys follow the
+  same session detection as window capture.
+- Parameterized / repeated / `@ParameterizedClass` hosts often need an explicit
+  `invocationKey` so invocations do not share a gold — see the user guide.
+- Update mode (rewrite **current** OS + scale gold only):
+  `SPECTRE_UPDATE_SCREENSHOT_GOLDS=true` or
+  `-Pspectre.updateScreenshotGolds=true` (Spectre's `:testing` task forwards the
+  property as a system property; when both are set the property wins). Force a
+  rerun if you rely on the env var alone (`--rerun-tasks`).
+
+Full detail (scale-key rules, inherited-class identity, CI upload glob): user
+guide [JUnit — Screenshot golds](https://spectre.sebastiano.dev/guide/junit/).
+
 ## Launch-and-attach (separate UI JVM)
 
 When the UI under test is a **separate JVM** (prod-like `java -jar`,
