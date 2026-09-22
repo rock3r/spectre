@@ -183,9 +183,12 @@ fun homeMatchesGold(testInfo: TestInfo, automator: ComposeAutomator): Unit =
 - Parameterized / repeated / `@ParameterizedClass` hosts often need an explicit
   `invocationKey` so invocations do not share a gold — see the user guide.
 - Update mode (rewrite **current** OS + scale gold only):
-  `SPECTRE_UPDATE_SCREENSHOT_GOLDS=true` or
-  `-Pspectre.updateScreenshotGolds=true` (Spectre's `:testing` task forwards the
-  property as a system property; when both are set the property wins). Force a
+  `SPECTRE_UPDATE_SCREENSHOT_GOLDS=true` (read by the test JVM; needs no
+  Gradle forwarding) or `-Pspectre.updateScreenshotGolds=true`. Spectre's own
+  `:testing` task forwards `-P` as
+  `-Ddev.sebastiano.spectre.testing.updateScreenshotGolds=true`; **consumers
+  using `-P` on their own `Test` task must forward that system property the same
+  way** (or prefer the env var). When both are set the property wins. Force a
   rerun if you rely on the env var alone (`--rerun-tasks`).
 
 Full detail (scale-key rules, inherited-class identity, CI upload glob): user
