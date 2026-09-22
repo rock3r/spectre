@@ -64,12 +64,14 @@ Region capture on Windows 11 (UniversalApiContract 12) calls
 `IGraphicsCaptureItemStatics2.TryCreateFromDisplayId` through `RoGetActivationFactory` and vtable
 slot 7. `GraphicsCaptureItem.As<IInspectable>()` throws `PlatformNotSupportedException` under the
 .NET 8 / Windows App SDK 1.8 combination this helper ships, so the helper does not use that cast.
-The display token comes from `DisplayArea.GetFromRect`, then from `GetDisplayIdFromMonitor` when
-that value differs. A GDI `HMONITOR` is not passed as a `DisplayId`: on the Mattone Win11 host
-`TryCreateFromDisplayId(0x2680A25)` returned `S_OK` and a null item, and that value is the monitor
-handle. If DisplayId capture fails, the helper calls `IGraphicsCaptureItemInterop.CreateForMonitor`
-on the activation-factory vtable (slot 4), first with `GetMonitorFromDisplayId` and then with the
-`EnumDisplayMonitors` handle. `GraphicsCaptureItem.As<IGraphicsCaptureItemInterop>()` is not used
+WinUI `DisplayArea.DisplayId` and `GetDisplayIdFromMonitor` are read only so they can be compared
+with the GDI `HMONITOR`. On the Mattone Win11 host those WinUI tokens were `0x2680A25`, the same
+bits as `EnumDisplayMonitors` / `GetMonitorFromDisplayId`. `Microsoft.UI.DisplayId.Value` is that
+monitor handle, not a `Windows.Graphics.DisplayId`. A token that matches a known `HMONITOR` is not
+passed to `TryCreateFromDisplayId`; stderr says `TryCreateFromDisplayId was not called.` A token
+that differs from every known handle is still attempted. If DisplayId capture fails or is skipped,
+the helper calls `IGraphicsCaptureItemInterop.CreateForMonitor` on the activation-factory vtable
+(slot 4), first with `GetMonitorFromDisplayId` and then with the `EnumDisplayMonitors` handle. `GraphicsCaptureItem.As<IGraphicsCaptureItemInterop>()` is not used
 for monitors. If those screen-scoped paths still fail, region capture exits 5. It does not fall
 back to window capture.
 The rectangle must intersect a monitor; a one-pixel DPI overshoot is clamped to that monitor
