@@ -15,6 +15,7 @@ class WindowsGraphicsCaptureHelperSourceTest {
     @Test
     fun `monitor capture does not marshal GraphicsCaptureItem statics as IInspectable`() {
         val source = Files.readString(helperSource())
+        val selection = Files.readString(selectionSource(helperSource()))
         assertTrue(
             !source.contains("As<IGraphicsCaptureItemStatics2>()"),
             "GraphicsCaptureItem.As<IGraphicsCaptureItemStatics2>() throws " +
@@ -34,8 +35,10 @@ class WindowsGraphicsCaptureHelperSourceTest {
                 "the enumerated HMONITOR",
         )
         assertTrue(
-            "MonitorCaptureSelection.DisplayIds" in source,
-            "TryCreateFromDisplayId must use a WinUI DisplayId, not an HMONITOR bit-cast",
+            "MonitorCaptureSelection.DisplayIds" in source &&
+                "MissingDisplayIdDiagnostic" in source &&
+                "TryCreateFromDisplayId was not called." in selection,
+            "an HMONITOR-valued WinUI token must not be passed to TryCreateFromDisplayId",
         )
         assertTrue(
             "DisplayArea.GetFromRect" in source,
@@ -67,5 +70,13 @@ class WindowsGraphicsCaptureHelperSourceTest {
             ?: error(
                 "spectre-window-capture Program.cs not found from ${Path.of("").toAbsolutePath()}"
             )
+    }
+
+    private fun selectionSource(program: Path): Path {
+        val selection = program.resolveSibling("MonitorCaptureSelection.cs")
+        check(Files.isRegularFile(selection)) {
+            "MonitorCaptureSelection.cs not found next to $program"
+        }
+        return selection
     }
 }

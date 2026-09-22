@@ -547,9 +547,23 @@ internal static class Program
                 $"enumerated=0x{placed.Value.Monitor.ToInt64():X}");
 
             var failures = new List<string>();
-            foreach (var displayId in MonitorCaptureSelection.DisplayIds(
-                         topology.DisplayAreaId,
-                         topology.MonitorApiId))
+            var displayIds = MonitorCaptureSelection.DisplayIds(
+                topology.DisplayAreaId,
+                topology.MonitorApiId,
+                placed.Value.Monitor,
+                topology.MonitorFromDisplay);
+            var missingDisplayId = MonitorCaptureSelection.MissingDisplayIdDiagnostic(
+                topology.DisplayAreaId,
+                topology.MonitorApiId,
+                placed.Value.Monitor,
+                topology.MonitorFromDisplay);
+            if (missingDisplayId is not null)
+            {
+                Console.Error.WriteLine(missingDisplayId);
+                failures.Add(missingDisplayId);
+            }
+
+            foreach (var displayId in displayIds)
             {
                 var item = GraphicsCaptureItemInterop.TryCreateFromDisplayId(displayId, out var failure);
                 if (item is null)
