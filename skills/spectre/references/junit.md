@@ -147,8 +147,11 @@ or failure video. Prefer `automator.screenshot(windowIndex = …)` when
 with `waitForVisualIdle()` first.
 
 ```kotlin
+import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.testing.ScreenshotTolerance
 import dev.sebastiano.spectre.testing.assertMatchesGold
+import dev.sebastiano.spectre.testing.runSpectreTest
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInfo
 
 @Test

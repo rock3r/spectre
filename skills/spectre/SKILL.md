@@ -289,6 +289,8 @@ try {
 `automator.screenshot()` returns a `BufferedImage` (or a multi-window scene — see below):
 
 ```kotlin
+import dev.sebastiano.spectre.core.WindowScreenshotResult
+
 automator.screenshot()                  // full desktop
 automator.screenshot(region = Rectangle(x, y, w, h))
 automator.screenshot(node)              // node bounds
