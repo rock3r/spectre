@@ -16,5 +16,7 @@
   <ItemGroup>
     <Compile Include="../Options.cs" Link="Options.cs" />
     <Compile Include="../RegionPlacement.cs" Link="RegionPlacement.cs" />
+    <Compile Include="../MonitorCaptureSelection.cs" Link="MonitorCaptureSelection.cs" />
+    <Compile Include="../WindowRegionTarget.cs" Link="WindowRegionTarget.cs" />
   </ItemGroup>
 </Project>

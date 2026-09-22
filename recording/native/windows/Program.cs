@@ -23,6 +23,7 @@ internal static class Program
     [STAThread]
     private static async Task<int> Main(string[] args)
     {
+        EnsurePerMonitorDpiAwareness();
         Options options;
         try
         {
@@ -214,6 +215,26 @@ internal static class Program
     }
 
     private static int Even(int value) => value % 2 == 0 ? value : value + 1;
+
+    private static void EnsurePerMonitorDpiAwareness()
+    {
+        // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2. EnumDisplayMonitors / GetWindowRect then
+        // match a per-monitor-aware JVM, and WGC sees the same HMONITORs as the interactive desktop.
+        const int PerMonitorAwareV2 = -4;
+        if (!SetProcessDpiAwarenessContext(new IntPtr(PerMonitorAwareV2)))
+        {
+            Console.Error.WriteLine("Per-monitor DPI awareness was already set; continuing.");
+        }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
 
     private static IntPtr FindWindowByTitleAndOwnerPid(string title, long ownerPid)
     {
@@ -498,6 +519,21 @@ internal static class Program
 
         public static WgcFrameSource StartRegion(CaptureRect region, bool captureCursor)
         {
+            try
+            {
+                return StartMonitorRegion(region, captureCursor);
+            }
+            catch (InvalidOperationException monitorFailure)
+            {
+                Console.Error.WriteLine(
+                    $"monitor capture failed ({monitorFailure.GetType().Name}: {monitorFailure.Message}); " +
+                    "trying the window that covers the region.");
+                return StartWindowRegion(region, captureCursor, monitorFailure);
+            }
+        }
+
+        private static WgcFrameSource StartMonitorRegion(CaptureRect region, bool captureCursor)
+        {
             var placed = FindPlacedRegion(region);
             if (placed is null)
             {
@@ -511,6 +547,40 @@ internal static class Program
             Console.Error.WriteLine(
                 $"region {region.X},{region.Y} {region.Width}x{region.Height} " +
                 $"monitor=0x{placed.Value.Monitor.ToInt64():X} " +
+                $"crop={crop.X},{crop.Y} {crop.Width}x{crop.Height} " +
+                $"item={item.Size.Width}x{item.Size.Height} cursor={captureCursor}");
+            return Start(
+                canvasDevice,
+                item,
+                captureCursor,
+                crop,
+                (Even(crop.Width), Even(crop.Height)));
+        }
+
+        private static WgcFrameSource StartWindowRegion(
+            CaptureRect region,
+            bool captureCursor,
+            Exception monitorFailure)
+        {
+            var window = FindWindowCovering(region);
+            if (window is null)
+            {
+                throw new InvalidOperationException(
+                    $"Region {region.X},{region.Y} {region.Width}x{region.Height} does not cover a " +
+                    $"visible window after monitor capture failed: {monitorFailure.Message}",
+                    monitorFailure);
+            }
+
+            var canvasDevice = new CanvasDevice();
+            var hwnd = window.Value.Hwnd;
+            var item = GraphicsCaptureItemInterop.CreateForWindow(hwnd);
+            var crop = ClampCropToItemSize(
+                WindowRegionTarget.Crop(window.Value, region),
+                item.Size.Width,
+                item.Size.Height);
+            Console.Error.WriteLine(
+                $"region {region.X},{region.Y} {region.Width}x{region.Height} " +
+                $"window=0x{hwnd.ToInt64():X} " +
                 $"crop={crop.X},{crop.Y} {crop.Width}x{crop.Height} " +
                 $"item={item.Size.Width}x{item.Size.Height} cursor={captureCursor}");
             return Start(
@@ -748,8 +818,35 @@ internal static class Program
             }
 
             var match = monitors.Find(monitor => monitor.Bounds == placed.Value.Monitor);
-            var handle = FreshMonitorHandle(placed.Value, match.Handle);
+            var fresh = FreshMonitorHandle(placed.Value, match.Handle);
+            if (fresh != IntPtr.Zero && fresh != match.Handle)
+            {
+                Console.Error.WriteLine(
+                    $"ignoring MonitorFromRect 0x{fresh.ToInt64():X}; " +
+                    $"using enumerated HMONITOR 0x{match.Handle.ToInt64():X}.");
+            }
+
+            var handle = MonitorCaptureSelection.PreferEnumeratedHandle(match.Handle, fresh);
             return new PlacedMonitor(handle, placed.Value.Crop);
+        }
+
+        private static WindowRect? FindWindowCovering(CaptureRect region)
+        {
+            var windows = new List<WindowRect>();
+            bool Callback(IntPtr hwnd, IntPtr data)
+            {
+                if (!IsWindowVisible(hwnd) || !GetWindowRect(hwnd, out var bounds))
+                {
+                    return true;
+                }
+
+                windows.Add(
+                    new WindowRect(hwnd, bounds.Left, bounds.Top, bounds.Right, bounds.Bottom));
+                return true;
+            }
+
+            EnumWindows(Callback, IntPtr.Zero);
+            return WindowRegionTarget.Choose(windows, region);
         }
 
         private static IntPtr FreshMonitorHandle(PlacedRegion placed, IntPtr enumerated)
@@ -881,28 +978,35 @@ internal static class Program
                 return null;
             }
 
+            var winUiDisplayId = 0UL;
             try
             {
-                var uiId = Microsoft.UI.Win32Interop.GetDisplayIdFromMonitor(monitor);
-                if (uiId.Value == 0)
-                {
-                    Console.Error.WriteLine("GetDisplayIdFromMonitor returned 0; using CreateForMonitor.");
-                    return null;
-                }
-
-                return CreateItemForDisplayId(uiId.Value);
+                winUiDisplayId = Microsoft.UI.Win32Interop.GetDisplayIdFromMonitor(monitor).Value;
             }
             catch (Exception e)
             {
-                // DisplayId is optional. CreateForMonitor is the path that captured regions
-                // before the IInspectable cast started failing the pipeline.
                 Console.Error.WriteLine(
-                    $"DisplayId capture failed ({e.GetType().Name}: {e.Message}); using CreateForMonitor.");
-                return null;
+                    $"GetDisplayIdFromMonitor failed ({e.GetType().Name}: {e.Message}).");
             }
+
+            if (winUiDisplayId == 0)
+            {
+                Console.Error.WriteLine("GetDisplayIdFromMonitor returned 0; trying the HMONITOR bits.");
+            }
+
+            foreach (var candidate in MonitorCaptureSelection.DisplayIdCandidates(winUiDisplayId, monitor))
+            {
+                var item = CreateItemForDisplayId(candidate);
+                if (item is not null)
+                {
+                    return item;
+                }
+            }
+
+            return null;
         }
 
-        private static GraphicsCaptureItem? CreateItemForDisplayId(ulong displayId)
+        private static unsafe GraphicsCaptureItem? CreateItemForDisplayId(ulong displayId)
         {
             var className = "Windows.Graphics.Capture.GraphicsCaptureItem";
             var hrString = WindowsCreateString(className, className.Length, out var classNamePtr);
@@ -936,11 +1040,21 @@ internal static class Program
                         IntPtr.Size * TryCreateFromDisplayIdVtableSlot);
                     var tryCreate =
                         Marshal.GetDelegateForFunctionPointer<TryCreateFromDisplayIdDelegate>(methodPtr);
-                    var hr = tryCreate(factory, displayId, out var abi);
+                    var abi = IntPtr.Zero;
+                    var hr = tryCreate(factory, displayId, &abi);
+
                     if (hr < 0 || abi == IntPtr.Zero)
                     {
-                        // Leave a failed out-pointer alone: WinRT may not have written it.
-                        Console.Error.WriteLine($"TryCreateFromDisplayId failed hr=0x{hr:X8}.");
+                        if (abi != IntPtr.Zero)
+                        {
+                            Marshal.Release(abi);
+                        }
+
+                        // S_OK with a null item is TryCreate's "no capture item" result. The
+                        // previous `out IntPtr` delegate hid a written pointer on some runtimes,
+                        // so this call passes the address explicitly.
+                        Console.Error.WriteLine(
+                            $"TryCreateFromDisplayId(0x{displayId:X}) failed hr=0x{hr:X8}.");
                         return null;
                     }
 
@@ -974,10 +1088,10 @@ internal static class Program
             out IntPtr factory);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private delegate int TryCreateFromDisplayIdDelegate(
+        private unsafe delegate int TryCreateFromDisplayIdDelegate(
             IntPtr thisPtr,
             ulong displayId,
-            out IntPtr item);
+            IntPtr* item);
     }
 
     [ComImport]

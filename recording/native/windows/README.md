@@ -64,9 +64,15 @@ Region capture on Windows 11 (UniversalApiContract 12) calls
 `IGraphicsCaptureItemStatics2.TryCreateFromDisplayId` through `RoGetActivationFactory` and vtable
 slot 7. `GraphicsCaptureItem.As<IInspectable>()` throws `PlatformNotSupportedException` under the
 .NET 8 / Windows App SDK 1.8 combination this helper ships, so the helper does not use that cast.
-If DisplayId capture fails, the helper falls back to `IGraphicsCaptureItemInterop.CreateForMonitor`.
+If DisplayId capture fails, the helper falls back to `IGraphicsCaptureItemInterop.CreateForMonitor`
+with the `EnumDisplayMonitors` HMONITOR. A `MonitorFromRect` value that is not that handle is
+ignored (`0x2680A25` on the Mattone host was rejected as `E_INVALIDARG`). DisplayId candidates are
+the WinUI `GetDisplayIdFromMonitor` token and the HMONITOR bits. If monitor capture still fails,
+region capture uses `CreateForWindow` on the smallest visible top-level window that contains the
+rectangle and crops inside it.
 The rectangle must intersect a monitor; a one-pixel DPI overshoot is clamped to that monitor
-instead of failing the capture. `--cursor true|false` is parsed as those two literals. Setting
+instead of failing the capture. The helper sets per-monitor DPI awareness V2 before enumerating
+displays so those rectangles stay in the same pixel space as a DPI-aware JVM. `--cursor true|false` is parsed as those two literals. Setting
 `IsCursorCaptureEnabled` is best-effort: some builds reject it for monitor capture, and the
 recording continues.
 
