@@ -57,3 +57,31 @@ tasks.withType<Test>().configureEach {
     forwardRealKeyboardGate(providers)
     forwardScreenshotGoldUpdateMode(providers)
 }
+
+// IDEA 2026.2.3 (262.10968.63). Compile Spectre normally, then exercise its bytecode
+// against the IDE's coroutine runtime rather than the compile-time dependency.
+val intellijCoroutinesRuntime by configurations.creating {
+    isCanBeConsumed = false
+    isTransitive = false
+}
+
+dependencies {
+    intellijCoroutinesRuntime(
+        "org.jetbrains.intellij.deps.kotlinx:kotlinx-coroutines-core-jvm:1.10.2-intellij-2"
+    )
+}
+
+val intellijCompatibilityTest by
+    tasks.registering(Test::class) {
+        description =
+            "Runs the test-runner contracts against the stable IntelliJ coroutine runtime."
+        group = "verification"
+        testClassesDirs = sourceSets.test.get().output.classesDirs
+        classpath =
+            sourceSets.test.get().runtimeClasspath.filter {
+                !it.name.startsWith("kotlinx-coroutines-core-")
+            } + intellijCoroutinesRuntime
+        filter { includeTestsMatching("dev.sebastiano.spectre.testing.RunSpectreTestTest") }
+    }
+
+tasks.named("check") { dependsOn(intellijCompatibilityTest) }

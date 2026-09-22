@@ -23,7 +23,7 @@ import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.application.pluginOrNull
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.server.request.receive
+import io.ktor.server.request.receiveNullable
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -355,7 +355,10 @@ private suspend inline fun <reified T : Any> receiveOrRespond400(
     requestTypeName: String,
 ): T? =
     try {
-        call.receive<T>()
+        // Ktor 3.4 treats an empty body as untransformable for non-null types (415).
+        // Receive nullable so empty JSON keeps the same curated 400 as malformed JSON.
+        call.receiveNullable<T?>()
+            ?: throw io.ktor.server.plugins.BadRequestException("Empty request")
     } catch (_: io.ktor.server.plugins.BadRequestException) {
         call.respond(HttpStatusCode.BadRequest, "Could not decode $requestTypeName")
         null

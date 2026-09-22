@@ -57,9 +57,8 @@ class HttpNegativeContractTest {
 
     @Test
     fun `POST click with empty body returns 400`() = testApplication {
-        // Ktor 3.6+ no longer 415s an empty `application/json` body at the content-negotiation
-        // precheck. The empty payload now reaches `receiveOrRespond400`, which responds 400
-        // with the curated type name and no body echo.
+        // Preserve the 0.7.0 response even on the IDE's older Ktor baseline: an empty
+        // JSON body is a bad request, not an unsupported media type.
         application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
         val response =
             postRaw("/spectre/click", body = "", contentType = ContentType.Application.Json)
@@ -141,8 +140,7 @@ class HttpNegativeContractTest {
 
     @Test
     fun `POST typeText with empty body returns 400`() = testApplication {
-        // Symmetry with `/click`: Ktor 3.6+ delivers an empty `application/json` body to
-        // `receiveOrRespond400`, which answers 400 naming the request type.
+        // Symmetry with `/click`: empty JSON answers 400 naming the request type.
         application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
         val response =
             postRaw("/spectre/typeText", body = "", contentType = ContentType.Application.Json)

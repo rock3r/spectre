@@ -6,6 +6,37 @@ semantics actions, and capture screenshots. The work to make this practical is m
 about getting the automator running inside the IDE process and respecting the IDE's
 EDT contract.
 
+## Dependency compatibility
+
+Spectre's shared libraries compile against the dependency baseline of the latest stable
+IntelliJ Platform release selected for that Spectre release. The baseline is pinned, not
+resolved dynamically. For Spectre 0.7.1 it is **IDEA 2026.2.3, build 262.10968.63**:
+
+| Dependency | Compile baseline |
+| --- | --- |
+| Kotlin | 2.4.0 |
+| Coroutines | 1.10.2; tested with the IDE's `1.10.2-intellij-2` fork |
+| Kotlin serialization | 1.9.0 |
+| Ktor | 3.4.1 |
+| Compose Multiplatform | 1.12.0 |
+| Skiko | 0.150.1, supplied through Compose |
+
+The versions come from the
+[stable IDE source](https://github.com/JetBrains/intellij-community/tree/idea/2026.2.3)
+and its [dependency inventory](https://resources.jetbrains.com/storage/third-party-libraries/idea/idea-2026.2.3-third-party-libraries.json).
+This baseline does not promise compatibility with older IDE releases.
+
+Let the IDE supply its Kotlin, coroutines, serialization, Compose, and Skiko classes.
+Declare the required platform modules, including `composeUI()` for Compose, and exclude
+duplicate dependencies from the plugin distribution. Do not replace the IDE's coroutine
+fork with an upstream JAR. Dependencies used only by the separately packaged Spectre CLI
+and build tools do not have to match the IDE.
+
+**Spectre 0.7.0 is incompatible with the IDE's coroutine runtime.** Its ordinary Kotlin
+`runBlocking` calls compile to `BuildersKt.runBlockingK`, introduced in coroutines 1.11.
+Excluding the newer coroutine dependency cannot rewrite those calls. Version 0.7.1
+restores the older compile baseline without replacing the test runner or its checks.
+
 ## In-process via a plugin action
 
 The recommended pattern is to build a `ComposeAutomator` from inside an IntelliJ

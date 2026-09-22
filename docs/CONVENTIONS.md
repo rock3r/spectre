@@ -44,6 +44,22 @@ These rules apply to new and modified code:
 - Use `./gradlew ktfmtFormat` when a formatting pass is needed instead of hand-fixing large style
   diffs.
 
+### IntelliJ dependency baseline
+
+Before changing dependencies shared with an IDE host, inspect the latest stable IDEA release's
+source tag and dependency inventory. Pin that baseline in `gradle/libs.versions.toml` and update
+the [compatibility table](guide/intellij.md#dependency-compatibility). Do not use an EAP or the
+IntelliJ repository's current main branch as the stable baseline.
+
+Compile shared libraries against those versions, even when a transitive dependency requests a
+newer one. The root build enforces this for application and test classpaths without publishing
+strict version constraints to consumers. The CLI and build-tool classpaths are separate.
+
+Run `./gradlew :testing:intellijCompatibilityTest` after dependency changes. It executes the
+test-runner contracts with the stable IDE's actual coroutine JAR, while retaining Spectre's
+normally compiled bytecode. Update that runtime pin when changing the stable IDE baseline.
+Also run a Linux, macOS, or Windows live smoke against the updated libraries before release.
+
 ## Git Workflow
 
 - Do not push directly to `main` without explicit approval.

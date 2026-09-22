@@ -63,7 +63,10 @@ public data class InputCapabilities(
 public data class InputLeaseOptions(
     public val acquireTimeout: Duration = 30.seconds,
     public val ownerLabel: String? = null,
-)
+) {
+    /** Creates options with the default timeout and no owner label. */
+    public constructor() : this(ownerLabel = null)
+}
 
 /** Raised instead of waiting for a contended lease on the AUT's AWT event-dispatch thread. */
 @ExperimentalSpectreInputCoordinationApi
