@@ -1,13 +1,13 @@
 {
-    "version": "0.7.0",
+    "version": "0.7.1",
     "description": "Agent-facing CLI and MCP server for Spectre Compose Desktop automation",
     "homepage": "https://github.com/rock3r/spectre",
     "license": "Apache-2.0",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/rock3r/spectre/releases/download/v0.7.0/spectre-windowsX64.zip",
-            "hash": "sha256:27fdf51c17038b2b5f6c3c330cb10e9149eb3c93df46c63f1ebc1b24a7c07738"
+            "url": "https://github.com/rock3r/spectre/releases/download/v0.7.1/spectre-windowsX64.zip",
+            "hash": "sha256:29406ee676f2f9a1051673d574a815699b20d21c28b5312cbc4784034e114eb7"
         }
     },
-    "bin": "spectre-cli-0.7.0/spectre.exe"
+    "bin": "spectre-cli-0.7.1/spectre.exe"
 }
