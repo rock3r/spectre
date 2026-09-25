@@ -2,6 +2,7 @@
 """Watch GitHub PR CI and review activity for PR babysitting workflows."""
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -12,6 +13,191 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
+
+# Project settings live in `config.json` next to the `scripts/` directory. A missing
+# file or a missing key means "use the default". The defaults match a repository with
+# one CI workflow, Codex as the only review bot, and nothing that is skipped by design.
+CONFIG_VERSION = 1
+DEFAULT_CONFIG = {
+    "version": CONFIG_VERSION,
+    # The command the agent runs locally before every push, e.g. "./gradlew check".
+    "local_gate": None,
+    # Check names whose `skipping` result is expected on PRs (e.g. a deploy job).
+    "expected_skipped_checks": [],
+    # Check names that must be present and passed before the PR counts as ready.
+    "required_checks": [],
+    # Workflow name fragments whose failures are worth an automatic rerun.
+    "retry_eligible_workflow_keywords": ["e2e"],
+    # A check that stays pending longer than this is reported as hung.
+    "hung_check_minutes": 30,
+    # Comments from these author associations count as trusted human review.
+    "trusted_author_associations": ["OWNER", "MEMBER", "COLLABORATOR"],
+    # Login fragments of `[bot]` accounts whose comments are review findings.
+    "review_bot_login_keywords": ["codex"],
+    # Default for --max-session-minutes.
+    "max_session_minutes": 90,
+    "codex": {
+        # Watch the Codex review bot (its 👀 reaction and its review summary).
+        "enabled": True,
+        # Require a Codex review of the head even when Codex never posted on the PR.
+        "required": False,
+    },
+    "coderabbit": {
+        # Wait for CodeRabbit while it shows signs of reviewing the PR.
+        "enabled": False,
+    },
+    "pr_af": {
+        # Watch the label-triggered PR-AF review workflow.
+        "enabled": False,
+        "label": "pr-af",
+        "workflow_names": [],
+        "check_names": [],
+        "review_body_markers": [],
+        "review_author_login": "github-actions[bot]",
+        "missing_check_grace_minutes": 5,
+    },
+    "cleanup": {
+        # When true, the agent must ask the owner before deleting a merged branch.
+        "branch_delete_requires_approval": False,
+    },
+}
+
+
+class ConfigError(ValueError):
+    pass
+
+
+def _is_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _check_positive_int(value):
+    return _is_int(value) and value > 0, "a whole number greater than 0"
+
+
+def _check_non_negative_int(value):
+    return _is_int(value) and value >= 0, "a whole number of 0 or more"
+
+
+def _check_bool(value):
+    return isinstance(value, bool), "true or false"
+
+
+def _check_string(value):
+    return isinstance(value, str) and bool(value.strip()), "a non-empty string"
+
+
+def _check_optional_string(value):
+    return value is None or (isinstance(value, str) and bool(value.strip())), "a non-empty string or null"
+
+
+def _check_string_list(value):
+    ok = isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value)
+    return ok, "a list of non-empty strings"
+
+
+CONFIG_VALIDATORS = {
+    "version": _check_positive_int,
+    "local_gate": _check_optional_string,
+    "expected_skipped_checks": _check_string_list,
+    "required_checks": _check_string_list,
+    "retry_eligible_workflow_keywords": _check_string_list,
+    "hung_check_minutes": _check_positive_int,
+    "trusted_author_associations": _check_string_list,
+    "review_bot_login_keywords": _check_string_list,
+    "max_session_minutes": _check_positive_int,
+    "codex": {
+        "enabled": _check_bool,
+        "required": _check_bool,
+    },
+    "coderabbit": {
+        "enabled": _check_bool,
+    },
+    "pr_af": {
+        "enabled": _check_bool,
+        "label": _check_string,
+        "workflow_names": _check_string_list,
+        "check_names": _check_string_list,
+        "review_body_markers": _check_string_list,
+        "review_author_login": _check_string,
+        "missing_check_grace_minutes": _check_non_negative_int,
+    },
+    "cleanup": {
+        "branch_delete_requires_approval": _check_bool,
+    },
+}
+
+
+def build_config(raw):
+    """Merge `raw` over the defaults. Returns (config, warnings).
+
+    Unknown keys produce a warning, not an error, so an older watcher can read a newer
+    file. A value of the wrong type raises ConfigError: guessing could change what the
+    watcher treats as safe to merge.
+    """
+    if not isinstance(raw, dict):
+        raise ConfigError("the config file must contain a JSON object")
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    warnings = []
+    for key, value in raw.items():
+        validator = CONFIG_VALIDATORS.get(key)
+        if validator is None:
+            warnings.append(f"unknown config key '{key}' is ignored")
+            continue
+        if isinstance(validator, dict):
+            if not isinstance(value, dict):
+                raise ConfigError(f"config key '{key}' must be a JSON object")
+            for sub_key, sub_value in value.items():
+                sub_validator = validator.get(sub_key)
+                if sub_validator is None:
+                    warnings.append(f"unknown config key '{key}.{sub_key}' is ignored")
+                    continue
+                ok, expected = sub_validator(sub_value)
+                if not ok:
+                    raise ConfigError(f"config key '{key}.{sub_key}' must be {expected}")
+                config[key][sub_key] = copy.deepcopy(sub_value)
+            continue
+        ok, expected = validator(value)
+        if not ok:
+            raise ConfigError(f"config key '{key}' must be {expected}")
+        config[key] = copy.deepcopy(value)
+    if config["version"] > CONFIG_VERSION:
+        raise ConfigError(
+            f"config version {config['version']} is newer than this watcher supports "
+            f"({CONFIG_VERSION}); update the skill"
+        )
+    pr_af = config["pr_af"]
+    if pr_af["enabled"] and not (pr_af["workflow_names"] or pr_af["check_names"]):
+        warnings.append(
+            "pr_af is enabled but pr_af.workflow_names and pr_af.check_names are empty, "
+            "so no check can be recognised as PR-AF"
+        )
+    return config, warnings
+
+
+def default_config_path():
+    return Path(__file__).resolve().parent.parent / "config.json"
+
+
+def load_config(path, explicit):
+    """Read and validate a config file. Returns (config, warnings).
+
+    A missing file is fine when the watcher looks in its default place, and an error
+    when the caller named the file with --config.
+    """
+    path = Path(path)
+    if not path.exists():
+        if explicit:
+            raise ConfigError(f"config file not found: {path}")
+        return build_config({})
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as err:
+        raise ConfigError(f"config file is not valid JSON: {path}: {err}") from err
+    return build_config(raw)
+
+
+CONFIG = build_config({})[0]
 
 FAILED_RUN_CONCLUSIONS = {
     "failure",
@@ -27,20 +213,6 @@ PENDING_CHECK_STATES = {
     "PENDING",
     "WAITING",
     "REQUESTED",
-}
-# Login keyword fragments that identify actionable review bots.
-# A bot comment is surfaced when its login contains any of these keywords.
-# Codex posts as chatgpt-codex-connector[bot]. `cursor` is kept so any leftover
-# cursor[bot] review comment is still surfaced, even though Bugbot no longer
-# gates the merge.
-REVIEW_BOT_LOGIN_KEYWORDS = {
-    "cursor",
-    "codex",
-}
-TRUSTED_AUTHOR_ASSOCIATIONS = {
-    "OWNER",
-    "MEMBER",
-    "COLLABORATOR",
 }
 MERGE_BLOCKING_REVIEW_DECISIONS = {
     "REVIEW_REQUIRED",
@@ -58,44 +230,39 @@ MERGE_CONFLICT_OR_BLOCKING_STATES = {
 MERGE_CONFLICT_STATES = {
     "DIRTY",
 }
+# `BEHIND` means branch protection wants the branch updated with its base before merge.
+MERGE_BEHIND_STATES = {
+    "BEHIND",
+}
 GREEN_STATE_MAX_POLL_SECONDS = 60
 
 # Minimum seconds to wait after all checks go terminal before declaring the PR
-# ready to merge.  Review bots complete their CI check run first, then post
-# inline review comments to the PR a few seconds later via a separate API
-# call.  Without this grace period the watcher can emit
-# stop_ready_to_merge in that narrow window, causing the agent to merge before
-# the bot's findings are ever seen.
+# ready to merge. Some review workflows complete their CI check run first, then
+# post inline review comments to the PR a few seconds later via a separate API
+# call. Without this grace period the watcher can emit stop_ready_to_merge in
+# that narrow window, causing the agent to merge before findings are ever seen.
 CHECKS_TERMINAL_GRACE_PERIOD_SECONDS = 60
 
-# Codex keeps one "Codex Review Summary" status table on the PR and edits it on
-# every review. It never carries a finding, so it must not surface as a review
-# item; otherwise every edit resurfaces it as new on the next poll.
+# Codex keeps one "Codex Review Summary" status table on the PR and edits it on every review.
+# It never carries a finding, so it must not surface as a review item.
 STATUS_ONLY_BOT_COMMENT_MARKER = "<!-- codex-pull-request-review-summary -->"
 
-# Per-check-name hung thresholds: if a check has been IN_PROGRESS longer than
-# this many seconds without completing, surface a diagnose_hung_check action.
-# Matched by substring of the lowercased check name; "default" is the fallback.
-HUNG_CHECK_THRESHOLDS_SECONDS = {
-    "default": 30 * 60,  # CI / E2E: normal 5-6 min, slow-but-legit up to ~20 min
-}
+GH_PR_CHECKS_STATE_EXIT_CODES = (0, 1, 8)
+# A hung `gh` call (network trouble, an auth prompt) must not freeze the watcher.
+GH_COMMAND_TIMEOUT_SECONDS = 60
 
-# Retry budget should focus on historically flaky checks. Based on recent PR
-# failure analysis, CI workflow failures are usually deterministic
-# lint/static-analysis/code issues, while E2E failures are more likely to be
-# transient and worth one or more reruns.
-RETRY_ELIGIBLE_WORKFLOW_KEYWORDS = {
-    "e2e",
-}
-# Login keyword fragments for Codex bot, used for emoji reaction gate detection.
+# The exact Codex bot identity, used for the 👀 reaction gate and the review summary.
 # Codex signals it is reviewing a PR by adding a 👀 reaction; it either posts a
 # review with comments (issues found) or removes the reaction silently (clean).
-CODEX_BOT_LOGIN_KEYWORDS = {
-    "codex",
-    "chatgpt-codex",
+# The REST API reports the login with a `[bot]` suffix, GraphQL without it. A loose
+# substring match would let any account with "codex" in its name hold or open the gate.
+CODEX_BOT_LOGINS = {
+    "chatgpt-codex-connector[bot]",
+    "chatgpt-codex-connector",
 }
 
-MAX_SESSION_MINUTES_DEFAULT = 90
+# CodeRabbit posts as coderabbitai[bot] and may add a "CodeRabbit" status check.
+CODERABBIT_KEYWORD = "coderabbit"
 STATE_STALENESS_RESET_SECONDS = 2 * 60 * 60
 
 _AUTHENTICATED_LOGIN_CACHE = None
@@ -141,11 +308,20 @@ def parse_args():
     parser.add_argument(
         "--max-session-minutes",
         type=int,
-        default=MAX_SESSION_MINUTES_DEFAULT,
+        default=None,
         help=(
-            "In --watch mode, stop with stop_session_timeout after this many minutes "
-            f"(default: {MAX_SESSION_MINUTES_DEFAULT})"
+            "Stop with stop_session_timeout after this many minutes "
+            "(default: max_session_minutes from config.json, else 90)"
         ),
+    )
+    parser.add_argument(
+        "--config",
+        help="Path to the project config file (default: config.json next to scripts/)",
+    )
+    parser.add_argument(
+        "--print-config",
+        action="store_true",
+        help="Print the effective config as JSON and exit",
     )
     parser.add_argument(
         "--json",
@@ -154,6 +330,8 @@ def parse_args():
     )
     args = parser.parse_args()
 
+    if args.max_session_minutes is None:
+        args.max_session_minutes = CONFIG["max_session_minutes"]
     if args.poll_seconds <= 0:
         parser.error("--poll-seconds must be > 0")
     if args.max_flaky_retries < 0:
@@ -181,7 +359,7 @@ def _format_gh_error(cmd, err):
     return "\n".join(parts)
 
 
-def gh_text(args, repo=None, allowed_exit_codes=(0,)):
+def gh_text(args, repo=None, ok_exit_codes=(0,), empty_result_stderr=()):
     cmd = ["gh"]
     # `gh api` does not accept `-R/--repo` on all gh versions. The watcher's
     # API calls use explicit endpoints (e.g. repos/{owner}/{repo}/...), so the
@@ -195,33 +373,36 @@ def gh_text(args, repo=None, allowed_exit_codes=(0,)):
             check=True,
             capture_output=True,
             text=True,
-            # GitHub CLI/API output is UTF-8. Without an explicit encoding Python
-            # decodes it with the locale default (cp1252 on Windows), which fails
-            # on em-dashes or emoji in review comments.
+            # GitHub output is UTF-8. Without an explicit encoding Python decodes with the
+            # locale default (cp1252 on Windows), which fails on emoji in review comments.
             encoding="utf-8",
             errors="replace",
+            timeout=GH_COMMAND_TIMEOUT_SECONDS,
         )
     except FileNotFoundError as err:
         raise GhCommandError("`gh` command not found") from err
+    except subprocess.TimeoutExpired as err:
+        raise GhCommandError(f"GitHub CLI command timed out: {' '.join(cmd)}") from err
     except subprocess.CalledProcessError as err:
-        # An allowed exit code only counts when gh still printed a payload.
-        # Without one, the command really failed (for example "no pull
-        # requests found"), and treating it as empty output would hide that.
-        if err.returncode in allowed_exit_codes and (err.stdout or "").strip():
+        if err.returncode in ok_exit_codes and (err.stdout or "").strip():
             return err.stdout
+        # Some "nothing to report" answers come as an error with a known message.
+        if err.returncode in ok_exit_codes and any(
+            marker in (err.stderr or "") for marker in empty_result_stderr
+        ):
+            return ""
         raise GhCommandError(_format_gh_error(cmd, err)) from err
     if proc.stdout is None:
-        # `subprocess` leaves stdout as None when its reader thread dies (for
-        # example on a decode error), which would otherwise surface downstream
-        # as a confusing AttributeError on None.
-        raise GhCommandError(
-            f"No output captured from GitHub CLI command: {' '.join(cmd)}"
-        )
+        # `subprocess` leaves stdout as None when its reader thread dies, which would
+        # otherwise surface later as a confusing AttributeError.
+        raise GhCommandError(f"No output captured from GitHub CLI command: {' '.join(cmd)}")
     return proc.stdout
 
 
-def gh_json(args, repo=None, allowed_exit_codes=(0,)):
-    raw = gh_text(args, repo=repo, allowed_exit_codes=allowed_exit_codes).strip()
+def gh_json(args, repo=None, ok_exit_codes=(0,), empty_result_stderr=()):
+    raw = gh_text(
+        args, repo=repo, ok_exit_codes=ok_exit_codes, empty_result_stderr=empty_result_stderr
+    ).strip()
     if not raw:
         return None
     try:
@@ -244,7 +425,7 @@ def parse_pr_spec(pr_spec):
 def pr_view_fields():
     return (
         "number,url,state,mergedAt,closedAt,headRefName,headRefOid,"
-        "headRepository,headRepositoryOwner,mergeable,mergeStateStatus,reviewDecision"
+        "headRepository,headRepositoryOwner,mergeable,mergeStateStatus,reviewDecision,labels"
     )
 
 
@@ -287,7 +468,24 @@ def resolve_pr(pr_spec, repo_override=None):
         "mergeable": str(data.get("mergeable") or ""),
         "merge_state_status": str(data.get("mergeStateStatus") or ""),
         "review_decision": str(data.get("reviewDecision") or ""),
+        "labels": normalize_pr_labels(data.get("labels")),
     }
+
+
+def normalize_pr_labels(raw_labels):
+    if not isinstance(raw_labels, list):
+        return []
+    labels = []
+    for label in raw_labels:
+        name = str(label.get("name") or "") if isinstance(label, dict) else str(label or "")
+        if name:
+            labels.append(name)
+    return labels
+
+
+def pr_has_label(pr, label_name):
+    wanted = str(label_name or "").lower()
+    return any(str(label).lower() == wanted for label in pr.get("labels") or [])
 
 
 def extract_repo_from_pr_view(data):
@@ -330,6 +528,11 @@ def reset_seen_tracking_state(state):
     state["pending_checks_first_seen_at"] = {}
     state["checks_went_terminal_at"] = None
     state["checks_terminal_sha"] = None
+    state["pr_af_missing_since_at"] = None
+    state["pr_af_missing_sha"] = None
+    state["pr_af_label_absent_sha"] = None
+    state["pr_af_label_rerun_sha"] = None
+    state["pr_af_label_rerun_seen_at"] = None
 
 
 def is_state_stale(state, now_seconds=None):
@@ -379,6 +582,17 @@ def load_state(path):
         # identity. This allows hung detection even when `startedAt` is not
         # provided by GitHub for queued/blocked checks.
         "pending_checks_first_seen_at": {},
+        # First-seen unix seconds for a labelled head whose PR-AF check has not
+        # appeared yet. This closes the label-on-green race and still ends the
+        # wait when GitHub never starts a run.
+        "pr_af_missing_since_at": None,
+        "pr_af_missing_sha": None,
+        # Same-SHA relabel tracking. When the PR-AF label goes away and comes back
+        # on the same head, a PR-AF check from before that must not count for the
+        # newly requested audit.
+        "pr_af_label_absent_sha": None,
+        "pr_af_label_rerun_sha": None,
+        "pr_af_label_rerun_seen_at": None,
     }, True
 
 
@@ -410,11 +624,16 @@ def get_pr_checks(pr_spec, repo):
     if parsed["value"] is not None:
         cmd.append(parsed["value"])
     cmd.extend(["--json", checks_fields()])
-    # `gh pr checks` deliberately exits 1 for failed checks and 8 for pending
-    # checks, while still writing the complete JSON status payload to stdout.
-    # These are watcher inputs, not command failures; every other gh call
-    # retains the fail-closed default of accepting exit code 0 only.
-    data = gh_json(cmd, repo=repo, allowed_exit_codes=(0, 1, 8))
+    # `gh pr checks` exits 1 when a check failed and 8 while checks are pending, and still
+    # prints the requested JSON. Those are states to report, not command failures.
+    # A PR without any check makes gh exit 1 with "no checks reported" and no JSON.
+    # That is an empty check list. Any other exit 1 without JSON is still a failure.
+    data = gh_json(
+        cmd,
+        repo=repo,
+        ok_exit_codes=GH_PR_CHECKS_STATE_EXIT_CODES,
+        empty_result_stderr=("no checks reported",),
+    )
     if data is None:
         return []
     if not isinstance(data, list):
@@ -428,23 +647,33 @@ def is_pending_check(check):
     return bucket == "pending" or state in PENDING_CHECK_STATES
 
 
+def is_expected_skipped_check(check):
+    name = str(check.get("name") or "").strip().lower()
+    return name in {str(item).strip().lower() for item in CONFIG["expected_skipped_checks"]}
+
+
 def summarize_checks(checks):
     pending_count = 0
     failed_count = 0
     passed_count = 0
     skipping_count = 0
     for check in checks:
+        # PR-AF is advisory: its own gate reports it, and its result is never a CI failure.
+        if is_optional_review_check(check):
+            continue
         bucket = str(check.get("bucket") or "").lower()
-        name = str(check.get("name") or "").lower()
         if is_pending_check(check):
             pending_count += 1
         elif bucket in ("fail", "cancel"):
             failed_count += 1
         elif bucket == "pass":
             passed_count += 1
-        elif bucket in ("neutral", "skipping") and not (
-            bucket == "skipping" and name == "deploy"
-        ):
+        elif bucket in ("neutral", "skipping"):
+            # A job that is skipped on every PR by design (for example one that only runs
+            # on pushes to main) is not a blocker. A neutral result is not a skip, so it
+            # still needs a look.
+            if bucket == "skipping" and is_expected_skipped_check(check):
+                continue
             skipping_count += 1
     return {
         "pending_count": pending_count,
@@ -452,7 +681,35 @@ def summarize_checks(checks):
         "passed_count": passed_count,
         "skipping_count": skipping_count,
         "all_terminal": pending_count == 0,
+        "required_missing": missing_required_checks(checks),
+        # Every check gh reported, including expected skips and advisory checks.
+        "check_count": len(checks),
     }
+
+
+def missing_required_checks(checks):
+    """Names from `required_checks` that have no passing check on the PR.
+
+    Without this, a lone third-party check that passes could make the PR look
+    ready before the project's own CI has even registered.
+    """
+    passed = {
+        str(check.get("name") or "").strip().lower()
+        for check in checks
+        if isinstance(check, dict) and str(check.get("bucket") or "").lower() == "pass"
+    }
+    return [name for name in CONFIG["required_checks"] if name.strip().lower() not in passed]
+
+
+def has_green_check_set(checks_summary):
+    """At least one check passed and every required check is among them.
+
+    An empty check set usually means GitHub has not registered the checks for a new
+    push yet. It must never read as green.
+    """
+    if int(checks_summary.get("passed_count") or 0) <= 0:
+        return False
+    return not checks_summary.get("required_missing")
 
 
 def get_workflow_runs_for_sha(repo, head_sha):
@@ -484,7 +741,7 @@ def get_workflow_runs_for_sha(repo, head_sha):
 
 def is_retry_eligible_workflow_name(workflow_name):
     lower = str(workflow_name or "").lower()
-    return any(keyword in lower for keyword in RETRY_ELIGIBLE_WORKFLOW_KEYWORDS)
+    return any(keyword.lower() in lower for keyword in CONFIG["retry_eligible_workflow_keywords"])
 
 
 def is_retry_eligible_failed_run(run):
@@ -517,6 +774,8 @@ def failed_runs_from_workflow_runs(runs, head_sha):
         if conclusion not in FAILED_RUN_CONCLUSIONS:
             continue
         workflow_name = run.get("name") or run.get("display_title") or ""
+        if is_optional_review_name(workflow_name):
+            continue
         failed_runs.append(
             {
                 "run_id": run.get("id"),
@@ -533,18 +792,266 @@ def failed_runs_from_workflow_runs(runs, head_sha):
     return failed_runs
 
 
+def normalize_review_name(name):
+    return " ".join(str(name or "").lower().split())
+
+
+def is_pr_af_name(name):
+    """Whether a check, job, or workflow name belongs to PR-AF.
+
+    The match is exact after normalising case and spaces, so a job such as
+    "verify-pr-after-rebase" never matches by accident.
+    """
+    pr_af = CONFIG["pr_af"]
+    if not pr_af["enabled"]:
+        return False
+    names = {normalize_review_name(item) for item in pr_af["workflow_names"] + pr_af["check_names"]}
+    return normalize_review_name(name) in names
+
+
+def is_optional_review_name(name):
+    return is_pr_af_name(name)
+
+
+def is_optional_review_check(check):
+    return is_optional_review_name(check.get("name")) or is_optional_review_name(check.get("workflow"))
+
+
+def review_check_activity_sort_key(check):
+    started = str(check.get("startedAt") or "")
+    completed = str(check.get("completedAt") or "")
+    return (max(started, completed), started, completed, str(check.get("name") or ""))
+
+
+def summarize_pr_af_gate_from_checks(checks):
+    """Summarise the latest PR-AF check on the current head."""
+    pr_af_checks = [
+        check for check in checks
+        if isinstance(check, dict)
+        and (is_pr_af_name(check.get("name")) or is_pr_af_name(check.get("workflow")))
+    ]
+    if not pr_af_checks:
+        return {
+            "required": False,
+            "present": False,
+            "status": "missing",
+            "conclusion": "",
+            "is_success": False,
+            "workflow_name": "",
+            "html_url": "",
+            "source": "checks",
+        }
+
+    # A pending rerun wins over an older completed run.
+    pending = [check for check in pr_af_checks if is_pending_check(check)]
+    candidates = pending or pr_af_checks
+    latest = sorted(candidates, key=review_check_activity_sort_key)[-1]
+    state = str(latest.get("state") or "").upper()
+    bucket = str(latest.get("bucket") or "").lower()
+
+    if is_pending_check(latest):
+        status, conclusion = "in_progress", ""
+    elif bucket == "pass" or state == "SUCCESS":
+        status, conclusion = "completed", "success"
+    elif bucket == "skipping" or state == "SKIPPING":
+        status, conclusion = "completed", "skipped"
+    elif state == "NEUTRAL":
+        status, conclusion = "completed", "neutral"
+    elif bucket == "fail":
+        status, conclusion = "completed", "failure"
+    elif state:
+        status, conclusion = "completed", state.lower()
+    else:
+        status, conclusion = "in_progress", ""
+
+    return {
+        "required": False,
+        "present": True,
+        "status": status,
+        "conclusion": conclusion,
+        "is_success": status == "completed" and conclusion == "success",
+        "workflow_name": str(latest.get("name") or ""),
+        "html_url": str(latest.get("link") or ""),
+        "started_at": str(latest.get("startedAt") or ""),
+        "completed_at": str(latest.get("completedAt") or ""),
+        "source": "checks",
+    }
+
+
+def get_recent_pr_label_events(repo, pr_number):
+    """The last 20 label and unlabel events of the PR."""
+    query = """
+    query($owner:String!, $name:String!, $number:Int!) {
+      repository(owner:$owner, name:$name) {
+        pullRequest(number:$number) {
+          timelineItems(last:20, itemTypes:[LABELED_EVENT, UNLABELED_EVENT]) {
+            nodes {
+              __typename
+              ... on LabeledEvent { createdAt label { name } }
+              ... on UnlabeledEvent { createdAt label { name } }
+            }
+          }
+        }
+      }
+    }
+    """
+    owner, name = repo.split("/", 1)
+    data = gh_json(
+        [
+            "api", "graphql",
+            "-f", f"owner={owner}",
+            "-f", f"name={name}",
+            "-F", f"number={int(pr_number)}",
+            "-f", f"query={query}",
+        ],
+        repo=repo,
+    )
+    try:
+        nodes = data["data"]["repository"]["pullRequest"]["timelineItems"]["nodes"]
+    except (TypeError, KeyError):
+        return []
+    return [node for node in nodes or [] if isinstance(node, dict)]
+
+
+def parse_github_time_seconds(value):
+    text = str(value or "")
+    if not text:
+        return None
+    try:
+        return int(datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        return None
+
+
+def latest_pr_af_label_event_seconds(label_events, typename):
+    wanted = str(CONFIG["pr_af"]["label"]).lower()
+    latest = None
+    for event in label_events or []:
+        if str(event.get("__typename") or "") != typename:
+            continue
+        label = event.get("label") or {}
+        if str(label.get("name") or "").lower() != wanted:
+            continue
+        event_seconds = parse_github_time_seconds(event.get("createdAt"))
+        if event_seconds is None:
+            continue
+        latest = event_seconds if latest is None else max(latest, event_seconds)
+    return latest
+
+
+def pr_af_label_events_needed(pr, state):
+    """Label events matter only for a labelled head that was never seen without the label."""
+    return (
+        pr_has_label(pr, CONFIG["pr_af"]["label"])
+        and state.get("pr_af_label_absent_sha") != str(pr.get("head_sha") or "")
+    )
+
+
+def update_pr_af_label_rerun_tracking(pr, state, now_seconds, label_events=None):
+    """Track a PR-AF label that was removed and added again on the same head SHA."""
+    head_sha = str(pr.get("head_sha") or "")
+    if not head_sha:
+        return
+    if not pr_has_label(pr, CONFIG["pr_af"]["label"]):
+        state["pr_af_label_absent_sha"] = head_sha
+        state["pr_af_label_rerun_sha"] = None
+        state["pr_af_label_rerun_seen_at"] = None
+        return
+    if state.get("pr_af_label_absent_sha") != head_sha:
+        # The watcher never saw this head without the label. The timeline tells
+        # whether the label was re-added between polls or before the watch started.
+        latest_labeled_at = latest_pr_af_label_event_seconds(label_events, "LabeledEvent")
+        latest_unlabeled_at = latest_pr_af_label_event_seconds(label_events, "UnlabeledEvent")
+        if latest_labeled_at is None or (
+            latest_unlabeled_at is not None and latest_unlabeled_at > latest_labeled_at
+        ):
+            return
+        state["pr_af_label_absent_sha"] = head_sha
+        state["pr_af_label_rerun_sha"] = head_sha
+        state["pr_af_label_rerun_seen_at"] = latest_labeled_at
+        return
+    if state.get("pr_af_label_rerun_sha") != head_sha:
+        state["pr_af_label_rerun_sha"] = head_sha
+        state["pr_af_label_rerun_seen_at"] = int(now_seconds)
+
+
+def apply_pr_af_label_rerun_grace(pr, pr_af_gate, state):
+    """Ignore a completed PR-AF check that started before the label was re-added."""
+    if not pr_has_label(pr, CONFIG["pr_af"]["label"]):
+        return pr_af_gate
+    if str(pr_af_gate.get("status") or "") != "completed":
+        return pr_af_gate
+    if state.get("pr_af_label_rerun_sha") != str(pr.get("head_sha") or ""):
+        return pr_af_gate
+    try:
+        rerun_seen_at = int(state.get("pr_af_label_rerun_seen_at") or 0)
+    except (TypeError, ValueError):
+        return pr_af_gate
+    started_at = parse_github_time_seconds(pr_af_gate.get("started_at"))
+    if started_at is None or started_at >= rerun_seen_at:
+        return pr_af_gate
+
+    gate = dict(pr_af_gate)
+    gate.update({
+        "present": False,
+        "status": "missing",
+        "conclusion": "",
+        "is_success": False,
+        "stale_started_at": pr_af_gate.get("started_at"),
+    })
+    return gate
+
+
+def apply_pr_af_missing_check_grace(pr, pr_af_gate, state, now_seconds):
+    """Wait a bounded time for the PR-AF check of a labelled head to appear."""
+    if not pr_has_label(pr, CONFIG["pr_af"]["label"]) or str(pr_af_gate.get("status") or "") != "missing":
+        state["pr_af_missing_since_at"] = None
+        state["pr_af_missing_sha"] = None
+        return pr_af_gate
+
+    head_sha = str(pr.get("head_sha") or "")
+    if state.get("pr_af_missing_sha") != head_sha:
+        state["pr_af_missing_sha"] = head_sha
+        state["pr_af_missing_since_at"] = int(now_seconds)
+    try:
+        first_seen = int(state.get("pr_af_missing_since_at") or now_seconds)
+    except (TypeError, ValueError):
+        first_seen = int(now_seconds)
+        state["pr_af_missing_since_at"] = first_seen
+
+    elapsed = max(0, int(now_seconds) - first_seen)
+    gate = dict(pr_af_gate)
+    gate["missing_elapsed_seconds"] = elapsed
+    grace_seconds = int(CONFIG["pr_af"]["missing_check_grace_minutes"]) * 60
+    gate["status"] = "missing_wait" if elapsed < grace_seconds else "missing_timeout"
+    return gate
+
+
+def pr_af_holds_readiness(pr_af_gate):
+    return bool(pr_af_gate) and str(pr_af_gate.get("status") or "") in {"in_progress", "missing_wait"}
+
+
+def collect_pr_af_gate(pr, checks, state, now_seconds):
+    label_events = None
+    if pr_af_label_events_needed(pr, state):
+        label_events = get_recent_pr_label_events(pr["repo"], pr["number"])
+    update_pr_af_label_rerun_tracking(pr, state, now_seconds, label_events=label_events)
+    gate = summarize_pr_af_gate_from_checks(checks)
+    gate = apply_pr_af_label_rerun_grace(pr, gate, state)
+    return apply_pr_af_missing_check_grace(pr, gate, state, now_seconds)
+
+
 def is_codex_bot_login(login):
-    lower = str(login or "").lower()
-    return any(keyword in lower for keyword in CODEX_BOT_LOGIN_KEYWORDS)
+    return str(login or "").lower() in CODEX_BOT_LOGINS
 
 
 def get_pr_issue_reactions(repo, pr_number):
     """Fetch the PR's issue-level reactions (all pages), or None if unavailable.
 
-    Pagination matters: a 👀 reaction from a review bot can land on a later
-    page on a busy PR, and missing it would let the watcher declare
-    merge-readiness (`stop_ready_to_merge`) while a review is still in
-    progress.
+    The Codex gate inspects these reactions. Pagination matters: a 👀 reaction
+    from a review bot can land on a later page on a busy PR, and missing it
+    would let the watcher declare merge-readiness (`stop_ready_to_merge`) while
+    a review is still in progress.
     """
     try:
         return gh_api_list_paginated(
@@ -581,13 +1088,149 @@ def summarize_codex_gate(reactions):
     lookup failed).
     """
     if reactions is None:
-        # A transient reactions API failure must never be interpreted as proof
-        # that Codex removed its active review reaction. Keep the merge gate
-        # closed and let the next polling cycle retry the lookup.
+        # A failed reactions lookup cannot prove that Codex removed its 👀 reaction.
+        # Keep the gate closed and let the next poll retry the lookup.
         return {"reviewing": True, "status": "unknown"}
     if _bot_has_eyes_reaction(reactions, is_codex_bot_login):
         return {"reviewing": True, "status": "in_progress"}
     return {"reviewing": False, "status": "idle"}
+
+
+# One row of Codex's review-summary table, e.g.
+# | 📝 **Code Review** | ✅ **Completed** <relative-time ...> | `b5d394b` | New commits |
+_CODEX_SUMMARY_ROW = re.compile(
+    r"^\|\s*📝\s*\*\*Code Review\*\*\s*\|(?P<status>[^|]*)\|\s*`(?P<sha>[0-9a-f]{7,40})`",
+    re.MULTILINE,
+)
+
+
+def summarize_codex_head_review(issue_comments, head_sha):
+    """Tell whether Codex finished a review of `head_sha`.
+
+    A missing 👀 reaction only says Codex is not reviewing right now: on a fresh push it may
+    simply not have started. Codex's review-summary comment records the status and the commit
+    of its latest review, which is proof that the current head was reviewed. When the PR has
+    no such comment, Codex is not active on it and this check does not apply.
+    """
+    active = False
+    head_statuses = set()
+    for comment in issue_comments or []:
+        if not isinstance(comment, dict):
+            continue
+        if not is_codex_bot_login(extract_login(comment.get("user"))):
+            continue
+        body = str(comment.get("body") or "")
+        if STATUS_ONLY_BOT_COMMENT_MARKER not in body:
+            continue
+        active = True
+        for row in _CODEX_SUMMARY_ROW.finditer(body):
+            if str(head_sha or "").startswith(row.group("sha")):
+                head_statuses.add(classify_codex_review_status(row.group("status")))
+    if "completed" in head_statuses:
+        head_status = "completed"
+    elif "running" in head_statuses:
+        head_status = "running"
+    elif "failed" in head_statuses:
+        head_status = "failed"
+    else:
+        head_status = "none"
+    return {"active": active, "head_reviewed": head_status == "completed", "head_status": head_status}
+
+
+# Words in the status column of Codex's summary table that mean "still working".
+_CODEX_IN_PROGRESS_WORDS = ("running", "queued", "pending", "in progress", "started")
+
+
+def classify_codex_review_status(status_text):
+    """Map one status cell of the Codex summary table to completed, running, or failed.
+
+    Anything else, such as Failed, Cancelled, or a status this watcher does not know,
+    counts as failed. Waiting on it would only end at the session timeout.
+    """
+    lower = str(status_text or "").lower()
+    if "completed" in lower:
+        return "completed"
+    if any(word in lower for word in _CODEX_IN_PROGRESS_WORDS):
+        return "running"
+    return "failed"
+
+
+def collect_codex_gate(pr, reactions=None):
+    """Codex's review state for the PR: the 👀 reaction plus proof of a review of the head.
+
+    `reactions` is the PR's issue-reactions list, shared with other gates. When it is
+    not given, this function fetches it.
+    """
+    if reactions is None:
+        reactions = get_pr_issue_reactions(pr["repo"], pr["number"])
+    codex_gate = summarize_codex_gate(reactions)
+    try:
+        issue_comments = gh_api_list_paginated(comment_endpoints(pr["repo"], pr["number"])["issue_comment"])
+        codex_gate.update(summarize_codex_head_review(issue_comments, pr["head_sha"]))
+    except GhCommandError:
+        # Without the summary comment we cannot prove the head was reviewed: treat as unknown.
+        codex_gate.update({"status": "unknown", "active": True, "head_reviewed": False, "head_status": "none"})
+    return codex_gate
+
+
+def is_coderabbit_login(login):
+    return CODERABBIT_KEYWORD in str(login or "").lower()
+
+
+def is_coderabbit_name(name):
+    return CODERABBIT_KEYWORD in str(name or "").lower()
+
+
+def _bot_has_any_reaction(reactions, login_predicate):
+    if not isinstance(reactions, list):
+        return False
+    for reaction in reactions:
+        if not isinstance(reaction, dict):
+            continue
+        user = reaction.get("user") or {}
+        if login_predicate(str(user.get("login") or "")):
+            return True
+    return False
+
+
+def summarize_coderabbit_gate(checks, reactions):
+    """Presence-conditional gate for CodeRabbit.
+
+    CodeRabbit gates a PR only when it shows signs of life: a CodeRabbit check or a
+    reaction from the CodeRabbit bot. Its comments block merge through the normal
+    review-item path. When CodeRabbit is dormant the gate does nothing, so the
+    watcher stays correct if CodeRabbit is removed from the repository.
+
+    `reviewing` is true while its check is pending, or while it has a 👀 reaction on
+    the PR. Other reactions count as a sign of life, not as "still reviewing".
+    `reactions` is None when the reactions lookup failed.
+    """
+    cr_checks = [
+        check for check in checks or []
+        if isinstance(check, dict)
+        and (is_coderabbit_name(check.get("name")) or is_coderabbit_name(check.get("workflow")))
+    ]
+    check_present = bool(cr_checks)
+    # Any pending CodeRabbit check means it is still reviewing, whatever the order of
+    # an older completed entry in the `gh pr checks` output.
+    check_pending = any(is_pending_check(check) for check in cr_checks)
+    reactions_unknown = reactions is None
+    has_eyes = _bot_has_eyes_reaction(reactions, is_coderabbit_login)
+    has_any_reaction = _bot_has_any_reaction(reactions, is_coderabbit_login)
+
+    active = check_present or has_any_reaction
+    # Once CodeRabbit has a check, a failed reaction lookup cannot prove that its
+    # review reaction is gone. Fail closed until reactions can be read again.
+    reviewing = check_pending or has_eyes or (check_present and reactions_unknown)
+    if reactions_unknown and check_present:
+        status = "unknown"
+    elif reviewing:
+        status = "in_progress"
+    elif active:
+        status = "active"
+    else:
+        status = "idle"
+    return {"active": active, "present_check": check_present, "reviewing": reviewing, "status": status}
 
 
 def get_authenticated_login():
@@ -652,6 +1295,8 @@ def get_unresolved_review_comment_ids(repo, pr_number):
         if not isinstance(payload, dict):
             raise GhCommandError("Unexpected GraphQL payload for review threads")
 
+        # A GraphQL error comes back with exit code 0 and no data. Reading it as "no
+        # unresolved threads" would let the watcher report a blocked PR as ready.
         data = payload.get("data")
         if payload.get("errors") or not isinstance(data, dict):
             raise GhCommandError("GraphQL review-thread lookup returned errors or no data")
@@ -728,6 +1373,91 @@ def gh_api_list_paginated(endpoint, repo=None, per_page=100, query_params=None):
     return items
 
 
+def gh_graphql_list_reviews(repo, pr_number):
+    """List PR reviews through GraphQL, shaped like the REST review list."""
+    owner, name = repo.split("/", 1)
+    query = (
+        "query($owner:String!, $name:String!, $number:Int!, $cursor:String) {"
+        " repository(owner:$owner, name:$name) {"
+        "   pullRequest(number:$number) {"
+        "     reviews(first:100, after:$cursor) {"
+        "       pageInfo { hasNextPage endCursor }"
+        "       nodes {"
+        "         id: databaseId"
+        "         user: author { login type: __typename }"
+        "         author_association: authorAssociation"
+        "         submitted_at: submittedAt"
+        "         body"
+        "         state"
+        "         html_url: url"
+        "       }"
+        "     }"
+        "   }"
+        " }"
+        "}"
+    )
+
+    items = []
+    cursor = None
+    while True:
+        args = [
+            "api", "graphql",
+            "-f", f"query={query}",
+            "-F", f"owner={owner}",
+            "-F", f"name={name}",
+            "-F", f"number={pr_number}",
+        ]
+        if cursor is not None:
+            args.extend(["-F", f"cursor={cursor}"])
+
+        payload = gh_json(args, repo=repo)
+        if not isinstance(payload, dict):
+            raise GhCommandError("Unexpected GraphQL payload for reviews")
+        if payload.get("errors"):
+            raise GhCommandError("GraphQL reviews query returned errors")
+        data = payload.get("data")
+        repository = data.get("repository") if isinstance(data, dict) else None
+        pull_request = repository.get("pullRequest") if isinstance(repository, dict) else None
+        reviews = pull_request.get("reviews") if isinstance(pull_request, dict) else None
+        nodes = reviews.get("nodes") if isinstance(reviews, dict) else None
+        if not isinstance(nodes, list):
+            raise GhCommandError("Unexpected GraphQL reviews payload")
+        for node in nodes:
+            if not isinstance(node, dict):
+                raise GhCommandError("Unexpected GraphQL review node payload")
+            user = node.get("user")
+            # GraphQL reports bot logins without the `[bot]` suffix that REST uses.
+            if isinstance(user, dict) and user.get("type") == "Bot":
+                login = user.get("login")
+                if isinstance(login, str) and login and not login.endswith("[bot]"):
+                    node = dict(node, user=dict(user, login=f"{login}[bot]"))
+            items.append(node)
+
+        page_info = reviews.get("pageInfo")
+        if not isinstance(page_info, dict):
+            raise GhCommandError("Unexpected GraphQL reviews pageInfo payload")
+        if not bool(page_info.get("hasNextPage")):
+            break
+        cursor = page_info.get("endCursor")
+        if not cursor:
+            raise GhCommandError("Missing GraphQL reviews pagination cursor")
+
+    return items
+
+
+def get_review_payload(repo, pr_number):
+    """List PR reviews through REST, and through GraphQL when REST fails.
+
+    The REST review list sometimes fails for a PR while GraphQL still works. If both
+    fail, the error propagates and the poll counts as failed: no review state is
+    never read as "no reviews".
+    """
+    try:
+        return gh_api_list_paginated(comment_endpoints(repo, pr_number)["review"], repo=repo)
+    except GhCommandError:
+        return gh_graphql_list_reviews(repo, pr_number)
+
+
 def normalize_issue_comments(items):
     out = []
     for item in items:
@@ -744,7 +1474,7 @@ def normalize_issue_comments(items):
                 "body": str(item.get("body") or ""),
                 "path": None,
                 "line": None,
-                "commit_id": str(item.get("commit_id") or ""),
+                "commit_id": None,
                 "url": str(item.get("html_url") or ""),
             }
         )
@@ -770,7 +1500,8 @@ def normalize_review_comments(items):
                 "body": str(item.get("body") or ""),
                 "path": item.get("path"),
                 "line": line,
-                "commit_id": None,
+                "commit_id": str(item.get("commit_id") or ""),
+                "review_id": str(item.get("pull_request_review_id") or ""),
                 "url": str(item.get("html_url") or ""),
             }
         )
@@ -799,7 +1530,7 @@ def normalize_reviews(items):
                 "review_state": str(item.get("state") or "").upper(),
                 "path": None,
                 "line": None,
-                "commit_id": str(item.get("commit_id") or ""),
+                "commit_id": None,
                 "url": str(item.get("html_url") or ""),
             }
         )
@@ -820,13 +1551,47 @@ def is_actionable_review_bot_login(login):
     if not is_bot_login(login):
         return False
     lower_login = login.lower()
-    return any(keyword in lower_login for keyword in REVIEW_BOT_LOGIN_KEYWORDS)
+    keywords = list(CONFIG["review_bot_login_keywords"])
+    if CONFIG["coderabbit"]["enabled"]:
+        keywords.append(CODERABBIT_KEYWORD)
+    return any(keyword.lower() in lower_login for keyword in keywords)
 
 
-def is_actionable_review_bot_item(item):
+def is_pr_af_review_item(item, pr_af_review_ids=None, pr_af_check_present=True):
+    """A PR-AF finding: the configured author, plus a known marker or a marked parent review.
+
+    PR-AF usually posts as the shared github-actions[bot] login. A marker counts only
+    while a PR-AF check exists on the current head, so an ordinary workflow comment
+    cannot become a finding by echoing the marker text.
+    """
+    pr_af = CONFIG["pr_af"]
+    if not pr_af["enabled"] or not pr_af_check_present:
+        return False
+    if str(item.get("author") or "").lower() != str(pr_af["review_author_login"]).lower():
+        return False
+    review_id = str(item.get("review_id") or "")
+    if review_id and review_id in (pr_af_review_ids or set()):
+        return True
+    body = str(item.get("body") or "").lower()
+    return any(marker.lower() in body for marker in pr_af["review_body_markers"])
+
+
+def is_pr_af_author(item):
+    pr_af = CONFIG["pr_af"]
+    return bool(pr_af["enabled"]) and (
+        str(item.get("author") or "").lower() == str(pr_af["review_author_login"]).lower()
+    )
+
+
+def is_actionable_review_bot_item(item, pr_af_review_ids=None, pr_af_check_present=True):
+    author = str(item.get("author") or "")
     if STATUS_ONLY_BOT_COMMENT_MARKER in str(item.get("body") or ""):
         return False
-    return is_actionable_review_bot_login(str(item.get("author") or ""))
+    if is_pr_af_author(item):
+        return is_pr_af_review_item(
+            item, pr_af_review_ids=pr_af_review_ids, pr_af_check_present=pr_af_check_present
+        )
+    return is_actionable_review_bot_login(author)
 
 
 def is_trusted_human_review_author(item, authenticated_login):
@@ -835,12 +1600,13 @@ def is_trusted_human_review_author(item, authenticated_login):
     if not author:
         return False
     association = str(item.get("author_association") or "").upper()
-    return association in TRUSTED_AUTHOR_ASSOCIATIONS
+    return association in {str(item).upper() for item in CONFIG["trusted_author_associations"]}
 
 
-def fetch_new_review_items(pr, state, fresh_state, authenticated_login=None):
+def fetch_new_review_items(pr, state, fresh_state, authenticated_login=None, pr_af_gate=None):
     repo = pr["repo"]
     pr_number = pr["number"]
+    head_sha = str(pr.get("head_sha") or "")
     endpoints = comment_endpoints(repo, pr_number)
 
     if fresh_state:
@@ -858,12 +1624,18 @@ def fetch_new_review_items(pr, state, fresh_state, authenticated_login=None):
         endpoints["review_comment"],
         repo=repo,
     )
-    review_payload = gh_api_list_paginated(endpoints["review"], repo=repo)
+    review_payload = get_review_payload(repo, pr_number)
 
     issue_items = normalize_issue_comments(issue_payload)
     review_comment_items = normalize_review_comments(review_comment_payload)
     review_items = normalize_reviews(review_payload)
     all_items = issue_items + review_comment_items + review_items
+    pr_af_check_present = bool((pr_af_gate or {}).get("present"))
+    pr_af_review_ids = {
+        str(item.get("id") or "")
+        for item in review_items
+        if is_pr_af_review_item(item, pr_af_check_present=pr_af_check_present)
+    }
 
     # Look up unresolved review threads via GraphQL when there are any review
     # comments at all.  Unresolved threads block merge regardless of which
@@ -912,9 +1684,8 @@ def fetch_new_review_items(pr, state, fresh_state, authenticated_login=None):
             continue
         is_review_comment = str(item.get("kind") or "") == "review_comment"
         if authenticated_login and author == authenticated_login:
-            # The agent usually authenticates as the owner. Never surface its
-            # own comments as new items, but an owner's inline thread that is
-            # still open must keep blocking.
+            # The agent usually authenticates as the owner. Never surface its own comments as
+            # new items, but an owner's inline thread that is still open must keep blocking.
             if is_review_comment and (
                 unresolved_review_comment_ids is None
                 or item_id in unresolved_review_comment_ids
@@ -923,7 +1694,9 @@ def fetch_new_review_items(pr, state, fresh_state, authenticated_login=None):
                 blocking_items.append(item)
             continue
         if is_bot_login(author):
-            if not is_actionable_review_bot_item(item):
+            if not is_actionable_review_bot_item(
+                item, pr_af_review_ids=pr_af_review_ids, pr_af_check_present=pr_af_check_present
+            ):
                 continue
         elif not is_trusted_human_review_author(item, authenticated_login):
             continue
@@ -937,9 +1710,8 @@ def fetch_new_review_items(pr, state, fresh_state, authenticated_login=None):
                 and (item_id in unresolved_review_comment_ids or unresolved_lookup_truncated)
             )
         else:
-            # Without thread state, an inline comment of any age may still be
-            # open. Fail closed: block on every inline comment until the lookup
-            # works again.
+            # Without thread state, an inline comment of any age may still be open. Fail closed:
+            # block on every inline comment until the lookup works again.
             is_blocking = is_review_comment
 
         if is_blocking:
@@ -1026,6 +1798,40 @@ def unique_actions(actions):
     return out
 
 
+def codex_waiting_for_head_review(codex_gate):
+    """Codex is active on the PR but has not finished a review of the current head yet."""
+    return (
+        bool(codex_gate)
+        and bool(codex_gate.get("active"))
+        and not bool(codex_gate.get("head_reviewed"))
+        and str(codex_gate.get("head_status") or "") != "failed"
+    )
+
+
+def codex_review_failed(codex_gate):
+    """Codex's summary reports a failed or unknown review status for the current head."""
+    return (
+        bool(codex_gate)
+        and not bool(codex_gate.get("reviewing"))
+        and bool(codex_gate.get("active"))
+        and not bool(codex_gate.get("head_reviewed"))
+        and str(codex_gate.get("head_status") or "") == "failed"
+    )
+
+
+def codex_required():
+    return bool(CONFIG["codex"]["enabled"]) and bool(CONFIG["codex"]["required"])
+
+
+def codex_missing_but_required(codex_gate):
+    """The config requires Codex, but Codex has not shown up on this PR at all."""
+    if not codex_required():
+        return False
+    if not codex_gate:
+        return True
+    return not bool(codex_gate.get("active")) and not bool(codex_gate.get("reviewing"))
+
+
 def is_pr_ready_to_merge(
     pr,
     checks_summary,
@@ -1033,6 +1839,8 @@ def is_pr_ready_to_merge(
     checks_terminal_elapsed=None,
     blocking_review_items=None,
     codex_gate=None,
+    coderabbit_gate=None,
+    pr_af_gate=None,
 ):
     if pr["closed"] or pr["merged"]:
         return False
@@ -1043,6 +1851,8 @@ def is_pr_ready_to_merge(
         or checks_summary["pending_count"] > 0
         or checks_summary.get("skipping_count", 0) > 0
     ):
+        return False
+    if not has_green_check_set(checks_summary):
         return False
     if new_review_items:
         return False
@@ -1056,6 +1866,14 @@ def is_pr_ready_to_merge(
         return False
     if codex_gate and bool(codex_gate.get("reviewing")):
         return False
+    if codex_waiting_for_head_review(codex_gate) or codex_review_failed(codex_gate):
+        return False
+    if codex_required() and not (codex_gate and codex_gate.get("head_reviewed")):
+        return False
+    if coderabbit_gate and bool(coderabbit_gate.get("reviewing")):
+        return False
+    if pr_af_holds_readiness(pr_af_gate):
+        return False
     # A failed reactions lookup means we cannot tell whether Codex is still reviewing.
     if codex_gate and str(codex_gate.get("status") or "") == "unknown":
         return False
@@ -1068,16 +1886,74 @@ def is_pr_ready_to_merge(
     return True
 
 
+def is_branch_behind(pr):
+    return str(pr.get("merge_state_status") or "") in MERGE_BEHIND_STATES
+
+
+def is_merge_blocked_without_reason(pr, checks_summary, checks_terminal_elapsed):
+    """GitHub says BLOCKED although every check the watcher can see is green.
+
+    Typical causes are a required status check that never reported, a required
+    signature, or a ruleset. None of them resolves by waiting, so the watcher hands
+    the PR to the agent instead of idling until the session timeout. The caller only
+    asks when no other action already explains the state.
+    """
+    if str(pr.get("merge_state_status") or "") != "BLOCKED":
+        return False
+    if str(pr.get("mergeable") or "") == "CONFLICTING":
+        return False
+    # Waiting for a human approval is a normal reason to be blocked.
+    if str(pr.get("review_decision") or "") in MERGE_BLOCKING_REVIEW_DECISIONS:
+        return False
+    if not checks_summary.get("all_terminal"):
+        return False
+    if (
+        int(checks_summary.get("failed_count") or 0) > 0
+        or int(checks_summary.get("pending_count") or 0) > 0
+        or int(checks_summary.get("skipping_count") or 0) > 0
+    ):
+        return False
+    if not has_green_check_set(checks_summary):
+        return False
+    # GitHub can lag behind the checks for a moment. Give it the same grace period
+    # that review bots get.
+    return grace_period_elapsed(checks_terminal_elapsed)
+
+
+def grace_period_elapsed(checks_terminal_elapsed):
+    return (
+        checks_terminal_elapsed is not None
+        and checks_terminal_elapsed >= CHECKS_TERMINAL_GRACE_PERIOD_SECONDS
+    )
+
+
+def has_no_checks(checks_summary, checks_terminal_elapsed):
+    """GitHub reports no check at all for the PR, even after the grace period.
+
+    Right after a push the checks may not be registered yet, so the grace period comes
+    first. After that, an empty check set means no workflow runs on this PR. Waiting
+    would only end at the session timeout.
+    """
+    if checks_summary.get("check_count") != 0:
+        return False
+    return grace_period_elapsed(checks_terminal_elapsed)
+
+
+def is_required_check_missing(checks_summary, checks_terminal_elapsed):
+    """Every check is done, but a required check never passed or never appeared."""
+    if not checks_summary.get("required_missing"):
+        return False
+    if not checks_summary.get("all_terminal"):
+        return False
+    return grace_period_elapsed(checks_terminal_elapsed)
+
+
 def is_merge_conflicted(pr):
     mergeable = str(pr.get("mergeable") or "")
     merge_state_status = str(pr.get("merge_state_status") or "")
     if mergeable == "CONFLICTING":
         return True
     return merge_state_status in MERGE_CONFLICT_STATES
-
-
-def is_pr_behind(pr):
-    return str(pr.get("merge_state_status") or "") == "BEHIND"
 
 
 def pending_check_key(check):
@@ -1094,6 +1970,11 @@ def reset_state_for_new_head_sha(state, head_sha):
     current_sha = str(head_sha or "")
     if previous_sha and current_sha and previous_sha != current_sha:
         state["pending_checks_first_seen_at"] = {}
+        state["pr_af_missing_since_at"] = None
+        state["pr_af_missing_sha"] = None
+        state["pr_af_label_absent_sha"] = None
+        state["pr_af_label_rerun_sha"] = None
+        state["pr_af_label_rerun_seen_at"] = None
 
 
 def update_pending_checks_first_seen(state, checks, now_seconds):
@@ -1121,13 +2002,8 @@ def update_pending_checks_first_seen(state, checks, now_seconds):
 
 def hung_threshold_for_check(check_name):
     """Return the hung-detection threshold in seconds for a given check name."""
-    lower = (check_name or "").lower()
-    for keyword, threshold in HUNG_CHECK_THRESHOLDS_SECONDS.items():
-        if keyword == "default":
-            continue
-        if keyword in lower:
-            return threshold
-    return HUNG_CHECK_THRESHOLDS_SECONDS["default"]
+    _ = check_name
+    return int(CONFIG["hung_check_minutes"]) * 60
 
 
 def hung_checks_from_checks(checks, pending_checks_first_seen_at):
@@ -1136,6 +2012,8 @@ def hung_checks_from_checks(checks, pending_checks_first_seen_at):
     now = time.time()
     for check in checks:
         if not is_pending_check(check):
+            continue
+        if is_optional_review_check(check):
             continue
 
         started_at = None
@@ -1147,13 +2025,12 @@ def hung_checks_from_checks(checks, pending_checks_first_seen_at):
                 ).timestamp()
             except (ValueError, OverflowError, OSError):
                 parsed = None
-            # GitHub reports a zero-time sentinel (Go's `0001-01-01T00:00:00Z`
+            # GitHub can report a zero-time sentinel (Go's `0001-01-01T00:00:00Z`
             # or the Unix epoch) as the `startedAt` for checks that are queued
             # but not yet started. Those parse to a non-positive timestamp,
             # which would make `elapsed` billions of seconds and falsely trip
-            # hung detection. Treat any
-            # non-positive start time as "no real start time" and fall back to
-            # first-seen tracking instead.
+            # hung detection. Treat any non-positive start time as "no real
+            # start time" and fall back to first-seen tracking instead.
             if parsed is not None and parsed > 0:
                 started_at = parsed
 
@@ -1189,6 +2066,8 @@ def recommend_actions(
     checks_terminal_elapsed=None,
     blocking_review_items=None,
     codex_gate=None,
+    coderabbit_gate=None,
+    pr_af_gate=None,
 ):
     actions = []
     if pr["closed"] or pr["merged"]:
@@ -1199,8 +2078,18 @@ def recommend_actions(
 
     if is_merge_conflicted(pr):
         actions.append("diagnose_merge_conflict")
-    if is_pr_behind(pr):
+
+    if is_branch_behind(pr):
         actions.append("diagnose_branch_behind")
+
+    # A draft can never become ready on its own. Once its checks are green, stop and hand it to the
+    # owner instead of idling until the session timeout.
+    if (
+        str(pr.get("merge_state_status") or "") == "DRAFT"
+        and checks_summary["all_terminal"]
+        and checks_summary["failed_count"] == 0
+    ):
+        actions.append("stop_draft_pr")
 
     if is_pr_ready_to_merge(
         pr,
@@ -1209,6 +2098,8 @@ def recommend_actions(
         checks_terminal_elapsed=checks_terminal_elapsed,
         blocking_review_items=blocking_review_items,
         codex_gate=codex_gate,
+        coderabbit_gate=coderabbit_gate,
+        pr_af_gate=pr_af_gate,
     ):
         actions.append("stop_ready_to_merge")
         return unique_actions(actions)
@@ -1218,8 +2109,22 @@ def recommend_actions(
     elif blocking_review_items:
         actions.append("process_review_comment")
 
-    if codex_gate and bool(codex_gate.get("reviewing")):
+    if codex_gate and (bool(codex_gate.get("reviewing")) or codex_waiting_for_head_review(codex_gate)):
         actions.append("wait_codex")
+    elif codex_review_failed(codex_gate):
+        actions.append("diagnose_codex_review")
+    elif codex_missing_but_required(codex_gate):
+        # Give Codex until the checks finish to show up on its own, then ask for a review.
+        if checks_summary["all_terminal"] and grace_period_elapsed(checks_terminal_elapsed):
+            actions.append("request_codex_review")
+        else:
+            actions.append("wait_codex")
+
+    if coderabbit_gate and bool(coderabbit_gate.get("reviewing")):
+        actions.append("wait_coderabbit")
+
+    if pr_af_holds_readiness(pr_af_gate):
+        actions.append("wait_pr_af")
 
     if hung_checks:
         actions.append("diagnose_hung_check")
@@ -1243,6 +2148,15 @@ def recommend_actions(
             else:
                 actions.append("stop_non_retryable_failure")
 
+    if not actions and has_no_checks(checks_summary, checks_terminal_elapsed):
+        actions.append("diagnose_no_checks")
+
+    if not actions and is_required_check_missing(checks_summary, checks_terminal_elapsed):
+        actions.append("diagnose_missing_required_checks")
+
+    if not actions and is_merge_blocked_without_reason(pr, checks_summary, checks_terminal_elapsed):
+        actions.append("diagnose_merge_blocked")
+
     if not actions:
         actions.append("idle")
     return unique_actions(actions)
@@ -1265,9 +2179,12 @@ def collect_snapshot(args):
     checks_summary = summarize_checks(checks)
     pending_checks_first_seen_at = update_pending_checks_first_seen(state, checks, now)
     hung_checks = hung_checks_from_checks(checks, pending_checks_first_seen_at)
+    pr_af_gate = collect_pr_af_gate(pr, checks, state, now) if CONFIG["pr_af"]["enabled"] else None
 
+    workflow_runs = []
     failed_runs = []
-    if checks_summary["failed_count"] > 0:
+    needs_failed_run_lookup = checks_summary["failed_count"] > 0
+    if needs_failed_run_lookup:
         workflow_runs = get_workflow_runs_for_sha(pr["repo"], pr["head_sha"])
         failed_runs = failed_runs_from_workflow_runs(workflow_runs, pr["head_sha"])
 
@@ -1275,12 +2192,22 @@ def collect_snapshot(args):
         authenticated_login = get_authenticated_login()
     except GhCommandError:
         authenticated_login = None
+    # Read Codex's state before scanning review comments. Codex posts its findings before it
+    # marks the head reviewed, so this order can never pair "reviewed" with a stale scan.
+    # Both review-bot gates read the PR's reactions, so fetch them once.
+    reactions = None
+    if CONFIG["codex"]["enabled"] or CONFIG["coderabbit"]["enabled"]:
+        reactions = get_pr_issue_reactions(pr["repo"], pr["number"])
+    codex_gate = collect_codex_gate(pr, reactions=reactions) if CONFIG["codex"]["enabled"] else None
+    coderabbit_gate = summarize_coderabbit_gate(checks, reactions) if CONFIG["coderabbit"]["enabled"] else None
     new_review_items, blocking_review_items = fetch_new_review_items(
         pr,
         state,
         fresh_state=fresh_state,
         authenticated_login=authenticated_login,
+        pr_af_gate=pr_af_gate,
     )
+
     # Track when checks first went all_terminal for the current head SHA.
     # This timestamp is used to enforce a grace period before emitting
     # stop_ready_to_merge, preventing a race where the script declares the PR
@@ -1306,8 +2233,6 @@ def collect_snapshot(args):
         state["checks_went_terminal_at"] = None
         checks_terminal_elapsed = None
 
-    pr_issue_reactions = get_pr_issue_reactions(pr["repo"], pr["number"])
-    codex_gate = summarize_codex_gate(pr_issue_reactions)
 
     retries_used = current_retry_count(state, pr["head_sha"])
     actions = recommend_actions(
@@ -1321,6 +2246,8 @@ def collect_snapshot(args):
         checks_terminal_elapsed=checks_terminal_elapsed,
         blocking_review_items=blocking_review_items,
         codex_gate=codex_gate,
+        coderabbit_gate=coderabbit_gate,
+        pr_af_gate=pr_af_gate,
     )
 
     state["pr"] = {"repo": pr["repo"], "number": pr["number"]}
@@ -1333,6 +2260,8 @@ def collect_snapshot(args):
         "checks": checks_summary,
         "failed_runs": failed_runs,
         "codex_gate": codex_gate,
+        "coderabbit_gate": coderabbit_gate,
+        "pr_af_gate": pr_af_gate,
         "hung_checks": hung_checks,
         "new_review_items": new_review_items,
         "blocking_review_items": blocking_review_items,
@@ -1439,13 +2368,18 @@ def is_ci_green(snapshot):
     review_decision = str(pr.get("review_decision") or "")
     codex_gate = snapshot.get("codex_gate") or {}
     codex_reviewing = bool(codex_gate.get("reviewing"))
+    coderabbit_reviewing = bool((snapshot.get("coderabbit_gate") or {}).get("reviewing"))
+    pr_af_running = str((snapshot.get("pr_af_gate") or {}).get("status") or "") == "in_progress"
     return (
         bool(checks.get("all_terminal"))
+        and has_green_check_set(checks)
         and int(checks.get("failed_count") or 0) == 0
         and int(checks.get("pending_count") or 0) == 0
         and not blocking_review_items
         and review_decision not in MERGE_BLOCKING_REVIEW_DECISIONS
         and not codex_reviewing
+        and not coderabbit_reviewing
+        and not pr_af_running
     )
 
 
@@ -1476,6 +2410,9 @@ def snapshot_change_key(snapshot):
         ),
         tuple(snapshot.get("actions") or []),
         bool(codex_gate.get("reviewing")),
+        bool((snapshot.get("coderabbit_gate") or {}).get("reviewing")),
+        str((snapshot.get("pr_af_gate") or {}).get("status") or ""),
+        str((snapshot.get("pr_af_gate") or {}).get("conclusion") or ""),
         # Include whether the checks-terminal grace period is still active.
         # This flips exactly once (True → False) when the grace period expires,
         # ensuring the change-key transitions at that moment and preventing the
@@ -1493,27 +2430,49 @@ def _grace_period_active(snapshot):
 
 # Actions that mean "nothing for the agent to do yet, keep waiting internally".
 # Everything else requires agent attention and should cause --once to return.
-PASSIVE_WAIT_ACTIONS = {
-    "idle",
+# Waits for a review bot that is still working on the current head.
+BOT_WAIT_ACTIONS = {
     "wait_codex",
+    "wait_coderabbit",
+    "wait_pr_af",
 }
+PASSIVE_WAIT_ACTIONS = {"idle"} | BOT_WAIT_ACTIONS
+# Actions that ask the agent to update the branch, which starts new bot reviews.
+BRANCH_UPDATE_ACTIONS = {
+    "diagnose_merge_conflict",
+    "diagnose_branch_behind",
+}
+
+
+def waiting_on_review_bot(actions):
+    return bool(set(actions or []) & BOT_WAIT_ACTIONS)
 
 
 def needs_agent_attention(actions):
     """Return True when the actions list contains something the agent should act on.
 
     Used by --once to decide when to stop polling and return to the caller.
-    Returns True for any action that is not a passive wait (idle, wait_codex).
-    An empty actions list also returns True as a safety measure.
+    Returns True for any action that is not a passive wait. A branch update (merge
+    conflict or branch behind) waits while a review bot is still running, so that
+    its findings land in the same fix cycle as the update. An empty actions list
+    also returns True as a safety measure.
     """
     action_set = set(actions or [])
     if not action_set:
         return True
+    if waiting_on_review_bot(action_set) and action_set.issubset(PASSIVE_WAIT_ACTIONS | BRANCH_UPDATE_ACTIONS):
+        return False
     return not action_set.issubset(PASSIVE_WAIT_ACTIONS)
 
 
 def should_stop_watching(actions):
     action_set = set(actions or [])
+    if "diagnose_merge_blocked" in action_set:
+        return True
+    if "diagnose_missing_required_checks" in action_set:
+        return True
+    if "diagnose_no_checks" in action_set:
+        return True
     if "stop_pr_closed" in action_set:
         return True
     if "stop_exhausted_retries" in action_set:
@@ -1522,15 +2481,22 @@ def should_stop_watching(actions):
         return True
     if "stop_ready_to_merge" in action_set:
         return True
+    if "stop_draft_pr" in action_set:
+        return True
     if "diagnose_hung_check" in action_set:
         return True
     if "diagnose_skipping_checks" in action_set:
         return True
-    if "diagnose_merge_conflict" in action_set:
-        return True
-    if "diagnose_branch_behind" in action_set:
+    if action_set & BRANCH_UPDATE_ACTIONS and not waiting_on_review_bot(action_set):
         return True
     return False
+
+
+def with_session_timeout_action(snapshot):
+    """Keep the snapshot's own actions and add stop_session_timeout."""
+    snapshot = dict(snapshot or {})
+    snapshot["actions"] = unique_actions(list(snapshot.get("actions") or []) + ["stop_session_timeout"])
+    return snapshot
 
 
 def run_watch(args):
@@ -1541,10 +2507,18 @@ def run_watch(args):
     while True:
         elapsed = time.time() - watch_started_at
         if elapsed > max_session_seconds:
+            # Report the last known state with the timeout, not the timeout alone.
+            try:
+                snapshot, state_path = collect_snapshot(args)
+            except (GhCommandError, RuntimeError):
+                snapshot, state_path = {"actions": []}, None
+            snapshot = with_session_timeout_action(snapshot)
             print_event(
                 "stop",
                 {
-                    "actions": ["stop_session_timeout"],
+                    "actions": snapshot["actions"],
+                    "snapshot": snapshot,
+                    "state_file": str(state_path) if state_path else None,
                     "elapsed_seconds": int(elapsed),
                     "max_session_seconds": max_session_seconds,
                 },
@@ -1610,9 +2584,8 @@ def run_once(args):
             try:
                 snapshot, state_path = collect_snapshot(args)
             except (GhCommandError, RuntimeError):
-                snapshot = {"actions": ["stop_session_timeout"]}
-                state_path = None
-            snapshot["actions"] = ["stop_session_timeout"]
+                snapshot, state_path = {"actions": []}, None
+            snapshot = with_session_timeout_action(snapshot)
             snapshot["state_file"] = str(state_path) if state_path else None
             return snapshot
 
@@ -1633,8 +2606,33 @@ def run_once(args):
         time.sleep(poll_seconds)
 
 
+def activate_config(argv):
+    """Load the config named by --config (or the default file) into CONFIG."""
+    global CONFIG
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--config")
+    known, _unknown = pre_parser.parse_known_args(argv)
+    if known.config:
+        path, explicit = Path(known.config), True
+    else:
+        path, explicit = default_config_path(), False
+    config, warnings = load_config(path, explicit=explicit)
+    for warning in warnings:
+        sys.stderr.write(f"gh_pr_watch.py config warning: {warning}\n")
+    CONFIG = config
+    return path if path.exists() else None
+
+
 def main():
+    try:
+        config_file = activate_config(sys.argv[1:])
+    except ConfigError as err:
+        sys.stderr.write(f"gh_pr_watch.py config error: {err}\n")
+        return 1
     args = parse_args()
+    if args.print_config:
+        print_json({"config": CONFIG, "config_file": str(config_file) if config_file else None})
+        return 0
     try:
         if args.retry_failed_now:
             print_json(retry_failed_now(args))

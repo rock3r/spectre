@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "local_gate": "./gradlew check",
+  "expected_skipped_checks": ["deploy"],
+  "cleanup": {
+    "branch_delete_requires_approval": true
+  }
+}
