@@ -17,7 +17,10 @@ gh pr checks --json name,state,bucket,link,workflow,event,startedAt,completedAt
 ```
 
 Used to compute pending/failed/passed counts and whether the current CI round is terminal.
-`bucket` values: `pass`, `fail`, `pending`, `skipping`.
+`bucket` values: `pass`, `fail`, `pending`, `skipping`, `cancel`. The watcher counts `cancel` as failed.
+
+`gh pr checks` can exit 1 (a check failed) or 8 (checks are pending) and still print the requested JSON.
+The watcher reads that JSON as check state. It still reports an error when one of those exit codes comes without JSON.
 
 ### Workflow runs for head SHA
 

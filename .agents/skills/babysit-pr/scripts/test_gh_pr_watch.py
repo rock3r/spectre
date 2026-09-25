@@ -31,6 +31,24 @@ class PrChecksExitCodeTests(unittest.TestCase):
                         [{"bucket": bucket}],
                     )
 
+    @staticmethod
+    def _fake_gh_run(returncode, stdout, stderr=""):
+        # Behaves like subprocess.run, including check=True raising on a nonzero exit.
+        def run(cmd, check=False, **_kwargs):
+            if check and returncode != 0:
+                raise subprocess.CalledProcessError(returncode, cmd, output=stdout, stderr=stderr)
+            return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
+
+        return run
+
+    def test_get_pr_checks_still_fails_without_json(self):
+        # An allowed exit code without any JSON is a real error (for example
+        # "no pull requests found"), not an empty list of checks.
+        fake = self._fake_gh_run(1, "", stderr="no pull requests found")
+        with patch.object(watch.subprocess, "run", side_effect=fake):
+            with self.assertRaises(watch.GhCommandError):
+                watch.get_pr_checks("62", repo="rock3r/punaro")
+
 
 class RetryEligibilityTests(unittest.TestCase):
     def _base_pr(self):
@@ -151,19 +169,23 @@ class RetryEligibilityTests(unittest.TestCase):
             new_review_items=[], checks_terminal_elapsed=120, blocking_review_items=[],
         ))
 
-    def test_is_blocking_review_item_blocks_when_thread_resolution_is_unknown(self):
-        created_at = "2026-01-01T00:00:00Z"
-        created_at_seconds = watch.datetime.fromisoformat("2026-01-01T00:00:00+00:00").timestamp()
-        stale_now = created_at_seconds + watch.BLOCKING_REVIEW_ITEM_FRESH_SECONDS + 1
-        item = {
-            "kind": "review_comment",
-            "commit_id": "abc123",
-            "created_at": created_at,
-        }
-
-        self.assertTrue(
-            watch.is_blocking_review_item(item, head_sha="abc123", now_seconds=stale_now)
+    def test_is_pr_ready_to_merge_blocks_while_codex_gate_is_unknown(self):
+        # A failed reactions lookup must not be read as "Codex is done".
+        ready = watch.is_pr_ready_to_merge(
+            pr=self._base_pr(),
+            checks_summary={
+                "all_terminal": True,
+                "failed_count": 0,
+                "pending_count": 0,
+                "passed_count": 1,
+            },
+            new_review_items=[],
+            checks_terminal_elapsed=120,
+            blocking_review_items=[],
+            codex_gate={"reviewing": False, "status": "unknown"},
         )
+
+        self.assertFalse(ready)
 
     def test_recommend_actions_surfaces_merge_conflict(self):
         pr = self._base_pr()
@@ -198,7 +220,7 @@ class RetryEligibilityTests(unittest.TestCase):
 
     def test_fetch_new_review_items_excludes_resolved_blocking_comments(self):
         pr = {
-            "repo": "ADUX-sandbox/Compose-Pi",
+            "repo": "owner/repo",
             "number": 716,
             "head_sha": "abc123",
         }
@@ -244,7 +266,7 @@ class RetryEligibilityTests(unittest.TestCase):
 
     def test_fetch_new_review_items_blocks_unresolved_comment_even_if_stale(self):
         pr = {
-            "repo": "ADUX-sandbox/Compose-Pi",
+            "repo": "owner/repo",
             "number": 716,
             "head_sha": "abc123",
         }
@@ -291,7 +313,7 @@ class RetryEligibilityTests(unittest.TestCase):
     def test_fetch_new_review_items_blocks_unresolved_comment_on_old_commit(self):
         """Unresolved threads block regardless of which commit they were posted on."""
         pr = {
-            "repo": "ADUX-sandbox/Compose-Pi",
+            "repo": "owner/repo",
             "number": 716,
             "head_sha": "abc123",
         }
@@ -338,7 +360,7 @@ class RetryEligibilityTests(unittest.TestCase):
 
     def test_fetch_new_review_items_resurfaces_edited_issue_comment(self):
         pr = {
-            "repo": "ADUX-sandbox/Compose-Pi",
+            "repo": "owner/repo",
             "number": 716,
             "head_sha": "abc123",
         }
@@ -381,7 +403,7 @@ class RetryEligibilityTests(unittest.TestCase):
 
     def test_fetch_new_review_items_ignores_self_authored_comments(self):
         pr = {
-            "repo": "ADUX-sandbox/Compose-Pi",
+            "repo": "owner/repo",
             "number": 716,
             "head_sha": "abc123",
         }
@@ -421,9 +443,148 @@ class RetryEligibilityTests(unittest.TestCase):
 
         self.assertEqual(new_items, [])
 
+    def test_fetch_new_review_items_blocks_on_own_unresolved_threads(self):
+        # The agent usually authenticates as the owner, so the owner's own open
+        # threads must still block even though they are not surfaced as new items.
+        pr = {"repo": "owner/repo", "number": 716, "head_sha": "abc123"}
+        state = {
+            "seen_issue_comment_ids": [],
+            "seen_review_comment_ids": [],
+            "seen_review_ids": [],
+            "last_review_poll_at": None,
+        }
+        review_comment_payload = [
+            {
+                "id": 7,
+                "user": {"login": "octocat"},
+                "author_association": "OWNER",
+                "created_at": "2025-01-01T00:00:00Z",
+                "body": "Rename this before merging.",
+                "path": "foo.kt",
+                "line": 1,
+                "commit_id": "abc123",
+                "html_url": "https://example.invalid/comment",
+            }
+        ]
+
+        with patch.object(
+            watch,
+            "gh_api_list_paginated",
+            side_effect=[[], review_comment_payload, []],
+        ), patch.object(
+            watch,
+            "get_unresolved_review_comment_ids",
+            return_value={"ids": {"7"}, "truncated": False},
+        ):
+            new_items, blocking_items = watch.fetch_new_review_items(
+                pr,
+                state,
+                fresh_state=True,
+                authenticated_login="octocat",
+            )
+
+        self.assertEqual(new_items, [])
+        self.assertEqual([item["id"] for item in blocking_items], ["7"])
+
+    def test_fetch_new_review_items_does_not_block_on_own_resolved_threads(self):
+        pr = {"repo": "owner/repo", "number": 716, "head_sha": "abc123"}
+        state = {
+            "seen_issue_comment_ids": [],
+            "seen_review_comment_ids": [],
+            "seen_review_ids": [],
+            "last_review_poll_at": None,
+        }
+        review_comment_payload = [
+            {
+                "id": 7,
+                "user": {"login": "octocat"},
+                "author_association": "OWNER",
+                "created_at": "2025-01-01T00:00:00Z",
+                "body": "Rename this before merging.",
+                "path": "foo.kt",
+                "line": 1,
+                "commit_id": "abc123",
+                "html_url": "https://example.invalid/comment",
+            }
+        ]
+
+        with patch.object(
+            watch,
+            "gh_api_list_paginated",
+            side_effect=[[], review_comment_payload, []],
+        ), patch.object(
+            watch,
+            "get_unresolved_review_comment_ids",
+            return_value={"ids": set(), "truncated": False},
+        ):
+            new_items, blocking_items = watch.fetch_new_review_items(
+                pr,
+                state,
+                fresh_state=True,
+                authenticated_login="octocat",
+            )
+
+        self.assertEqual(new_items, [])
+        self.assertEqual(blocking_items, [])
+
+    def test_fetch_new_review_items_ignores_codex_review_summary_comment(self):
+        # Codex edits this status table on every review. It never carries a
+        # finding, so it must not resurface as a new review item on every poll.
+        pr = {"repo": "owner/repo", "number": 716, "head_sha": "abc123"}
+        state = {
+            "seen_issue_comment_ids": [],
+            "seen_review_comment_ids": [],
+            "seen_review_ids": [],
+            "last_review_poll_at": None,
+        }
+        issue_payload = [
+            {
+                "id": 3,
+                "user": {"login": "chatgpt-codex-connector[bot]"},
+                "author_association": "NONE",
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T01:00:00Z",
+                "body": "<!-- codex-pull-request-review-summary -->\n\n## Codex Review Summary\n",
+                "html_url": "https://example.invalid/issue-comment",
+            }
+        ]
+
+        with patch.object(
+            watch,
+            "gh_api_list_paginated",
+            side_effect=[issue_payload, [], []],
+        ):
+            new_items, blocking_items = watch.fetch_new_review_items(
+                pr,
+                state,
+                fresh_state=True,
+                authenticated_login="octocat",
+            )
+
+        self.assertEqual(new_items, [])
+        self.assertEqual(blocking_items, [])
+
+    def test_codex_review_summary_status_comment_is_not_actionable(self):
+        item = {
+            "kind": "issue_comment",
+            "author": "chatgpt-codex-connector[bot]",
+            "body": "<!-- codex-pull-request-review-summary -->\n\n## Codex Review Summary\n",
+        }
+
+        self.assertFalse(watch.is_actionable_review_bot_item(item))
+
+    def test_codex_findings_are_still_actionable(self):
+        item = {
+            "kind": "review_comment",
+            "author": "chatgpt-codex-connector[bot]",
+            "body": "**P2** Avoid wrapping the initial stripe onto the right edge",
+        }
+
+        self.assertTrue(watch.is_actionable_review_bot_item(item))
+
     def test_fetch_new_review_items_does_not_block_on_seen_issue_comment_without_edits(self):
         pr = {
-            "repo": "ADUX-sandbox/Compose-Pi",
+            "repo": "owner/repo",
             "number": 716,
             "head_sha": "abc123",
         }
@@ -466,7 +627,7 @@ class RetryEligibilityTests(unittest.TestCase):
 
     def test_fetch_new_review_items_resurfaces_edited_old_issue_comment(self):
         pr = {
-            "repo": "ADUX-sandbox/Compose-Pi",
+            "repo": "owner/repo",
             "number": 716,
             "head_sha": "abc123",
         }
@@ -509,7 +670,7 @@ class RetryEligibilityTests(unittest.TestCase):
 
     def test_fetch_new_review_items_ignores_approved_reviews(self):
         pr = {
-            "repo": "ADUX-sandbox/Compose-Pi",
+            "repo": "owner/repo",
             "number": 716,
             "head_sha": "abc123",
         }
@@ -567,7 +728,7 @@ class RetryEligibilityTests(unittest.TestCase):
 
     def test_fetch_new_review_items_blocks_when_unresolved_lookup_errors(self):
         pr = {
-            "repo": "ADUX-sandbox/Compose-Pi",
+            "repo": "owner/repo",
             "number": 716,
             "head_sha": "abc123",
         }
@@ -757,7 +918,7 @@ class RetryEligibilityTests(unittest.TestCase):
             "pr": {
                 "closed": False,
                 "merged": False,
-                "repo": "ADUX-sandbox/Compose-Pi",
+                "repo": "owner/repo",
                 "head_sha": "abc123",
             },
             "checks": {

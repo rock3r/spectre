@@ -24,11 +24,11 @@ Monitor a PR persistently until one of the terminal states is reached:
 
 - No PR argument — infer from current branch (`--pr auto`)
 - PR number — e.g. `123`
-- PR URL — e.g. `https://github.com/ADUX-sandbox/Compose-Pi/pull/123`
+- PR URL — e.g. `https://github.com/OWNER/REPO/pull/123`
 
 ## Core workflow
 
-0. **Before running any script**, output a single line so the user knows which PR this conversation is tracking — e.g. `Babysitting PR [#123](https://github.com/ADUX-sandbox/Compose-Pi/pull/123)`. Resolve the PR number/URL from the user's input or the current branch first if needed.
+0. **Before running any script**, output a single line so the user knows which PR this conversation is tracking — e.g. `Babysitting PR [#123](https://github.com/OWNER/REPO/pull/123)`. Resolve the PR number/URL from the user's input or the current branch first if needed.
 1. Start with `--once` (default) — it blocks until something needs your attention, then returns.
 2. Run the watcher to snapshot PR/CI/review state.
 3. Inspect the `actions` list in the JSON output.
@@ -55,7 +55,7 @@ python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr auto --retry-faile
 
 # Explicit PR number or URL
 python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr 42 --once
-python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr https://github.com/ADUX-sandbox/Compose-Pi/pull/42 --snapshot
+python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr https://github.com/OWNER/REPO/pull/42 --snapshot
 ```
 
 ## Stop conditions
@@ -69,7 +69,7 @@ python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr https://github.com
 | `stop_session_timeout` | `--max-session-minutes` elapsed (default 90 min) — stop and report |
 | `diagnose_hung_check` | A pending check has exceeded its hung threshold (30 min) — stop and report |
 | `diagnose_merge_conflict` | PR is merge-conflicted (`CONFLICTING` / `DIRTY`) — resolve conflicts before waiting on checks |
-| `diagnose_branch_behind` | PR head is `BEHIND` the base branch — update the branch (rebase or merge base) before waiting on checks; `stop_ready_to_merge` is never emitted while behind |
+| `diagnose_branch_behind` | PR head is `BEHIND` the base branch — merge `origin/main` into the branch before waiting on checks; `stop_ready_to_merge` is never emitted while behind |
 | `diagnose_skipping_checks` | One or more checks completed with `neutral`/`skipping` — investigate why |
 | `wait_codex` | Codex is still reviewing (👀 reaction present on the PR) — do not push or merge |
 
@@ -79,31 +79,30 @@ awaiting approval.
 
 ## Post-merge cleanup (when `stop_pr_closed` and PR is merged)
 
-After a PR is merged, clean up the local environment automatically:
+`stop_pr_closed` also fires for a PR that was closed without merging. Clean up only when the PR was merged: check
+`pr.merged` in the snapshot, or run `gh pr view <n> --json mergedAt` and confirm that `mergedAt` is set. For a PR
+that was closed without merging, keep everything and tell the owner.
 
-1. **If currently on the PR branch, switch away first** (for example to `main`):
+Run every step from the main checkout, never from inside the PR's worktree. If the main checkout itself has the PR
+branch checked out, switch it to `main` first. Skip any step whose worktree or branch does not exist locally.
+
+1. **Remove the linked worktree first**, if `git worktree list` shows the PR's `head_branch` in one:
    ```bash
-   git checkout main
+   git worktree remove <path>
    ```
+   Git refuses when the worktree has uncommitted changes. Do not force it; ask the owner instead. Remove the
+   worktree before deleting the branch, because Git does not delete a branch that a worktree still uses.
 
-2. **Delete the local branch** (squash merges leave it unmerged by default):
+2. **Delete the local branch only when nothing would be lost.** Squash merges leave the branch looking unmerged, so
+   `git branch -d` refuses and `git branch -D` is needed. Force-deleting a branch can lose commits, so first check
+   that the local tip is exactly the head that was merged:
    ```bash
-   git branch -D <head_branch>
+   test "$(git rev-parse <head_branch>)" = "$(gh pr view <n> --json headRefOid --jq .headRefOid)" && git branch -D <head_branch>
    ```
+   If the local tip differs, the branch has commits that were never merged. Keep it, and tell the owner.
 
-3. **Remove the git worktree**, if the branch was checked out in one:
-   ```bash
-   # Find worktrees for this branch
-   git worktree list
-   # Remove if found (adjust path as needed)
-   git worktree remove /path/to/worktree
-   ```
-
-**How to detect a worktree:** run `git worktree list` and check if any entry's branch matches the PR's `head_branch`. If the current working directory IS the worktree, `cd` to the main checkout first before removing it.
-
-**Only delete the local branch and worktree** — never touch remote branches (the remote is already deleted by GitHub's "delete branch on merge" setting or the `--delete-branch` flag used at merge time).
-
-Skip silently if the branch or worktree doesn't exist locally.
+**Only delete the local branch and worktree.** Never touch remote branches. GitHub already deletes the remote branch
+through the "delete branch on merge" setting or the `--delete-branch` flag used at merge time.
 
 ## Push discipline — batch all fixes before pushing (cost control)
 
@@ -112,6 +111,8 @@ Each push triggers new Codex runs. **Never push until all of the following are t
 1. `./gradlew check` passes locally (no CI failures to fix after the push).
 2. Codex is not still reviewing — so its comments, if any, can be collected and fixed in the same push.
 3. You have incorporated all currently visible actionable Codex and human review comments into the pending local fix batch.
+
+Pushing follows the approval rules in the repository's AGENTS.md: push the PR branch only when the owner has approved it.
 
 After pushing the fix batch, resolve all bot threads on GitHub (or reply + resolve when no code change is needed). No open bot threads should remain when the PR is merged.
 
@@ -130,7 +131,7 @@ When GitHub reports merge conflicts while Codex/CI is still running:
 
 1. **Do not push immediately.** Wait until Codex is no longer reviewing.
 2. Snapshot latest status/comments.
-3. If conflict remains, rebase branch onto `origin/main` (or merge main if repo policy prefers).
+3. If the conflict remains, merge `origin/main` into the PR branch. This keeps the branch history intact. Rebase only when the owner asks for it, because a rebase rewrites history and needs a force push.
 4. Resolve conflicts and **in the same fix cycle** apply all actionable Codex and human review comments.
 5. Run `./gradlew check`.
 6. Push once.
@@ -155,7 +156,9 @@ Codex does **not** use a CI check. Instead it uses emoji reactions on the PR:
 - **👀 reaction removed, no new review comments** → Codex is satisfied. Proceed.
 - **👀 reaction removed, review comments posted** → Codex found issues. Fix them locally and batch them into the next push (see push discipline).
 
-The watcher automatically detects the 👀 reaction via the PR reactions API and surfaces `codex_gate` in the snapshot.
+The watcher automatically detects the 👀 reaction via the PR reactions API and surfaces `codex_gate` in the snapshot. If the reactions lookup fails, `codex_gate.status` is `unknown` and the watcher treats Codex as still reviewing.
+
+Codex also keeps a "Codex Review Summary" status table as a PR comment and edits it on every review. It never carries a finding, so the watcher ignores it.
 
 ## Decision rules
 
@@ -215,14 +218,20 @@ Use `--snapshot` for an instant point-in-time view with no waiting.
 
 All modes emit newline-delimited JSON.
 
-- `--once` / `--snapshot` / `--retry-failed-now`: emit a top-level snapshot/result object where `actions` is directly available.
-- `--watch`: emits event envelopes:
-  - `{"event":"snapshot","payload":{"snapshot":{...},"state_file":"...","next_poll_seconds":30}}`
-  - `{"event":"stop","payload":{...}}`
+Where the `actions` list is depends on the mode:
 
-In `--watch`, read actions from `payload.snapshot.actions` for `snapshot` events and `payload.actions` for `stop` events.
+| Mode | Read the actions from |
+|---|---|
+| `--once`, `--snapshot` | top-level `actions` |
+| `--retry-failed-now` | `snapshot.actions`. The top level reports the rerun: `rerun_attempted`, `rerun_count`, `reason`. |
+| `--watch` | `payload.snapshot.actions` on `snapshot` events, `payload.actions` on `stop` events |
 
-`blocking_review_items` contains actionable unresolved inline review comments. When thread-resolution lookup is unavailable, the watcher fails closed: comments whose resolution state is unknown stay blocking regardless of age or commit. While non-empty, `stop_ready_to_merge` is not emitted.
+`--watch` emits event envelopes:
+
+- `{"event":"snapshot","payload":{"snapshot":{...},"state_file":"...","next_poll_seconds":30}}`
+- `{"event":"stop","payload":{...}}`
+
+`blocking_review_items` contains actionable unresolved inline review comments. When thread-resolution lookup is unavailable, the watcher fails closed: comments whose resolution state is unknown stay blocking regardless of age or commit. Comments by the authenticated account (usually the owner) are never reported as new items, but its own unresolved inline threads still block. While non-empty, `stop_ready_to_merge` is not emitted.
 
 Example snapshot payload shape (`--once` / `--snapshot`, or `--watch` under `payload.snapshot`):
 
