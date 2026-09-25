@@ -45,9 +45,9 @@ stops the watcher with an error that names the key.
 | `trusted_author_associations` | `["OWNER", "MEMBER", "COLLABORATOR"]` | Comments from these authors are review items. |
 | `review_bot_login_keywords` | `["codex"]` | Comments from `[bot]` accounts whose login contains one of these words are review items. |
 | `max_session_minutes` | `90` | The default for `--max-session-minutes`. |
+| `require_up_to_date` | `"auto"` | Whether a branch that is behind its base must be updated before merge. `"auto"` reads the base branch's protection and rulesets. `true` or `false` skips that lookup. |
 | `codex.enabled` | `true` | Watch the Codex review bot. |
 | `codex.required` | `false` | Require a Codex review of the head, even on a PR where Codex never posted. |
-| `coderabbit.enabled` | `false` | Wait for CodeRabbit while it reviews, and treat its comments as review items. |
 | `pr_af.enabled` | `false` | Watch the label-triggered PR-AF review. The other `pr_af` keys describe it. |
 | `pr_af.label` | `"pr-af"` | The PR label that asks for a PR-AF review. |
 | `pr_af.workflow_names`, `pr_af.check_names` | `[]` | The names of the PR-AF workflow and check. A name matches either list. |
@@ -55,6 +55,7 @@ stops the watcher with an error that names the key.
 | `pr_af.review_author_login` | `"github-actions[bot]"` | The login that PR-AF posts as. |
 | `pr_af.missing_check_grace_minutes` | `5` | How long a labelled head waits for its PR-AF check to appear. |
 | `cleanup.branch_delete_requires_approval` | `false` | When `true`, ask the owner before you delete a merged branch. |
+| `sync.keep` | `[]` | Paths or globs in this skill folder that belong to the repository. `sync.py` never deletes or overwrites them. `skill-source.json` is always kept. Do not put your own files in this folder unless they are listed here. |
 
 ## The watcher
 
@@ -95,7 +96,7 @@ The output is JSON lines. Where the actions are depends on the mode:
 | `--watch` | `payload.snapshot.actions` on `snapshot` events, `payload.actions` on `stop` events |
 
 Other useful snapshot fields are `checks` (pending, failed, passed and skipping counts, `all_terminal`,
-`required_missing`, and `check_count`), `failed_runs` (with `retry_eligible`), `codex_gate`, `coderabbit_gate`, `pr_af_gate`,
+`required_missing`, and `check_count`), `failed_runs` (with `retry_eligible`), `codex_gate`, `pr_af_gate`,
 `hung_checks`, `new_review_items`, `blocking_review_items`, and `retry_state`.
 
 `blocking_review_items` lists unresolved inline comments. While it is not empty, the watcher never reports the PR
@@ -111,15 +112,14 @@ again.
 |---|---|---|---|
 | `idle` | CI is running and there is nothing to do. | no | no |
 | `wait_codex` | Codex is reviewing, or has not finished a review of the head yet. Do not push or merge. | no | no |
-| `wait_coderabbit` | CodeRabbit is reviewing. Do not push or merge. | no | no |
 | `wait_pr_af` | A PR-AF check for the head is running, or has not appeared yet. | no | no |
 | `process_review_comment` | There are new or unresolved review items. Triage them. | yes | no |
 | `diagnose_ci_failure` | A check failed. Classify it before you act. | yes | no |
 | `retry_failed_checks` | Only retry-eligible workflows failed. Rerun them with `--retry-failed-now`. | yes | no |
 | `diagnose_codex_review` | Codex reports a failed or unknown review status for the head. | yes | no |
-| `request_codex_review` | Codex is required but has not reviewed this PR. Comment `@codex review` on the PR. | yes | no |
+| `request_codex_review` | Codex is required but has not reviewed the head: it never posted on the PR, or its latest review is of an older commit. Comment `@codex review` on the PR. | yes | no |
 | `diagnose_merge_conflict` | The PR is `CONFLICTING` or `DIRTY`. It waits while a review bot runs. | yes | yes |
-| `diagnose_branch_behind` | The branch is behind its base and branch protection wants it updated. It waits while a review bot runs. | yes | yes |
+| `diagnose_branch_behind` | The branch is behind its base, and the base requires up-to-date branches. It waits while a review bot runs. | yes | yes |
 | `diagnose_merge_blocked` | Every check is green, but GitHub still says `BLOCKED` and nothing else explains it. | yes | yes |
 | `diagnose_no_checks` | GitHub reports no check at all for the PR, even after the grace period. | yes | yes |
 | `diagnose_missing_required_checks` | Every check is done, but a check from `required_checks` never passed. See `checks.required_missing`. | yes | yes |
@@ -160,12 +160,10 @@ it when it is done. The watcher reads the reactions into `codex_gate.reviewing` 
 A missing reaction is not proof on its own: right after a push, Codex may not have started. Codex keeps a "Codex
 Review Summary" table on the PR with the status and commit of its latest review. When that table exists, the
 watcher also requires a **Completed** review of the head commit (`codex_gate.head_reviewed`). A PR without the
-table does not have Codex active, so this check does not apply, unless `codex.required` is `true`. The table is a
-status, not a finding, so the watcher never reports it as a review item. When the reactions cannot be read, the
+table does not have Codex active, so this check does not apply, unless `codex.required` is `true`. With
+`codex.required`, the watcher asks for a review (`request_codex_review`) once the checks are done and the grace period
+has passed, when Codex is idle and has not reviewed the head. The table is a status, not a finding, so the watcher never reports it as a review item. When the reactions cannot be read, the
 gate stays closed.
-
-**CodeRabbit** gates a PR only while it shows signs of life on it: a CodeRabbit check or a reaction from its bot.
-While `coderabbit_gate.reviewing` is `true`, do not push or merge.
 
 **PR-AF** runs when the PR has the `pr_af.label` label, and again on every push while the label stays. Its check is
 advisory. A running PR-AF check on the head holds readiness with `wait_pr_af`. A failed, skipped, cancelled, or hung
@@ -198,7 +196,9 @@ No bot thread may be open at merge time.
 
 ## Updating the branch
 
-`diagnose_merge_conflict` and `diagnose_branch_behind` both mean that the branch needs its base merged in.
+`diagnose_merge_conflict` and `diagnose_branch_behind` both mean that the branch needs its base merged in. A branch
+that is only behind its base is not a problem when the base does not require up-to-date branches. The watcher checks
+that for you (`pr.up_to_date_required` in the snapshot) and then does not report it.
 
 1. Wait until no review bot is running. The watcher already does this for you.
 2. Find the real base with `gh pr view <n> --json baseRefName`. Never assume `main`. Fetch that base from the

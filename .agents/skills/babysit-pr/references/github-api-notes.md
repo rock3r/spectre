@@ -8,7 +8,7 @@ timeout, and the watcher decodes all output as UTF-8.
 ### PR metadata
 
 ```bash
-gh pr view --json number,url,state,mergedAt,closedAt,headRefName,headRefOid,headRepository,headRepositoryOwner,mergeable,mergeStateStatus,reviewDecision,labels
+gh pr view --json number,url,state,mergedAt,closedAt,headRefName,headRefOid,headRepository,headRepositoryOwner,baseRefName,mergeable,mergeStateStatus,reviewDecision,labels
 ```
 
 The watcher uses this to find the PR number, URL, branch, head SHA, labels, and the closed, merged, and mergeable
@@ -55,6 +55,18 @@ gh run rerun <run-id> --failed
 
 This reruns only the failed jobs of a run, and the jobs they depend on.
 
+### Up-to-date requirement of the base branch
+
+```bash
+gh api repos/{owner}/{repo}/branches/<base>/protection/required_status_checks
+gh api "repos/{owner}/{repo}/rules/branches/<base>?per_page=100&page=<p>"
+```
+
+The watcher makes these calls only for a PR whose `mergeStateStatus` is `BEHIND`, and only when
+`require_up_to_date` is `"auto"`. It remembers the answer for the rest of the run. The base requires up-to-date
+branches when `strict` is `true`, or when a `required_status_checks` rule has
+`parameters.strict_required_status_checks_policy` set to `true`. A 403 or 404 answer means no such requirement.
+
 ## Review endpoints
 
 ```bash
@@ -67,7 +79,7 @@ gh api "repos/{owner}/{repo}/pulls/<n>/comments?per_page=100&page=<p>"
 # Review submissions. When this call fails, the watcher lists reviews through GraphQL instead.
 gh api "repos/{owner}/{repo}/pulls/<n>/reviews?per_page=100&page=<p>"
 
-# Reactions on the PR (the Codex and CodeRabbit 👀 reactions), all pages
+# Reactions on the PR (the Codex 👀 reaction), all pages
 gh api "repos/{owner}/{repo}/issues/<n>/reactions?per_page=100&page=<p>"
 
 # The authenticated login, so the watcher can skip its own comments
@@ -93,6 +105,7 @@ head.
 | `state` | Detecting closed PRs |
 | `mergedAt` / `closedAt` | Detecting the end state |
 | `headRefName` | Branch name |
+| `baseRefName` | Base branch, for the up-to-date requirement |
 | `headRefOid` | Head SHA for the workflow run lookup |
 | `mergeable` | Detecting conflicts (`CONFLICTING`) |
 | `mergeStateStatus` | Detecting `BEHIND`, `BLOCKED`, `DIRTY`, `DRAFT`, and `UNKNOWN` |
@@ -105,7 +118,7 @@ head.
 |---|---|
 | `bucket` | Pass, fail, pending, and skip classification |
 | `state` | Extra pending detection |
-| `name` / `workflow` | Reports, expected skips, required checks, and the CodeRabbit and PR-AF checks |
+| `name` / `workflow` | Reports, expected skips, required checks, and the PR-AF checks |
 | `link` | Links to failed runs |
 | `startedAt` / `completedAt` | Hung-check detection and the latest PR-AF run. GitHub reports `0001-01-01T00:00:00Z` for a check that has not started. The watcher ignores that value. |
 

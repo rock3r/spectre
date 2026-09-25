@@ -8,12 +8,10 @@
   "trusted_author_associations": ["OWNER", "MEMBER", "COLLABORATOR"],
   "review_bot_login_keywords": ["codex"],
   "max_session_minutes": 90,
+  "require_up_to_date": "auto",
   "codex": {
     "enabled": true,
     "required": false
-  },
-  "coderabbit": {
-    "enabled": false
   },
   "pr_af": {
     "enabled": false,
@@ -26,5 +24,8 @@
   },
   "cleanup": {
     "branch_delete_requires_approval": false
+  },
+  "sync": {
+    "keep": []
   }
 }

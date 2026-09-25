@@ -39,9 +39,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config["trusted_author_associations"], ["OWNER", "MEMBER", "COLLABORATOR"])
         self.assertEqual(config["review_bot_login_keywords"], ["codex"])
         self.assertEqual(config["max_session_minutes"], 90)
+        self.assertEqual(config["require_up_to_date"], "auto")
+        self.assertEqual(config["sync"]["keep"], [])
         self.assertTrue(config["codex"]["enabled"])
         self.assertFalse(config["codex"]["required"])
-        self.assertFalse(config["coderabbit"]["enabled"])
+        self.assertNotIn("coderabbit", config)
         self.assertFalse(config["pr_af"]["enabled"])
         self.assertEqual(config["pr_af"]["label"], "pr-af")
         self.assertEqual(config["pr_af"]["missing_check_grace_minutes"], 5)
@@ -92,11 +94,19 @@ class ConfigTests(unittest.TestCase):
             {"pr_af": {"missing_check_grace_minutes": -1}},
             {"cleanup": {"branch_delete_requires_approval": 1}},
             {"version": "1"},
+            {"require_up_to_date": "yes"},
+            {"require_up_to_date": 1},
+            {"sync": {"keep": "skill-source.json"}},
         ]
         for raw in bad_values:
             with self.subTest(raw=raw):
                 with self.assertRaises(watch.ConfigError):
                     watch.build_config(raw)
+
+    def test_sync_keep_list_is_a_known_key(self):
+        config, warnings = watch.build_config({"sync": {"keep": ["skill-source.json", "extras/*.yaml"]}})
+        self.assertEqual(warnings, [])
+        self.assertEqual(config["sync"]["keep"], ["skill-source.json", "extras/*.yaml"])
 
     def test_top_level_must_be_an_object(self):
         with self.assertRaises(watch.ConfigError):
@@ -138,7 +148,8 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = self._write(tmp_dir, {"local_gate": "npm test", "extra": True})
             stdout, stderr = io.StringIO(), io.StringIO()
-            with patch.object(sys, "argv", ["gh_pr_watch.py", "--config", str(path), "--print-config"]), \
+            with configured(), \
+                    patch.object(sys, "argv", ["gh_pr_watch.py", "--config", str(path), "--print-config"]), \
                     patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", stderr):
                 code = watch.main()
 
@@ -152,7 +163,8 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = self._write(tmp_dir, {"hung_check_minutes": "soon"})
             stderr = io.StringIO()
-            with patch.object(sys, "argv", ["gh_pr_watch.py", "--config", str(path), "--print-config"]), \
+            with configured(), \
+                    patch.object(sys, "argv", ["gh_pr_watch.py", "--config", str(path), "--print-config"]), \
                     patch.object(sys, "stdout", io.StringIO()), patch.object(sys, "stderr", stderr):
                 code = watch.main()
 
@@ -1396,6 +1408,127 @@ class BranchBehindTests(unittest.TestCase):
         self.assertTrue(watch.should_stop_watching(actions))
 
 
+class UpToDateRequirementTests(unittest.TestCase):
+    """BEHIND only means "the head is out of date". It blocks the merge only when the
+    base branch requires up-to-date branches (strict status checks)."""
+
+    def setUp(self):
+        watch._UP_TO_DATE_CACHE.clear()
+        self.addCleanup(watch._UP_TO_DATE_CACHE.clear)
+
+    @staticmethod
+    def _http_error(code):
+        return watch.GhCommandError(f"GitHub CLI command failed: gh api x\nstderr: gh: Not Found (HTTP {code})")
+
+    def _lookup(self, protection, rules, config=None):
+        """Run the auto lookup with fake protection and ruleset answers (a value or an error)."""
+        def fake_json(args, **_kwargs):
+            if isinstance(protection, Exception):
+                raise protection
+            return protection
+
+        def fake_list(endpoint, **_kwargs):
+            if isinstance(rules, Exception):
+                raise rules
+            return rules
+
+        with configured(config or {}), \
+                patch.object(watch, "gh_json", side_effect=fake_json) as json_calls, \
+                patch.object(watch, "gh_api_list_paginated", side_effect=fake_list) as list_calls:
+            result = watch.base_requires_up_to_date("owner/repo", "main")
+        return result, json_calls, list_calls
+
+    def test_behind_branch_is_ready_when_the_base_does_not_require_up_to_date(self):
+        pr = _open_pr(merge_state_status="BEHIND", up_to_date_required=False)
+        self.assertTrue(watch.is_pr_ready_to_merge(
+            pr, _green_checks(), new_review_items=[], checks_terminal_elapsed=120, blocking_review_items=[]))
+        self.assertEqual(_actions_for(pr), ["stop_ready_to_merge"])
+
+    def test_behind_branch_waits_on_codex_without_a_branch_update_when_not_required(self):
+        pr = _open_pr(merge_state_status="BEHIND", up_to_date_required=False)
+        gate = {"reviewing": True, "status": "in_progress", "active": True, "head_reviewed": False}
+        self.assertEqual(_actions_for(pr, codex_gate=gate), ["wait_codex"])
+
+    def test_behind_branch_still_asks_for_an_update_when_required(self):
+        pr = _open_pr(merge_state_status="BEHIND", up_to_date_required=True)
+        self.assertIn("diagnose_branch_behind", _actions_for(pr))
+
+    def test_strict_branch_protection_requires_up_to_date(self):
+        result, _, _ = self._lookup({"strict": True, "contexts": ["check"]}, [])
+        self.assertTrue(result)
+
+    def test_loose_protection_and_no_rules_do_not_require_up_to_date(self):
+        result, _, _ = self._lookup({"strict": False, "contexts": ["check"]}, [])
+        self.assertFalse(result)
+
+    def test_a_strict_ruleset_requires_up_to_date(self):
+        rules = [{"type": "required_status_checks",
+                  "parameters": {"strict_required_status_checks_policy": True, "required_status_checks": []}}]
+        result, _, _ = self._lookup(self._http_error(404), rules)
+        self.assertTrue(result)
+
+    def test_404_and_403_mean_not_required(self):
+        for code in (403, 404):
+            with self.subTest(code=code):
+                watch._UP_TO_DATE_CACHE.clear()
+                result, _, _ = self._lookup(self._http_error(code), self._http_error(code))
+                self.assertFalse(result)
+
+    def test_other_lookup_failures_fail_closed(self):
+        result, _, _ = self._lookup(watch.GhCommandError("GitHub CLI command timed out: gh api x"), [])
+        self.assertTrue(result)
+
+    def test_config_override_skips_the_lookup(self):
+        for setting in (True, False):
+            with self.subTest(setting=setting):
+                result, json_calls, list_calls = self._lookup(
+                    {"strict": not setting}, [], config={"require_up_to_date": setting})
+                self.assertEqual(result, setting)
+                json_calls.assert_not_called()
+                list_calls.assert_not_called()
+
+    def test_the_answer_is_cached_per_repository_and_branch(self):
+        self._lookup({"strict": True}, [])
+        result, json_calls, list_calls = self._lookup({"strict": False}, [])
+        self.assertTrue(result)
+        json_calls.assert_not_called()
+        list_calls.assert_not_called()
+
+    def test_resolve_pr_reads_the_base_branch(self):
+        data = {"number": 21, "url": "https://github.com/owner/repo/pull/21", "state": "OPEN",
+                "headRefOid": "abc123", "headRefName": "feature", "baseRefName": "release/2.x",
+                "mergeable": "MERGEABLE", "mergeStateStatus": "BEHIND", "reviewDecision": "", "labels": []}
+        with patch.object(watch, "gh_json", return_value=data) as fake:
+            pr = watch.resolve_pr("21")
+        self.assertIn("baseRefName", fake.call_args[0][0][-1])
+        self.assertEqual(pr["base_branch"], "release/2.x")
+
+    def _snapshot(self, merge_state_status):
+        pr = {"repo": "owner/repo", "number": 21, "head_sha": "abc123", "labels": [], "base_branch": "main",
+              "closed": False, "merged": False, "mergeable": "MERGEABLE",
+              "merge_state_status": merge_state_status, "review_decision": ""}
+        args = SimpleNamespace(pr="21", repo=None, state_file=None, max_flaky_retries=3)
+        with tempfile.TemporaryDirectory() as tmp, configured(), \
+                patch.object(watch, "resolve_pr", return_value=pr), \
+                patch.object(watch, "default_state_file_for", return_value=watch.Path(tmp) / "s.json"), \
+                patch.object(watch, "get_pr_checks", return_value=[_ci_pass()]), \
+                patch.object(watch, "get_authenticated_login", return_value="octocat"), \
+                patch.object(watch, "collect_codex_gate", return_value=None), \
+                patch.object(watch, "fetch_new_review_items", return_value=([], [])), \
+                patch.object(watch, "base_requires_up_to_date", return_value=False) as lookup:
+            snapshot, _ = watch.collect_snapshot(args)
+        return snapshot, lookup
+
+    def test_snapshot_looks_up_the_requirement_only_for_a_behind_branch(self):
+        snapshot, lookup = self._snapshot("BEHIND")
+        lookup.assert_called_once_with("owner/repo", "main")
+        self.assertFalse(snapshot["pr"]["up_to_date_required"])
+        self.assertNotIn("diagnose_branch_behind", snapshot["actions"])
+
+        snapshot, lookup = self._snapshot("CLEAN")
+        lookup.assert_not_called()
+
+
 class WaitForBotsBeforeBranchUpdateTests(unittest.TestCase):
     """Updating the branch starts new bot reviews, so let running reviews finish first."""
 
@@ -1472,12 +1605,31 @@ class RequiredChecksTests(unittest.TestCase):
         actions = _actions_for(_open_pr(merge_state_status="BLOCKED"), _green_checks(passed_count=0))
         self.assertEqual(actions, ["idle"])
 
-    def test_summary_counts_every_check_that_gh_reported(self):
+    def test_check_count_ignores_expected_skips_and_advisory_checks(self):
+        # check_count must agree with the pass, pending, and fail totals. A check that
+        # those totals ignore cannot make a PR ready, so it must not hide "no checks".
         self.assertEqual(watch.summarize_checks([])["check_count"], 0)
-        checks = [{"name": "build", "bucket": "pass", "state": "SUCCESS"},
-                  {"name": "deploy", "bucket": "skipping", "state": "SKIPPED"}]
-        with configured({"expected_skipped_checks": ["deploy"]}):
-            self.assertEqual(watch.summarize_checks(checks)["check_count"], 2)
+        checks = [
+            {"name": "build", "bucket": "pass", "state": "SUCCESS"},
+            {"name": "deploy", "bucket": "skipping", "state": "SKIPPED"},
+            {"name": "pr-af-review", "workflow": "PR-AF Review", "bucket": "pass", "state": "SUCCESS"},
+        ]
+        with configured(dict(PR_AF_CONFIG, expected_skipped_checks=["deploy"])):
+            self.assertEqual(watch.summarize_checks(checks)["check_count"], 1)
+
+    def test_only_ignored_checks_count_as_no_checks(self):
+        checks = [
+            {"name": "deploy", "bucket": "skipping", "state": "SKIPPED"},
+            {"name": "pr-af-review", "workflow": "PR-AF Review", "bucket": "fail", "state": "FAILURE"},
+        ]
+        with configured(dict(PR_AF_CONFIG, expected_skipped_checks=["deploy"])):
+            summary = watch.summarize_checks(checks)
+        self.assertEqual(summary["check_count"], 0)
+        self.assertEqual(_actions_for(_open_pr(), summary), ["diagnose_no_checks"])
+
+    def test_an_unexpected_skip_still_counts_as_a_check(self):
+        summary = watch.summarize_checks([{"name": "lint", "bucket": "skipping", "state": "SKIPPED"}])
+        self.assertEqual(summary["check_count"], 1)
 
     def test_pr_without_checks_waits_during_the_grace_period(self):
         actions = _actions_for(_open_pr(), _green_checks(passed_count=0, check_count=0),
@@ -1670,6 +1822,42 @@ class CodexSettingsTests(unittest.TestCase):
         self.assertEqual(actions, ["request_codex_review"])
         self.assertTrue(watch.needs_agent_attention(actions))
 
+    STALE = {"reviewing": False, "status": "idle", "active": True, "head_reviewed": False, "head_status": "none"}
+
+    def test_required_codex_with_a_stale_review_is_requested_once_checks_finish(self):
+        # Codex reviewed an older head and is not reviewing now. On a repository where
+        # Codex does not review every push by itself, waiting would only time out.
+        with configured({"codex": {"required": True}}):
+            actions = _actions_for(_open_pr(), codex_gate=self.STALE)
+        self.assertEqual(actions, ["request_codex_review"])
+        self.assertTrue(watch.needs_agent_attention(actions))
+
+    def test_required_codex_with_a_stale_review_waits_while_checks_run_or_in_grace(self):
+        with configured({"codex": {"required": True}}):
+            pending = _actions_for(_open_pr(), _green_checks(all_terminal=False, pending_count=1),
+                                   checks_terminal_elapsed=None, codex_gate=self.STALE)
+            in_grace = _actions_for(_open_pr(), checks_terminal_elapsed=10, codex_gate=self.STALE)
+        self.assertEqual(pending, ["wait_codex"])
+        self.assertEqual(in_grace, ["wait_codex"])
+
+    def test_required_codex_that_is_reviewing_or_running_on_the_head_is_awaited(self):
+        reviewing = dict(self.STALE, reviewing=True, status="in_progress")
+        running = dict(self.STALE, head_status="running")
+        with configured({"codex": {"required": True}}):
+            self.assertEqual(_actions_for(_open_pr(), codex_gate=reviewing), ["wait_codex"])
+            self.assertEqual(_actions_for(_open_pr(), codex_gate=running), ["wait_codex"])
+
+    def test_required_codex_with_an_unreadable_summary_is_not_requested(self):
+        # When the summary comment cannot be read, the watcher does not know whether a
+        # review of the head exists, so it keeps waiting instead of asking for one.
+        unknown = dict(self.STALE, status="unknown")
+        with configured({"codex": {"required": True}}):
+            self.assertEqual(_actions_for(_open_pr(), codex_gate=unknown), ["wait_codex"])
+
+    def test_optional_codex_with_a_stale_review_keeps_waiting(self):
+        with configured():
+            self.assertEqual(_actions_for(_open_pr(), codex_gate=self.STALE), ["wait_codex"])
+
     def test_optional_codex_that_never_showed_up_does_not_block(self):
         absent = {"reviewing": False, "status": "idle", "active": False, "head_reviewed": False,
                   "head_status": "none"}
@@ -1731,90 +1919,40 @@ class ReviewListFallbackTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in new_items], ["5"])
 
 
-class CodeRabbitGateTests(unittest.TestCase):
-    """CodeRabbit gates a PR only while it shows signs of life on it."""
+class RetiredCodeRabbitTests(unittest.TestCase):
+    """The CodeRabbit gate was removed in 2.0.0. A leftover config section only warns."""
 
-    def test_gate_inert_when_no_coderabbit_activity(self):
-        gate = watch.summarize_coderabbit_gate([], [])
-        self.assertFalse(gate["active"])
-        self.assertFalse(gate["reviewing"])
-        self.assertEqual(gate["status"], "idle")
+    LEFTOVER = {"coderabbit": {"enabled": True}}
 
-    def test_gate_ignores_other_bots_reactions(self):
-        reactions = [{"content": "eyes", "user": {"login": "chatgpt-codex-connector[bot]"}}]
-        gate = watch.summarize_coderabbit_gate([], reactions)
-        self.assertFalse(gate["active"])
-        self.assertFalse(gate["reviewing"])
+    def test_leftover_section_is_an_unknown_key_warning(self):
+        config, warnings = watch.build_config(self.LEFTOVER)
+        self.assertEqual(warnings, ["unknown config key 'coderabbit' is ignored"])
+        self.assertNotIn("coderabbit", config)
 
-    def test_gate_reviewing_when_check_pending(self):
-        gate = watch.summarize_coderabbit_gate([{"name": "CodeRabbit", "bucket": "pending", "state": "QUEUED"}], [])
-        self.assertTrue(gate["active"])
-        self.assertTrue(gate["present_check"])
-        self.assertTrue(gate["reviewing"])
-        self.assertEqual(gate["status"], "in_progress")
+    def test_leftover_section_does_not_stop_the_watcher(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = watch.Path(tmp_dir) / "config.json"
+            path.write_text(json.dumps(self.LEFTOVER), encoding="utf-8")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with configured(), \
+                    patch.object(sys, "argv", ["gh_pr_watch.py", "--config", str(path), "--print-config"]), \
+                    patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", stderr):
+                code = watch.main()
+        self.assertEqual(code, 0)
+        self.assertIn("unknown config key 'coderabbit' is ignored", stderr.getvalue())
+        self.assertNotIn("coderabbit", json.loads(stdout.getvalue())["config"])
 
-    def test_gate_reviewing_when_pending_rerun_follows_old_completed_check(self):
-        checks = [
-            {"name": "CodeRabbit", "bucket": "pass", "state": "SUCCESS", "startedAt": "0001-01-01T00:00:00Z"},
-            {"name": "CodeRabbit", "bucket": "pending", "state": "QUEUED", "startedAt": "0001-01-01T00:00:00Z"},
-        ]
-        gate = watch.summarize_coderabbit_gate(checks, [])
-        self.assertTrue(gate["reviewing"])
-        self.assertEqual(gate["status"], "in_progress")
-
-    def test_gate_active_not_reviewing_when_check_success(self):
-        gate = watch.summarize_coderabbit_gate([{"name": "CodeRabbit", "bucket": "pass", "state": "SUCCESS"}], [])
-        self.assertTrue(gate["active"])
-        self.assertFalse(gate["reviewing"])
-        self.assertEqual(gate["status"], "active")
-
-    def test_gate_blocks_when_reactions_are_unknown_after_check_completion(self):
-        gate = watch.summarize_coderabbit_gate([{"name": "CodeRabbit", "bucket": "pass", "state": "SUCCESS"}], None)
-        self.assertTrue(gate["reviewing"])
-        self.assertEqual(gate["status"], "unknown")
-
-    def test_gate_reviewing_when_coderabbit_eyes_reaction_without_check(self):
-        gate = watch.summarize_coderabbit_gate([], [{"content": "eyes", "user": {"login": "coderabbitai[bot]"}}])
-        self.assertTrue(gate["active"])
-        self.assertFalse(gate["present_check"])
-        self.assertTrue(gate["reviewing"])
-
-    def test_gate_active_not_reviewing_for_non_eyes_coderabbit_reaction(self):
-        gate = watch.summarize_coderabbit_gate([], [{"content": "+1", "user": {"login": "coderabbitai[bot]"}}])
-        self.assertTrue(gate["active"])
-        self.assertFalse(gate["reviewing"])
-        self.assertEqual(gate["status"], "active")
-
-    def test_reviewing_coderabbit_blocks_readiness_and_emits_wait_coderabbit(self):
-        gate = {"active": True, "reviewing": True, "status": "in_progress"}
-        actions = _actions_for(_open_pr(), coderabbit_gate=gate)
-        self.assertEqual(actions, ["wait_coderabbit"])
-        self.assertFalse(watch.needs_agent_attention(actions))
-        self.assertFalse(watch.needs_agent_attention(["diagnose_merge_conflict", "wait_coderabbit"]))
-
-    def test_dormant_coderabbit_allows_readiness(self):
-        gate = {"active": False, "reviewing": False, "status": "idle"}
-        self.assertEqual(_actions_for(_open_pr(), coderabbit_gate=gate), ["stop_ready_to_merge"])
-
-    def test_ci_is_not_green_while_coderabbit_reviews(self):
-        snapshot = {
-            "pr": {"review_decision": "APPROVED"},
-            "checks": _green_checks(),
-            "blocking_review_items": [],
-            "checks_terminal_elapsed_seconds": 120,
-            "coderabbit_gate": {"reviewing": True},
-        }
-        self.assertFalse(watch.is_ci_green(snapshot))
-
-    def test_coderabbit_comments_are_findings_only_when_enabled(self):
-        with configured():
+    def test_leftover_section_does_not_make_coderabbit_comments_findings(self):
+        with configured(self.LEFTOVER):
             self.assertFalse(watch.is_actionable_review_bot_login("coderabbitai[bot]"))
-        with configured({"coderabbit": {"enabled": True}}):
-            self.assertTrue(watch.is_actionable_review_bot_login("coderabbitai[bot]"))
+
+    def test_recommend_actions_takes_no_coderabbit_gate(self):
+        with self.assertRaises(TypeError):
+            _actions_for(_open_pr(), coderabbit_gate={"active": True, "reviewing": True})
 
     def _snapshot(self, overrides):
         pr = {
-            "repo": "owner/repo", "number": 21, "head_sha": "abc123",
+            "repo": "owner/repo", "number": 21, "head_sha": "abc123", "labels": [],
             "closed": False, "merged": False, "mergeable": "MERGEABLE",
             "merge_state_status": "CLEAN", "review_decision": "",
         }
@@ -1831,15 +1969,15 @@ class CodeRabbitGateTests(unittest.TestCase):
             snapshot, _ = watch.collect_snapshot(args)
         return snapshot, reactions_lookup
 
-    def test_snapshot_has_no_coderabbit_gate_when_disabled(self):
-        snapshot, _ = self._snapshot({})
-        self.assertIsNone(snapshot["coderabbit_gate"])
-
-    def test_snapshot_shares_one_reactions_lookup_between_gates(self):
-        snapshot, reactions_lookup = self._snapshot({"coderabbit": {"enabled": True}})
-        self.assertTrue(snapshot["coderabbit_gate"]["reviewing"])
-        self.assertIn("wait_coderabbit", snapshot["actions"])
+    def test_snapshot_has_no_coderabbit_gate_and_treats_its_check_like_any_check(self):
+        snapshot, reactions_lookup = self._snapshot(self.LEFTOVER)
+        self.assertNotIn("coderabbit_gate", snapshot)
+        self.assertEqual(snapshot["actions"], ["idle"])
         reactions_lookup.assert_called_once()
+
+    def test_reactions_are_read_only_for_codex(self):
+        _snapshot, reactions_lookup = self._snapshot({"codex": {"enabled": False}})
+        reactions_lookup.assert_not_called()
 
 
 PR_AF_CONFIG = {

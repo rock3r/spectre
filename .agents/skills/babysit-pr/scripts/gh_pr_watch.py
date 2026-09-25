@@ -12,7 +12,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 # Project settings live in `config.json` next to the `scripts/` directory. A missing
 # file or a missing key means "use the default". The defaults match a repository with
@@ -36,15 +36,14 @@ DEFAULT_CONFIG = {
     "review_bot_login_keywords": ["codex"],
     # Default for --max-session-minutes.
     "max_session_minutes": 90,
+    # Whether a PR that is behind its base must be updated before merge: "auto" reads the
+    # base branch's protection and rulesets, true or false skips that lookup.
+    "require_up_to_date": "auto",
     "codex": {
         # Watch the Codex review bot (its 👀 reaction and its review summary).
         "enabled": True,
         # Require a Codex review of the head even when Codex never posted on the PR.
         "required": False,
-    },
-    "coderabbit": {
-        # Wait for CodeRabbit while it shows signs of reviewing the PR.
-        "enabled": False,
     },
     "pr_af": {
         # Watch the label-triggered PR-AF review workflow.
@@ -59,6 +58,11 @@ DEFAULT_CONFIG = {
     "cleanup": {
         # When true, the agent must ask the owner before deleting a merged branch.
         "branch_delete_requires_approval": False,
+    },
+    "sync": {
+        # Paths or globs in the vendored skill folder that belong to the repository.
+        # sync.py never deletes or overwrites them. The watcher itself does not use this.
+        "keep": [],
     },
 }
 
@@ -91,6 +95,10 @@ def _check_optional_string(value):
     return value is None or (isinstance(value, str) and bool(value.strip())), "a non-empty string or null"
 
 
+def _check_up_to_date_setting(value):
+    return value is True or value is False or value == "auto", 'true, false, or "auto"'
+
+
 def _check_string_list(value):
     ok = isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value)
     return ok, "a list of non-empty strings"
@@ -106,12 +114,10 @@ CONFIG_VALIDATORS = {
     "trusted_author_associations": _check_string_list,
     "review_bot_login_keywords": _check_string_list,
     "max_session_minutes": _check_positive_int,
+    "require_up_to_date": _check_up_to_date_setting,
     "codex": {
         "enabled": _check_bool,
         "required": _check_bool,
-    },
-    "coderabbit": {
-        "enabled": _check_bool,
     },
     "pr_af": {
         "enabled": _check_bool,
@@ -124,6 +130,9 @@ CONFIG_VALIDATORS = {
     },
     "cleanup": {
         "branch_delete_requires_approval": _check_bool,
+    },
+    "sync": {
+        "keep": _check_string_list,
     },
 }
 
@@ -261,11 +270,11 @@ CODEX_BOT_LOGINS = {
     "chatgpt-codex-connector",
 }
 
-# CodeRabbit posts as coderabbitai[bot] and may add a "CodeRabbit" status check.
-CODERABBIT_KEYWORD = "coderabbit"
 STATE_STALENESS_RESET_SECONDS = 2 * 60 * 60
 
 _AUTHENTICATED_LOGIN_CACHE = None
+# (repo, base branch) -> whether the base requires up-to-date branches.
+_UP_TO_DATE_CACHE = {}
 
 
 class GhCommandError(RuntimeError):
@@ -425,7 +434,7 @@ def parse_pr_spec(pr_spec):
 def pr_view_fields():
     return (
         "number,url,state,mergedAt,closedAt,headRefName,headRefOid,"
-        "headRepository,headRepositoryOwner,mergeable,mergeStateStatus,reviewDecision,labels"
+        "headRepository,headRepositoryOwner,baseRefName,mergeable,mergeStateStatus,reviewDecision,labels"
     )
 
 
@@ -462,6 +471,7 @@ def resolve_pr(pr_spec, repo_override=None):
         "repo": repo,
         "head_sha": str(data.get("headRefOid") or ""),
         "head_branch": str(data.get("headRefName") or ""),
+        "base_branch": str(data.get("baseRefName") or ""),
         "state": state,
         "merged": merged,
         "closed": closed,
@@ -657,6 +667,7 @@ def summarize_checks(checks):
     failed_count = 0
     passed_count = 0
     skipping_count = 0
+    check_count = 0
     for check in checks:
         # PR-AF is advisory: its own gate reports it, and its result is never a CI failure.
         if is_optional_review_check(check):
@@ -675,6 +686,7 @@ def summarize_checks(checks):
             if bucket == "skipping" and is_expected_skipped_check(check):
                 continue
             skipping_count += 1
+        check_count += 1
     return {
         "pending_count": pending_count,
         "failed_count": failed_count,
@@ -682,8 +694,9 @@ def summarize_checks(checks):
         "skipping_count": skipping_count,
         "all_terminal": pending_count == 0,
         "required_missing": missing_required_checks(checks),
-        # Every check gh reported, including expected skips and advisory checks.
-        "check_count": len(checks),
+        # The checks that these totals judge. Advisory checks and expected skips are left
+        # out: they can never make a PR ready, so they must not hide "no checks".
+        "check_count": check_count,
     }
 
 
@@ -1155,15 +1168,9 @@ def classify_codex_review_status(status_text):
     return "failed"
 
 
-def collect_codex_gate(pr, reactions=None):
-    """Codex's review state for the PR: the 👀 reaction plus proof of a review of the head.
-
-    `reactions` is the PR's issue-reactions list, shared with other gates. When it is
-    not given, this function fetches it.
-    """
-    if reactions is None:
-        reactions = get_pr_issue_reactions(pr["repo"], pr["number"])
-    codex_gate = summarize_codex_gate(reactions)
+def collect_codex_gate(pr):
+    """Codex's review state for the PR: the 👀 reaction plus proof of a review of the head."""
+    codex_gate = summarize_codex_gate(get_pr_issue_reactions(pr["repo"], pr["number"]))
     try:
         issue_comments = gh_api_list_paginated(comment_endpoints(pr["repo"], pr["number"])["issue_comment"])
         codex_gate.update(summarize_codex_head_review(issue_comments, pr["head_sha"]))
@@ -1171,66 +1178,6 @@ def collect_codex_gate(pr, reactions=None):
         # Without the summary comment we cannot prove the head was reviewed: treat as unknown.
         codex_gate.update({"status": "unknown", "active": True, "head_reviewed": False, "head_status": "none"})
     return codex_gate
-
-
-def is_coderabbit_login(login):
-    return CODERABBIT_KEYWORD in str(login or "").lower()
-
-
-def is_coderabbit_name(name):
-    return CODERABBIT_KEYWORD in str(name or "").lower()
-
-
-def _bot_has_any_reaction(reactions, login_predicate):
-    if not isinstance(reactions, list):
-        return False
-    for reaction in reactions:
-        if not isinstance(reaction, dict):
-            continue
-        user = reaction.get("user") or {}
-        if login_predicate(str(user.get("login") or "")):
-            return True
-    return False
-
-
-def summarize_coderabbit_gate(checks, reactions):
-    """Presence-conditional gate for CodeRabbit.
-
-    CodeRabbit gates a PR only when it shows signs of life: a CodeRabbit check or a
-    reaction from the CodeRabbit bot. Its comments block merge through the normal
-    review-item path. When CodeRabbit is dormant the gate does nothing, so the
-    watcher stays correct if CodeRabbit is removed from the repository.
-
-    `reviewing` is true while its check is pending, or while it has a 👀 reaction on
-    the PR. Other reactions count as a sign of life, not as "still reviewing".
-    `reactions` is None when the reactions lookup failed.
-    """
-    cr_checks = [
-        check for check in checks or []
-        if isinstance(check, dict)
-        and (is_coderabbit_name(check.get("name")) or is_coderabbit_name(check.get("workflow")))
-    ]
-    check_present = bool(cr_checks)
-    # Any pending CodeRabbit check means it is still reviewing, whatever the order of
-    # an older completed entry in the `gh pr checks` output.
-    check_pending = any(is_pending_check(check) for check in cr_checks)
-    reactions_unknown = reactions is None
-    has_eyes = _bot_has_eyes_reaction(reactions, is_coderabbit_login)
-    has_any_reaction = _bot_has_any_reaction(reactions, is_coderabbit_login)
-
-    active = check_present or has_any_reaction
-    # Once CodeRabbit has a check, a failed reaction lookup cannot prove that its
-    # review reaction is gone. Fail closed until reactions can be read again.
-    reviewing = check_pending or has_eyes or (check_present and reactions_unknown)
-    if reactions_unknown and check_present:
-        status = "unknown"
-    elif reviewing:
-        status = "in_progress"
-    elif active:
-        status = "active"
-    else:
-        status = "idle"
-    return {"active": active, "present_check": check_present, "reviewing": reviewing, "status": status}
 
 
 def get_authenticated_login():
@@ -1551,10 +1498,7 @@ def is_actionable_review_bot_login(login):
     if not is_bot_login(login):
         return False
     lower_login = login.lower()
-    keywords = list(CONFIG["review_bot_login_keywords"])
-    if CONFIG["coderabbit"]["enabled"]:
-        keywords.append(CODERABBIT_KEYWORD)
-    return any(keyword.lower() in lower_login for keyword in keywords)
+    return any(keyword.lower() in lower_login for keyword in CONFIG["review_bot_login_keywords"])
 
 
 def is_pr_af_review_item(item, pr_af_review_ids=None, pr_af_check_present=True):
@@ -1823,6 +1767,23 @@ def codex_required():
     return bool(CONFIG["codex"]["enabled"]) and bool(CONFIG["codex"]["required"])
 
 
+def codex_review_stale_but_required(codex_gate):
+    """The config requires Codex, and its latest review is of another commit.
+
+    Codex is active on the PR, is not reviewing now, and has no row at all for the head
+    in its summary table.
+    """
+    return (
+        codex_required()
+        and bool(codex_gate)
+        and bool(codex_gate.get("active"))
+        and not bool(codex_gate.get("reviewing"))
+        and not bool(codex_gate.get("head_reviewed"))
+        and str(codex_gate.get("head_status") or "") == "none"
+        and str(codex_gate.get("status") or "") != "unknown"
+    )
+
+
 def codex_missing_but_required(codex_gate):
     """The config requires Codex, but Codex has not shown up on this PR at all."""
     if not codex_required():
@@ -1839,7 +1800,6 @@ def is_pr_ready_to_merge(
     checks_terminal_elapsed=None,
     blocking_review_items=None,
     codex_gate=None,
-    coderabbit_gate=None,
     pr_af_gate=None,
 ):
     if pr["closed"] or pr["merged"]:
@@ -1860,7 +1820,7 @@ def is_pr_ready_to_merge(
         return False
     if str(pr.get("mergeable") or "") != "MERGEABLE":
         return False
-    if str(pr.get("merge_state_status") or "") in MERGE_CONFLICT_OR_BLOCKING_STATES:
+    if merge_state_blocks_readiness(pr):
         return False
     if str(pr.get("review_decision") or "") in MERGE_BLOCKING_REVIEW_DECISIONS:
         return False
@@ -1869,8 +1829,6 @@ def is_pr_ready_to_merge(
     if codex_waiting_for_head_review(codex_gate) or codex_review_failed(codex_gate):
         return False
     if codex_required() and not (codex_gate and codex_gate.get("head_reviewed")):
-        return False
-    if coderabbit_gate and bool(coderabbit_gate.get("reviewing")):
         return False
     if pr_af_holds_readiness(pr_af_gate):
         return False
@@ -1887,7 +1845,80 @@ def is_pr_ready_to_merge(
 
 
 def is_branch_behind(pr):
-    return str(pr.get("merge_state_status") or "") in MERGE_BEHIND_STATES
+    """The branch is behind its base and the base requires it to be up to date.
+
+    GitHub reports BEHIND for any out-of-date head. It blocks the merge only when the
+    base branch requires strict (up-to-date) status checks. Without the lookup result
+    the watcher assumes it does.
+    """
+    if str(pr.get("merge_state_status") or "") not in MERGE_BEHIND_STATES:
+        return False
+    return pr.get("up_to_date_required", True) is not False
+
+
+def merge_state_blocks_readiness(pr):
+    state = str(pr.get("merge_state_status") or "")
+    if state in MERGE_BEHIND_STATES:
+        return is_branch_behind(pr)
+    return state in MERGE_CONFLICT_OR_BLOCKING_STATES
+
+
+def _is_not_found_or_forbidden(err):
+    return re.search(r"HTTP 40[34]\b", str(err)) is not None
+
+
+def branch_protection_requires_up_to_date(repo, branch):
+    endpoint = f"repos/{repo}/branches/{quote(branch, safe='')}/protection/required_status_checks"
+    try:
+        data = gh_json(["api", endpoint])
+    except GhCommandError as err:
+        # 404: no protection or no required checks. 403: the token cannot read the
+        # protection settings. Neither shows a strict requirement.
+        if _is_not_found_or_forbidden(err):
+            return False
+        raise
+    return isinstance(data, dict) and data.get("strict") is True
+
+
+def rulesets_require_up_to_date(repo, branch):
+    endpoint = f"repos/{repo}/rules/branches/{quote(branch, safe='')}"
+    try:
+        rules = gh_api_list_paginated(endpoint)
+    except GhCommandError as err:
+        if _is_not_found_or_forbidden(err):
+            return False
+        raise
+    for rule in rules or []:
+        if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
+            continue
+        parameters = rule.get("parameters") or {}
+        if parameters.get("strict_required_status_checks_policy") is True:
+            return True
+    return False
+
+
+def base_requires_up_to_date(repo, branch):
+    """Whether the base branch requires a PR to be up to date before it can merge.
+
+    The config can answer directly with true or false. With "auto" the watcher reads the
+    branch protection and the rulesets once per run. A failed lookup other than 403 or
+    404 counts as "required", so the watcher never reports an unmergeable PR as ready.
+    """
+    setting = CONFIG["require_up_to_date"]
+    if setting is True or setting is False:
+        return setting
+    if not branch:
+        return True
+    key = (repo, branch)
+    if key not in _UP_TO_DATE_CACHE:
+        try:
+            _UP_TO_DATE_CACHE[key] = (
+                branch_protection_requires_up_to_date(repo, branch)
+                or rulesets_require_up_to_date(repo, branch)
+            )
+        except GhCommandError:
+            return True
+    return _UP_TO_DATE_CACHE[key]
 
 
 def is_merge_blocked_without_reason(pr, checks_summary, checks_terminal_elapsed):
@@ -2066,7 +2097,6 @@ def recommend_actions(
     checks_terminal_elapsed=None,
     blocking_review_items=None,
     codex_gate=None,
-    coderabbit_gate=None,
     pr_af_gate=None,
 ):
     actions = []
@@ -2098,7 +2128,6 @@ def recommend_actions(
         checks_terminal_elapsed=checks_terminal_elapsed,
         blocking_review_items=blocking_review_items,
         codex_gate=codex_gate,
-        coderabbit_gate=coderabbit_gate,
         pr_af_gate=pr_af_gate,
     ):
         actions.append("stop_ready_to_merge")
@@ -2109,7 +2138,13 @@ def recommend_actions(
     elif blocking_review_items:
         actions.append("process_review_comment")
 
-    if codex_gate and (bool(codex_gate.get("reviewing")) or codex_waiting_for_head_review(codex_gate)):
+    if codex_review_stale_but_required(codex_gate) and checks_summary["all_terminal"] and grace_period_elapsed(
+        checks_terminal_elapsed
+    ):
+        # Codex reviewed an older head and is idle. Where Codex does not review every push
+        # by itself, only a request brings a review of this head.
+        actions.append("request_codex_review")
+    elif codex_gate and (bool(codex_gate.get("reviewing")) or codex_waiting_for_head_review(codex_gate)):
         actions.append("wait_codex")
     elif codex_review_failed(codex_gate):
         actions.append("diagnose_codex_review")
@@ -2119,9 +2154,6 @@ def recommend_actions(
             actions.append("request_codex_review")
         else:
             actions.append("wait_codex")
-
-    if coderabbit_gate and bool(coderabbit_gate.get("reviewing")):
-        actions.append("wait_coderabbit")
 
     if pr_af_holds_readiness(pr_af_gate):
         actions.append("wait_pr_af")
@@ -2172,6 +2204,8 @@ def collect_snapshot(args):
 
     now = int(time.time())
     reset_state_for_new_head_sha(state, pr["head_sha"])
+    if str(pr.get("merge_state_status") or "") in MERGE_BEHIND_STATES:
+        pr["up_to_date_required"] = base_requires_up_to_date(pr["repo"], pr.get("base_branch") or "")
 
     # `gh pr checks -R <repo>` requires an explicit PR/branch/url argument.
     # After resolving `--pr auto`, reuse the concrete PR number.
@@ -2194,12 +2228,7 @@ def collect_snapshot(args):
         authenticated_login = None
     # Read Codex's state before scanning review comments. Codex posts its findings before it
     # marks the head reviewed, so this order can never pair "reviewed" with a stale scan.
-    # Both review-bot gates read the PR's reactions, so fetch them once.
-    reactions = None
-    if CONFIG["codex"]["enabled"] or CONFIG["coderabbit"]["enabled"]:
-        reactions = get_pr_issue_reactions(pr["repo"], pr["number"])
-    codex_gate = collect_codex_gate(pr, reactions=reactions) if CONFIG["codex"]["enabled"] else None
-    coderabbit_gate = summarize_coderabbit_gate(checks, reactions) if CONFIG["coderabbit"]["enabled"] else None
+    codex_gate = collect_codex_gate(pr) if CONFIG["codex"]["enabled"] else None
     new_review_items, blocking_review_items = fetch_new_review_items(
         pr,
         state,
@@ -2246,7 +2275,6 @@ def collect_snapshot(args):
         checks_terminal_elapsed=checks_terminal_elapsed,
         blocking_review_items=blocking_review_items,
         codex_gate=codex_gate,
-        coderabbit_gate=coderabbit_gate,
         pr_af_gate=pr_af_gate,
     )
 
@@ -2260,7 +2288,6 @@ def collect_snapshot(args):
         "checks": checks_summary,
         "failed_runs": failed_runs,
         "codex_gate": codex_gate,
-        "coderabbit_gate": coderabbit_gate,
         "pr_af_gate": pr_af_gate,
         "hung_checks": hung_checks,
         "new_review_items": new_review_items,
@@ -2368,7 +2395,6 @@ def is_ci_green(snapshot):
     review_decision = str(pr.get("review_decision") or "")
     codex_gate = snapshot.get("codex_gate") or {}
     codex_reviewing = bool(codex_gate.get("reviewing"))
-    coderabbit_reviewing = bool((snapshot.get("coderabbit_gate") or {}).get("reviewing"))
     pr_af_running = str((snapshot.get("pr_af_gate") or {}).get("status") or "") == "in_progress"
     return (
         bool(checks.get("all_terminal"))
@@ -2378,7 +2404,6 @@ def is_ci_green(snapshot):
         and not blocking_review_items
         and review_decision not in MERGE_BLOCKING_REVIEW_DECISIONS
         and not codex_reviewing
-        and not coderabbit_reviewing
         and not pr_af_running
     )
 
@@ -2410,7 +2435,6 @@ def snapshot_change_key(snapshot):
         ),
         tuple(snapshot.get("actions") or []),
         bool(codex_gate.get("reviewing")),
-        bool((snapshot.get("coderabbit_gate") or {}).get("reviewing")),
         str((snapshot.get("pr_af_gate") or {}).get("status") or ""),
         str((snapshot.get("pr_af_gate") or {}).get("conclusion") or ""),
         # Include whether the checks-terminal grace period is still active.
@@ -2433,7 +2457,6 @@ def _grace_period_active(snapshot):
 # Waits for a review bot that is still working on the current head.
 BOT_WAIT_ACTIONS = {
     "wait_codex",
-    "wait_coderabbit",
     "wait_pr_af",
 }
 PASSIVE_WAIT_ACTIONS = {"idle"} | BOT_WAIT_ACTIONS
