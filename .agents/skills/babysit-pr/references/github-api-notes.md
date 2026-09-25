@@ -1,34 +1,42 @@
-# GitHub CLI / API Notes For `babysit-pr`
+# GitHub CLI and API notes for `babysit-pr`
 
-## Primary commands used
+This page lists the `gh` calls that the watcher makes and the fields that it reads. Every call has a 60-second
+timeout, and the watcher decodes all output as UTF-8.
+
+## Commands
 
 ### PR metadata
 
 ```bash
-gh pr view --json number,url,state,mergedAt,closedAt,headRefName,headRefOid,headRepository,headRepositoryOwner,mergeable,mergeStateStatus,reviewDecision
+gh pr view --json number,url,state,mergedAt,closedAt,headRefName,headRefOid,headRepository,headRepositoryOwner,mergeable,mergeStateStatus,reviewDecision,labels
 ```
 
-Used to resolve PR number, URL, branch, head SHA, and closed/merged/mergeable state.
+The watcher uses this to find the PR number, URL, branch, head SHA, labels, and the closed, merged, and mergeable
+state.
 
-### PR checks summary
+### PR checks
 
 ```bash
-gh pr checks --json name,state,bucket,link,workflow,event,startedAt,completedAt
+gh pr checks <n> --json name,state,bucket,link,workflow,event,startedAt,completedAt
 ```
 
-Used to compute pending/failed/passed counts and whether the current CI round is terminal.
-`bucket` values: `pass`, `fail`, `pending`, `skipping`, `cancel`. The watcher counts `cancel` as failed.
+The watcher uses this to count pending, failed, passed, and skipped checks, and to tell whether the current CI round
+is done. `bucket` values are `pass`, `fail`, `pending`, `skipping`, and `cancel`. The watcher counts `cancel` as a
+failure.
 
-`gh pr checks` can exit 1 (a check failed) or 8 (checks are pending) and still print the requested JSON.
-The watcher reads that JSON as check state. It still reports an error when one of those exit codes comes without JSON.
+`gh pr checks` exits with code 1 when a check failed and with code 8 while checks are pending. In both cases it
+still prints the requested JSON, so the watcher reads that JSON. A PR without any check also makes it exit with code
+1, with no JSON and the message "no checks reported". The watcher reads that as an empty check list. Without JSON in
+any other case, or with any other non-zero exit code, the call counts as failed.
 
-### Workflow runs for head SHA
+### Workflow runs for the head SHA
 
 ```bash
-gh api repos/{owner}/{repo}/actions/runs -X GET -f head_sha=<sha> -f per_page=100
+gh api repos/{owner}/{repo}/actions/runs -X GET -f head_sha=<sha> -f per_page=100 -f event=pull_request
 ```
 
-Used to discover failed workflow runs and rerunnable run IDs.
+The watcher uses this to find failed workflow runs and the run IDs to rerun. It keeps only the latest run of each
+workflow.
 
 ### Failed log inspection
 
@@ -37,60 +45,77 @@ gh run view <run-id> --json jobs,name,workflowName,conclusion,status,url,headSha
 gh run view <run-id> --log-failed
 ```
 
-Used to classify branch-related vs. flaky/unrelated failures.
+Use these to tell a branch-related failure from a flaky or unrelated one.
 
-### Retry failed jobs only
+### Rerun failed jobs only
 
 ```bash
 gh run rerun <run-id> --failed
 ```
 
-Reruns only failed jobs (and their dependencies) for a workflow run.
+This reruns only the failed jobs of a run, and the jobs they depend on.
 
-## Review-related endpoints
+## Review endpoints
 
 ```bash
-# Issue comments on PR
-gh api repos/{owner}/{repo}/issues/<pr_number>/comments?per_page=100
+# Issue comments on the PR, including the Codex review summary
+gh api "repos/{owner}/{repo}/issues/<n>/comments?per_page=100&page=<p>"
 
-# Inline PR review comments
-gh api repos/{owner}/{repo}/pulls/<pr_number>/comments?per_page=100
+# Inline review comments
+gh api "repos/{owner}/{repo}/pulls/<n>/comments?per_page=100&page=<p>"
 
-# Review submissions
-gh api repos/{owner}/{repo}/pulls/<pr_number>/reviews?per_page=100
+# Review submissions. When this call fails, the watcher lists reviews through GraphQL instead.
+gh api "repos/{owner}/{repo}/pulls/<n>/reviews?per_page=100&page=<p>"
+
+# Reactions on the PR (the Codex and CodeRabbit 👀 reactions), all pages
+gh api "repos/{owner}/{repo}/issues/<n>/reactions?per_page=100&page=<p>"
+
+# The authenticated login, so the watcher can skip its own comments
+gh api user
 ```
 
-## JSON fields consumed by the watcher
+The watcher reads unresolved review threads through GraphQL (`pullRequest.reviewThreads`, 100 threads per page,
+100 comments per thread). A GraphQL response with `errors` or without data is a failed lookup, never "no open
+threads". When the lookup fails, every actionable inline comment blocks.
+
+With PR-AF enabled, the watcher also reads the last 20 label and unlabel events of a labelled PR through GraphQL
+(`pullRequest.timelineItems`). It uses them to notice that the PR-AF label was removed and added again on the same
+head.
+
+## JSON fields the watcher reads
 
 ### `gh pr view`
 
 | Field | Used for |
 |---|---|
 | `number` | Identifying the PR |
-| `url` | Extracting `owner/repo` |
+| `url` | Finding `owner/repo` |
 | `state` | Detecting closed PRs |
-| `mergedAt` / `closedAt` | Terminal state detection |
+| `mergedAt` / `closedAt` | Detecting the end state |
 | `headRefName` | Branch name |
-| `headRefOid` | Head SHA for workflow run lookup |
-| `mergeable` | Merge conflict detection |
-| `mergeStateStatus` | Blocking state detection (`BLOCKED`, `DIRTY`, `DRAFT`) |
+| `headRefOid` | Head SHA for the workflow run lookup |
+| `mergeable` | Detecting conflicts (`CONFLICTING`) |
+| `mergeStateStatus` | Detecting `BEHIND`, `BLOCKED`, `DIRTY`, `DRAFT`, and `UNKNOWN` |
 | `reviewDecision` | Approval gating (`REVIEW_REQUIRED`, `CHANGES_REQUESTED`) |
+| `labels` | The PR-AF label |
 
 ### `gh pr checks`
 
 | Field | Used for |
 |---|---|
-| `bucket` | Pass/fail/pending classification |
-| `state` | Supplementary pending detection |
-| `name` / `workflow` | Human-readable failure reporting |
-| `link` | Deep-linking to failed runs |
+| `bucket` | Pass, fail, pending, and skip classification |
+| `state` | Extra pending detection |
+| `name` / `workflow` | Reports, expected skips, required checks, and the CodeRabbit and PR-AF checks |
+| `link` | Links to failed runs |
+| `startedAt` / `completedAt` | Hung-check detection and the latest PR-AF run. GitHub reports `0001-01-01T00:00:00Z` for a check that has not started. The watcher ignores that value. |
 
 ### Actions runs API (`workflow_runs[]`)
 
 | Field | Used for |
 |---|---|
 | `id` | Run ID for rerun commands |
-| `name` / `display_title` | Workflow name in failure report |
+| `workflow_id` | Keeping only the latest run of each workflow |
+| `name` / `display_title` | Workflow name in the failure report |
 | `status` / `conclusion` | Failure classification |
-| `html_url` | Link to run in CI report |
-| `head_sha` | Filtering runs to current commit |
+| `html_url` | Link to the run |
+| `head_sha` | Keeping only runs for the current commit |

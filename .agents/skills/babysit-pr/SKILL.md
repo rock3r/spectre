@@ -1,224 +1,92 @@
 ---
 name: babysit-pr
 description: >
-  Babysit a GitHub pull request after creation by continuously polling CI checks/workflow
-  runs, new review comments, and mergeability state until the PR is ready to merge (or
-  merged/closed). Diagnose failures, retry likely flaky failures up to 3 times, auto-fix
-  and push branch-related issues when appropriate, and stop only when user help is required
-  (e.g. CI infrastructure issues, exhausted flaky retries, or ambiguous/blocking review
-  feedback). Use when the user asks to monitor a PR, watch CI, handle review comments, or
-  keep an eye on failures and feedback on an open PR.
-allowed-tools: Bash(python3 */skills/babysit-pr/scripts/*), Bash(gh pr *), Bash(gh run *), Bash(gh api *), Bash(git fetch *), Bash(git rebase *), Bash(git merge *), Bash(git checkout *), Bash(git switch *), Bash(git push *), Bash(git commit *), Bash(git diff *), Bash(git log *), Bash(git status), Bash(git branch *), Bash(git worktree *), Bash(./gradlew check *), Read, Edit
-metadata:
-  internal: true
+  Use when asked to watch, monitor, or babysit an open pull request: poll CI and reviews until it is ready to
+  merge, fix branch-caused failures, retry flaky runs, and stop when a human decision is needed.
 ---
 
-# PR Babysitter
+# PR babysitter
 
-Monitor a PR persistently until one of the terminal states is reached:
-- PR merged or closed
-- CI fully green, no unaddressed review comments, no merge conflicts
-- A situation requiring user intervention
+This skill watches a PR until one of three things happens:
 
-## Inputs
+- the PR is merged or closed;
+- CI is green, no review threads are unresolved, and there are no conflicts;
+- something needs the owner.
 
-- No PR argument — infer from current branch (`--pr auto`)
-- PR number — e.g. `123`
-- PR URL — e.g. `https://github.com/OWNER/REPO/pull/123`
+The watcher script does the polling. You diagnose, fix, and triage. The watcher is the only authority on
+readiness. Use `gh pr checks`, `gh pr view`, and similar commands only to diagnose a state that the watcher
+reported. Never use them to decide that a PR is green. If the watcher does not work, report that as a tooling
+problem. Do not replace it with your own polling.
 
-## Core workflow
+## Before you start
 
-0. **Before running any script**, output a single line so the user knows which PR this conversation is tracking — e.g. `Babysitting PR [#123](https://github.com/OWNER/REPO/pull/123)`. Resolve the PR number/URL from the user's input or the current branch first if needed.
-1. Start with `--once` (default) — it blocks until something needs your attention, then returns.
-2. Run the watcher to snapshot PR/CI/review state.
-3. Inspect the `actions` list in the JSON output.
-4. Diagnose CI failures — classify as branch-related (fix and push) vs. flaky (retry).
-5. Process actionable review comments from trusted humans and Codex.
-6. Verify mergeability on each loop.
-7. After any push, relaunch `--watch` in the same turn.
-8. Continue until a terminal stop condition is reached.
+1. Read `config.json` in this skill folder, or run the watcher with `--print-config`. It tells you the project's
+   local gate, the checks it expects, the review bots that gate a merge, and the cleanup rules. The
+   [config table](#project-config) explains each key.
+2. Check that the `gh` CLI is installed and authenticated: `gh auth status`.
+3. Tell the owner which PR you are tracking, with its link.
+4. Before you edit anything, check that you are in the right checkout. `HEAD` must be the PR's `head_branch` at
+   its `head_sha` from the snapshot. If you started from another branch, check the PR branch out in its own
+   worktree first.
 
-## Key commands
+## Project config
+
+The file is `.agents/skills/babysit-pr/config.json`. The sync script creates it from `config.example.json` and
+never overwrites it. A missing key uses its default. An unknown key prints a warning. A value of the wrong type
+stops the watcher with an error that names the key.
+
+| Key | Default | What it means for you |
+|---|---|---|
+| `local_gate` | `null` | The command to run before every push, for example `./gradlew check`. When it is `null`, use the check command that the repository's own docs name. |
+| `expected_skipped_checks` | `[]` | Check names that are skipped on every PR by design. The watcher ignores their `skipping` result. |
+| `required_checks` | `[]` | Check names that must pass before the PR is ready. |
+| `retry_eligible_workflow_keywords` | `["e2e"]` | The watcher reruns failed workflows whose name contains one of these words. Every other failure needs a diagnosis first. |
+| `hung_check_minutes` | `30` | A check that stays pending longer than this is reported as hung. |
+| `trusted_author_associations` | `["OWNER", "MEMBER", "COLLABORATOR"]` | Comments from these authors are review items. |
+| `review_bot_login_keywords` | `["codex"]` | Comments from `[bot]` accounts whose login contains one of these words are review items. |
+| `max_session_minutes` | `90` | The default for `--max-session-minutes`. |
+| `codex.enabled` | `true` | Watch the Codex review bot. |
+| `codex.required` | `false` | Require a Codex review of the head, even on a PR where Codex never posted. |
+| `coderabbit.enabled` | `false` | Wait for CodeRabbit while it reviews, and treat its comments as review items. |
+| `pr_af.enabled` | `false` | Watch the label-triggered PR-AF review. The other `pr_af` keys describe it. |
+| `pr_af.label` | `"pr-af"` | The PR label that asks for a PR-AF review. |
+| `pr_af.workflow_names`, `pr_af.check_names` | `[]` | The names of the PR-AF workflow and check. A name matches either list. |
+| `pr_af.review_body_markers` | `[]` | Text that marks a comment as a PR-AF finding. |
+| `pr_af.review_author_login` | `"github-actions[bot]"` | The login that PR-AF posts as. |
+| `pr_af.missing_check_grace_minutes` | `5` | How long a labelled head waits for its PR-AF check to appear. |
+| `cleanup.branch_delete_requires_approval` | `false` | When `true`, ask the owner before you delete a merged branch. |
+
+## The watcher
+
+Run these from the repository root:
 
 ```bash
-# Wait until something needs attention, then return one snapshot (default)
+# Block until something needs attention, then return one snapshot (the default mode)
 python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr auto --once
 
-# Instant snapshot of current state (no waiting)
+# Take an instant snapshot, without waiting
 python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr auto --snapshot
 
-# Continuously poll, emitting JSONL snapshots (for streaming-capable consumers)
+# Stream snapshots as JSON lines until a terminal action
 python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr auto --watch
 
-# Trigger a rerun of failed jobs for the current SHA
+# Rerun the failed jobs of retry-eligible workflows for the current head SHA
 python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr auto --retry-failed-now
 
-# Explicit PR number or URL
-python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr 42 --once
-python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr https://github.com/OWNER/REPO/pull/42 --snapshot
+# Show the effective config
+python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --print-config
 ```
 
-## Stop conditions
+`--pr` takes `auto` (the PR of the current branch), a PR number, or a PR URL. `--config <path>` reads another
+config file.
 
-| `actions` value | Meaning |
-|---|---|
-| `stop_pr_closed` | PR was merged or closed — done |
-| `stop_ready_to_merge` | CI green, no blocking reviews, no conflicts |
-| `stop_exhausted_retries` | Flaky reruns hit the retry limit — user must investigate |
-| `stop_non_retryable_failure` | Terminal failure is not in retry-eligible workflows — diagnose/fix before continuing |
-| `stop_session_timeout` | `--max-session-minutes` elapsed (default 90 min) — stop and report |
-| `diagnose_hung_check` | A pending check has exceeded its hung threshold (30 min) — stop and report |
-| `diagnose_merge_conflict` | PR is merge-conflicted (`CONFLICTING` / `DIRTY`) — resolve conflicts before waiting on checks |
-| `diagnose_branch_behind` | PR head is `BEHIND` the base branch — merge `origin/main` into the branch before waiting on checks; `stop_ready_to_merge` is never emitted while behind |
-| `diagnose_skipping_checks` | One or more checks completed with `neutral`/`skipping` — investigate why |
-| `wait_codex` | Codex is still reviewing (👀 reaction present on the PR) — do not push or merge |
+`--once` polls inside the script every 30 seconds. It returns only when `actions` contains something other than a
+passive wait. Use it when the harness returns tool output only after the command exits, which is the usual case.
+After you act on the actions, run `--once` again. `--watch` streams `{"event":"snapshot",...}` objects as the state
+changes and ends with `{"event":"stop",...}`. Use it only when the harness can read streamed output while the
+command runs. `--max-session-minutes` limits both modes.
 
-Keep polling when CI is running (`idle`), when new review items arrive (`process_review_comment`),
-when Codex is still reviewing (`wait_codex`), or when CI is green but the PR is
-awaiting approval.
-
-## Post-merge cleanup (when `stop_pr_closed` and PR is merged)
-
-`stop_pr_closed` also fires for a PR that was closed without merging. Clean up only when the PR was merged: check
-`pr.merged` in the snapshot, or run `gh pr view <n> --json mergedAt` and confirm that `mergedAt` is set. For a PR
-that was closed without merging, keep everything and tell the owner.
-
-Run every step from the main checkout, never from inside the PR's worktree. If the main checkout itself has the PR
-branch checked out, switch it to `main` first. Skip any step whose worktree or branch does not exist locally.
-
-1. **Remove the linked worktree first**, if `git worktree list` shows the PR's `head_branch` in one:
-   ```bash
-   git worktree remove <path>
-   ```
-   Git refuses when the worktree has uncommitted changes. Do not force it; ask the owner instead. Remove the
-   worktree before deleting the branch, because Git does not delete a branch that a worktree still uses.
-
-2. **Delete the local branch only when nothing would be lost.** Squash merges leave the branch looking unmerged, so
-   `git branch -d` refuses and `git branch -D` is needed. Force-deleting a branch can lose commits, so first check
-   that the local tip is exactly the head that was merged:
-   ```bash
-   test "$(git rev-parse <head_branch>)" = "$(gh pr view <n> --json headRefOid --jq .headRefOid)" && git branch -D <head_branch>
-   ```
-   If the local tip differs, the branch has commits that were never merged. Keep it, and tell the owner.
-
-**Only delete the local branch and worktree.** Never touch remote branches. GitHub already deletes the remote branch
-through the "delete branch on merge" setting or the `--delete-branch` flag used at merge time.
-
-## Push discipline — batch all fixes before pushing (cost control)
-
-Each push triggers new Codex runs. **Never push until all of the following are true:**
-
-1. `./gradlew check` passes locally (no CI failures to fix after the push).
-2. Codex is not still reviewing — so its comments, if any, can be collected and fixed in the same push.
-3. You have incorporated all currently visible actionable Codex and human review comments into the pending local fix batch.
-
-Pushing follows the approval rules in the repository's AGENTS.md: push the PR branch only when the owner has approved it.
-
-After pushing the fix batch, resolve all bot threads on GitHub (or reply + resolve when no code change is needed). No open bot threads should remain when the PR is merged.
-
-**Workflow when fixes are needed:**
-
-1. Collect all outstanding issues: failed CI logs + any Codex or human review comments already posted.
-2. Fix everything locally in one pass.
-3. Run `./gradlew check` to confirm green.
-4. Only then push — one push per fix cycle.
-
-If a bot finishes while you are mid-fix and posts new comments, incorporate those fixes into the same commit before pushing.
-
-## Conflict + review-bot batching strategy (use this when PR shows `CONFLICTING`/`DIRTY`)
-
-When GitHub reports merge conflicts while Codex/CI is still running:
-
-1. **Do not push immediately.** Wait until Codex is no longer reviewing.
-2. Snapshot latest status/comments.
-3. If the conflict remains, merge `origin/main` into the PR branch. This keeps the branch history intact. Rebase only when the owner asks for it, because a rebase rewrites history and needs a force push.
-4. Resolve conflicts and **in the same fix cycle** apply all actionable Codex and human review comments.
-5. Run `./gradlew check`.
-6. Push once.
-
-Rationale: this avoids paying for multiple Codex reruns and prevents a ping-pong where a conflict-fix push is immediately followed by a second bot-fix push.
-
-## Codex merge gate (mandatory)
-
-**Never merge until Codex reports clean.**
-
-> Cursor Bugbot and CodeRabbit have both been removed and no longer gate anything.
-> A leftover check from either on an old PR is now treated like any other check: if it
-> completes `neutral`/`skipping` it shows up under `diagnose_skipping_checks`, not as a
-> dedicated gate. CodeRabbit comments are no longer surfaced as actionable review items
-> either.
-
-### Codex (emoji reaction)
-
-Codex does **not** use a CI check. Instead it uses emoji reactions on the PR:
-
-- **👀 reaction present** from `chatgpt-codex-connector[bot]` → Codex is actively reviewing. The `codex_gate.reviewing` field will be `true` and a `wait_codex` action will be emitted. Do not push or merge.
-- **👀 reaction removed, no new review comments** → Codex is satisfied. Proceed.
-- **👀 reaction removed, review comments posted** → Codex found issues. Fix them locally and batch them into the next push (see push discipline).
-
-The watcher automatically detects the 👀 reaction via the PR reactions API and surfaces `codex_gate` in the snapshot. If the reactions lookup fails, `codex_gate.status` is `unknown` and the watcher treats Codex as still reviewing.
-
-Codex also keeps a "Codex Review Summary" status table as a PR comment and edits it on every review. It never carries a finding, so the watcher ignores it.
-
-## Decision rules
-
-See `references/heuristics.md` for the full classification checklist:
-- **Branch-related failure**: edit the code, collect all other pending issues (Codex, human reviews), fix everything, run `./gradlew check`, then push once.
-- **Likely flaky/unrelated**: rerun via `--retry-failed-now`; retry budget defaults to 3 per SHA.
-  - The watcher only auto-reruns retry-eligible workflows (currently E2E-style workflows).
-  - CI/check workflow failures are treated as diagnose/fix-first by default.
-- **Ambiguous or requires product decision**: stop and ask the user.
-
-## Review bots
-
-The watcher surfaces feedback from:
-- **chatgpt-codex-connector[bot]** — OpenAI Codex (emoji reaction-based code review)
-- **cursor[bot]** — retired Cursor Bugbot; its login stays in `REVIEW_BOT_LOGIN_KEYWORDS` so any leftover comment is still surfaced, but it no longer gates anything
-- Trusted humans: authors with `OWNER`, `MEMBER`, or `COLLABORATOR` association
-
-> **Note**: if additional review bots are enabled on the repo (e.g. GitHub Actions summary
-> bots), add their login keyword to `REVIEW_BOT_LOGIN_KEYWORDS` in `scripts/gh_pr_watch.py`.
-
-## Worktree gotchas
-
-When working from a git worktree, watch out for ktfmt CLI vs Gradle plugin version
-mismatches and rebases silently reverting fixes. Always run `./gradlew check`
-before pushing — see the
-[pre-push checklist](../../../AGENTS.md#pre-push-checklist) in AGENTS.md.
-
-## Choosing a mode based on harness capabilities
-
-The right mode depends on whether the harness can stream bash tool stdout back to the
-model while the command is still running, or only delivers the final output after exit.
-
-### Harness streams tool output to the model (e.g. Claude Code subagents)
-
-Use `--watch`. The script runs continuously, emitting JSONL snapshots as events. The
-model sees each snapshot as it arrives and can act on it (retry, fix, merge) without
-waiting for the script to exit. The script exits on terminal stop conditions.
-
-### Harness only returns output after tool exit (e.g. Pi, most tool-use loops)
-
-Use `--once` (the default). The script blocks internally, polling every 30 seconds,
-and only returns to the model when something needs agent attention — a CI failure to
-diagnose, a review comment to process, a merge readiness signal, etc. The model never
-sleeps blindly; the script handles all waiting. After acting on the result, the model
-calls `--once` again to wait for the next event.
-
-Typical agent loop:
-1. Run `--once` → script blocks until CI finishes, review arrives, etc.
-2. Model reads the snapshot, acts on `actions` (fix code, retry, merge).
-3. If not terminal, run `--once` again → repeat.
-
-### Quick debugging / one-off inspection
-
-Use `--snapshot` for an instant point-in-time view with no waiting.
-
-## Output format
-
-All modes emit newline-delimited JSON.
-
-Where the `actions` list is depends on the mode:
+The output is JSON lines. Where the actions are depends on the mode:
 
 | Mode | Read the actions from |
 |---|---|
@@ -226,25 +94,173 @@ Where the `actions` list is depends on the mode:
 | `--retry-failed-now` | `snapshot.actions`. The top level reports the rerun: `rerun_attempted`, `rerun_count`, `reason`. |
 | `--watch` | `payload.snapshot.actions` on `snapshot` events, `payload.actions` on `stop` events |
 
-`--watch` emits event envelopes:
+Other useful snapshot fields are `checks` (pending, failed, passed and skipping counts, `all_terminal`,
+`required_missing`, and `check_count`), `failed_runs` (with `retry_eligible`), `codex_gate`, `coderabbit_gate`, `pr_af_gate`,
+`hung_checks`, `new_review_items`, `blocking_review_items`, and `retry_state`.
 
-- `{"event":"snapshot","payload":{"snapshot":{...},"state_file":"...","next_poll_seconds":30}}`
-- `{"event":"stop","payload":{...}}`
+`blocking_review_items` lists unresolved inline comments. While it is not empty, the watcher never reports the PR
+as ready. It includes open threads that the authenticated account started, although those never appear in
+`new_review_items`. When the thread lookup fails, every actionable inline comment blocks until the lookup works
+again.
 
-`blocking_review_items` contains actionable unresolved inline review comments. When thread-resolution lookup is unavailable, the watcher fails closed: comments whose resolution state is unknown stay blocking regardless of age or commit. Comments by the authenticated account (usually the owner) are never reported as new items, but its own unresolved inline threads still block. While non-empty, `stop_ready_to_merge` is not emitted.
+## Actions
 
-Example snapshot payload shape (`--once` / `--snapshot`, or `--watch` under `payload.snapshot`):
+"Returns" means `--once` returns with this action. "Ends" means `--watch` stops on it.
 
-```json
-{
-  "pr": { "number": 42, "head_sha": "abc123", "mergeable": "MERGEABLE", ... },
-  "checks": { "pending_count": 0, "failed_count": 1, "passed_count": 8, "skipping_count": 0, "all_terminal": true },
-  "failed_runs": [{ "run_id": 123, "workflow_name": "CI", "conclusion": "failure", "retry_eligible": false, ... }],
-  "codex_gate": { "reviewing": false, "status": "idle" },
-  "hung_checks": [{ "name": "CI", "elapsed_seconds": 1920, "threshold_seconds": 1800 }],
-  "new_review_items": [],
-  "blocking_review_items": [],
-  "actions": ["diagnose_ci_failure", "stop_non_retryable_failure"],
-  "retry_state": { "current_sha_retries_used": 0, "max_flaky_retries": 3 }
-}
-```
+| `actions` value | Meaning | Returns | Ends |
+|---|---|---|---|
+| `idle` | CI is running and there is nothing to do. | no | no |
+| `wait_codex` | Codex is reviewing, or has not finished a review of the head yet. Do not push or merge. | no | no |
+| `wait_coderabbit` | CodeRabbit is reviewing. Do not push or merge. | no | no |
+| `wait_pr_af` | A PR-AF check for the head is running, or has not appeared yet. | no | no |
+| `process_review_comment` | There are new or unresolved review items. Triage them. | yes | no |
+| `diagnose_ci_failure` | A check failed. Classify it before you act. | yes | no |
+| `retry_failed_checks` | Only retry-eligible workflows failed. Rerun them with `--retry-failed-now`. | yes | no |
+| `diagnose_codex_review` | Codex reports a failed or unknown review status for the head. | yes | no |
+| `request_codex_review` | Codex is required but has not reviewed this PR. Comment `@codex review` on the PR. | yes | no |
+| `diagnose_merge_conflict` | The PR is `CONFLICTING` or `DIRTY`. It waits while a review bot runs. | yes | yes |
+| `diagnose_branch_behind` | The branch is behind its base and branch protection wants it updated. It waits while a review bot runs. | yes | yes |
+| `diagnose_merge_blocked` | Every check is green, but GitHub still says `BLOCKED` and nothing else explains it. | yes | yes |
+| `diagnose_no_checks` | GitHub reports no check at all for the PR, even after the grace period. | yes | yes |
+| `diagnose_missing_required_checks` | Every check is done, but a check from `required_checks` never passed. See `checks.required_missing`. | yes | yes |
+| `diagnose_hung_check` | A check has been pending for longer than `hung_check_minutes`. | yes | yes |
+| `diagnose_skipping_checks` | A check that should run was skipped or neutral. Find out why. | yes | yes |
+| `stop_non_retryable_failure` | A workflow that the watcher does not rerun failed. Fix it first. | yes | yes |
+| `stop_exhausted_retries` | Reruns used the budget for this SHA (3 by default). The owner must investigate. | yes | yes |
+| `stop_ready_to_merge` | CI is green, no review blocks it, and there are no conflicts. | yes | yes |
+| `stop_draft_pr` | CI is green but the PR is a draft. Ask the owner to mark it ready. | yes | yes |
+| `stop_pr_closed` | The PR is merged or closed. | yes | yes |
+| `stop_session_timeout` | The session limit has passed. It comes with the last snapshot's actions. Report and stop. | yes | yes |
+
+What to do for the less obvious ones:
+
+- `diagnose_merge_blocked`: the usual causes are a required status check that never reports, a required review
+  from a code owner, a required signature, or a repository ruleset. Look at the branch rules with
+  `gh api repos/{owner}/{repo}/rules/branches/<base>`. Tell the owner what blocks the merge. Never bypass it.
+- `diagnose_no_checks`: find out why no workflow runs on this PR. Common causes are path or branch filters, a
+  disabled workflow, a PR from a fork that needs approval to run workflows, or a repository without CI. Tell the
+  owner. A PR without checks is never reported as ready.
+- `diagnose_missing_required_checks`: find out why the check did not run. Common causes are path filters, a
+  disabled workflow, or a trigger that does not fire on PRs.
+- `diagnose_codex_review`: read the Codex summary comment on the PR. If the review failed, ask again with
+  `@codex review`. If it fails again, tell the owner.
+- `diagnose_hung_check` and `diagnose_skipping_checks`: look at the run with `gh run view`. Report what you find.
+
+`references/heuristics.md` lists how to tell a branch-caused failure from a flaky one, and when to stop and ask.
+`references/github-api-notes.md` documents the `gh` calls and JSON fields that the watcher uses.
+
+## Review gates
+
+**Codex** has no CI check. `chatgpt-codex-connector[bot]` adds a 👀 reaction to the PR while it reviews and removes
+it when it is done. The watcher reads the reactions into `codex_gate.reviewing` and emits `wait_codex`.
+
+- Reaction gone, no comments: Codex is satisfied.
+- Reaction gone, comments posted: triage them like any other review finding.
+
+A missing reaction is not proof on its own: right after a push, Codex may not have started. Codex keeps a "Codex
+Review Summary" table on the PR with the status and commit of its latest review. When that table exists, the
+watcher also requires a **Completed** review of the head commit (`codex_gate.head_reviewed`). A PR without the
+table does not have Codex active, so this check does not apply, unless `codex.required` is `true`. The table is a
+status, not a finding, so the watcher never reports it as a review item. When the reactions cannot be read, the
+gate stays closed.
+
+**CodeRabbit** gates a PR only while it shows signs of life on it: a CodeRabbit check or a reaction from its bot.
+While `coderabbit_gate.reviewing` is `true`, do not push or merge.
+
+**PR-AF** runs when the PR has the `pr_af.label` label, and again on every push while the label stays. Its check is
+advisory. A running PR-AF check on the head holds readiness with `wait_pr_af`. A failed, skipped, cancelled, or hung
+PR-AF check never counts as a CI failure. Its comments are not advisory: unresolved PR-AF comments block like any
+other review item. PR-AF usually posts as the shared `github-actions[bot]` login. A comment counts as a PR-AF
+finding only when it carries a marker from `pr_af.review_body_markers`, or belongs to a review that does, and only
+while a PR-AF check exists on the head. When the label is present but GitHub has not shown the check yet, the
+watcher waits up to `pr_af.missing_check_grace_minutes`.
+
+**Trusted humans** are authors with an association from `trusted_author_associations`. To surface another bot's
+comments, add a login word to `review_bot_login_keywords`. Never add the shared `github-actions[bot]` login there.
+
+"Clean" means that every finding is dispositioned: fixed, or filed as an issue with the link on the thread and the
+thread resolved.
+
+## Push discipline
+
+Every push starts new bot reviews. Push once per fix cycle, when all of these hold:
+
+1. Every known issue is fixed locally: failed CI logs, bot findings, and human comments.
+2. No review bot is in the middle of a review, so its comments arrive in the same batch.
+3. The local gate (`local_gate` in the config) is green.
+
+Start fixing branch-caused failures as soon as you have diagnosed them. Only the push waits. If a bot posts while you
+are fixing, fold its findings into the same batch. Follow the repository's own rules (for example in `AGENTS.md`)
+about when you may push and merge.
+
+After the push, resolve every bot thread on GitHub. If nothing changed for a comment, reply with the reason first.
+No bot thread may be open at merge time.
+
+## Updating the branch
+
+`diagnose_merge_conflict` and `diagnose_branch_behind` both mean that the branch needs its base merged in.
+
+1. Wait until no review bot is running. The watcher already does this for you.
+2. Find the real base with `gh pr view <n> --json baseRefName`. Never assume `main`. Fetch that base from the
+   repository that the PR targets. For a PR from a fork, `origin` is the fork, so use the remote of the target
+   repository.
+3. Merge the updated base into the PR branch. Resolve any conflicts, and fold in the outstanding review fixes.
+4. Run the local gate and push once. A merge keeps the branch history, so a normal push is enough.
+
+Rebase only when the owner asks for it. A rebase rewrites the branch history and needs
+`git push --force-with-lease`. Never use a plain force push. After a merge or a rebase, check that your earlier fixes
+are still there.
+
+## Triage every finding before fixing it
+
+A true finding is not automatically a fix for this PR. Classify it on two axes, and say which box it landed in when
+you reply:
+
+| | Blocker | Improvement |
+|---|---|---|
+| In scope | Fix now. | Fix now if trivial, otherwise file an issue. |
+| Out of scope | File an issue, and say so on the PR. | File an issue. |
+
+A finding is in scope when it is about the behaviour this PR set out to change. Ask: would this defect exist on the
+base branch without my change? If it would, it is pre-existing and belongs in an issue, however real it is.
+
+A blocker means shipping would cause visible harm, data loss, or a security hole. Stricter validation, hardening an
+adjacent path, and "this could also be wrong if" are improvements, however confidently a bot reports them. A fix
+that would make something that works today stop working is a scope decision for the owner.
+
+Stop the review loop and ask the owner when any of these hold:
+
+- Three rounds in a row produce no in-scope blocker.
+- Twice in a row, a finding is about code that only exists because of an earlier finding in this PR.
+- The diff has grown well beyond the task. Check with `git diff --stat` against the base, not from memory.
+- Every push produces new findings, so the "no outstanding findings" gate can never be met.
+
+When you stop, bring numbers: commits, diff size, and files. Propose how to split the work. Before you revert
+out-of-scope work, keep it on a branch (`git branch followup/<topic>`) and tell the owner about it.
+
+## Post-merge cleanup
+
+`stop_pr_closed` fires for a PR that was closed without merging, too. Clean up only when the PR was merged: check
+`pr.merged` in the snapshot, or run `gh pr view <n> --json mergedAt` and confirm that `mergedAt` is set. For a PR
+that was closed without merging, keep everything and tell the owner.
+
+When `cleanup.branch_delete_requires_approval` is `true`, ask the owner before step 2, and skip it without their
+approval. Deleting a branch is destructive.
+
+Run every step from the main checkout, never from inside the PR's worktree. Skip any step whose worktree or branch
+does not exist. Clean up local state only. Never delete remote branches.
+
+1. If `git worktree list` shows the PR branch in a linked worktree, run `git worktree remove <path>`. Git refuses
+   when the worktree has uncommitted changes. Do not force it; tell the owner instead. Remove the worktree before
+   deleting the branch, because Git will not delete a branch that a worktree still uses.
+2. Delete the local branch only when nothing would be lost. Squash merges leave the branch looking unmerged, so
+   `git branch -d` refuses and `git branch -D` is needed. Force-deleting a branch is a destructive history change,
+   so first prove that the local tip is exactly the head that was merged:
+
+   ```bash
+   merged_head=$(gh pr view <n> --json headRefOid --jq .headRefOid)
+   test "$(git rev-parse <head_branch>)" = "$merged_head" && git branch -D <head_branch>
+   ```
+
+   If the local tip differs, it has commits that were never merged. Keep the branch, and tell the owner.
+3. Update the base branch in the main checkout with `git pull --ff-only`.
