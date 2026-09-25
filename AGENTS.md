@@ -125,8 +125,8 @@ Do not perform the following without clear user instruction in the current task:
 
 - Minimize interruptions. Read the code and docs before asking questions.
 - Clarify upfront or not at all. If a real blocker exists, ask once and ask clearly.
-- Be explicit about directory changes when working across repos such as `~/src/compose-pi`,
-  `~/src/compose-driver`, `~/src/intellij-community`, or `~/src/compose-multiplatform-core`.
+- Be explicit about directory changes when working across repos such as `~/src/compose-driver`,
+  `~/src/intellij-community`, `~/src/compose-multiplatform-core`, or other local repos.
 - Prefer repo-local docs and checked-out source over memory for Compose/Jewel/IntelliJ specifics.
 - Before concluding that something is unsupported, check `.agents/skills/` for local guidance.
 
