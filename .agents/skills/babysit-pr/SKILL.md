@@ -166,7 +166,9 @@ table does not have Codex active, so this check does not apply, unless `codex.re
 has passed, when Codex is idle and has not reviewed the head. Without `codex.required`, the watcher waits
 `codex.idle_wait_minutes` for Codex to start. After that, the missing review no longer blocks, and
 `codex_gate.idle_wait_expired` and `codex_gate.note` say that Codex did not review the head. A running review (a 👀
-reaction, or a "Running" row for the head) always blocks. The table is a status, not a finding, so the watcher never reports it as a review item. When the reactions cannot be read, the
+reaction, or a "Running" row for the head) always blocks. When Codex finds nothing, it posts a "Didn't find any major issues" comment with the reviewed commit. That comment
+is a result, not a finding, so it is never a review item. When its commit is the head, it also counts as a completed
+review of the head. The table is a status, not a finding, so the watcher never reports it as a review item. When the reactions cannot be read, the
 gate stays closed.
 
 **PR-AF** runs when the PR has the `pr_af.label` label, and again on every push while the label stays. Its check is

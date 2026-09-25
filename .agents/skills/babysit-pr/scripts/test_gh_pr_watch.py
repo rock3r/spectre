@@ -2374,6 +2374,68 @@ class CodexIdleWaitTests(unittest.TestCase):
         self.assertTrue(snapshot["codex_gate"]["idle_wait_expired"])
 
 
+class CodexCleanReviewCommentTests(unittest.TestCase):
+    """Codex's "Didn't find any major issues" comment is a result, not a finding."""
+
+    HEAD = "bb9ad5059612f0e4c1d2a3b4c5d6e7f8a9b0c1d2"
+
+    @staticmethod
+    def _body(sha, apostrophe="'"):
+        return (
+            f"Codex Review: Didn{apostrophe}t find any major issues. You're on a roll.\n\n"
+            f"**Reviewed commit:** `{sha}`\n\n"
+            "<details> <summary>About Codex in GitHub</summary>\n</details>"
+        )
+
+    def _comment(self, sha, login="chatgpt-codex-connector[bot]", apostrophe="'"):
+        return {"id": 31, "user": {"login": login}, "author_association": "NONE",
+                "created_at": "2026-09-25T10:00:00Z", "updated_at": "2026-09-25T10:00:00Z",
+                "body": self._body(sha, apostrophe), "html_url": "https://example.invalid/c"}
+
+    def test_clean_review_comment_is_not_actionable(self):
+        for apostrophe in ("'", "\u2019"):
+            with self.subTest(apostrophe=apostrophe):
+                item = {"kind": "issue_comment", "author": "chatgpt-codex-connector[bot]",
+                        "body": self._body(self.HEAD[:10], apostrophe)}
+                self.assertFalse(watch.is_actionable_review_bot_item(item))
+
+    def test_codex_findings_stay_actionable(self):
+        item = {"kind": "review_comment", "author": "chatgpt-codex-connector[bot]",
+                "body": "**P1** This can find major issues later."}
+        self.assertTrue(watch.is_actionable_review_bot_item(item))
+
+    def test_clean_review_comment_is_not_a_new_review_item(self):
+        pr = {"repo": "owner/repo", "number": 21, "head_sha": self.HEAD}
+        state = {"seen_issue_comment_ids": [], "seen_review_comment_ids": [], "seen_review_ids": [],
+                 "last_review_poll_at": None}
+        with patch.object(watch, "gh_api_list_paginated", side_effect=[[self._comment(self.HEAD[:10])], [], []]):
+            new_items, blocking_items = watch.fetch_new_review_items(
+                pr, state, fresh_state=True, authenticated_login="octocat")
+        self.assertEqual(new_items, [])
+        self.assertEqual(blocking_items, [])
+
+    def test_clean_review_of_the_head_proves_the_head_was_reviewed(self):
+        review = watch.summarize_codex_head_review([self._comment(self.HEAD[:10])], self.HEAD)
+        self.assertEqual(review, {"active": True, "head_reviewed": True, "head_status": "completed"})
+
+    def test_clean_review_of_an_older_commit_proves_nothing(self):
+        # It neither marks the head reviewed nor makes Codex count as active on its own.
+        review = watch.summarize_codex_head_review([self._comment("0123456789")], self.HEAD)
+        self.assertEqual(review, {"active": False, "head_reviewed": False, "head_status": "none"})
+
+    def test_clean_review_from_another_login_is_ignored(self):
+        review = watch.summarize_codex_head_review(
+            [self._comment(self.HEAD[:10], login="codex-fan")], self.HEAD)
+        self.assertFalse(review["head_reviewed"])
+
+    def test_clean_review_of_the_head_clears_a_stale_summary_table(self):
+        table = {"user": {"login": "chatgpt-codex-connector[bot]"},
+                 "body": ("<!-- codex-pull-request-review-summary -->\n"
+                          "| 📝 **Code Review** | ✅ **Completed** | `0123456` | New commits |\n")}
+        review = watch.summarize_codex_head_review([table, self._comment(self.HEAD[:10])], self.HEAD)
+        self.assertTrue(review["head_reviewed"])
+
+
 class SnapshotOrderingTests(unittest.TestCase):
     def test_codex_gate_is_read_before_review_comments(self):
         # If Codex posts a finding and then marks the head reviewed between the two reads,

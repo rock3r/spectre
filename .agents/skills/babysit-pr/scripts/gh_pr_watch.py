@@ -1121,6 +1121,28 @@ _CODEX_SUMMARY_ROW = re.compile(
 )
 
 
+# Codex's comment when a review finds nothing, e.g.
+# "Codex Review: Didn't find any major issues. ..." followed by "**Reviewed commit:** `bb9ad50596`".
+_CODEX_CLEAN_REVIEW_PHRASE = re.compile(r"didn[\'\u2019]t find any major issues", re.IGNORECASE)
+_CODEX_REVIEWED_COMMIT = re.compile(r"\*\*Reviewed commit:\*\*\s*`(?P<sha>[0-9a-f]{7,40})`")
+
+
+def is_codex_clean_review_comment(item):
+    """Codex's "no major issues" comment. It carries no finding, like the summary table."""
+    author = item.get("author")
+    if author is None:
+        author = extract_login(item.get("user"))
+    return is_codex_bot_login(author) and bool(_CODEX_CLEAN_REVIEW_PHRASE.search(str(item.get("body") or "")))
+
+
+def codex_clean_review_commit(comment):
+    """The commit that a Codex "no major issues" comment reviewed, or None."""
+    if not is_codex_clean_review_comment(comment):
+        return None
+    match = _CODEX_REVIEWED_COMMIT.search(str(comment.get("body") or ""))
+    return match.group("sha") if match else None
+
+
 def summarize_codex_head_review(issue_comments, head_sha):
     """Tell whether Codex finished a review of `head_sha`.
 
@@ -1135,6 +1157,13 @@ def summarize_codex_head_review(issue_comments, head_sha):
         if not isinstance(comment, dict):
             continue
         if not is_codex_bot_login(extract_login(comment.get("user"))):
+            continue
+        # A "no major issues" comment for the head proves a completed review of it. One
+        # for an older commit proves nothing, and does not make Codex count as active.
+        clean_sha = codex_clean_review_commit(comment)
+        if clean_sha and str(head_sha or "").startswith(clean_sha):
+            active = True
+            head_statuses.add("completed")
             continue
         body = str(comment.get("body") or "")
         if STATUS_ONLY_BOT_COMMENT_MARKER not in body:
@@ -1534,6 +1563,8 @@ def is_pr_af_author(item):
 def is_actionable_review_bot_item(item, pr_af_review_ids=None, pr_af_check_present=True):
     author = str(item.get("author") or "")
     if STATUS_ONLY_BOT_COMMENT_MARKER in str(item.get("body") or ""):
+        return False
+    if is_codex_clean_review_comment(item):
         return False
     if is_pr_af_author(item):
         return is_pr_af_review_item(
