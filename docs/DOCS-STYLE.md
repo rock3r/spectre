@@ -92,8 +92,7 @@ change that touches a public signature.
 
 ## API and behaviour invariants worth re-checking
 
-These have bitten reviews already; they're worth re-verifying every time the
-corresponding doc page is touched:
+Check these API contracts whenever you edit the corresponding page:
 
 - **No auto-wait.** Queries (`findByTestTag`, `findByText`, `hasTag`, `hasText`, etc.)
   do a single read. They never retry. Document them as such.
@@ -191,8 +190,9 @@ corresponding doc page is touched:
 
 ## Linking
 
-- **Inside `docs/`: relative links only.** `[Synchronization](synchronization.md)`,
-  `[Architecture](../ARCHITECTURE.md)`. `mkdocs build --strict` resolves these.
+- **Use relative links inside `docs/`.** For example, link to
+  `[Synchronization](synchronization.md)` or `[Architecture](../ARCHITECTURE.md)`.
+  `mkdocs build --strict` checks these links.
 - **Outside `docs/` (workflows, repo-root files, source code): absolute
   `https://github.com/rock3r/spectre/...` URLs.** A relative path like
   `../.github/workflows/...` works in GitHub's preview but fails the strict build,

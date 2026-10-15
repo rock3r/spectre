@@ -139,7 +139,8 @@ public object SpectreMcpServer {
         server.addTool(
             name = "find_text",
             description =
-                "Find nodes by visible/editable text (#202). exact defaults true; set exact=false for substring.",
+                "Find nodes by visible or editable text. exact defaults to true; " +
+                    "set exact=false for substring matches.",
             inputSchema =
                 schema(
                     "session_id" to "string",
@@ -169,7 +170,7 @@ public object SpectreMcpServer {
         server.addTool(
             name = "wait_for_node",
             description =
-                "Wait until a semantics node matches tag and/or text (#201). Throws on timeout.",
+                "Wait until a semantics node matches tag, text, or both. Throws on timeout.",
             inputSchema =
                 schema(
                     "session_id" to "string",
@@ -192,7 +193,7 @@ public object SpectreMcpServer {
         server.addTool(
             name = "wait_until_gone",
             description =
-                "Wait until NO semantics node matches tag and/or text (#438) — the absence " +
+                "Wait until no semantics node matches tag, text, or both. This is the absence " +
                     "counterpart to wait_for_node, for dismissed popups, menus, and dialogs. " +
                     "Refreshes tracked windows before each poll, so a popup that closed its whole " +
                     "window is observed rather than answered from a stale tree. On timeout the " +
@@ -219,7 +220,7 @@ public object SpectreMcpServer {
         }
         server.addTool(
             name = "wait_for_visual_idle",
-            description = "Wait until consecutive visual frames are stable (#201).",
+            description = "Wait until consecutive visual frames are stable.",
             inputSchema =
                 schema(
                     "session_id" to "string",
@@ -238,7 +239,7 @@ public object SpectreMcpServer {
         server.addTool(
             name = "wait_for_reload_settled",
             description =
-                "Wait until a Compose Hot Reload settles for a reload-aware session (#211): " +
+                "Wait until a Compose Hot Reload settles for a reload-aware session: " +
                     "ReloadClassesRequest → matching ReloadClassesResult → matching UIRendered → " +
                     "Ping/Ack drain. Fails immediately with hotReloadUnavailable when the target " +
                     "is not running under HR. Distinguishes reloadFailed vs timeout.",
@@ -268,7 +269,7 @@ public object SpectreMcpServer {
         }
         server.addTool(
             name = "double_click",
-            description = "Double-click a semantics node by node key (#203).",
+            description = "Double-click a semantics node by node key.",
             inputSchema = schema("session_id" to "string", "node_key" to "string"),
         ) { call ->
             request(
@@ -281,7 +282,8 @@ public object SpectreMcpServer {
         }
         server.addTool(
             name = "long_click",
-            description = "Long-press a semantics node by node key (#203). Optional hold_for_ms.",
+            description =
+                "Long-press a semantics node by node key. Set hold_for_ms to change the duration.",
             inputSchema =
                 schema(
                     "session_id" to "string",
@@ -304,7 +306,7 @@ public object SpectreMcpServer {
             name = "swipe",
             description =
                 "Drag between two node keys (from_node_key/to_node_key) or screen coordinates " +
-                    "(start_x/start_y/end_x/end_y) (#203).",
+                    "(start_x/start_y/end_x/end_y).",
             inputSchema =
                 schema(
                     "session_id" to "string",
@@ -337,7 +339,7 @@ public object SpectreMcpServer {
         server.addTool(
             name = "scroll_wheel",
             description =
-                "Mouse-wheel scroll at a node's centre (#203). Positive wheel_clicks scrolls down.",
+                "Scroll the mouse wheel at a node's centre. Positive wheel_clicks scrolls down.",
             inputSchema =
                 schema(
                     "session_id" to "string",
@@ -357,7 +359,7 @@ public object SpectreMcpServer {
         server.addTool(
             name = "press_key",
             description =
-                "Send a raw AWT key code with optional modifiers mask (#203). Requires OS focus.",
+                "Send a raw AWT key code with an optional modifiers mask. Real OS input requires OS focus.",
             inputSchema =
                 schema(
                     "session_id" to "string",
@@ -378,7 +380,7 @@ public object SpectreMcpServer {
         server.addTool(
             name = "type_text",
             description =
-                "Type text through the real operating-system input path into the focused target UI.",
+                "Type text into the focused target UI. Default attach uses synthetic input; real OS input is opt-in.",
             inputSchema = schema("session_id" to "string", "text" to "string"),
         ) { call ->
             request(DaemonRequest.TypeText(call.requiredSessionId(), call.requiredString("text")))
@@ -404,7 +406,7 @@ public object SpectreMcpServer {
             name = "capture",
             description =
                 "Atomic capture: window PNG + full semantics tree written to disk. Returns a " +
-                    "decision-grade summary with artifact paths (tree is never inlined). Optional " +
+                    "summary with artifact paths (tree is never inlined). Optional " +
                     "inline PNG preview is available via include_image=true. See the " +
                     "spectre-capture skill for jq recipes over capture.json.",
             inputSchema = captureSchema,

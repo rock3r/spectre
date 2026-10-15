@@ -28,7 +28,7 @@ val CounterScenario: Scenario =
     Scenario(
         title = "Counter + text input",
         testTag = "scenario.counter",
-        unblocks = "Baseline (#5 click + typeText paths).",
+        unblocks = "Checks basic click and typeText behaviour.",
         content = { CounterContent() },
     )
 

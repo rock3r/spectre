@@ -33,7 +33,7 @@ val HiDpiScenario: Scenario =
     Scenario(
         title = "HiDPI coordinate targets",
         testTag = "scenario.hidpi",
-        unblocks = "#8 boundsInWindow → screen pixel mapping on Retina.",
+        unblocks = "Checks boundsInWindow mapping to screen pixels on Retina displays.",
         content = { HiDpiContent() },
     )
 

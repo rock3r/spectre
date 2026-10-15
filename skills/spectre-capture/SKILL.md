@@ -14,29 +14,28 @@ compatibility: Requires the Spectre CLI (or in-process capture API) and schemaVe
 
 ## Division of labor (HR MCP vs Spectre)
 
-If this agent also has Compose Hot Reload’s MCP server configured, **do not flip a coin per
-call**. Use this rule verbatim:
+If both MCP servers are configured, choose the tool based on the task:
 
-> **If you have HR available and want quick sanity checks while iterating on a live app, use the
-> HR MCP; in any other case, Spectre is the right choice.**
+> Use Compose Hot Reload MCP to check recomposition during a live Hot Reload session.
+> Use Spectre for other inspection and automation tasks.
 
-- **HR MCP** — quick reload-native sanity checks while iterating on a live HR run.
-- **Spectre** (CLI / MCP / capture) — semantics tree, node keys, real input, screenshots,
+- **HR MCP** — check recomposition during a live Hot Reload session.
+- **Spectre** (CLI / MCP / capture) — semantics tree, node keys, synthetic or real input, screenshots,
   recording, atomic capture, attach to any Spectre-enabled JVM, and
   `wait --reload-settled` / `wait_for_reload_settled` when you need settle + re-inspect.
 
 Reload awareness is **optional** and **dev-loop only**. It is not part of Spectre’s JUnit
 `:testing` surface. Full user guide: <https://spectre.sebastiano.dev/guide/hot-reload/>
 
-Atomic capture freezes one Compose window into:
+Atomic capture writes a window's pixels and semantics to these files:
 
 | File | Role |
 |---|---|
 | `screenshot.png` | Window pixels at capture time (primary visual evidence) |
 | `capture.json` | Versioned semantics tree + window metadata + summary |
 
-Only a **decision-grade summary** is returned to agents (paths, node counts, image size). The full
-tree stays on disk — query it with `jq` (or any JSON tool). This skill is the map.
+Agents receive a summary with paths, node counts and image size. The full tree stays on
+disk. Query it with `jq` or another JSON tool.
 
 Skill name (for discovery): **`spectre-capture`**. Capture summaries and detach leftovers reports
 reference this name on purpose.

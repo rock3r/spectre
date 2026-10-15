@@ -34,7 +34,7 @@ val FocusScenario: Scenario =
     Scenario(
         title = "Focus traversal",
         testTag = "scenario.focus",
-        unblocks = "#8 focus state surfacing, Robot input fidelity after explicit focus jumps.",
+        unblocks = "Checks focus state and Robot input after explicit focus changes.",
         content = { FocusContent() },
     )
 

@@ -4,11 +4,12 @@
   Spectre
 </h1>
 
-A Kotlin library for driving Compose Desktop UIs from automated tests. Reads the semantics
-tree, drives mouse and keyboard input — synthetic AWT events dispatched straight into the
-window hierarchy by default (`RobotDriver.synthetic()`), or real OS-level events via
-`java.awt.Robot` when you pass `RobotDriver()` — and records the screen,
-against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop apps alike.
+Spectre is a Kotlin library for automating live Compose Desktop UIs. It reads the semantics
+tree, sends mouse and keyboard input, and records the screen. It supports IntelliJ and
+Jewel-hosted Compose surfaces and standalone desktop apps.
+
+Input uses synthetic AWT events by default (`RobotDriver.synthetic()`). Pass
+`RobotDriver()` to use real operating-system input through `java.awt.Robot`.
 
 > [!IMPORTANT]
 > Spectre is pre-1.0. Stable APIs are covered by the compatibility policy in
@@ -16,11 +17,11 @@ against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop app
 > may change between releases. Read [`docs/SECURITY.md`](docs/SECURITY.md) before enabling
 > cross-JVM control or recording in environments that handle untrusted input.
 
-macOS, Windows, Linux Xorg, and Linux Wayland. The Wayland path goes through a small
+Spectre supports macOS, Windows, Linux Xorg, and Linux Wayland. The Wayland path uses a
 out-of-process Rust helper (`recording/native/linux/`) that owns the xdg-desktop-portal
 handshake, the PipeWire FD lifetime, and the `gst-launch-1.0` subprocess; the JVM-side
-recorder talks to it over stdin/stdout via a tiny JSON protocol. Same out-of-process
-architecture as the macOS Swift helper.
+recorder talks to it over standard input and output using JSON. The macOS Swift helper
+also runs in a separate process.
 
 > [!NOTE]
 > **Linux support is best-effort.** Routine validation runs on one machine: Ubuntu 22.04,
@@ -69,8 +70,8 @@ npx skills add rock3r/spectre --skill spectre
 - `agent-runtime` — loadable Java-agent runtime jar used by `agent` when attaching to a target JVM.
 - `testing` — JUnit 5 extension and JUnit 4 rule.
 - `sample-desktop` — Compose Desktop app for manual smokes.
-- `sample-intellij-plugin` — in-tree IntelliJ plugin hosting a Jewel tool window. Unpublished;
-  serves as the IDE-hosted test bed.
+- `sample-intellij-plugin` — unpublished IntelliJ plugin with a Jewel tool window for
+  IDE-hosted tests.
 
 ## Run the samples
 

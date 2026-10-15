@@ -201,9 +201,9 @@ All `suspend` on `ComposeAutomator`:
   use `AttachedAutomator.focusWindow(nodeKey)` (#364) before `pressKey` / `typeText`
   when the target app may not own OS keyboard focus.
 
-## Synchronization — the part everyone gets wrong
+## Synchronization
 
-This is the #1 source of flakes. Internalize three rules:
+Use explicit waits to avoid querying the UI before it reaches the expected state.
 
 ### Rule 1: queries don't wait
 
@@ -384,7 +384,7 @@ touches that area*; they are not needed for the common case.
 | Window-targeted Wayland recording throws `IllegalStateException` | `xprop` missing or non-GNOME compositor | Use `AutoRecorder.startRegion(...)` with an explicit rectangle |
 | Coordinates derived from `boundsInWindow` land off-target on HiDPI | `boundsInWindow` is Compose pixels (already density-scaled) and window-relative; AWT/Robot and recording regions use screen pixels | Use `boundsOnScreen`/`centerOnScreen` for input and region targeting. If converting yourself, divide by the display scale **and** add the surface/panel screen origin — do not multiply |
 
-## What Spectre is NOT (don't pretend it is)
+## API boundaries
 
 - If a tagged release is not available on Maven Central yet, consumers wire Spectre as a
   composite build or local clone. Check the installation guide before giving coordinates.

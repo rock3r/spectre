@@ -12,10 +12,10 @@ reliable test.
 ## Division of labor
 
 If you configure both Compose Hot Reload’s MCP server and Spectre’s MCP (or CLI) in the same
-agent session, use this rule — do not flip a coin per call:
+agent session, choose the tool based on the task:
 
-> **If you have HR available and want quick sanity checks while iterating on a live app, use the
-> HR MCP; in any other case, Spectre is the right choice.**
+> Use Compose Hot Reload MCP to check recomposition during a live Hot Reload session.
+> Use Spectre for other inspection and automation tasks.
 
 | Goal | Prefer |
 |---|---|

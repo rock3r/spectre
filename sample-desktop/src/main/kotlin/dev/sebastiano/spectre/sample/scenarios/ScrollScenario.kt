@@ -33,7 +33,7 @@ val ScrollScenario: Scenario =
     Scenario(
         title = "Scrollable list",
         testTag = "scenario.scroll",
-        unblocks = "#14 large-tree perf; #8 bounds-drift validation while scrolling.",
+        unblocks = "Checks large-tree performance and bounds updates while scrolling.",
         content = { ScrollContent() },
     )
 

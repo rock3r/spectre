@@ -49,7 +49,7 @@ val nodes = automator.findByText(
 ```
 
 `TextQuery` covers `exact`, `substring`, and case-insensitive variants. Prefer test tags
-when the UI is yours — text matchers are brittle to copy changes and localisation.
+when you control the UI. Text selectors can break when copy or translations change.
 
 ## By content description
 

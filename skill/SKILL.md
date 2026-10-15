@@ -13,7 +13,7 @@ compatibility: Requires a Compose Desktop or Compose Multiplatform (desktop targ
 
 # Spectre UI Automation
 
-Spectre automates live Compose Desktop UIs by reading the semantics tree and dispatching real OS input. Full docs and API reference: **[spectre.sebastiano.dev](https://spectre.sebastiano.dev)**
+Spectre automates live Compose Desktop UIs by reading the semantics tree and sending synthetic input by default. Real OS input is opt-in. Full docs and API reference: **[spectre.sebastiano.dev](https://spectre.sebastiano.dev)**
 
 For the longer agent skill (selectors, recording, agent attach, IntelliJ), use **`spectre`** /
 `skills/spectre/SKILL.md`. For atomic `capture.json` workflows, use **`spectre-capture`**.
@@ -21,7 +21,7 @@ For the longer agent skill (selectors, recording, agent attach, IntelliJ), use *
 ## Spectre vs `ComposeTestRule`
 
 - **`ComposeTestRule`** (`compose-ui-test`) — tests a composable in isolation, without launching a real app. Right for unit and component tests.
-- **Spectre** — automates a fully running app end-to-end: the local process, a separate JVM via HTTP or Java-agent attach, or an IntelliJ plugin hosting Compose UI. Right when you need the whole app stack in motion, for UI automation and user-journey level validation.
+- **Spectre** — automates a running app in the local process, a separate JVM via HTTP or Java-agent attach, or an IntelliJ plugin hosting Compose UI. Use it to test interactions across the application.
 
 If you're testing an individual composable in isolation → use `ComposeTestRule`. If you're automating a full app → use Spectre.
 

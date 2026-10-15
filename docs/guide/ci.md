@@ -4,8 +4,8 @@
 
 Desktop input coordination is an experimental, opt-in preview. Consumer source must opt in with
 `ExperimentalSpectreInputCoordinationApi`; see
-[Experimental desktop input coordination](input-coordination.md). Experimental does not make an
-unproven platform claim release-safe: headed cross-platform smoke remains required.
+[Experimental desktop input coordination](input-coordination.md). Validate real input on a
+graphical desktop for each supported platform before release.
 
 Separate Gradle forks and separate CI jobs cannot coordinate through JUnit's in-memory resource
 locks. Use `InputIsolationConfig.perTest()` for in-process real-input JUnit tests and install the
@@ -40,7 +40,7 @@ tasks.withType<Test>().configureEach {
 Linux a display server, but it cannot help if the JVM has already decided to run headless and
 ignore `DISPLAY`.
 
-**Honesty:** `xvfb-run` proves the Linux **X11** capture path (helper `ximagesrc`, JUnit
+`xvfb-run` tests the Linux **X11** capture path (helper `ximagesrc`, JUnit
 failure screenshots, agent screenshots, visual idle under a virtual framebuffer). It does
 **not** prove Wayland portal consent, PipeWire one-frame capture, or restore-token behaviour.
 When the host also has residual Wayland sockets or inherited Wayland env vars, Spectre still

@@ -52,7 +52,7 @@ authoritative reference for command arguments and options when this page and the
 
 ## What it can do
 
-The CLI follows a simple loop:
+Use the CLI in this order:
 
 1. Find a running JVM with `ps`, **or** launch one with `spectre launch -- <command>`.
 2. Attach it and retain the returned session ID (or hold the launch session open).
@@ -377,7 +377,7 @@ Spectre for tree, input, capture, and evidence.
 | Attach | `attach` → retain `sessionId` |
 | Drive | `tree` / `find` / input tools / waits |
 | Capture | `screenshot` (inline image), `capture` (paths on daemon FS), `record_*` (paths) |
-| Release session | **`detach`** with `session_id` — ends **that** session only and returns leftover capture cleanup summary (same honesty as CLI `spectre detach`). Unknown / already-detached / blank `session_id` **fail closed** (`isError`). Sibling sessions stay attached. Detach does **not** delete capture files; prune stays explicit. Use `spectre daemon kill` only when you intend to drop **every** session. |
+| Release session | `detach` with `session_id` ends that session and reports leftover captures, as CLI detach does. Unknown, detached or blank IDs return `isError`. Other sessions stay attached. Captures remain on disk until you prune them. Use `spectre daemon kill` only to close all sessions. |
 
 Sessions created by MCP remain in the daemon until **`detach`**, daemon kill, or daemon
 teardown. **MCP front-end exit does not detach** — kill/restart the MCP client or drop stdio
@@ -471,7 +471,7 @@ match the daemon protocol, not the CLI human line and not necessarily CLI `--jso
 Do **not** treat MCP text and CLI `--json` as byte-identical envelopes. CLI human output is a
 prose line (`Detached <id>.` plus optional leftover lines), not this JSON.
 
-**Honesty rules (shared with CLI detach):** when the session left capture artifacts on disk,
+When the session left capture artifacts on disk,
 `captureCount` / `captureBytes` / `capturePaths` are non-zero and paths are real; `pruneCommand`
 and `skillHint` are populated. Empty sessions report zeros and omit prune/skill. Detach never
 auto-deletes files — run the reported prune command (or `spectre captures prune …`) explicitly.
