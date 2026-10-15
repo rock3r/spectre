@@ -380,7 +380,7 @@ public object SpectreMcpServer {
         server.addTool(
             name = "type_text",
             description =
-                "Type text into the focused target UI. Default attach uses synthetic input; real OS input is opt-in.",
+                "Type text into the focused target UI. Attach to current Spectre core uses synthetic input.",
             inputSchema = schema("session_id" to "string", "text" to "string"),
         ) { call ->
             request(DaemonRequest.TypeText(call.requiredSessionId(), call.requiredString("text")))
