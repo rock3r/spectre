@@ -44,6 +44,7 @@ class SpectreBootstrapTest {
                 jarFile,
                 arrayOf("daemon", "status"),
                 25,
+                emptyList(),
             )
 
         assertEquals(
@@ -151,9 +152,45 @@ class SpectreBootstrapTest {
                 jarFile,
                 arrayOf("--help"),
                 21,
+                emptyList(),
             )
 
         assertFalse("--enable-native-access=ALL-UNNAMED" in command)
+    }
+
+    @Test
+    fun `child command forwards the caller's system properties`() {
+        // -D properties given to the bootstrap JVM (java -D..., JAVA_OPTS,
+        // SPECTRE_OPTS) are read by the real CLI and its daemon launcher; they
+        // must reach the child instead of stopping at the bootstrap.
+        val plan = AotCache.Plan(AotCache.Mode.DISABLED, null, null, emptyList())
+
+        val command =
+            SpectreBootstrap.childCommand(
+                javaExecutable,
+                plan,
+                jarFile,
+                arrayOf("--help"),
+                25,
+                SpectreBootstrap.callerSystemProperties(
+                    listOf(
+                        "-XX:+UseZGC",
+                        "-Ddev.sebastiano.spectre.agent.runtimeJar=/tmp/agent.jar",
+                        "-Xmx512m",
+                        "-Ddev.sebastiano.spectre.agent.inputCoordination=disabled",
+                    )
+                ),
+            )
+
+        assertEquals(
+            listOf(
+                "-Ddev.sebastiano.spectre.agent.runtimeJar=/tmp/agent.jar",
+                "-Ddev.sebastiano.spectre.agent.inputCoordination=disabled",
+            ),
+            command.filter { it.startsWith("-D") },
+        )
+        assertFalse("-XX:+UseZGC" in command)
+        assertFalse("-Xmx512m" in command)
     }
 
     @Test

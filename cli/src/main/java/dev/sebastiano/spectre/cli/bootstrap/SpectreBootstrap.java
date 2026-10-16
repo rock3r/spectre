@@ -135,11 +135,17 @@ public final class SpectreBootstrap {
      * before the CLI's own minimum-JDK check runs.
      */
     static List<String> childCommand(
-            String javaExecutable, AotCache.Plan plan, Path jarFile, String[] args, int runtimeFeature) {
+            String javaExecutable,
+            AotCache.Plan plan,
+            Path jarFile,
+            String[] args,
+            int runtimeFeature,
+            List<String> callerSystemProperties) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable);
         command.addAll(FRONTEND_JVM_ARGUMENTS);
         command.addAll(plan.jvmArguments());
+        command.addAll(callerSystemProperties);
         if (plan.mode() == AotCache.Mode.PRODUCTION) {
             command.add("-Xlog:aot=off");
         }
@@ -226,6 +232,20 @@ public final class SpectreBootstrap {
         return javaExecutable;
     }
 
+    /**
+     * The {@code -D} system properties the caller gave this JVM (via {@code java -D…},
+     * start-script {@code JAVA_OPTS}/{@code SPECTRE_OPTS}, or {@code JAVA_TOOL_OPTIONS}),
+     * filtered from the JVM's input arguments. They are forwarded to the child: documented
+     * properties such as {@code dev.sebastiano.spectre.agent.runtimeJar} and {@code
+     * dev.sebastiano.spectre.agent.inputCoordination} are read by the real CLI and its
+     * daemon launcher, and would silently vanish if they stopped at the bootstrap JVM.
+     * Other caller JVM options are not forwarded: heap/GC/module flags are owned by the
+     * frontend contract above, and an arbitrary caller flag could invalidate the cache.
+     */
+    static List<String> callerSystemProperties(List<String> inputArguments) {
+        return inputArguments.stream().filter(arg -> arg.startsWith("-D")).toList();
+    }
+
     private static int runChild(AotCache.Plan plan, Path jarFile, String[] args) {
         try {
             Process child = new ProcessBuilder(
@@ -234,7 +254,11 @@ public final class SpectreBootstrap {
                                     plan,
                                     jarFile,
                                     args,
-                                    Runtime.version().feature()))
+                                    Runtime.version().feature(),
+                                    callerSystemProperties(
+                                            java.lang.management.ManagementFactory
+                                                    .getRuntimeMXBean()
+                                                    .getInputArguments())))
                     .inheritIO()
                     .start();
             return child.waitFor();

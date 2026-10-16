@@ -139,6 +139,11 @@ public final class AotCache {
     /**
      * JVM arguments for a daemon launch: a ready cache when the classpath is a single existing
      * jar and one matches, otherwise no arguments. The daemon never trains.
+     *
+     * <p>A consumed cache also needs {@code --enable-native-access=ALL-UNNAMED}: the cache
+     * was recorded and assembled with that module option, and JEP 483 rejects an archive
+     * whose archived module options differ from the consuming JVM's. Without it the daemon
+     * would silently start uncached on every launch.
      */
     public static List<String> daemonJvmArguments(
             String classPath,
@@ -148,8 +153,16 @@ public final class AotCache {
             String runtimeVersion,
             int featureVersion) {
         return singleJarFile(classPath)
-                .map(jar -> plan(jar, environment, userHome, osName, runtimeVersion, featureVersion,
-                        false, "daemon").jvmArguments())
+                .map(jar -> {
+                    Plan plan = plan(jar, environment, userHome, osName, runtimeVersion,
+                            featureVersion, false, "daemon");
+                    if (plan.mode() != Mode.PRODUCTION) {
+                        return plan.jvmArguments();
+                    }
+                    List<String> arguments = new java.util.ArrayList<>(plan.jvmArguments());
+                    arguments.add("--enable-native-access=ALL-UNNAMED");
+                    return List.copyOf(arguments);
+                })
                 .orElse(List.of());
     }
 

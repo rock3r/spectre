@@ -85,6 +85,23 @@ class AotCacheTest {
         val warm = plan(jar, allowTraining = false)
         assertEquals(AotCache.Mode.PRODUCTION, warm.mode())
         assertEquals(listOf("-XX:AOTCache=" + training.cacheFile()), warm.jvmArguments())
+
+        // The daemon consumes the same cache, so its arguments must carry the
+        // module option the cache was trained with, or the JVM rejects it.
+        assertEquals(
+            listOf(
+                "-XX:AOTCache=" + training.cacheFile(),
+                "--enable-native-access=ALL-UNNAMED",
+            ),
+            AotCache.daemonJvmArguments(
+                jar.toString(),
+                emptyMap(),
+                root.resolve("home"),
+                "Linux",
+                "25.0.1",
+                25,
+            ),
+        )
     }
 
     @Test
