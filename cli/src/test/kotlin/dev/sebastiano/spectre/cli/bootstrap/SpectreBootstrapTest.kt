@@ -251,6 +251,44 @@ class SpectreBootstrapTest {
     }
 
     @Test
+    fun `caller representation flags survive when the plan consumes no cache`() {
+        // With SPECTRE_AOT=off (DISABLED) or an unavailable cache, the child
+        // consumes nothing the frontend contract trained, so a caller's
+        // heap-representation choices must not be silently replaced by the
+        // pinned opposites: forwarded after the pinned flags, they win.
+        val inputArguments =
+            listOf(
+                "-XX:+UseCompactObjectHeaders",
+                "-XX:-UseCompressedOops",
+                "-XX:ObjectAlignmentInBytes=16",
+                "-Xmx1g",
+            )
+        for (mode in listOf(AotCache.Mode.DISABLED, AotCache.Mode.UNAVAILABLE)) {
+            assertEquals(
+                inputArguments,
+                SpectreBootstrap.callerJvmOptions(
+                    inputArguments,
+                    AotCache.Plan(mode, null, null, emptyList()),
+                ),
+            )
+        }
+        // A production child consumes the cache the contract trained; the
+        // pinned representation stays non-negotiable there.
+        assertEquals(
+            listOf("-Xmx1g"),
+            SpectreBootstrap.callerJvmOptions(
+                inputArguments,
+                AotCache.Plan(
+                    AotCache.Mode.PRODUCTION,
+                    Path.of("/tmp", "aot", "spectre.aot"),
+                    null,
+                    emptyList(),
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun `foreign collector selection makes the launch user-managed`() {
         assertFalse(SpectreBootstrap.hasForeignCollector(listOf("-XX:+UseG1GC")))
         assertFalse(SpectreBootstrap.hasForeignCollector(listOf("-XX:+UseCompressedOops")))

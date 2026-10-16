@@ -395,7 +395,23 @@ public final class SpectreBootstrap {
      * set stays behind rather than risking the child's cache or protocol stdout.
      */
     public static List<String> callerJvmOptions(List<String> inputArguments) {
-        return filterCallerOptions(inputArguments, false);
+        return filterCallerOptions(inputArguments, false, false);
+    }
+
+    /**
+     * {@link #callerJvmOptions} for a managed child running {@code plan}. When the
+     * plan consumes no cache ({@code DISABLED} — {@code SPECTRE_AOT=off} — or {@code
+     * UNAVAILABLE}), nothing on the child's command line was trained under the
+     * frontend contract, so the caller's heap-representation flags are preserved
+     * instead of being silently replaced by the pinned opposites: {@link
+     * #childCommand} places the forwarded options after the pinned ones, and the
+     * last value wins. A cache-consuming (production) child keeps the pinned
+     * representation non-negotiable.
+     */
+    static List<String> callerJvmOptions(List<String> inputArguments, AotCache.Plan plan) {
+        boolean preserveRepresentation =
+                plan.mode() == AotCache.Mode.DISABLED || plan.mode() == AotCache.Mode.UNAVAILABLE;
+        return filterCallerOptions(inputArguments, false, preserveRepresentation);
     }
 
     /**
@@ -425,9 +441,11 @@ public final class SpectreBootstrap {
 
     /**
      * Whether {@code argument} restates one of the heap-representation flags the
-     * frontend contract pins. Forwarding a caller's different value would make
-     * every production launch reject the cache the contract trained, silently
-     * running uncached forever, so managed children never carry it. ({@code
+     * frontend contract pins. Forwarding a caller's different value to a
+     * cache-consuming child would make every production launch reject the cache
+     * the contract trained, silently running uncached forever, so such children
+     * never carry it; a child whose plan consumes no cache keeps the caller's
+     * value (see {@link #callerJvmOptions(List, AotCache.Plan)}). ({@code
      * UseCompressedClassPointers} is included: naming it also makes JDK 25 print
      * a deprecation warning.)
      */
@@ -455,7 +473,7 @@ public final class SpectreBootstrap {
             String javaExecutable, Path jarFile, String[] args, List<String> inputArguments) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable);
-        command.addAll(filterCallerOptions(inputArguments, true));
+        command.addAll(filterCallerOptions(inputArguments, true, false));
         command.add("-cp");
         command.add(jarFile.toString());
         command.add(MAIN_CLASS_NAME);
@@ -469,14 +487,15 @@ public final class SpectreBootstrap {
      * {@code --enable-native-access}, and {@code -D} properties are kept as well;
      * without it, only options compatible with the frontend contract are kept.
      */
-    private static List<String> filterCallerOptions(List<String> inputArguments, boolean userManaged) {
+    private static List<String> filterCallerOptions(
+            List<String> inputArguments, boolean userManaged, boolean preserveRepresentation) {
         List<String> options = new ArrayList<>();
         for (int i = 0; i < inputArguments.size(); i++) {
             String argument = inputArguments.get(i);
             if (BOOTSTRAP_ONLY_ARGUMENTS.contains(argument)) {
                 continue;
             }
-            if (!userManaged && isPinnedRepresentationArgument(argument)) {
+            if (!userManaged && !preserveRepresentation && isPinnedRepresentationArgument(argument)) {
                 continue;
             }
             if (argument.startsWith("-D")
@@ -579,7 +598,7 @@ public final class SpectreBootstrap {
                         jarFile,
                         args,
                         Runtime.version().feature(),
-                        callerJvmOptions(inputArguments),
+                        callerJvmOptions(inputArguments, plan),
                         callerSystemProperties(inputArguments)));
     }
 
