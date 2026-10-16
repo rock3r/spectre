@@ -201,7 +201,7 @@ public final class AotCache {
         return daemonJvmArguments(
                 classPath,
                 System.getenv(),
-                Path.of(System.getProperty("user.home")),
+                userHomePath(),
                 System.getProperty("os.name"),
                 System.getProperty("os.arch"),
                 runtimeIdentity(),
@@ -230,6 +230,26 @@ public final class AotCache {
                     }
                     return arg.contains("AOTCache");
                 });
+    }
+
+    /**
+     * This process's user home as a path, or {@code null} when the {@code user.home}
+     * property is missing or malformed. A caller can supply that property (via
+     * {@code -Duser.home} in {@code JAVA_OPTS}/{@code SPECTRE_OPTS} or an inherited
+     * JVM-option variable), and converting it must never abort a launch before
+     * planning starts: callers pass the {@code null} on to {@link #plan}, which
+     * degrades to an uncached launch.
+     */
+    public static Path userHomePath() {
+        String userHome = System.getProperty("user.home");
+        if (userHome == null || userHome.isBlank()) {
+            return null;
+        }
+        try {
+            return Path.of(userHome);
+        } catch (java.nio.file.InvalidPathException | SecurityException e) {
+            return null;
+        }
     }
 
     /**
@@ -265,6 +285,18 @@ public final class AotCache {
         return isJarFile(candidate) ? Optional.of(candidate.toAbsolutePath().normalize()) : Optional.empty();
     }
 
+    /**
+     * {@code userHome} or a planning failure the caller already handles: a missing
+     * or malformed user home (see {@link #userHomePath}) means no cache directory
+     * can be derived, and {@link #plan} turns this into an uncached launch.
+     */
+    private static Path requireUserHome(Path userHome) {
+        if (userHome == null) {
+            throw new java.nio.file.InvalidPathException("user.home", "user home is unavailable");
+        }
+        return userHome;
+    }
+
     /** Per-user directory holding trained caches for this OS. */
     public static Path cacheDirectory(Map<String, String> environment, Path userHome, String osName) {
         String override = environment.getOrDefault(CACHE_DIR_ENV, "").strip();
@@ -275,15 +307,16 @@ public final class AotCache {
         if (os.contains("win")) {
             String localAppData = environment.getOrDefault("LOCALAPPDATA", "").strip();
             Path base = localAppData.isEmpty()
-                    ? userHome.resolve("AppData").resolve("Local")
+                    ? requireUserHome(userHome).resolve("AppData").resolve("Local")
                     : Path.of(localAppData);
             return base.resolve("Spectre").resolve("aot");
         }
         if (os.contains("mac") || os.contains("darwin")) {
-            return userHome.resolve("Library").resolve("Caches").resolve("Spectre").resolve("aot");
+            return requireUserHome(userHome)
+                    .resolve("Library").resolve("Caches").resolve("Spectre").resolve("aot");
         }
         String xdgCache = environment.getOrDefault("XDG_CACHE_HOME", "").strip();
-        Path base = xdgCache.isEmpty() ? userHome.resolve(".cache") : Path.of(xdgCache);
+        Path base = xdgCache.isEmpty() ? requireUserHome(userHome).resolve(".cache") : Path.of(xdgCache);
         return base.resolve("spectre").resolve("aot");
     }
 

@@ -132,7 +132,7 @@ public final class SpectreBootstrap {
         return AotCache.plan(
                 jarFile,
                 System.getenv(),
-                Path.of(System.getProperty("user.home")),
+                AotCache.userHomePath(),
                 System.getProperty("os.name"),
                 System.getProperty("os.arch"),
                 AotCache.runtimeIdentity(),

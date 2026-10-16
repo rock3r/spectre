@@ -8,6 +8,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.io.TempDir
 
@@ -59,6 +60,41 @@ class AotCacheTest {
             plan.jvmArguments(),
         )
         assertTrue(plan.trainingFile().toString().endsWith(".training-testpid"))
+    }
+
+    @Test
+    fun `planning tolerates a missing or invalid user home`() {
+        // A malformed -Duser.home (supplied via JAVA_OPTS, SPECTRE_OPTS, or an
+        // inherited JVM-option variable) must degrade to an uncached launch,
+        // never abort the CLI before planning even runs.
+        assertEquals(
+            AotCache.Mode.UNAVAILABLE,
+            AotCache.plan(
+                    jar(),
+                    emptyMap(),
+                    null,
+                    "Linux",
+                    "x86_64",
+                    "25.0.1",
+                    25,
+                    true,
+                    "testpid",
+                    emptyList(),
+                )
+                .mode(),
+        )
+
+        val originalHome = System.getProperty("user.home")
+        try {
+            System.setProperty("user.home", "bad\u0000home")
+            assertNull(AotCache.userHomePath())
+            System.clearProperty("user.home")
+            assertNull(AotCache.userHomePath())
+        } finally {
+            if (originalHome != null) {
+                System.setProperty("user.home", originalHome)
+            }
+        }
     }
 
     @Test
