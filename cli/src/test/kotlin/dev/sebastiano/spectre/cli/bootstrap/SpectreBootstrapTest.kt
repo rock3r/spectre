@@ -88,7 +88,8 @@ class SpectreBootstrapTest {
                 ),
             )
 
-        val command = SpectreBootstrap.trainingCommand(javaExecutable, plan, jarFile, 25)
+        val command =
+            SpectreBootstrap.trainingCommand(javaExecutable, plan, jarFile, 25, emptyList())
 
         // The record run must carry the same frontend arguments and
         // --enable-native-access as the production child: JEP 483 requires module
@@ -125,7 +126,8 @@ class SpectreBootstrapTest {
                 ),
             )
 
-        val command = SpectreBootstrap.assemblyCommand(javaExecutable, plan, jarFile, 25)
+        val command =
+            SpectreBootstrap.assemblyCommand(javaExecutable, plan, jarFile, 25, emptyList())
 
         assertEquals(
             listOf(
@@ -222,6 +224,11 @@ class SpectreBootstrapTest {
                     "java.base/java.lang=ALL-UNNAMED",
                     "-XX:MaxGCPauseMillis=50",
                     "-verbose:gc",
+                    // Pinned by the frontend contract: forwarding a caller's different
+                    // value would make every production launch reject the cache the
+                    // contract trained, silently running uncached forever.
+                    "-XX:-UseCompressedOops",
+                    "-XX:ObjectAlignmentInBytes=16",
                     // Already added by the frontend contract itself.
                     "--enable-native-access=ALL-UNNAMED",
                     // Not a JVM option shape the bootstrap forwards.
@@ -335,16 +342,109 @@ class SpectreBootstrapTest {
     }
 
     @Test
-    fun `only cache-backed plans exec a child JVM`() {
-        fun plan(mode: AotCache.Mode) = AotCache.Plan(mode, null, null, emptyList())
+    fun `unavailable plan child command runs the real CLI uncached`() {
+        // A jar-backed launch whose cache is unavailable (malformed cache dir,
+        // old JDK, ...) still execs this child instead of running in the capped
+        // bootstrap JVM: frontend contract and caller options, no AOT flags.
+        val plan = AotCache.Plan(AotCache.Mode.UNAVAILABLE, null, null, emptyList())
 
-        assertTrue(SpectreBootstrap.shouldExecInChild(plan(AotCache.Mode.PRODUCTION)))
-        assertTrue(SpectreBootstrap.shouldExecInChild(plan(AotCache.Mode.TRAINING)))
-        // Disabled still execs: packaged launches give the bootstrap JVM lean startup
-        // flags, and the real CLI (notably the long-lived MCP server) must not inherit
-        // them by running in-process.
-        assertTrue(SpectreBootstrap.shouldExecInChild(plan(AotCache.Mode.DISABLED)))
-        assertFalse(SpectreBootstrap.shouldExecInChild(plan(AotCache.Mode.UNAVAILABLE)))
+        val command =
+            SpectreBootstrap.childCommand(
+                javaExecutable,
+                plan,
+                jarFile,
+                arrayOf("mcp"),
+                25,
+                listOf("-Xmx1g"),
+                emptyList(),
+            )
+
+        assertEquals(
+            listOf(
+                javaExecutable,
+                *frontendArguments.toTypedArray(),
+                "-Xmx1g",
+                "--enable-native-access=ALL-UNNAMED",
+                "-cp",
+                jarFile.toString(),
+                "dev.sebastiano.spectre.cli.SpectreCliKt",
+                "mcp",
+            ),
+            command,
+        )
+    }
+
+    @Test
+    fun `caller module options reach the record and assembly JVMs as well as production`() {
+        // JEP 483 requires identical module options across record, create, and
+        // consumption: if the production child carried --add-opens but training
+        // did not, the JVM would reject the trained cache on every launch and
+        // silently run uncached forever. Heap and agent options, by contrast,
+        // are production-only: they do not shape the archived module graph.
+        val moduleOptions =
+            SpectreBootstrap.callerModuleOptions(
+                listOf(
+                    "-Xmx1g",
+                    "--add-opens",
+                    "java.base/java.lang=ALL-UNNAMED",
+                    "-javaagent:/tmp/agent.jar",
+                    "--add-modules",
+                    "java.sql",
+                )
+            )
+
+        assertEquals(
+            listOf("--add-opens", "java.base/java.lang=ALL-UNNAMED", "--add-modules", "java.sql"),
+            moduleOptions,
+        )
+
+        val training = Path.of("/tmp", "aot", "spectre.aot.training-42")
+        val plan =
+            AotCache.Plan(
+                AotCache.Mode.TRAINING,
+                Path.of("/tmp", "aot", "spectre.aot"),
+                training,
+                listOf(
+                    "-XX:AOTMode=record",
+                    "-XX:AOTConfiguration=$training.config",
+                ),
+            )
+
+        assertEquals(
+            listOf(
+                javaExecutable,
+                *frontendArguments.toTypedArray(),
+                "-XX:AOTMode=record",
+                "-XX:AOTConfiguration=$training.config",
+                "--add-opens",
+                "java.base/java.lang=ALL-UNNAMED",
+                "--add-modules",
+                "java.sql",
+                "--enable-native-access=ALL-UNNAMED",
+                "-cp",
+                jarFile.toString(),
+                "dev.sebastiano.spectre.cli.SpectreCliKt",
+                "--help",
+            ),
+            SpectreBootstrap.trainingCommand(javaExecutable, plan, jarFile, 25, moduleOptions),
+        )
+        assertEquals(
+            listOf(
+                javaExecutable,
+                *frontendArguments.toTypedArray(),
+                "-XX:AOTMode=create",
+                "-XX:AOTConfiguration=$training.config",
+                "-XX:AOTCacheOutput=$training",
+                "--add-opens",
+                "java.base/java.lang=ALL-UNNAMED",
+                "--add-modules",
+                "java.sql",
+                "--enable-native-access=ALL-UNNAMED",
+                "-cp",
+                jarFile.toString(),
+            ),
+            SpectreBootstrap.assemblyCommand(javaExecutable, plan, jarFile, 25, moduleOptions),
+        )
     }
 
     @Test

@@ -101,11 +101,17 @@ public final class SpectreBootstrap {
                 plan = new AotCache.Plan(AotCache.Mode.DISABLED, null, null, List.of());
             }
         }
-        if (!shouldExecInChild(plan)) {
+        if (jarFile.isEmpty()) {
+            // Exploded classpath (tests, Gradle dev runs): nothing to exec, and this
+            // JVM carries no packaged-launcher caps, so run in-process as before.
+            // Every jar-backed plan — production, training, disabled, and
+            // unavailable alike — execs a child instead: even an unavailable cache
+            // (for example a malformed SPECTRE_AOT_CACHE_DIR) must degrade to an
+            // uncached child, never to a capped in-process run.
             runInProcess(args);
             return;
         }
-        System.exit(runChild(plan, jarFile.orElseThrow(), args));
+        System.exit(runChild(plan, jarFile.get(), args));
     }
 
     private static AotCache.Plan planFor(Path jarFile) {
@@ -119,13 +125,6 @@ public final class SpectreBootstrap {
                 Runtime.version().feature(),
                 true,
                 Long.toString(ProcessHandle.current().pid()));
-    }
-
-    /** Launches that produce or consume a cache — and the explicitly disabled launch — need a child JVM. */
-    static boolean shouldExecInChild(AotCache.Plan plan) {
-        return plan.mode() == AotCache.Mode.PRODUCTION
-                || plan.mode() == AotCache.Mode.TRAINING
-                || plan.mode() == AotCache.Mode.DISABLED;
     }
 
     /** First JDK feature release that warns about restricted native methods at runtime. */
@@ -207,11 +206,16 @@ public final class SpectreBootstrap {
      * discarded by the caller.
      */
     static List<String> trainingCommand(
-            String javaExecutable, AotCache.Plan plan, Path jarFile, int runtimeFeature) {
+            String javaExecutable,
+            AotCache.Plan plan,
+            Path jarFile,
+            int runtimeFeature,
+            List<String> callerModuleOptions) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable);
         command.addAll(FRONTEND_JVM_ARGUMENTS);
         command.addAll(plan.jvmArguments());
+        command.addAll(callerModuleOptions);
         addNativeAccessArgument(command, runtimeFeature);
         command.add("-cp");
         command.add(jarFile.toString());
@@ -222,13 +226,18 @@ public final class SpectreBootstrap {
 
     /** The cache-assembly JVM: creates the training cache from the recorded configuration. */
     static List<String> assemblyCommand(
-            String javaExecutable, AotCache.Plan plan, Path jarFile, int runtimeFeature) {
+            String javaExecutable,
+            AotCache.Plan plan,
+            Path jarFile,
+            int runtimeFeature,
+            List<String> callerModuleOptions) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable);
         command.addAll(FRONTEND_JVM_ARGUMENTS);
         command.add("-XX:AOTMode=create");
         command.add("-XX:AOTConfiguration=" + trainingConfigFile(plan));
         command.add("-XX:AOTCacheOutput=" + plan.trainingFile());
+        command.addAll(callerModuleOptions);
         addNativeAccessArgument(command, runtimeFeature);
         command.add("-cp");
         command.add(jarFile.toString());
@@ -327,6 +336,49 @@ public final class SpectreBootstrap {
     }
 
     /**
+     * The caller's module options ({@code --add-*} and {@code --patch-module}, with
+     * their values) from the input arguments. These shape the module graph JEP 483
+     * archives, so the record run and the cache-assembly JVM must carry exactly the
+     * ones the production child carries, or the JVM rejects the trained cache on
+     * every launch. {@code --enable-native-access} is not part of this list: every
+     * phase adds it separately (see {@link #addNativeAccessArgument}). Heap, agent,
+     * and tuning options do not shape the archived module graph and stay
+     * production-only.
+     */
+    static List<String> callerModuleOptions(List<String> inputArguments) {
+        List<String> options = new ArrayList<>();
+        for (int i = 0; i < inputArguments.size(); i++) {
+            String argument = inputArguments.get(i);
+            if (!argument.startsWith("--add-") && !argument.startsWith("--patch-module")) {
+                continue;
+            }
+            options.add(argument);
+            if (TWO_TOKEN_MODULE_OPTIONS.contains(argument) && i + 1 < inputArguments.size()) {
+                options.add(inputArguments.get(++i));
+            }
+        }
+        return options;
+    }
+
+    /**
+     * Whether {@code argument} restates one of the heap-representation flags the
+     * frontend contract pins. Forwarding a caller's different value would make
+     * every production launch reject the cache the contract trained, silently
+     * running uncached forever, so managed children never carry it. ({@code
+     * UseCompressedClassPointers} is included: naming it also makes JDK 25 print
+     * a deprecation warning.)
+     */
+    private static boolean isPinnedRepresentationArgument(String argument) {
+        return argument.startsWith("-XX:+UseCompressedOops")
+                || argument.startsWith("-XX:-UseCompressedOops")
+                || argument.startsWith("-XX:+UseCompactObjectHeaders")
+                || argument.startsWith("-XX:-UseCompactObjectHeaders")
+                || argument.startsWith("-XX:+UseCompressedClassPointers")
+                || argument.startsWith("-XX:-UseCompressedClassPointers")
+                || argument.startsWith("-XX:ObjectAlignmentInBytes=");
+    }
+
+    /**
      * The full child command for a user-managed launch: this JVM's {@code java}, the
      * caller's preserved options (their AOT flags, collector selection, heap, agents,
      * module options, and {@code -D} properties, in the order given), then the real
@@ -359,6 +411,9 @@ public final class SpectreBootstrap {
         for (int i = 0; i < inputArguments.size(); i++) {
             String argument = inputArguments.get(i);
             if (BOOTSTRAP_ONLY_ARGUMENTS.contains(argument)) {
+                continue;
+            }
+            if (!userManaged && isPinnedRepresentationArgument(argument)) {
                 continue;
             }
             if (argument.startsWith("-D")
@@ -508,9 +563,19 @@ public final class SpectreBootstrap {
             Files.createDirectories(cacheFile.getParent());
             String javaExecutable = childJavaExecutable();
             int runtimeFeature = Runtime.version().feature();
-            int recorded = runDiscarded(trainingCommand(javaExecutable, plan, jarFile, runtimeFeature));
+            List<String> moduleOptions =
+                    callerModuleOptions(
+                            java.lang.management.ManagementFactory.getRuntimeMXBean()
+                                    .getInputArguments());
+            int recorded =
+                    runDiscarded(
+                            trainingCommand(
+                                    javaExecutable, plan, jarFile, runtimeFeature, moduleOptions));
             if (recorded == 0 && Files.isRegularFile(trainingConfigFile(plan))) {
-                int assembled = runDiscarded(assemblyCommand(javaExecutable, plan, jarFile, runtimeFeature));
+                int assembled =
+                        runDiscarded(
+                                assemblyCommand(
+                                        javaExecutable, plan, jarFile, runtimeFeature, moduleOptions));
                 if (assembled == 0) {
                     promoteTrainingCache(plan);
                     return;
