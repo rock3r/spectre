@@ -1,10 +1,13 @@
 package dev.sebastiano.spectre.cli.bootstrap
 
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.io.TempDir
 
 class SpectreBootstrapTest {
 
@@ -191,6 +194,53 @@ class SpectreBootstrapTest {
         )
         assertFalse("-XX:+UseZGC" in command)
         assertFalse("-Xmx512m" in command)
+    }
+
+    @Test
+    fun `child environment drops inherited JVM option variables`() {
+        // A caller collector in JAVA_TOOL_OPTIONS would collide with the pinned
+        // G1 in the child ("Multiple garbage collectors selected"); the supported
+        // -D properties are forwarded explicitly instead.
+        val environment =
+            mutableMapOf(
+                "JAVA_TOOL_OPTIONS" to "-XX:+UseZGC",
+                "JDK_JAVA_OPTIONS" to "-Xmx1g",
+                "_JAVA_OPTIONS" to "-Dfoo=bar",
+                "PATH" to "/usr/bin",
+            )
+
+        SpectreBootstrap.sanitizeChildEnvironment(environment)
+
+        assertEquals(mapOf("PATH" to "/usr/bin"), environment)
+    }
+
+    @Test
+    fun `promotion replaces an empty cache file but keeps a concurrent winner`(
+        @TempDir directory: Path
+    ) {
+        val cache = directory.resolve("spectre.aot")
+        val training = directory.resolve("spectre.aot.training-1")
+        Files.write(training, byteArrayOf(1, 2, 3))
+        Files.write(cache, byteArrayOf())
+
+        SpectreBootstrap.promoteTrainingCache(
+            AotCache.Plan(AotCache.Mode.TRAINING, cache, training, emptyList())
+        )
+
+        // Zero-length is not a usable cache: the fresh output replaces it
+        // instead of being discarded, which would retrain on every launch.
+        assertContentEquals(byteArrayOf(1, 2, 3), Files.readAllBytes(cache))
+
+        val winner = directory.resolve("spectre2.aot")
+        val training2 = directory.resolve("spectre2.aot.training-1")
+        Files.write(winner, byteArrayOf(9))
+        Files.write(training2, byteArrayOf(7))
+
+        SpectreBootstrap.promoteTrainingCache(
+            AotCache.Plan(AotCache.Mode.TRAINING, winner, training2, emptyList())
+        )
+
+        assertContentEquals(byteArrayOf(9), Files.readAllBytes(winner))
     }
 
     @Test

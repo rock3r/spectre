@@ -255,6 +255,23 @@ public final class SpectreBootstrap {
         return inputArguments.stream().filter(arg -> arg.startsWith("-D")).toList();
     }
 
+    /** JVM option environment variables a child JVM would otherwise inherit verbatim. */
+    private static final List<String> INHERITED_OPTION_ENV =
+            List.of("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS");
+
+    /**
+     * Removes the JVM option environment variables from a child process environment.
+     * Every option they carry already reached this JVM as an input argument, and the
+     * supported ones (caller {@code -D} properties) are forwarded explicitly; letting
+     * the raw variables through would re-apply them next to the frontend contract —
+     * a caller-selected collector (for example {@code -XX:+UseZGC} in {@code
+     * JAVA_TOOL_OPTIONS}) would collide with the pinned G1 and the child would exit
+     * with "Multiple garbage collectors selected", even with {@code SPECTRE_AOT=off}.
+     */
+    static void sanitizeChildEnvironment(java.util.Map<String, String> environment) {
+        INHERITED_OPTION_ENV.forEach(environment::remove);
+    }
+
     /** The currently running real-CLI child, so termination of this JVM can be propagated. */
     private static volatile Process currentChild;
 
@@ -285,7 +302,7 @@ public final class SpectreBootstrap {
 
     private static int runChild(AotCache.Plan plan, Path jarFile, String[] args) {
         try {
-            Process child = new ProcessBuilder(
+            ProcessBuilder childBuilder = new ProcessBuilder(
                             childCommand(
                                     childJavaExecutable(),
                                     plan,
@@ -296,8 +313,9 @@ public final class SpectreBootstrap {
                                             java.lang.management.ManagementFactory
                                                     .getRuntimeMXBean()
                                                     .getInputArguments())))
-                    .inheritIO()
-                    .start();
+                    .inheritIO();
+            sanitizeChildEnvironment(childBuilder.environment());
+            Process child = childBuilder.start();
             currentChild = child;
             registerChildTerminationHook();
             try {
@@ -367,10 +385,11 @@ public final class SpectreBootstrap {
 
     /** Runs a command with stdout and stderr discarded; returns its exit code. */
     private static int runDiscarded(List<String> command) throws IOException, InterruptedException {
-        Process process = new ProcessBuilder(command)
+        ProcessBuilder builder = new ProcessBuilder(command)
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                .redirectError(ProcessBuilder.Redirect.DISCARD)
-                .start();
+                .redirectError(ProcessBuilder.Redirect.DISCARD);
+        sanitizeChildEnvironment(builder.environment());
+        Process process = builder.start();
         try {
             return process.waitFor();
         } catch (InterruptedException e) {
@@ -379,7 +398,7 @@ public final class SpectreBootstrap {
         }
     }
 
-    private static void promoteTrainingCache(AotCache.Plan plan) {
+    static void promoteTrainingCache(AotCache.Plan plan) {
         Path trainingFile = plan.trainingFile();
         Path cacheFile = plan.cacheFile();
         if (trainingFile == null || cacheFile == null) {
@@ -396,15 +415,21 @@ public final class SpectreBootstrap {
             return;
         }
         try {
-            if (Files.isRegularFile(cacheFile)) {
+            if (Files.isRegularFile(cacheFile) && Files.size(cacheFile) > 0) {
                 // A concurrent first run won the race; its cache is equivalent.
+                // A zero-length file is not a cache (planning treats it as such),
+                // so it must not win: leaving it would retrain on every launch.
                 Files.deleteIfExists(trainingFile);
                 return;
             }
             try {
-                Files.move(trainingFile, cacheFile, StandardCopyOption.ATOMIC_MOVE);
+                Files.move(
+                        trainingFile,
+                        cacheFile,
+                        StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
             } catch (AtomicMoveNotSupportedException e) {
-                Files.move(trainingFile, cacheFile);
+                Files.move(trainingFile, cacheFile, StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (IOException ignored) {
             // A cache that cannot be promoted only means the next run trains again.
