@@ -48,6 +48,7 @@ class SpectreBootstrapTest {
                 arrayOf("daemon", "status"),
                 25,
                 emptyList(),
+                emptyList(),
             )
 
         assertEquals(
@@ -156,17 +157,28 @@ class SpectreBootstrapTest {
                 arrayOf("--help"),
                 21,
                 emptyList(),
+                emptyList(),
             )
 
         assertFalse("--enable-native-access=ALL-UNNAMED" in command)
     }
 
     @Test
-    fun `child command forwards the caller's system properties`() {
-        // -D properties given to the bootstrap JVM (java -D..., JAVA_OPTS,
+    fun `child command forwards the caller's system properties and JVM options`() {
+        // -D properties and non-property JVM options (-Xmx, -javaagent,
+        // --add-opens, ...) given to the bootstrap JVM (java ..., JAVA_OPTS,
         // SPECTRE_OPTS) are read by the real CLI and its daemon launcher; they
-        // must reach the child instead of stopping at the bootstrap.
+        // must reach the child instead of stopping at the bootstrap. Only the
+        // frontend contract itself (collector selectors, AOT flags) stays
+        // bootstrap-owned.
         val plan = AotCache.Plan(AotCache.Mode.DISABLED, null, null, emptyList())
+        val inputArguments =
+            listOf(
+                "-XX:+UseZGC",
+                "-Ddev.sebastiano.spectre.agent.runtimeJar=/tmp/agent.jar",
+                "-Xmx512m",
+                "-Ddev.sebastiano.spectre.agent.inputCoordination=disabled",
+            )
 
         val command =
             SpectreBootstrap.childCommand(
@@ -175,14 +187,8 @@ class SpectreBootstrapTest {
                 jarFile,
                 arrayOf("--help"),
                 25,
-                SpectreBootstrap.callerSystemProperties(
-                    listOf(
-                        "-XX:+UseZGC",
-                        "-Ddev.sebastiano.spectre.agent.runtimeJar=/tmp/agent.jar",
-                        "-Xmx512m",
-                        "-Ddev.sebastiano.spectre.agent.inputCoordination=disabled",
-                    )
-                ),
+                SpectreBootstrap.callerJvmOptions(inputArguments),
+                SpectreBootstrap.callerSystemProperties(inputArguments),
             )
 
         assertEquals(
@@ -193,7 +199,92 @@ class SpectreBootstrapTest {
             command.filter { it.startsWith("-D") },
         )
         assertFalse("-XX:+UseZGC" in command)
-        assertFalse("-Xmx512m" in command)
+        // The caller's heap choice reaches the real CLI; only the bootstrap's own
+        // -Xmx64m (see below) is withheld.
+        assertTrue("-Xmx512m" in command)
+    }
+
+    @Test
+    fun `caller JVM options keep user options and drop the bootstrap and contract flags`() {
+        val options =
+            SpectreBootstrap.callerJvmOptions(
+                listOf(
+                    // The Roast bootstrap's own vmArgs: the real CLI must not inherit
+                    // the 64 MiB heap cap or single-tier compilation.
+                    "-XX:TieredStopAtLevel=1",
+                    "-Xmx64m",
+                    "-Xmx1g",
+                    "-Ddev.sebastiano.spectre.agent.runtimeJar=/tmp/agent.jar",
+                    "-XX:+UseZGC",
+                    "-XX:AOTCache=/tmp/user.aot",
+                    "-javaagent:/tmp/agent.jar",
+                    "--add-opens",
+                    "java.base/java.lang=ALL-UNNAMED",
+                    "-XX:MaxGCPauseMillis=50",
+                    "-verbose:gc",
+                    // Already added by the frontend contract itself.
+                    "--enable-native-access=ALL-UNNAMED",
+                    // Not a JVM option shape the bootstrap forwards.
+                    "spectre",
+                )
+            )
+
+        assertEquals(
+            listOf(
+                "-Xmx1g",
+                "-javaagent:/tmp/agent.jar",
+                "--add-opens",
+                "java.base/java.lang=ALL-UNNAMED",
+                "-XX:MaxGCPauseMillis=50",
+                "-verbose:gc",
+            ),
+            options,
+        )
+    }
+
+    @Test
+    fun `foreign collector selection makes the launch user-managed`() {
+        assertFalse(SpectreBootstrap.hasForeignCollector(listOf("-XX:+UseG1GC")))
+        assertFalse(SpectreBootstrap.hasForeignCollector(listOf("-XX:+UseCompressedOops")))
+        assertTrue(SpectreBootstrap.hasForeignCollector(listOf("-XX:+UseZGC")))
+        assertTrue(SpectreBootstrap.hasForeignCollector(listOf("-XX:+UseShenandoahGC")))
+    }
+
+    @Test
+    fun `user-managed child carries the caller's options without the frontend contract`() {
+        // A caller who supplies their own AOT cache or collector gets a child JVM
+        // with exactly their options: no managed frontend arguments, no managed
+        // cache, and none of the bootstrap's own lean-startup flags — the real
+        // CLI (notably a long-lived `spectre mcp`) must not run capped at 64 MiB.
+        val command =
+            SpectreBootstrap.userManagedChildCommand(
+                javaExecutable,
+                jarFile,
+                arrayOf("mcp"),
+                listOf(
+                    "-XX:TieredStopAtLevel=1",
+                    "-Xmx64m",
+                    "-XX:+UseZGC",
+                    "-XX:AOTCache=/tmp/user.aot",
+                    "-Xmx1g",
+                    "-Ddev.sebastiano.spectre.agent.runtimeJar=/tmp/agent.jar",
+                ),
+            )
+
+        assertEquals(
+            listOf(
+                javaExecutable,
+                "-XX:+UseZGC",
+                "-XX:AOTCache=/tmp/user.aot",
+                "-Xmx1g",
+                "-Ddev.sebastiano.spectre.agent.runtimeJar=/tmp/agent.jar",
+                "-cp",
+                jarFile.toString(),
+                "dev.sebastiano.spectre.cli.SpectreCliKt",
+                "mcp",
+            ),
+            command,
+        )
     }
 
     @Test

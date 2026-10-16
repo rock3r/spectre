@@ -31,9 +31,12 @@ import java.util.Optional;
  *       command uncached,
  *   <li>execs a child JVM without AOT flags when caching is explicitly disabled, so the
  *       real CLI never runs inside this JVM (packaged launches give the bootstrap lean
- *       startup flags the long-lived MCP server must not inherit), or
+ *       startup flags the long-lived MCP server must not inherit),
+ *   <li>execs a child JVM carrying the caller's own JVM options — without the frontend
+ *       contract or a managed cache — when the caller manages AOT or the collector
+ *       themselves, or
  *   <li>runs the real CLI in-process when caching is unavailable (JDK &lt; 25, exploded
- *       classpath, user-managed AOT flags), so behaviour is unchanged.
+ *       classpath), so behaviour is unchanged.
  * </ul>
  *
  * <p>Training never touches the real command's stdio: a record run appends an {@code
@@ -60,15 +63,32 @@ public final class SpectreBootstrap {
     private SpectreBootstrap() {}
 
     public static void main(String[] args) {
-        if (AotCache.hasUserAotArguments(
-                java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments())) {
-            // The caller manages AOT themselves (java -XX:AOTCache=..., or a start
-            // script's JAVA_OPTS/SPECTRE_OPTS): run in-process so their options —
-            // which apply to this JVM — govern the launch, exactly as documented.
+        List<String> inputArguments =
+                java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments();
+        Optional<Path> jarFile = currentJarFile();
+        if ((AotCache.hasUserAotArguments(inputArguments) || hasForeignCollector(inputArguments))
+                && jarFile.isPresent()) {
+            // The caller manages AOT or the collector themselves (java
+            // -XX:AOTCache=..., or a start script's JAVA_OPTS/SPECTRE_OPTS): their
+            // options take precedence over the managed cache, exactly as
+            // documented. Re-exec them onto a child JVM rather than running
+            // in-process: this JVM carries the packaged launcher's lean startup
+            // flags (-Xmx64m, TieredStopAtLevel=1), which a long-lived
+            // `spectre mcp` must not inherit.
+            System.exit(
+                    runChild(
+                            userManagedChildCommand(
+                                    childJavaExecutable(), jarFile.get(), args, inputArguments),
+                            args));
+            return;
+        }
+        if (AotCache.hasUserAotArguments(inputArguments)) {
+            // Exploded classpath (tests, Gradle dev runs): no child can be built,
+            // and this JVM has no packaged-launcher caps, so the caller's options
+            // govern the launch in-process as before.
             runInProcess(args);
             return;
         }
-        Optional<Path> jarFile = currentJarFile();
         AotCache.Plan plan = jarFile
                 .map(SpectreBootstrap::planFor)
                 .orElseGet(() -> new AotCache.Plan(AotCache.Mode.UNAVAILABLE, null, null, List.of()));
@@ -149,11 +169,13 @@ public final class SpectreBootstrap {
             Path jarFile,
             String[] args,
             int runtimeFeature,
+            List<String> forwardedJvmOptions,
             List<String> callerSystemProperties) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable);
         command.addAll(FRONTEND_JVM_ARGUMENTS);
         command.addAll(plan.jvmArguments());
+        command.addAll(forwardedJvmOptions);
         command.addAll(callerSystemProperties);
         if (plan.mode() == AotCache.Mode.PRODUCTION) {
             command.add("-Xlog:aot=off");
@@ -248,11 +270,138 @@ public final class SpectreBootstrap {
      * properties such as {@code dev.sebastiano.spectre.agent.runtimeJar} and {@code
      * dev.sebastiano.spectre.agent.inputCoordination} are read by the real CLI and its
      * daemon launcher, and would silently vanish if they stopped at the bootstrap JVM.
-     * Other caller JVM options are not forwarded: heap/GC/module flags are owned by the
-     * frontend contract above, and an arbitrary caller flag could invalidate the cache.
      */
     static List<String> callerSystemProperties(List<String> inputArguments) {
         return inputArguments.stream().filter(arg -> arg.startsWith("-D")).toList();
+    }
+
+    /**
+     * This JVM's own packaged-launcher flags (the Roast {@code vmArgs} in {@code
+     * cli/build.gradle.kts}). They exist to make the throwaway bootstrap JVM cheap;
+     * the real CLI must never inherit them, so they are withheld from every child. A
+     * caller passing the identical flag themselves cannot be told apart from the
+     * launcher and loses it too — an accepted ambiguity, since both values are
+     * startup-tuning choices for a process that exits immediately.
+     */
+    private static final List<String> BOOTSTRAP_ONLY_ARGUMENTS =
+            List.of("-XX:TieredStopAtLevel=1", "-Xmx64m");
+
+    /** Module options that take their value as the following argument token. */
+    private static final List<String> TWO_TOKEN_MODULE_OPTIONS =
+            List.of("--add-modules", "--add-opens", "--add-exports", "--add-reads", "--patch-module");
+
+    /** Whether {@code argument} selects a garbage collector ({@code -XX:+Use…GC}). */
+    private static boolean isCollectorSelector(String argument) {
+        return argument.startsWith("-XX:+Use") && argument.endsWith("GC");
+    }
+
+    /** Whether {@code argument} is one of the caller's own AOT options. */
+    private static boolean isUserAotArgument(String argument) {
+        return argument.contains("AOTCache") || argument.contains("AOTMode");
+    }
+
+    /**
+     * Whether the caller selected a collector other than the frontend contract's G1.
+     * Such a launch is user-managed: the managed cache was trained under G1, and the
+     * caller's collector choice takes precedence (see {@link #userManagedChildCommand}).
+     * ({@code -XX:+UseCompressedOops} is not a selector: it does not end in {@code GC}.)
+     */
+    static boolean hasForeignCollector(List<String> inputArguments) {
+        return inputArguments.stream()
+                .anyMatch(arg -> isCollectorSelector(arg) && !arg.equals("-XX:+UseG1GC"));
+    }
+
+    /**
+     * The caller JVM options (from {@code java …}, {@code JAVA_OPTS}/{@code SPECTRE_OPTS},
+     * or the option environment variables — all visible as this JVM's input arguments)
+     * that are forwarded to a managed child: heap sizing, agents, module access,
+     * assertion and {@code -XX} tuning flags. Withheld are the bootstrap's own flags
+     * (above), {@code -D} properties (forwarded separately by {@link
+     * #callerSystemProperties}), collector selectors and AOT options (a foreign value
+     * makes the launch user-managed instead), and {@code --enable-native-access},
+     * which the frontend contract adds itself. An option shape outside the forwarded
+     * set stays behind rather than risking the child's cache or protocol stdout.
+     */
+    static List<String> callerJvmOptions(List<String> inputArguments) {
+        return filterCallerOptions(inputArguments, false);
+    }
+
+    /**
+     * The full child command for a user-managed launch: this JVM's {@code java}, the
+     * caller's preserved options (their AOT flags, collector selection, heap, agents,
+     * module options, and {@code -D} properties, in the order given), then the real
+     * CLI. No frontend arguments and no managed cache are added — the caller's cache
+     * was trained under their options, and Spectre's must not be mixed into it. The
+     * option environment variables are still scrubbed from the child's environment
+     * (see {@link #sanitizeChildEnvironment}): every option they carried is already
+     * present here explicitly, because the JVM surfaces them as input arguments.
+     */
+    static List<String> userManagedChildCommand(
+            String javaExecutable, Path jarFile, String[] args, List<String> inputArguments) {
+        List<String> command = new ArrayList<>();
+        command.add(javaExecutable);
+        command.addAll(filterCallerOptions(inputArguments, true));
+        command.add("-cp");
+        command.add(jarFile.toString());
+        command.add(MAIN_CLASS_NAME);
+        command.addAll(List.of(args));
+        return command;
+    }
+
+    /**
+     * One pass over the caller's input arguments keeping the options a child may
+     * carry. With {@code userManaged}, the caller's AOT options, collector selectors,
+     * {@code --enable-native-access}, and {@code -D} properties are kept as well;
+     * without it, only options compatible with the frontend contract are kept.
+     */
+    private static List<String> filterCallerOptions(List<String> inputArguments, boolean userManaged) {
+        List<String> options = new ArrayList<>();
+        for (int i = 0; i < inputArguments.size(); i++) {
+            String argument = inputArguments.get(i);
+            if (BOOTSTRAP_ONLY_ARGUMENTS.contains(argument)) {
+                continue;
+            }
+            if (argument.startsWith("-D")
+                    || isUserAotArgument(argument)
+                    || isCollectorSelector(argument)
+                    || argument.startsWith("--enable-native-access")) {
+                if (userManaged) {
+                    options.add(argument);
+                }
+                continue;
+            }
+            if (!isForwardableOption(argument)) {
+                continue;
+            }
+            options.add(argument);
+            if (TWO_TOKEN_MODULE_OPTIONS.contains(argument) && i + 1 < inputArguments.size()) {
+                // --add-opens java.base/java.lang=ALL-UNNAMED arrives as two tokens;
+                // forwarding the option without its value would break the child.
+                options.add(inputArguments.get(++i));
+            }
+        }
+        return options;
+    }
+
+    /** Whether {@code argument} has a JVM-option shape a managed child may inherit. */
+    private static boolean isForwardableOption(String argument) {
+        return argument.startsWith("-Xmx")
+                || argument.startsWith("-Xms")
+                || argument.startsWith("-Xss")
+                || argument.startsWith("-XX:")
+                || argument.startsWith("-javaagent:")
+                || argument.startsWith("-agentlib:")
+                || argument.startsWith("-agentpath:")
+                || argument.startsWith("--add-")
+                || argument.startsWith("--enable-")
+                || argument.startsWith("--patch-module")
+                || argument.equals("-ea")
+                || argument.equals("-da")
+                || argument.startsWith("-ea:")
+                || argument.startsWith("-da:")
+                || argument.startsWith("-enableassertions")
+                || argument.startsWith("-disableassertions")
+                || argument.startsWith("-verbose:");
     }
 
     /** JVM option environment variables a child JVM would otherwise inherit verbatim. */
@@ -262,11 +411,12 @@ public final class SpectreBootstrap {
     /**
      * Removes the JVM option environment variables from a child process environment.
      * Every option they carry already reached this JVM as an input argument, and the
-     * supported ones (caller {@code -D} properties) are forwarded explicitly; letting
-     * the raw variables through would re-apply them next to the frontend contract —
-     * a caller-selected collector (for example {@code -XX:+UseZGC} in {@code
-     * JAVA_TOOL_OPTIONS}) would collide with the pinned G1 and the child would exit
-     * with "Multiple garbage collectors selected", even with {@code SPECTRE_AOT=off}.
+     * supported ones (caller {@code -D} properties and JVM options) are forwarded
+     * explicitly; letting the raw variables through would re-apply them next to the
+     * frontend contract — a caller-selected collector (for example {@code
+     * -XX:+UseZGC} in {@code JAVA_TOOL_OPTIONS}) would collide with the pinned G1 and
+     * the child would exit with "Multiple garbage collectors selected", even with
+     * {@code SPECTRE_AOT=off}.
      */
     static void sanitizeChildEnvironment(java.util.Map<String, String> environment) {
         INHERITED_OPTION_ENV.forEach(environment::remove);
@@ -301,19 +451,23 @@ public final class SpectreBootstrap {
     }
 
     private static int runChild(AotCache.Plan plan, Path jarFile, String[] args) {
+        List<String> inputArguments =
+                java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments();
+        return runChild(
+                childCommand(
+                        childJavaExecutable(),
+                        plan,
+                        jarFile,
+                        args,
+                        Runtime.version().feature(),
+                        callerJvmOptions(inputArguments),
+                        callerSystemProperties(inputArguments)),
+                args);
+    }
+
+    private static int runChild(List<String> command, String[] args) {
         try {
-            ProcessBuilder childBuilder = new ProcessBuilder(
-                            childCommand(
-                                    childJavaExecutable(),
-                                    plan,
-                                    jarFile,
-                                    args,
-                                    Runtime.version().feature(),
-                                    callerSystemProperties(
-                                            java.lang.management.ManagementFactory
-                                                    .getRuntimeMXBean()
-                                                    .getInputArguments())))
-                    .inheritIO();
+            ProcessBuilder childBuilder = new ProcessBuilder(command).inheritIO();
             sanitizeChildEnvironment(childBuilder.environment());
             Process child = childBuilder.start();
             currentChild = child;
