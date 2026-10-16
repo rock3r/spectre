@@ -4,7 +4,7 @@
 
 Spectre is a JVM-first Kotlin project for automating live Compose Desktop UIs.
 
-The planned system spans:
+Spectre supports:
 
 - semantics tree inspection across windows and popup roots
 - Robot-backed real OS input
@@ -12,8 +12,7 @@ The planned system spans:
 - screenshot and recording support
 - standalone Compose Desktop apps and IntelliJ/Jewel-hosted UIs
 
-The repository is currently in bootstrap mode. Favor clean architecture, reproducible tests, and
-careful prior-art research over premature implementation.
+Keep the architecture clear and tests reproducible. Read existing code before adding a new implementation.
 
 If this file, the spike gist, and the checked-in code ever disagree, treat the checked-in code and
 repo docs as the current source of truth.

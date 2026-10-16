@@ -41,7 +41,7 @@ val AnimationScenario: Scenario =
     Scenario(
         title = "Infinite animation + event-driven settle",
         testTag = "scenario.animation",
-        unblocks = "#8 wait-contract correctness while a background animation never settles.",
+        unblocks = "Checks wait behaviour while a background animation runs continuously.",
         content = { AnimationContent() },
     )
 

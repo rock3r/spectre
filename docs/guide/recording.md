@@ -1,8 +1,8 @@
 # Recording And Screenshots
 
 The `recording` module adds video output and native still-window screenshots to your
-tests. It exposes small surfaces backed by platform-specific implementations and
-routers that pick the right one per call.
+tests. Platform-specific backends capture pixels. The capture routers select a backend
+for each call.
 
 !!! note "External dependencies"
     The recording backends shell out to platform tools — small native helpers for macOS,

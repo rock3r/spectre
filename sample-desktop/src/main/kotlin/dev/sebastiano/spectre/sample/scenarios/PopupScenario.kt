@@ -34,7 +34,7 @@ val PopupScenario: Scenario =
     Scenario(
         title = "Popup (in-canvas)",
         testTag = "scenario.popup",
-        unblocks = "#7 popup discovery, #8 popup-bound geometry.",
+        unblocks = "Checks popup discovery and popup bounds.",
         content = { PopupContent() },
     )
 

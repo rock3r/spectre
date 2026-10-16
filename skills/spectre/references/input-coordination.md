@@ -69,7 +69,7 @@ with an in-flight native call. A forced result reports `unsafeTakeover=true`; it
 holder or prove input stopped. Never suggest parsing a PID and killing it as the coordinator's
 normal escape hatch.
 
-## Release-status honesty
+## Release status
 
 The coordinator ships as Experimental on macOS, Windows with native `AF_UNIX`, and Linux
 Xorg/Xvfb. Linux Wayland real Robot input is not claimed. Do not call the API stable or default-on

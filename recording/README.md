@@ -53,9 +53,6 @@ implementer's view of the same module.
   `_GTK_FRAME_EXTENTS` (validated on GNOME/Mutter for GTK/XWayland windows; non-GTK toolkits
   and other compositors may not publish it).
 
-  Decision rationale + alternatives considered are written up in the bridge strategy doc kept
-  in `.plans/`.
-
 ### Auto-routing
 - `AutoRecorder` — high-level wrapper that takes platform recorders and the
   Linux portal recorders (when wired). Routing is Wayland-first (window-targeted portal,
@@ -89,10 +86,10 @@ implementer's view of the same module.
   `minY`; explicit legacy `FfmpegRecorder` callers still get avfoundation device ordering.
   Custom codecs are legacy ffmpeg-backend-specific today; the SCK/WGC/native-helper paths
   reject unsupported codec strings until encoder pipelines are represented structurally.
-- `MacOsRecordingPermissions.diagnose()` — best-effort startup diagnostic for Screen Recording
-  and Accessibility permissions. Full native detection (`CGPreflightScreenCaptureAccess`,
-  `AXIsProcessTrusted`) is a future improvement — the SCK helper detects TCC denial by exit
-  code, which is the practical signal callers need.
+- `MacOsRecordingPermissions.diagnose()` — startup guidance for Screen Recording and
+  Accessibility permissions. The bundled helper uses `CGPreflightScreenCaptureAccess`
+  for Screen Recording checks. `spectre permissions check` reports that result;
+  `spectre permissions request` opens a permission guide for a human.
 
 ## Capability matrix
 
@@ -277,18 +274,23 @@ the whole recording" and "frames at the configured rate". Keep it that way.
 
 ## Permissions
 
-The JVM running Spectre needs two macOS permissions for recording to work:
-- **Screen Recording** — for `ScreenCaptureKitRecorder`'s region/window capture, explicit
-  legacy ffmpeg avfoundation capture, and AWT `Robot` screenshots.
-- **Accessibility** — for AWT `Robot` mouse / keyboard control.
+macOS permissions depend on the capture or input path:
 
-Grant them under **System Settings → Privacy & Security**, targeting whichever process is
-hosting Spectre (your IDE, your test runner, or a standalone `java`). Restart the JVM after
-granting — macOS does not refresh TCC entitlements live. `MacOsRecordingPermissions.diagnose()`
-returns a human-readable summary you can dump at startup to surface this to developers.
+- **Screen Recording for Spectre Capture Helper** — the bundled
+  `SpectreCaptureHelper.app` owns ScreenCaptureKit capture permission. The Settings row
+  must say **Spectre Capture Helper**. The helper does not inherit the host JVM's grant.
+- **Accessibility for the input host** — real AWT `Robot` mouse and keyboard control needs
+  this permission for the app hosting the JVM. Synthetic input does not need it.
+- Legacy ffmpeg capture and AWT `Robot` screenshots use their own host's Screen Recording
+  permission rather than the bundled helper's permission.
 
-The SCK helper is a child process, so it inherits the host JVM's TCC grant — no separate
-permission grant needed for it.
+Run `spectre permissions check` to check the helper. With a human present, run
+`spectre permissions request` to open the guide. Open **System Settings → Privacy &
+Security → Screen Recording**, add the helper if missing, and enable it. Wait for
+**Done ✓** in the guide. Capture commands report permission errors without opening the guide.
+
+macOS may ask for approval again after an update or when a prior grant lapses. Run the
+request command again if this happens. See [troubleshooting](../docs/guide/troubleshooting.md).
 
 ## Build matrix: which helpers each host can produce
 

@@ -26,7 +26,7 @@ guarantees. See [`docs/SECURITY.md`](../docs/SECURITY.md) for the trust model an
 
 ## Current scope
 
-Endpoints land the data-only queries and actions. Advanced features — `registerIdlingResource`,
+Endpoints expose data-only queries and actions. Advanced features — `registerIdlingResource`,
 `waitForIdle` / `waitForVisualIdle`, `withTracing` — are intentionally in-process-only:
 
 - Idling resources are JVM objects without a serializable shape; HTTP-side polling would need a

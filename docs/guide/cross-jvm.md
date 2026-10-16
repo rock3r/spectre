@@ -56,7 +56,7 @@ doesn't bundle a Ktor server engine, so add one yourself:
 ```kotlin
 dependencies {
     // ...your existing Spectre + ktor-server-core comes via the server module
-    implementation("io.ktor:ktor-server-netty:2.3.12") // or :ktor-server-cio, :ktor-server-jetty
+    implementation("io.ktor:ktor-server-netty:3.4.1") // or :ktor-server-cio, :ktor-server-jetty
 }
 ```
 

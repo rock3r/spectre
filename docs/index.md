@@ -16,8 +16,7 @@ OS-level events or through synthetic AWT events dispatched straight into the win
 hierarchy, and records what happens on screen — against IDE-hosted Compose surfaces
 (IntelliJ, Jewel) and standalone desktop apps alike.
 
-If you've used UI Automator on Android or Espresso for that matter, the shape will feel
-familiar — Spectre brings the same "find a node, do a thing, assert" loop to Compose Desktop.
+Tests find a node, interact with it, and assert the result.
 
 !!! warning "Pre-1.0"
     Spectre is pre-1.0. Stable APIs are covered by the project's compatibility policy;
@@ -28,9 +27,8 @@ familiar — Spectre brings the same "find a node, do a thing, assert" loop to C
 
 ## Why Spectre
 
-- **Real Compose Desktop, not a simulator.** Spectre runs against your actual application
-  windows. Semantics, layout, focus, popups, and HiDPI all come from the running UI rather
-  than a parallel test harness.
+- **Test running application windows.** Spectre reads semantics, layout, focus, popups,
+  and HiDPI coordinates from the live UI.
 - **In-process or cross-JVM.** Use `ComposeAutomator.inProcess()` for the simple case, or
   use the `server` module to drive a UI hosted in a different JVM (e.g., an IDE under test).
 - **Synthetic input by default.** [`ComposeAutomator.inProcess()`](guide/interactions.md)

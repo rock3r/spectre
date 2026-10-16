@@ -2,9 +2,8 @@
 
 ## Two recording modes
 
-Before reading the rest of this page, it's worth being explicit about what "recording"
-means here. The `recording` module exposes two structurally different ways of producing
-a video file, and each has its own limitations:
+The `recording` module supports region capture and window-targeted capture.
+Each mode has different limits:
 
 - **Region capture** — records a fixed `Rectangle` of the virtual desktop, frame by
   frame. The source of pixels is the OS framebuffer (or the platform's nearest
@@ -18,9 +17,11 @@ a video file, and each has its own limitations:
 - **Window-targeted capture** — captures a specific OS window's pixels directly, not
   the screen rectangle the window happens to occupy. The source is the window's own
   backing store (`ScreenCaptureKit` on macOS, Windows Graphics Capture on Windows) or a
-  compositor-provided window stream on Wayland. Because the source is the window itself, movement, occlusion, and
-  off-screen position don't break the recording. This path is the right choice when
-  you have a top-level `ComposeWindow`.
+  compositor-provided window stream on Wayland. macOS and Windows capture follow window
+  movement and can capture occluded windows. Wayland uses a fixed crop set at `start()`;
+  keep the window's position and size unchanged. Linux Xorg/Xvfb reads visible framebuffer
+  pixels, so keep the window visible and unobscured. Use window targeting when you have
+  a top-level `ComposeWindow` and can meet the backend's requirements.
 
 Backend → mode mapping:
 
@@ -340,7 +341,7 @@ compositor and not raw framebuffer reads.
 delete the file at the end (`FailureVideoPolicy`: `Off` | `OnFailureKeep` | `Always`). See
 [JUnit integration — Failure video](guide/junit.md#failure-video).
 
-Honest overhead notes (policy defaults to **`Off`** for a reason):
+Recording overhead:
 
 - **Per-OS cost** — the same backends as `AutoRecorder` run for the full test duration
   (ScreenCaptureKit helper on macOS, Windows Graphics Capture helper on Windows, GStreamer

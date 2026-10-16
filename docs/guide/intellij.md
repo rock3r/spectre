@@ -1,10 +1,8 @@
 # IntelliJ-hosted Compose
 
-Spectre treats Jewel-on-IntelliJ tool windows the same as any other Compose surface:
-the in-process automator can read their semantics tree, drive their input via Compose
-semantics actions, and capture screenshots. The work to make this practical is mostly
-about getting the automator running inside the IDE process and respecting the IDE's
-EDT contract.
+Spectre can read semantics, send input and capture screenshots for Jewel tool windows
+in IntelliJ. Run the automator inside the IDE process and follow the IDE's event dispatch
+thread (EDT) rules.
 
 ## Dependency compatibility
 
@@ -162,11 +160,9 @@ There's a third interaction style that doesn't go through any `RobotDriver` at a
 walk the semantics tree and invoke the `SemanticsActions.OnClick` action directly on
 the EDT. This is what Compose's own test rule does internally. It's useful when:
 
-- You're using `RobotDriver.headless()` (which throws on real input) and still need
-  clicks to actually do something.
-- You want clicks that are robust against window focus, occlusion, parallel test
-  runs, and animation timing — semantics actions toggle state synchronously, no
-  layout dependency.
+- You use `RobotDriver.headless()`, which throws on input, and need to invoke click actions.
+- You need click actions independent of window focus, occlusion, parallel tests and layout.
+  Semantics actions change state synchronously.
 
 ```kotlin
 val toggle = automator.findOneByTestTag("popup.toggleButton") ?: return

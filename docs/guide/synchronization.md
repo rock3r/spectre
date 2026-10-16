@@ -1,8 +1,7 @@
 # Synchronization
 
-Spectre deliberately doesn't wrap reads and actions in an implicit idle barrier. The
-flip side is that you have a small but explicit set of wait helpers, and you decide
-where to put them. This page covers all five.
+Spectre reads and actions do not wait for idle automatically. Use the five explicit wait
+helpers below where your test needs them.
 
 ## Interactive-only: Compose Hot Reload settle
 

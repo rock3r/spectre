@@ -350,11 +350,11 @@ path as `screenshot(windowIndex)`). Class presence is not enough: on Linux the h
 recording is on the classpath but GStreamer is missing, Spectre falls back to Robot region
 capture of each surface rectangle instead of marking every sample unsampleable. Keep the
 target frontmost and unobscured in that fallback mode (Linux X11 region and some embedded
-cases still need visibility). Install GStreamer, or keep `spectre-recording` off the test
-runtime classpath, when you want native window stills.
+cases still need visibility). For native window stills on Linux, install GStreamer and
+include `spectre-recording` with the platform helper on the test runtime classpath.
 
-**Rule of thumb: when you're validating colours from a `screenshot()`, always think
-about the node's interaction state first.** If the node is currently focused,
+When validating colours from a `screenshot()`, check the node's interaction state first.
+If the node is currently focused,
 hovered, or pressed, the captured pixels include whatever indication overlay the
 component's theme draws on top — a translucent state layer for press / hover, a focus
 halo, a ripple, etc. The overlay alpha-blends with the underlying colour, so the
@@ -362,8 +362,7 @@ bytes that come out of `screenshot()` are the blended result, not the raw painte
 colour. The effect is platform-independent (same on macOS, Windows, and Linux) and
 easy to mistake for a colour-space or render-pipeline bug.
 
-The fix is to **assert against the right expected colour for the state you're
-actually capturing**, not to reach for tricks that bypass the indication. If your
+Assert against the expected colour for the state you capture. If your
 node is focused at capture time, your expected value is *raw colour + focus
 overlay*; if it's pressed, *raw colour + press overlay*; if it's idle, the raw
 colour. The indication is part of the rendered output, not noise to suppress.

@@ -641,7 +641,7 @@ as a report entry under `spectre.failureVideo`.
 CI artifact upload examples for **every** policy (`Off`, `OnFailureKeep`, `Always` with
 `if: always()`): [Running on CI — Failure video uploads](ci.md#failure-video-uploads).
 
-### Overhead (honest)
+### Recording overhead
 
 Recording every test is real cost. Prefer `Off` on CI unless you need video for a flaky suite.
 

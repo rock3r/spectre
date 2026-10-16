@@ -695,7 +695,7 @@ Restart Claude Code after changing the configuration. It can then use these tool
   long `wait_for_*` calls → **`detach`** that `sessionId`. Concurrent ops while detach runs
   **fail closed** (actionable errors; no hang); do not rely on them succeeding mid-teardown.
 - **Two sessions:** attach A and B independently; detaching A leaves B usable. Post-detach
-  `tree` / `click` / `screenshot` on A fail closed with session-not-found honesty.
+  `tree` / `click` / `screenshot` on A fail with a session-not-found error.
 - **Client disconnect ≠ detach.** Killing or restarting the MCP front-end (stdio death, agent
   process exit) cancels in-flight **front-end** work only. The daemon keeps the target session
   until an explicit `detach`, CLI `spectre detach <session-id>`, or `spectre daemon kill`. After
@@ -713,10 +713,10 @@ Node keys are short-lived: get a fresh key with `tree` or `find` after an intera
 UI. On reload-aware sessions, keys are also invalidated after a successful hot reload settle —
 see [Compose Hot Reload awareness](hot-reload.md).
 
-If the agent also has Compose Hot Reload’s MCP configured, do not alternate randomly:
+If both MCP servers are configured, choose the tool based on the task:
 
-> If you have HR available and want quick sanity checks while iterating on a live app, use the
-> HR MCP; in any other case, Spectre is the right choice.
+> Use Compose Hot Reload MCP to check recomposition during a live Hot Reload session.
+> Use Spectre for other inspection and automation tasks.
 
 Call the MCP **`detach`** tool (or `spectre detach <session-id>` from a shell) to release one
 session, or `spectre daemon kill` to stop the shared daemon and discard all sessions when you are

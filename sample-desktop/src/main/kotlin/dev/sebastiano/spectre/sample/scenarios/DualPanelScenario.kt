@@ -31,7 +31,7 @@ val DualPanelScenario: Scenario =
     Scenario(
         title = "Same-window dual roots (Compose + SwingPanel)",
         testTag = "scenario.dualpanel",
-        unblocks = "#7 same-window extra semantics roots discovered as first-class entries.",
+        unblocks = "Checks discovery of multiple semantics roots in one window.",
         content = { DualPanelContent() },
     )
 
