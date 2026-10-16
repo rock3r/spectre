@@ -394,7 +394,7 @@ Double-`detach` is the same fail-closed class as an unknown session.
 ### Tool inventory
 
 Tool inputs use snake_case JSON fields. Successful tools other than screenshot return
-serialized daemon JSON as text. Errors set MCP `isError` and include a message.
+serialised daemon JSON as text. Errors set MCP `isError` and include a message.
 
 | Tool | Required inputs | Optional inputs (defaults) | Success output shape |
 | --- | --- | --- | --- |
@@ -452,7 +452,7 @@ serialized daemon JSON as text. Errors set MCP `isError` and include a message.
 
 ### Detach success body (MCP vs CLI)
 
-MCP `detach` success content is the daemon’s serialized **`DaemonResponse.Detached`** payload
+MCP `detach` success content is the daemon’s serialised **`DaemonResponse.Detached`** payload
 (with `encodeDefaults`, plus the sealed-type discriminator field the codec emits). Field names
 match the daemon protocol. The CLI human line and CLI `--json` can have different shapes:
 
@@ -468,7 +468,7 @@ match the daemon protocol. The CLI human line and CLI `--json` can have differen
 Do **not** treat MCP text and CLI `--json` as byte-identical envelopes. CLI human output is a
 prose line (`Detached <id>.` plus optional leftover lines). It does not use this JSON shape.
 
-When the session left capture artifacts on disk,
+When the session left capture artefacts on disk,
 `captureCount` / `captureBytes` / `capturePaths` are non-zero and paths are real; `pruneCommand`
 and `skillHint` are populated. Empty sessions report zeros and omit prune/skill. Detach never
 auto-deletes files. Run the reported prune command (or `spectre captures prune …`) explicitly.

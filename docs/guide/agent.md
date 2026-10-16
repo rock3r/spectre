@@ -32,7 +32,7 @@ operations, and cases without CI execution. Each supported case needs executable
 
     Everything under `dev.sebastiano.spectre.agent.*` is annotated
     `@ExperimentalSpectreAgentApi` and requires explicit opt-in. The API may change in any
-    release until the UX stabilizes. See [Stability policy](../STABILITY.md).
+    release until the UX stabilises. See [Stability policy](../STABILITY.md).
 
 !!! warning "Trust boundary"
 
@@ -92,7 +92,7 @@ dependencies {
 For a stock IDE or third-party binary, attach can inject core when the target has Compose
 and the runtime jar contains the nested payload.
 
-The attacher JVM normally needs these artifacts:
+The attacher JVM normally needs these artefacts:
 
 - `spectre-agent` — the normal API jar used to compile test/inspector code.
 - `spectre-agent-runtime` — the loadable Java-agent runtime jar that gets passed to
@@ -656,7 +656,7 @@ Restart Claude Code after changing the configuration. It can then use these tool
    (`click`, `double_click`, `long_click`, `swipe`, `scroll_wheel`, `press_key`, `type_text`),
    and `wait_until_gone` after a dismissal before touching what it revealed.
 4. `screenshot` with `fullscreen=true` for an inline full-desktop PNG (window/surface targets
-   fail closed on attach), or `capture` / `record_*` for daemon-filesystem artifacts (paths only).
+   fail closed on attach), or `capture` / `record_*` for daemon-filesystem artefacts (paths only).
 5. When the target runs under Compose Hot Reload: call `wait_for_reload_settled` **before**
    triggering a code reload (it must observe the settle chain), then re-run `tree` / `find`
    before further input.

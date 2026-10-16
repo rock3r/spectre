@@ -319,7 +319,7 @@ required resource and throws `HelperNotBundledException` if it is missing.
 
 `./gradlew :recording-macos:check` and `./gradlew :recording-linux:check` verify the
 platform helper jars. The API-only `:recording` jar has a separate check. `./gradlew :recording-windows:check`
-does the same for the Windows helper artifact. Each helper module packages the
+does the same for the Windows helper artefact. Each helper module packages the
 generated resources staged by `:recording`'s native build tasks:
 
 - `:recording-macos` expects `native/macos/SpectreCaptureHelper.app` when a mac helper can
@@ -341,7 +341,7 @@ to lock in both-arch coverage explicitly.
 
 The tag-driven release workflow builds and notarizes the macOS helper on a macOS runner,
 builds both Linux helper architectures on a Linux runner, then publishes three recording
-artifacts:
+artefacts:
 
 - `spectre-recording` — API/common JVM implementation only.
 - `spectre-recording-macos` — signed and notarized universal ScreenCaptureKit helper.

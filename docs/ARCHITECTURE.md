@@ -40,12 +40,12 @@ The modules follow these dependency rules:
 - `server` transports `core` operations. It must not implement automation a second time.
 - `sample-desktop` provides a test harness. Production automation belongs in the library modules.
 - `testing` should use public APIs and reusable fixtures. Access private internals only when a
-  test cannot verify the behavior through a public path.
+  test cannot verify the behaviour through a public path.
 - The **shared contract-test corpus** in `:testing` checks transport parity across
   in-process, HTTP, and agent clients. It uses `AutomatorContractCorpus` and
   `CapabilityMatrix`. See the [capability matrix](guide/capability-matrix.md) and epic #197.
 - `recording` isolates OS and native library behaviour from core query and input APIs.
-  Platform helper artifacts carry runtime binaries. The API jar does not.
+  Platform helper artefacts carry runtime binaries. The API jar does not.
 
 ## Spike Constraints
 
@@ -69,12 +69,12 @@ The implementation must account for these Compose Desktop constraints:
 Expected long-term responsibilities:
 
 - window/surface tracking
-- semantics tree reading and normalization
+- semantics tree reading and normalisation
 - owner/root-aware node identity
 - selector/query API
 - coordinate mapping between Compose, AWT, and Robot
 - Robot-backed interaction primitives
-- wait/synchronization semantics
+- wait/synchronisation semantics
 
 ### `server`
 
@@ -165,7 +165,7 @@ Current backends:
   process with real OS input. That process uses RemoteDesktop, ScreenCast, host
   `Registry.Register`, and a Spectre-owned `restore_token` under
   `$XDG_STATE_HOME/spectre`. Window-source capture uses a separate one-shot ScreenCast
-  helper. The `:recording-linux` artifact packages the helper. It passes the
+  helper. The `:recording-linux` artefact packages the helper. It passes the
   PipeWire FD to `gst-launch-1.0`.
 - `AutoRecorder` selects a backend for each `startWindow(...)` or `startRegion(...)`
   call. It uses the Wayland portal on Wayland, macOS SCK on macOS, Windows Graphics

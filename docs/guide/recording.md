@@ -24,14 +24,14 @@ for each call.
 !!! note "Windows migration note"
     Windows window, region, and fullscreen recording use the
     `spectre-recording-windows` helper through Windows Graphics Capture.
-    `AutoRecorder` fails at `start(...)` if the helper artifact is absent. It
+    `AutoRecorder` fails at `start(...)` if the helper artefact is absent. It
     also fails for unsupported Windows options such as custom
     `RecordingOptions.codec` or `screenIndex`. Only explicit legacy ffmpeg
     backends need `ffmpeg` on `PATH`.
 
 !!! note "macOS migration note"
     macOS window and region recording use the `spectre-recording-macos`
-    ScreenCaptureKit helper. `AutoRecorder` fails at `start(...)` if that artifact
+    ScreenCaptureKit helper. `AutoRecorder` fails at `start(...)` if that artefact
     is absent or an option such as custom `RecordingOptions.codec` conflicts
     with SCK. Only explicit legacy ffmpeg backends need `ffmpeg` on `PATH`.
 
@@ -65,7 +65,7 @@ ImageIO.write(image, "png", File("build/reports/window.png"))
 
 `AutoScreenshotter.captureWindow(...)` returns a `BufferedImage`.
 
-| Platform | Backend | Occlusion behavior | Notes |
+| Platform | Backend | Occlusion behaviour | Notes |
 | --- | --- | --- | --- |
 | macOS | ScreenCaptureKit helper (`spectre-screencapture --mode screenshot`) | Captures only the window source; overlapping apps are excluded | Requires `spectre-recording-macos` at runtime and Screen Recording permission |
 | Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | Captures the named top-level window | Requires `spectre-recording-windows`, Windows 10 version 1903 or newer, .NET 8 Desktop Runtime, Windows App Runtime 1.8, and a non-blank exact window title |
@@ -287,7 +287,7 @@ Each platform has additional limits:
   This supports embedded `ComposePanel` region capture. The first call opens the
   compositor's sharing dialog. Later calls in the same JVM reuse the grant.
 - **Linux helper.** Both portal recorders run the same small Rust binary
-  (`spectre-wayland-helper`) from the `spectre-recording-linux` runtime artifact. The
+  (`spectre-wayland-helper`) from the `spectre-recording-linux` runtime artefact. The
   same binary also owns Linux Xorg/Xvfb capture. On Wayland it drives
   `xdg-desktop-portal`'s ScreenCast interface and hands a PipeWire FD to
   `gst-launch-1.0`; on Xorg/Xvfb it runs GStreamer's `ximagesrc` directly.
@@ -329,7 +329,7 @@ Install the helper and system dependencies for the host platform.
 - Add `dev.sebastiano.spectre:spectre-recording-macos:<version>` as a runtime-only
   dependency. Its jar carries the notarized universal ScreenCaptureKit helper as an app
   bundle at `native/macos/SpectreCaptureHelper.app/…`; the base `spectre-recording`
-  artifact does not bundle this helper.
+  artefact does not bundle this helper.
 - **Screen Recording TCC permission.** In System Settings → Privacy & Security →
   Screen & System Audio Recording, grant access to **Spectre Capture Helper**.
   Its bundle ID is `dev.sebastiano.spectre.screencapture`. The terminal or JVM

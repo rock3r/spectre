@@ -122,7 +122,7 @@ self-deadlock.
 Whole-test recording is optional via `FailureVideoConfig` (default
 `FailureVideoPolicy.Off`). Policies: `Off` | `OnFailureKeep` (delete on pass,
 keep on fail) | `Always`. Output: `build/reports/spectre/<class>/<method>/failure-video.mp4`
-next to stills. Video artifacts are independent of still failure artifacts. This applies to in-process JUnit only;
+next to stills. Video artefacts are independent of still failure artefacts. This applies to in-process JUnit only;
 see the user guide (`docs/guide/junit.md#failure-video`) and
 `docs/RECORDING-LIMITATIONS.md` for overhead.
 
@@ -214,7 +214,7 @@ val launchExt =
 ```
 
 Keep a `ComposeAutomatorExtension` / `Rule` innermost when using
-in-process failure artifacts. Full recipe: user guide
+in-process failure artefacts. Full recipe: user guide
 [JUnit — Launch-and-attach](https://spectre.sebastiano.dev/guide/junit/).
 
 ## Lifecycle notes

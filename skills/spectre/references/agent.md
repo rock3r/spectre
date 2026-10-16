@@ -63,7 +63,7 @@ dependencies {
 Use `testImplementation` / `testRuntimeOnly` instead when the attacher is a test
 source set.
 
-Use the separate `spectre-agent-runtime` artifact ID for the loadable agent jar.
+Use the separate `spectre-agent-runtime` artefact ID for the loadable agent jar.
 Do not use an `-all` classifier.
 
 ## What happens during attach

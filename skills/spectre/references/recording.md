@@ -35,8 +35,8 @@ Verify a local build with:
 
 | Platform | `startWindow` | `startRegion` |
 |---|---|---|
-| macOS | ScreenCaptureKit (native) | ScreenCaptureKit helper; missing helper artifacts and SCK-unsupported options (`codec`) produce an error. There is no ffmpeg/avfoundation fallback. `screenIndex` is the SCK display index: primary first, then by frame `minX`/`minY` |
-| Windows | Windows Graphics Capture helper | Windows Graphics Capture helper; missing helper artifacts and WGC-unsupported options (`codec`, `screenIndex`) produce an error. There is no ffmpeg fallback |
+| macOS | ScreenCaptureKit (native) | ScreenCaptureKit helper; missing helper artefacts and SCK-unsupported options (`codec`) produce an error. There is no ffmpeg/avfoundation fallback. `screenIndex` is the SCK display index: primary first, then by frame `minX`/`minY` |
+| Windows | Windows Graphics Capture helper | Windows Graphics Capture helper; missing helper artefacts and WGC-unsupported options (`codec`, `screenIndex`) produce an error. There is no ffmpeg fallback |
 | Linux X11 / XWayland | Linux helper | Linux helper |
 | Linux Wayland (GNOME/Mutter) | xdg-desktop-portal window source | xdg-desktop-portal monitor source |
 

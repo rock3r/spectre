@@ -178,7 +178,7 @@ Use the error code to choose a repair:
 
 | Code | What it means | First thing to try |
 | --- | --- | --- |
-| `COORDINATOR_PROVIDER_MISSING` | the coordinator artifact is not on the classpath | add `spectre-input-coordinator-server` to the **attacher's** runtime classpath |
+| `COORDINATOR_PROVIDER_MISSING` | the coordinator artefact is not on the classpath | add `spectre-input-coordinator-server` to the **attacher's** runtime classpath |
 | `COORDINATOR_IO` | a coordinator was launched; clients could not reach it | run `CoordinatorProcessLauncher.command()` by hand and read the child's stderr |
 | `ACQUIRE_TIMEOUT` | the coordinator is fine; another owner holds the desktop | `spectre input-lock status --json`, then revoke the exact lease ID |
 
@@ -464,9 +464,9 @@ Look for patterns such as `Sandbox: java(...) deny(1) mach-lookup`,
   `SPECTRE_SCREENCAPTURE_HELPER` so the bundled app is used.
 - **macOS may re-prompt after updates.** Run `spectre permissions request` again;
   the guide uses re-approval copy when opened after a prior grant lapsed.
-- **The SCK helper artifact is missing.** If `spectre-recording-macos` is not on the
+- **The SCK helper artefact is missing.** If `spectre-recording-macos` is not on the
   runtime classpath, the Swift helper is not present and `AutoRecorder.startWindow(...)`
-  throws and does not silently switch capture modes. Add the helper artifact as
+  throws and does not silently switch capture modes. Add the helper artefact as
   `runtimeOnly(...)` or `testRuntimeOnly(...)`. Use `startRegion(...)` explicitly if region
   capture is an acceptable fallback for the test.
 - **Operational SCK errors propagate.** Permission denied, target window not found,

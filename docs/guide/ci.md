@@ -13,9 +13,9 @@ Install `spectre-input-coordinator-server`; `spectre-testing`, CLI, and the atta
 already include it. Synthetic and headless tests can run in parallel unless they share
 the system clipboard.
 
-The coordinator serializes per normalized OS user/desktop identity and uses a short owner-only
+The coordinator serialises per normalised OS user/desktop identity and uses a short owner-only
 local socket. X11 spellings such as `:0`, `:0.0`, and `unix/:0` converge; Wayland socket paths are
-canonicalized where possible. Over-serialization is intentional when a platform cannot safely
+canonicalised where possible. Over-serialisation is intentional when a platform cannot safely
 distinguish sessions. Do not treat Xvfb evidence as Wayland real-input evidence: Robot input is not
 claimed on Wayland.
 

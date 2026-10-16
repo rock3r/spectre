@@ -43,7 +43,7 @@ A test needs three components:
 2. **A `ComposeAutomator`.** Built once per test via
    `ComposeAutomator.inProcess()` (usually through the JUnit extension/rule),
    it discovers Compose surfaces and reads their semantics.
-3. **Suspending input + synchronization calls** against that automator. All
+3. **Suspending input + synchronisation calls** against that automator. All
    input methods (`click`, `typeText`, etc.) and waits are `suspend` functions.
    Wrap the test body in `runSpectreTest { ... }` (from `dev.sebastiano.spectre.testing`).
 
@@ -138,7 +138,7 @@ The JUnit 4 rule uses the same shape: `ComposeAutomatorRule { ComposeAutomator.i
 ## Finding nodes
 
 `ComposeAutomator` selectors return one `AutomatorNode` or a list of nodes.
-They read once. Use the synchronization helpers when a node may appear later.
+They read once. Use the synchronisation helpers when a node may appear later.
 
 Choose a selector by the semantics the application provides:
 
@@ -221,7 +221,7 @@ Always wait before querying state that depends on a prior action.
   this for barriers no tag/text selector expresses: a node count, a comparison,
   or a combination. It is scoped to Spectre-observable state. Wait for a service
   flag, a file, or an HTTP response with the tool that owns it.
-- **`waitForIdle()`** — wait until the semantics fingerprint stabilizes and
+- **`waitForIdle()`** — wait until the semantics fingerprint stabilises and
   all registered `AutomatorIdlingResource`s are idle. Use this after
   work that updates semantics without producing a specific new node.
 - **`waitForVisualIdle(stableFrames = 3)`** — wait until tracked Compose
@@ -333,7 +333,7 @@ API. This is separate from video recording:
 Open the relevant reference for recording, JUnit, input coordination, IntelliJ, or attach work:
 
 - **Still window screenshots and video recording** → `references/recording.md` —
-  `AutoScreenshotter`, `AutoRecorder`, platform helper artifacts
+  `AutoScreenshotter`, `AutoRecorder`, platform helper artefacts
   (`spectre-recording-macos` / `-linux` / `-windows`), region vs window targeting,
   frame-drop and HiDPI traps.
 - **JUnit 4 vs JUnit 5 integration** → `references/junit.md` —
@@ -362,7 +362,7 @@ Open the relevant reference for recording, JUnit, input coordination, IntelliJ, 
 | Test deadlocks or throws inside any `waitFor…` / `waitUntil…` | Called from the AWT EDT | Wrap in `withContext(Dispatchers.Default) { … }` — applies to all five waits, including `waitForNode`, `waitUntilGone`, and `waitUntil` |
 | `longClick`/`swipe`/`typeText` complete instantly and miss | Test body uses `runTest` | Switch to `runSpectreTest` |
 | Two parallel test JVMs steal focus from each other | Both opted into real `RobotDriver()` | Stay on the default `RobotDriver.synthetic()` (or pin `rootWindow`) |
-| Parallel JVMs must preserve real OS input behavior | Real focus/pointer/clipboard state is shared across processes | Opt in to experimental coordination, add `spectre-input-coordinator-server` at runtime, use `Required` and JUnit `InputIsolationConfig.perTest()` |
+| Parallel JVMs must preserve real OS input behaviour | Real focus/pointer/clipboard state is shared across processes | Opt in to experimental coordination, add `spectre-input-coordinator-server` at runtime, use `Required` and JUnit `InputIsolationConfig.perTest()` |
 | Cmd+Tab or OS shortcuts don't work under synthetic driver | Synthetic events bypass HID | Use real `RobotDriver()` for those tests |
 | Screenshot is blurry / mid-animation | Captured before frame stabilised | `waitForVisualIdle()` first |
 | Windows WGC helper missing or fails to start | `spectre-recording-windows` is not on the runtime classpath, the helper was not built/staged locally, or .NET / Windows App Runtime is missing | Add `testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-windows")`; install .NET 8 Desktop Runtime + Windows App Runtime 1.8 for runtime; for source builds install .NET 8 SDK and run `:recording-windows:verifyRecordingWindowsHelper` |

@@ -67,7 +67,7 @@ A test finds a node, performs an action, and checks the result.
   window-targeted video, and native still-window screenshots across macOS, Windows,
   and Linux.
 - :material-camera: **[Atomic capture](guide/capture.md)** — Window PNG + versioned
-  `capture.json` for agents, CLI, and JUnit failure artifacts.
+  `capture.json` for agents, CLI, and JUnit failure artefacts.
 - :material-console: **[CLI](guide/cli.md)** — Attach, inspect, click, capture, and record
   from the `spectre` command (and MCP).
 - :material-link-variant: **[Agent attach](guide/agent.md)** — Drive a running Compose JVM

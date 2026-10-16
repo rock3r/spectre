@@ -102,7 +102,7 @@ X11, macOS, and Windows keep their input and capture paths.
 
 - **macOS** — ScreenCaptureKit region and window capture through the
   `spectre-recording-macos` helper. Requires the Screen Recording permission. `AutoRecorder`
-  no longer falls back to `FfmpegRecorder`/`avfoundation` when that helper artifact is absent
+  no longer falls back to `FfmpegRecorder`/`avfoundation` when that helper artefact is absent
   or when callers set SCK-incompatible options such as a custom `RecordingOptions.codec`.
   `RecordingOptions.screenIndex` is the SCK display index: primary display first, then by
   display frame `minX` and `minY`. The explicit `FfmpegRecorder` remains available only as a
@@ -111,7 +111,7 @@ X11, macOS, and Windows keep their input and capture paths.
   region, and fullscreen recordings and still window screenshots. It uses Windows
   Graphics Capture and supports x64 and arm64. It does not require ffmpeg. Install
   .NET 8 Desktop Runtime and Windows App Runtime 1.8 for this framework-dependent
-  helper. `AutoRecorder.startRegion(...)` fails if the artifact is absent. It also
+  helper. `AutoRecorder.startRegion(...)` fails if the artefact is absent. It also
   fails when `RecordingOptions.codec` or `screenIndex` requests an unsupported
   Windows region option. The deprecated `FfmpegRecorder` remains available for
   explicit legacy use.
@@ -313,10 +313,10 @@ Recording overhead:
   X11 / Wayland portal on Linux). CPU, encoder, and helper-process cost scale with test
   length and resolution; capability and permission limits on this page still apply.
 - **Disk under `OnFailureKeep`** — the video file is written during **every** invocation
-  (including green tests) and only deleted after stop+finalize on pass. Parallel suites and
+  (including green tests) and only deleted after stop+finalise on pass. Parallel suites and
   long-running tests can therefore spike disk use during the run even when nothing remains
   after a green suite.
-- **Stop before delete** — Spectre always stops the recorder and finalizes the file before
+- **Stop before delete** — Spectre always stops the recorder and finalises the file before
   applying keep/delete. A JVM exit without teardown can still leave a partial file and an
   orphaned helper (same as any other `RecordingHandle`; see process lifecycle above).
 - **In-process JUnit only** — this policy does not cover agent/attach / CLI `spectre record`

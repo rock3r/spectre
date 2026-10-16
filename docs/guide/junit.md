@@ -501,7 +501,7 @@ val automatorRule =
 
 ### Layout
 
-Artifacts land under Gradle’s reports tree (cleaned by `clean`). The CLI/agent
+Artefacts land under Gradle’s reports tree (cleaned by `clean`). The CLI/agent
 `$TMPDIR` capture root is separate:
 
 ```text
@@ -510,7 +510,7 @@ build/reports/spectre/<test-class>/<test-method>[/<invocation>][/attempt-N]/run-
   screenshot.png
 ```
 
-- **`<test-class>` / `<test-method>`** — sanitized FQCN and method name.
+- **`<test-class>` / `<test-method>`** — sanitised FQCN and method name.
 - **`<invocation>`** — distinguishes parallel or repeated runs of the same method (JUnit 5
   unique id by default; JUnit 4 synthesizes one).
 - **`attempt-N`** — only when `FailureArtifactsConfig.attemptIndex` is greater
@@ -549,8 +549,8 @@ Select a policy for each suite:
 | Policy | Behaviour |
 | --- | --- |
 | `Off` | The default policy starts no recording. |
-| `OnFailureKeep` | Record the whole test; **delete** the finalized file on pass; **keep** on fail. |
-| `Always` | Keep the finalized video on pass and fail; assumption/abort skips produce no kept video. |
+| `OnFailureKeep` | Record the whole test; **delete** the finalised file on pass; **keep** on fail. |
+| `Always` | Keep the finalised video on pass and fail; assumption/abort skips produce no kept video. |
 
 ### Runtime dependency (required for video)
 
@@ -624,7 +624,7 @@ Stills stay default-on and are independent of the video policy. Aborted tests (J
 never keep a failure video. This matches still skip semantics. On JUnit 5, a kept video is published
 as a report entry under `spectre.failureVideo`.
 
-CI artifact upload examples for **every** policy (`Off`, `OnFailureKeep`, `Always` with
+CI artefact upload examples for **every** policy (`Off`, `OnFailureKeep`, `Always` with
 `if: always()`): [Running on CI — Failure video uploads](ci.md#failure-video-uploads).
 
 ### Recording overhead
@@ -637,7 +637,7 @@ Use `Off` on CI unless a suite needs video diagnostics.
   See [Recording limitations](../RECORDING-LIMITATIONS.md) for per-OS backend behaviour and
   permissions.
 - **Disk under `OnFailureKeep`** — the file is written for **every** invocation (including green
-  tests) and only deleted after the recorder stops and finalizes. Parallel suites and long tests
+  tests) and only deleted after the recorder stops and finalises. Parallel suites and long tests
   can spike disk during the run even when nothing is left on pass.
 - **Permissions** — macOS Screen Recording TCC, Windows helper packaging, and Wayland
   portal consent still apply. If the backend cannot start, Spectre skips video
