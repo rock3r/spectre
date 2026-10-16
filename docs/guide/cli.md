@@ -542,8 +542,9 @@ The CLI table's capture-mode distinctions also apply to MCP tool names
 
 ## Requirements and limits
 
-- `ps` and `attach` require **JDK 21+** in both the CLI and target JVM. The CLI needs a full
-  JDK with `jdk.attach`. A JRE lacks the required attach module.
+- `ps` and `attach` require **JDK 25+** for the CLI and the daemon it spawns, and
+  **JDK 21+** in the target JVM. The CLI needs a full JDK with `jdk.attach`. A JRE lacks the
+  required attach module.
 - **Target shape (two paths, one attach command):**
   1. **Preferred — preinstalled `spectre-core`** on the target (instrumented attach). Use this
      for controlled app builds.

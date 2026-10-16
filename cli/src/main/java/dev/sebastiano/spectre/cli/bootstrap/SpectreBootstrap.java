@@ -36,7 +36,9 @@ import java.util.Optional;
  *       contract or a managed cache — when the caller manages AOT or the collector
  *       themselves, or
  *   <li>runs the real CLI in-process when caching is unavailable (JDK &lt; 25, exploded
- *       classpath), so behaviour is unchanged.
+ *       or multi-entry classpath — the latter is the thin start-script distribution,
+ *       whose child could not be built from the CLI jar alone), so behaviour is
+ *       unchanged.
  * </ul>
  *
  * <p>Training never touches the real command's stdio: a record run appends an {@code
@@ -684,9 +686,36 @@ public final class SpectreBootstrap {
             boolean isJar = Files.isRegularFile(location)
                     && location.getFileName() != null
                     && location.getFileName().toString().endsWith(".jar");
-            return isJar ? Optional.of(location.toAbsolutePath().normalize()) : Optional.empty();
+            if (!isJar) {
+                return Optional.empty();
+            }
+            Path jarFile = location.toAbsolutePath().normalize();
+            // The child command re-execs with -cp <jar>, which is only sound when
+            // this jar is the whole classpath (the fat jar: java -jar, Roast). A
+            // thin start-script distribution launches with the CLI jar plus
+            // separate dependency jars; re-execing with the thin jar alone would
+            // drop every dependency, so those launches stay in-process.
+            return isSoleClasspathEntry(jarFile, System.getProperty("java.class.path"))
+                    ? Optional.of(jarFile)
+                    : Optional.empty();
         } catch (Exception e) {
             return Optional.empty();
+        }
+    }
+
+    /** Whether {@code jarFile} is the only entry of {@code classPath}. */
+    static boolean isSoleClasspathEntry(Path jarFile, String classPath) {
+        if (classPath == null || classPath.isBlank()) {
+            return false;
+        }
+        String[] entries = classPath.split(java.util.regex.Pattern.quote(File.pathSeparator), -1);
+        if (entries.length != 1) {
+            return false;
+        }
+        try {
+            return Path.of(entries[0]).toAbsolutePath().normalize().equals(jarFile);
+        } catch (java.nio.file.InvalidPathException e) {
+            return false;
         }
     }
 

@@ -454,6 +454,24 @@ class SpectreBootstrapTest {
     }
 
     @Test
+    fun `only a sole classpath entry counts as the packaged fat jar`() {
+        // The child command re-execs with -cp <jar>, which is only the fat-jar
+        // launch (java -jar, Roast). A thin start-script distribution puts the
+        // CLI jar plus separate dependency jars on the classpath; re-execing
+        // with just the thin jar would drop every dependency, so those
+        // launches must stay in-process instead.
+        val separator = java.io.File.pathSeparator
+        val thinJar = Path.of("/opt", "spectre", "lib", "cli.jar").toAbsolutePath().normalize()
+        val classPath =
+            thinJar.toString() + separator + Path.of("/opt", "spectre", "lib", "kotlin-stdlib.jar")
+
+        assertTrue(SpectreBootstrap.isSoleClasspathEntry(thinJar, thinJar.toString()))
+        assertFalse(SpectreBootstrap.isSoleClasspathEntry(thinJar, classPath))
+        assertFalse(SpectreBootstrap.isSoleClasspathEntry(thinJar, "/opt/spectre/lib/other.jar"))
+        assertFalse(SpectreBootstrap.isSoleClasspathEntry(thinJar, ""))
+    }
+
+    @Test
     fun `java executable name follows the host OS`() {
         assertEquals(
             Path.of("/jdk", "bin", "java"),
