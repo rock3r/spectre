@@ -42,8 +42,20 @@ abstract class VerifyCliShadowJar : DefaultTask() {
         verifyMcpToolDiscovery(jar)
     }
 
+    // The jar's main class is the AOT bootstrap: without isolation a verification
+    // launch would train a cache for the build jar into the developer's real
+    // per-user cache directory, and promotion would prune that directory to
+    // three entries, evicting caches of installed Spectre versions.
+    private val aotCacheDir: File =
+        java.nio.file.Files.createTempDirectory("spectre-verify-aot-").toFile()
+
+    private fun launch(jar: File, vararg arguments: String): ProcessBuilder =
+        ProcessBuilder(javaExecutable(), "-jar", jar.absolutePath, *arguments)
+            .redirectErrorStream(true)
+            .apply { environment()["SPECTRE_AOT_CACHE_DIR"] = aotCacheDir.absolutePath }
+
     private fun verifyHelp(jar: File) {
-        val process = ProcessBuilder(javaExecutable(), "-jar", jar.absolutePath, "--help").redirectErrorStream(true).start()
+        val process = launch(jar, "--help").start()
         try {
             val output = readUntil(process) { "mcp" in it }
             check(process.waitFor(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS) && process.exitValue() == 0) {
@@ -56,7 +68,7 @@ abstract class VerifyCliShadowJar : DefaultTask() {
     }
 
     private fun verifyMcpToolDiscovery(jar: File) {
-        val process = ProcessBuilder(javaExecutable(), "-jar", jar.absolutePath, "mcp").redirectErrorStream(true).start()
+        val process = launch(jar, "mcp").start()
         try {
             val writer = process.outputStream.bufferedWriter()
             writer.appendLine(INITIALIZE_REQUEST)

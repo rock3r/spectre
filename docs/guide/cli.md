@@ -69,7 +69,8 @@ contents it was trained against, so Spectre never ships one. Instead:
    startup (for example `spectre --help` from ~330 ms to ~135 ms before the small
    bootstrap launcher's overhead).
 3. **Upgrades retrain automatically.** The cache file name fingerprints the jar's
-   path, size, modification time, and runtime version, so a replaced jar plans a
+   path, size, modification time, OS/architecture, and runtime identity (version,
+   vendor, and VM build), so a replaced jar plans a
    fresh training run instead of pointing the JVM at a cache it would reject.
    Relocating the installation likewise retrains once. At most three caches are
    retained per user; older ones are pruned when a new cache is promoted.

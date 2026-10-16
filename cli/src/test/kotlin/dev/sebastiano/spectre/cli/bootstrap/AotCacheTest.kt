@@ -31,6 +31,7 @@ class AotCacheTest {
             environment,
             root.resolve("home"),
             "Linux",
+            "x86_64",
             "25.0.1",
             featureVersion,
             allowTraining,
@@ -98,6 +99,7 @@ class AotCacheTest {
                 emptyMap(),
                 root.resolve("home"),
                 "Linux",
+                "x86_64",
                 "25.0.1",
                 25,
             ),
@@ -116,6 +118,28 @@ class AotCacheTest {
     @Test
     fun `fingerprint is stable for an unchanged jar`() {
         assertEquals(plan(jar()).cacheFile(), plan(jar()).cacheFile())
+    }
+
+    @Test
+    fun `fingerprint separates architectures sharing a home directory`() {
+        // A shared (for example NFS) home must not let an x86_64 host plan
+        // PRODUCTION against an arm64 host's incompatible cache, or the JVM
+        // would reject that cache forever instead of retraining.
+        val jar = jar()
+        val arm =
+            AotCache.plan(
+                jar,
+                emptyMap(),
+                root.resolve("home"),
+                "Linux",
+                "aarch64",
+                "25.0.1",
+                25,
+                true,
+                "testpid",
+            )
+
+        assertNotEquals(plan(jar).cacheFile(), arm.cacheFile())
     }
 
     @Test
@@ -232,6 +256,7 @@ class AotCacheTest {
                 emptyMap(),
                 root.resolve("home"),
                 "Linux",
+                "x86_64",
                 "25.0.1",
                 25,
             ),

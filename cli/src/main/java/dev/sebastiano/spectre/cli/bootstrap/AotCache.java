@@ -90,6 +90,7 @@ public final class AotCache {
             Map<String, String> environment,
             Path userHome,
             String osName,
+            String osArch,
             String runtimeVersion,
             int featureVersion,
             boolean allowTraining,
@@ -106,7 +107,7 @@ public final class AotCache {
         final Path cacheFile;
         try {
             cacheFile = cacheDirectory(environment, userHome, osName)
-                    .resolve("spectre-" + fingerprint(jarFile, runtimeVersion) + ".aot");
+                    .resolve("spectre-" + fingerprint(jarFile, runtimeVersion, osName, osArch) + ".aot");
         } catch (IOException | SecurityException e) {
             return unavailable(null);
         }
@@ -150,11 +151,12 @@ public final class AotCache {
             Map<String, String> environment,
             Path userHome,
             String osName,
+            String osArch,
             String runtimeVersion,
             int featureVersion) {
         return singleJarFile(classPath)
                 .map(jar -> {
-                    Plan plan = plan(jar, environment, userHome, osName, runtimeVersion,
+                    Plan plan = plan(jar, environment, userHome, osName, osArch, runtimeVersion,
                             featureVersion, false, "daemon");
                     if (plan.mode() != Mode.PRODUCTION) {
                         return plan.jvmArguments();
@@ -173,8 +175,20 @@ public final class AotCache {
                 System.getenv(),
                 Path.of(System.getProperty("user.home")),
                 System.getProperty("os.name"),
-                Runtime.version().toString(),
+                System.getProperty("os.arch"),
+                runtimeIdentity(),
                 Runtime.version().feature());
+    }
+
+    /**
+     * Identity of this runtime for cache fingerprinting: the version plus the vendor and
+     * VM build, so two distributions reporting the same {@link Runtime#version()} text
+     * (for example a Temurin and a JBR build of the same release) do not share caches.
+     */
+    public static String runtimeIdentity() {
+        return Runtime.version().toString()
+                + "|" + System.getProperty("java.vendor", "")
+                + "|" + System.getProperty("java.vm.version", "");
     }
 
     /**
@@ -310,11 +324,19 @@ public final class AotCache {
         return false;
     }
 
-    private static String fingerprint(Path jarFile, String runtimeVersion) throws IOException {
+    private static String fingerprint(Path jarFile, String runtimeVersion, String osName, String osArch)
+            throws IOException {
+        // The OS/arch and the runtime identity (version, vendor, VM build) are part of
+        // the identity: an AOT archive is only valid for the exact JDK build and
+        // OS/CPU combination that produced it, and a shared home directory (for
+        // example NFS) must not let one host plan PRODUCTION against another host's
+        // incompatible cache and then reject it forever.
         String identity = jarFile.toAbsolutePath().normalize()
                 + "\n" + Files.size(jarFile)
                 + "\n" + Files.getLastModifiedTime(jarFile).toMillis()
-                + "\n" + runtimeVersion;
+                + "\n" + runtimeVersion
+                + "\n" + osName
+                + "\n" + osArch;
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
                     .digest(identity.getBytes(StandardCharsets.UTF_8));

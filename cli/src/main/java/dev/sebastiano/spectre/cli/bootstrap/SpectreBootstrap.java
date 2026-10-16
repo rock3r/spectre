@@ -86,7 +86,8 @@ public final class SpectreBootstrap {
                 System.getenv(),
                 Path.of(System.getProperty("user.home")),
                 System.getProperty("os.name"),
-                Runtime.version().toString(),
+                System.getProperty("os.arch"),
+                AotCache.runtimeIdentity(),
                 Runtime.version().feature(),
                 true,
                 Long.toString(ProcessHandle.current().pid()));
@@ -246,6 +247,34 @@ public final class SpectreBootstrap {
         return inputArguments.stream().filter(arg -> arg.startsWith("-D")).toList();
     }
 
+    /** The currently running real-CLI child, so termination of this JVM can be propagated. */
+    private static volatile Process currentChild;
+
+    private static boolean childTerminationHookRegistered;
+
+    /**
+     * Registers (once) a shutdown hook that destroys the running child. The child inherits
+     * this process's streams and can be long-lived ({@code spectre mcp}, {@code spectre
+     * launch}); if the launcher is terminated by PID — an IDE/MCP host, a service timeout,
+     * {@code Process.destroy()} — a process-group signal never reaches the child, and
+     * without this hook it would keep running as an orphan with active sessions.
+     */
+    private static synchronized void registerChildTerminationHook() {
+        if (childTerminationHookRegistered) {
+            return;
+        }
+        childTerminationHookRegistered = true;
+        Runtime.getRuntime()
+                .addShutdownHook(
+                        new Thread(
+                                () -> {
+                                    Process child = currentChild;
+                                    if (child != null && child.isAlive()) {
+                                        child.destroy();
+                                    }
+                                }));
+    }
+
     private static int runChild(AotCache.Plan plan, Path jarFile, String[] args) {
         try {
             Process child = new ProcessBuilder(
@@ -261,13 +290,25 @@ public final class SpectreBootstrap {
                                                     .getInputArguments())))
                     .inheritIO()
                     .start();
-            return child.waitFor();
+            currentChild = child;
+            registerChildTerminationHook();
+            try {
+                return child.waitFor();
+            } finally {
+                if (currentChild == child) {
+                    currentChild = null;
+                }
+            }
         } catch (IOException e) {
             // The JVM we are running on exists, so this is unexpected; fall back to running
             // in-process rather than failing a command that would otherwise work.
             runInProcess(args);
             return 0;
         } catch (InterruptedException e) {
+            Process child = currentChild;
+            if (child != null && child.isAlive()) {
+                child.destroy();
+            }
             Thread.currentThread().interrupt();
             return 130;
         }
@@ -318,11 +359,16 @@ public final class SpectreBootstrap {
 
     /** Runs a command with stdout and stderr discarded; returns its exit code. */
     private static int runDiscarded(List<String> command) throws IOException, InterruptedException {
-        return new ProcessBuilder(command)
+        Process process = new ProcessBuilder(command)
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .redirectError(ProcessBuilder.Redirect.DISCARD)
-                .start()
-                .waitFor();
+                .start();
+        try {
+            return process.waitFor();
+        } catch (InterruptedException e) {
+            process.destroy();
+            throw e;
+        }
     }
 
     private static void promoteTrainingCache(AotCache.Plan plan) {
