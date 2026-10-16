@@ -12,34 +12,34 @@ compatibility: Requires the Spectre CLI (or in-process capture API) and schemaVe
 
 # Spectre capture output
 
-## Division of labor (HR MCP vs Spectre)
+## Compose Hot Reload MCP and Spectre
 
-If this agent also has Compose Hot Reload’s MCP server configured, **do not flip a coin per
-call**. Use this rule verbatim:
+When both MCP servers are available, use each for its supported operations:
 
-> **If you have HR available and want quick sanity checks while iterating on a live app, use the
-> HR MCP; in any other case, Spectre is the right choice.**
+> Use Compose Hot Reload MCP to check recomposition during a live Hot Reload session.
+> Use Spectre for other inspection and automation tasks.
 
-- **HR MCP** — quick reload-native sanity checks while iterating on a live HR run.
-- **Spectre** (CLI / MCP / capture) — semantics tree, node keys, real input, screenshots,
-  recording, atomic capture, attach to any Spectre-enabled JVM, and
-  `wait --reload-settled` / `wait_for_reload_settled` when you need settle + re-inspect.
+- **HR MCP** — check recomposition during a live Hot Reload session.
+- **Spectre** (CLI / MCP / capture) inspects semantics trees and node keys.
+  It sends synthetic or real input, takes screenshots, records video, and
+  makes atomic captures. It attaches to Spectre-enabled JVMs. Use
+  `wait --reload-settled` or `wait_for_reload_settled` before inspecting after reload.
 
-Reload awareness is **optional** and **dev-loop only**. It is not part of Spectre’s JUnit
-`:testing` surface. Full user guide: <https://spectre.sebastiano.dev/guide/hot-reload/>
+Reload awareness is optional and applies to interactive development.
+The JUnit `:testing` API does not include it.
+See the [Hot Reload guide](https://spectre.sebastiano.dev/guide/hot-reload/).
 
-Atomic capture freezes one Compose window into:
+Atomic capture writes window pixels and semantics into two files:
 
 | File | Role |
 |---|---|
 | `screenshot.png` | Window pixels at capture time (primary visual evidence) |
 | `capture.json` | Versioned semantics tree + window metadata + summary |
 
-Only a **decision-grade summary** is returned to agents (paths, node counts, image size). The full
-tree stays on disk — query it with `jq` (or any JSON tool). This skill is the map.
+The caller receives paths, node counts, and image dimensions.
+The full tree stays on disk in `capture.json`. Query it with `jq` or another JSON tool.
 
-Skill name (for discovery): **`spectre-capture`**. Capture summaries and detach leftovers reports
-reference this name on purpose.
+The skill name is **`spectre-capture`**. Capture summaries and detach reports use that name.
 
 ## Where captures live
 
@@ -70,7 +70,7 @@ On detach, Spectre reports that session’s leftover paths and the exact prune c
 
 ## capture.json schema (schemaVersion 1)
 
-Stable API surface — a schema bump is a skill bump (release checklist).
+The capture schema is versioned. A schema version change also requires a skill version change.
 
 ```jsonc
 {
@@ -113,11 +113,10 @@ Stable API surface — a schema bump is a skill bump (release checklist).
 | `boundsImage` | **Primary** — pixels of `screenshot.png` |
 | `boundsScreen` | Secondary — screen-space for input targeting |
 
-`screenshot.png` is **screen-pixel** sized, so on a 2× display it is twice the dp size of the
-window and `window.imageWidth` ≠ `window.boundsScreen.width`. Use `boundsImage` to address the
-PNG and `boundsScreen` to target input — neither needs a manual density conversion.
-`window.densityScaleX` / `densityScaleY` report the ratio when you need to compare captures taken
-on displays with different densities.
+`screenshot.png` uses **screen pixels**. On a 2× display, its dimensions are twice
+the window's dp dimensions. `window.imageWidth` can differ from `window.boundsScreen.width`.
+Use `boundsImage` for PNG coordinates and `boundsScreen` for input coordinates.
+`window.densityScaleX` and `densityScaleY` help compare captures from different display scales.
 
 `summary.textedNodeCount` counts nodes with non-empty `text` **or** `editableText`.
 
@@ -182,15 +181,16 @@ jq '.summary' "$CAP"
 - Keys are valid for the **current attach session** and the tree they came from.
 - After navigation, re-composition, or re-attach, **re-capture** and re-resolve keys.
 - Do not cache keys across detach/attach cycles.
-- **Compose Hot Reload:** on reload-aware attaches, keys from **`tree` / `find`** are
-  generation-stamped and cleared after a successful reload settle. Workflow:
-  1. Start `spectre wait --reload-settled <session-id>` (or MCP `wait_for_reload_settled`)
-     **before** triggering the reload (the wait must be armed to observe the settle chain)
-  2. Trigger the reload; when wait returns, run **`tree` / `find`** and resolve keys from that
-     response
-  3. Never reuse pre-reload keys — they fail as `nodeNotFound`
-  4. `capture.json` remains useful for evidence and `jq`, but its keys are **not** stamped for
-     post-reload click dispatch on reload-aware sessions — prefer `tree` / `find` for input keys
+- **Compose Hot Reload:** In reload-aware attaches, `tree` and `find` return
+  generation-stamped keys. Spectre clears them after a successful reload settle.
+  1. Start `spectre wait --reload-settled <session-id>` or MCP
+     `wait_for_reload_settled` before triggering reload. The wait must already
+     be active to observe the settle chain.
+  2. Trigger reload. After the wait returns, call `tree` or `find` and resolve
+     new keys from that response.
+  3. Old keys fail as `nodeNotFound`. Do not reuse them.
+  4. Use `capture.json` for evidence and `jq`. Its keys lack the stamp needed
+     for post-reload clicks. Use `tree` or `find` keys for input.
 
 ## Capture from MCP / CLI / library
 
@@ -198,9 +198,9 @@ jq '.summary' "$CAP"
 |---|---|
 | CLI | `spectre capture <session-id> [--window N] [--out-dir DIR] [--json]` |
 | MCP | `capture` tool (`session_id`, optional `window_index`, `out_dir`, `include_image`) |
-| In-process | `ComposeAutomator.capture(windowIndex)` → files via your own writer, or agent `AttachedAutomator.capture` |
+| In-process | `ComposeAutomator.capture(windowIndex)` → files via a caller-owned writer, or agent `AttachedAutomator.capture` |
 
-Prefer **files over inlining** the tree. Return summary fields to the agent; read `capture.json` on demand.
+Return summary fields first. Read `capture.json` when the full tree is needed.
 
 ## Cleanup guidance
 
@@ -210,7 +210,7 @@ Prefer **files over inlining** the tree. Return summary fields to the agent; rea
 
 ## Manual validation recipe
 
-With only this skill + the Spectre CLI (no source reading):
+Validate with the skill and Spectre CLI:
 
 1. Start `agent-test-fixture` (or any tagged Compose Desktop fixture).
 2. `spectre ps --json` → `spectre attach <pid> --json`.

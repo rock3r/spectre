@@ -34,7 +34,7 @@ val HoverScenario: Scenario =
     Scenario(
         title = "Pointer hover",
         testTag = "scenario.hover",
-        unblocks = "#433 moveTo/moveBy hover without click or drag.",
+        unblocks = "Checks hover through moveTo and moveBy without clicking or dragging.",
         content = { HoverContent() },
     )
 

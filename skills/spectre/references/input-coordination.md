@@ -1,9 +1,8 @@
 # Experimental desktop input coordination
 
-Read this reference when a user has multiple Spectre processes or Gradle forks that need real OS
-mouse, keyboard, focus, or clipboard access; asks about `InputLeasePolicy`,
-`InputIsolationConfig`, `withExclusiveInput`, or `spectre input-lock`; or reports that real-input
-tests steal focus from each other.
+Use this reference when multiple Spectre processes share real OS mouse, keyboard,
+focus, or clipboard access. It also covers `InputLeasePolicy`, `InputIsolationConfig`,
+`withExclusiveInput`, and `spectre input-lock`.
 
 ## Source of truth
 
@@ -13,7 +12,7 @@ tests steal focus from each other.
 - Repo docs: `docs/guide/input-coordination.md`, `docs/guide/junit.md`, and
   `docs/guide/ci.md`
 
-The feature is experimental and opt-in. Include:
+Input coordination is experimental and opt-in. Add:
 
 ```kotlin
 @file:OptIn(ExperimentalSpectreInputCoordinationApi::class)
@@ -21,8 +20,8 @@ The feature is experimental and opt-in. Include:
 import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
 ```
 
-Do not describe the coordinator as an OS mutex or input grab. It serialises participating Spectre
-clients only; people, older versions, and other automation tools remain outside the boundary.
+The coordinator serialises participating Spectre clients.
+It does not control people, older versions, or other automation tools.
 
 ## Decide whether coordination is appropriate
 
@@ -36,14 +35,15 @@ clients only; people, older versions, and other automation tools remain outside 
 4. Keep the no-argument `RobotDriver()` uncoordinated while the feature is experimental; do not
    imply that the next release changes its default.
 
-For JUnit 4/5 in-process real-input suites, recommend `InputIsolationConfig.perTest()` when setup,
-failure capture, or teardown can touch focus. It spans factory creation, test execution, evidence,
-and teardown. `PerInteraction` is narrower. `LaunchAndAttachExtension`/Rule rely on target-JVM
-operation leases and do not offer a test-JVM `PerTest` mode because two leases would self-deadlock.
+For JUnit 4 or 5 real-input suites, use `InputIsolationConfig.perTest()` when setup,
+failure capture, or teardown can change focus. It covers factory creation, test execution,
+evidence, and teardown. `PerInteraction` covers individual operations.
+`LaunchAndAttachExtension` and `LaunchAndAttachRule` use target-JVM operation leases;
+a second test-JVM `PerTest` lease would self-deadlock.
 
-For several related operations that must not interleave, use `automator.withExclusiveInput { ... }`.
-The scope is reentrant. Screenshots and recording are not automatically leased; place a capture in
-the scope only when its visible state must be protected from other Spectre input.
+Use `automator.withExclusiveInput { ... }` for operations that must stay together.
+The scope is reentrant. Screenshots and recording do not acquire a lease automatically.
+Put capture inside the scope when other Spectre input could change its visible state.
 
 Agent attach starts the coordinator best-effort so semantics inspection is still usable when the
 runtime cannot launch. A current target core uses `Required` for real input and therefore fails
@@ -52,7 +52,7 @@ uncoordinated `RobotDriver`; call out that compatibility boundary when version s
 
 ## Recovery guidance
 
-Inspect first:
+Inspect the current lease:
 
 ```text
 spectre input-lock status --json
@@ -64,12 +64,11 @@ Normal recovery uses the exact current ID and a meaningful reason:
 spectre input-lock revoke --lease <observed-id> --reason <text>
 ```
 
-Only suggest `--force` when normal cleanup cannot complete and the user accepts possible overlap
-with an in-flight native call. A forced result reports `unsafeTakeover=true`; it does not kill the
-holder or prove input stopped. Never suggest parsing a PID and killing it as the coordinator's
-normal escape hatch.
+Use `--force` only when normal cleanup cannot complete and native input may overlap.
+The result reports `unsafeTakeover=true`. It does not kill the holder or prove input stopped.
+Do not use a parsed PID as the normal recovery method.
 
-## Release-status honesty
+## Release status
 
 The coordinator ships as Experimental on macOS, Windows with native `AF_UNIX`, and Linux
 Xorg/Xvfb. Linux Wayland real Robot input is not claimed. Do not call the API stable or default-on

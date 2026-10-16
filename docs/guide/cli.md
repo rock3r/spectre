@@ -7,7 +7,7 @@
     and recovery workflow may change in any release. See
     [Experimental desktop input coordination](input-coordination.md).
 
-The control commands observe an existing coordinator and never launch one:
+These commands inspect or change an existing coordinator. They do not start one:
 
 ```text
 spectre input-lock status
@@ -16,17 +16,16 @@ spectre input-lock revoke --lease <observed-id> --reason <text>
 spectre input-lock revoke --lease <observed-id> --reason <text> --force
 ```
 
-Revoke is compare-and-revoke: always copy the current ID from `status`; a stale ID cannot affect a
-new holder. `--force` is an unsafe recovery escape hatch after grace, is audited, and reports
-`unsafeTakeover=true`. It does not prove an in-flight native call stopped.
+Revoke compares the supplied ID with the current lease. Copy the ID from `status`.
+A stale ID cannot revoke a new holder. `--force` waits through a grace period and
+reports audited `unsafeTakeover=true`. It does not prove an active native call has stopped.
 
-The `spectre` command is for inspecting and driving a running Compose Desktop application
-without first writing a JUnit test. It is useful for debugging a live UI, exploring its
-semantics tree, capturing evidence while developing, and giving an MCP client access to the
-same capabilities.
+The `spectre` command inspects and controls a running Compose Desktop application.
+Use it to examine the semantics tree, debug interactions, or capture evidence without
+writing a JUnit test. MCP clients can use the same operations.
 
-The command starts a private local daemon when an operation needs one. The daemon keeps attached
-sessions available across short-lived CLI invocations and is shared with `spectre mcp`.
+The command starts a private local daemon when needed.
+The daemon keeps sessions open across CLI calls and shares them with `spectre mcp`.
 
 ## Install
 
@@ -91,12 +90,12 @@ after an upgrade is uncached and later daemon starts are cached. Set
 through `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, or `_JAVA_OPTIONS` also win:
 Spectre then launches without managing a cache.
 
-Run `spectre --help` after installation. Every command also accepts `--help`; use it as the
-authoritative reference for command arguments and options when this page and the binary disagree.
+Run `spectre --help` after installation. Each command also supports `--help`.
+Use the installed binary's help text for its exact arguments and options.
 
 ## What it can do
 
-The CLI follows a simple loop:
+For a typical session:
 
 1. Find a running JVM with `ps`, **or** launch one with `spectre launch -- <command>`.
 2. Attach it and retain the returned session ID (or hold the launch session open).
@@ -140,15 +139,15 @@ spectre detach "$SESSION"
 | `spectre daemon kill` | Stops the daemon and **discards all sessions**. |
 | Leaving the process attached without detach | Session remains until detach, daemon kill, or daemon crash/idle teardown. |
 
-Retain the session id yourself — the CLI does not store a “current session” in the shell.
+Store the session ID. The CLI does not set a current session in the shell.
 
 #### End-to-end: launch harness
 
-`spectre launch` starts a command, runs staged readiness (process alive → JVM attachable →
-agent bootstrap → first window), attaches Spectre, and tears the process tree down when the
-session ends. Prefer **prod-like** launches (`java -jar`, installDist, packaged apps). Gradle
-`./gradlew :app:run` / `hotRun` work but print a loud warning and require `--app-name` when the
-app JVM is daemon-spawned.
+`spectre launch` starts a command and checks process, JVM, agent, and window readiness.
+It attaches Spectre and stops the launched process tree when the session ends.
+Use `java -jar`, installDist, or a packaged app when possible.
+Gradle `./gradlew :app:run` and `hotRun` emit warnings. They need `--app-name`
+when the Gradle daemon starts the app JVM.
 
 ```shell
 # Prod-like (recommended)
@@ -165,7 +164,7 @@ Options:
 
 - `-C` / `--directory` — working directory for the launched process
 - `--app-name` — substring of the app JVM display name (Gradle-ish descendant discovery)
-- `--once` — exit after readiness succeeds (print window count) instead of holding the session
+- `--once` — exit after readiness succeeds (print window count); the session does not remain open
 
 **Session lifetime (launch path):**
 
@@ -175,9 +174,8 @@ Options:
 | `--once` | Same readiness attach, then exits immediately after the first window check (still tears down the process tree). |
 | Ctrl-C / JVM exit | Shutdown hook tears down any published launch session. |
 
-Launch is **self-contained**: it does not print a daemon session id for later `spectre click
-$session` reuse from another shell. For multi-step scripting against a long-lived app, use
-`ps` + `attach` instead of `launch`.
+Launch manages its own session. It does not return a daemon session ID for later commands
+from another shell. Use `ps` and `attach` for a long-lived, multi-command session.
 
 Stdout/stderr from the launched process are captured to files; their paths are printed on
 success. Stage failures print a taxonomy error such as `[PROCESS_ALIVE]` with exit code and
@@ -185,9 +183,9 @@ stderr excerpt. See [Troubleshooting](troubleshooting.md#launch-and-attach-harne
 
 ### Quick recipe (attach session)
 
-For scripts and agents, add `--json` to a command that supports it. JSON output includes a
-format version and stable field names; use the returned session ID and node keys rather than
-parsing the human-readable output.
+Scripts and agents should request `--json` where available.
+The response includes a format version and stable field names.
+Use the response's session ID and node keys. Text output is intended for people.
 
 ```shell
 spectre ps --json
@@ -222,8 +220,8 @@ spectre detach <session-id>
 
 ## Command reference
 
-Every session command takes the session id as the first argument unless noted. Most support
-`--json`. Prefer `spectre <command> --help` for the live option list.
+Most session commands take the session ID first and support `--json`.
+Run `spectre <command> --help` for the installed option list.
 
 ### Discovery and lifecycle
 
@@ -250,11 +248,11 @@ Every session command takes the session id as the first argument unless noted. M
 | `wait-for-visual-idle <session-id>` | Wait until consecutive frames are stable | `--timeout-ms` default **5000** |
 | `wait --reload-settled <session-id>` | Compose Hot Reload settle only | Requires `--reload-settled`; `--timeout-ms` default **60000**; fails closed when HR is not active |
 
-Queries (`find`, `find-text`, `tree`) do a **single read** — they never retry. Use
-`wait-for-node` when the UI is still settling.
+`find`, `find-text`, and `tree` read the UI once.
+Use `wait-for-node` when the expected node may appear later.
 
 `wait-until-gone` is the absence counterpart: it returns once nothing matches, so use it after
-dismissing a popup, menu, or dialog rather than polling `find` yourself. It refreshes the tracked
+dismissing a popup, menu, or dialog. It refreshes the tracked
 windows before every poll, which is what lets it see a Compose popup that took its whole window
 with it. On timeout it exits **5** and prints the selector, the timeout, and how many matching
 nodes were still on screen:
@@ -265,8 +263,8 @@ Spectre daemon error: Agent reported timeout for waitUntilGone: IllegalStateExce
 
 ### Input
 
-Real OS input: can move focus, change app state, and interact with whatever is under the
-pointer/keyboard. Prefer focusing the target app before keyboard ops when another process
+Real OS input can change focus and application state. It reaches the current pointer
+or keyboard target. Focus the target app before keyboard operations when another process
 owns the foreground.
 
 | Command | Purpose | Important args / defaults |
@@ -281,7 +279,7 @@ owns the foreground.
 
 #### Swipe modes
 
-Exactly one mode per call — not both:
+Each swipe call uses either node keys or screen coordinates:
 
 ```shell
 # Node centres (from / to keys from tree / find / wait-for-node)
@@ -299,7 +297,7 @@ Defaults: `--steps 12`, `--duration-ms 200`. Mixing node keys with coordinates f
 #### Press-key AWT codes
 
 `press-key` takes a **`java.awt.event.KeyEvent` virtual-key integer** and an optional
-**`java.awt.event.InputEvent` modifier mask** (not a key-code list of modifiers).
+**`java.awt.event.InputEvent` modifier mask**. Modifier key codes are invalid here.
 
 | Example | `key-code` | `--modifiers` |
 | --- | --- | --- |
@@ -311,22 +309,21 @@ Defaults: `--steps 12`, `--duration-ms 200`. Mixing node keys with coordinates f
 | Cmd+S (macOS) | `83` | `256` (`META_DOWN_MASK`) |
 | Shift+Tab | `9` | `64` (`SHIFT_DOWN_MASK`) |
 
-Other common masks: `ALT_DOWN_MASK` = `512`. Combine masks with bitwise OR when needed
-(e.g. Ctrl+Shift). The library API documents the same values under
-[Driving input](interactions.md#keyboard-typing-and-key-events). Keyboard delivery needs
-OS focus on the target; attach clients that stay foreground may need the app focused first
-(agent API: `focusWindow`; CLI has no separate focus command — activate the app window
-manually or via a prior click).
+Other common masks: `ALT_DOWN_MASK` = `512`. Combine masks with bitwise OR, such as for
+Ctrl+Shift. [Driving input](interactions.md#keyboard-typing-and-key-events) lists the
+same values for the library API. The target needs OS focus for keyboard input. An attach
+client can keep focus, so the app may need focus first. The agent API provides
+`focusWindow`. The CLI has no focus command; activate the window manually or click it.
 
 ### Capture and recording
 
-Three different surfaces — pick intentionally:
+The three capture commands return different outputs:
 
-| Surface | CLI | What you get | Targeting notes |
+| Surface | CLI | Output | Targeting notes |
 | --- | --- | --- | --- |
-| **Fullscreen screenshot** | `screenshot … --fullscreen` | Single PNG of the **full virtual desktop** | **Only** whole-desktop mode on the attach/CLI path. Default / `--window` / `--surface` **fail closed** (occlusion/privacy risk). MCP returns inline PNG bytes, not a path. |
-| **Atomic capture** | `capture` | Window PNG + full semantics tree on **daemon disk** (`capture.json` + `screenshot.png`) | `--window` default **0**. Summary only on stdout/MCP (paths + counts). See [Atomic capture](capture.md). |
-| **Recording** | `record start` / `stop` / `status` | MP4 path on **daemon filesystem** | Default: tracked **window index 0**. `--fullscreen` = **primary display only** (not multi-monitor). Returns **paths**, never video bytes. |
+| **Fullscreen screenshot** | `screenshot … --fullscreen` | Single PNG of the **full virtual desktop** | Attach/CLI supports whole-desktop mode only. Default / `--window` / `--surface` **fail closed** (occlusion/privacy risk). MCP returns inline PNG bytes; no path is returned. |
+| **Atomic capture** | `capture` | Window PNG + full semantics tree on **daemon disk** (`capture.json` + `screenshot.png`) | `--window` defaults to **0**. Stdout/MCP returns only a summary (paths + counts). See [Atomic capture](capture.md). |
+| **Recording** | `record start` / `stop` / `status` | MP4 path on **daemon filesystem** | The default is tracked **window index 0**. `--fullscreen` captures the **primary display only**; multi-monitor recording is unsupported. Returns **paths**, never video bytes. |
 
 ```shell
 # Full-desktop still (explicit opt-in)
@@ -350,23 +347,22 @@ spectre captures prune --session <session-id>
 spectre captures prune --older-than 7d --include-out-dir --force
 ```
 
-All three write **screen-pixel** sized output, not dp sized: on a 2× display a 1600×1000dp
-window yields a 3200×2000 pixel PNG and an equally sized MP4. `capture.json` reports the exact
-PNG size in `window.imageWidth` / `imageHeight`. The one exception is a `--fullscreen` still too
-large for the attach transport's frame budget, which falls back to logical resolution rather than
-failing — see [Atomic capture — Pixel scale](capture.md#pixel-scale). The budget defaults to 64 MiB
-(a worst-case 4K desktop) and is raised with `--max-frame-bytes` or `$SPECTRE_MAX_FRAME_BYTES`; see
-[Agent — Payload limits](agent.md#payload-limits-204).
+All three normally write output in **screen pixels**. A 1600×1000dp window on a 2× display
+produces a 3200×2000 PNG or MP4. `capture.json` reports PNG dimensions in
+`window.imageWidth` and `imageHeight`. An oversized `--fullscreen` still can use logical
+resolution to fit the attach frame budget. See [Atomic capture — Pixel scale](capture.md#pixel-scale).
+The default budget is 64 MiB. Set `--max-frame-bytes` or `$SPECTRE_MAX_FRAME_BYTES` to
+raise it; see [payload limits](agent.md#payload-limits-204).
 
 `captures list` shows size and live/closed status. `captures prune` supports `--keep N`,
 `--older-than` (`30s` / `5m` / `24h` / `7d`), `--all`, `--session <id>`, `--force` (override
 live-session guard), and `--include-out-dir` (client `--out-dir` roots are skipped unless
 set). Prune refuses to run if the daemon cannot report live sessions.
 
-Default-root captures are lazily capped (keep last 50 closed sessions' captures); client
-`--out-dir` captures are never auto-deleted. Detach reports leftover captures and the exact
-`captures prune --session` command. Summaries point agents at the **`spectre-capture`** skill
-for `jq` recipes — see [Atomic capture](capture.md).
+Spectre keeps at most the last 50 closed-session captures under the default root when
+it applies the lazy cap. It never automatically deletes client `--out-dir` captures.
+Detach reports leftover files and a `captures prune --session` command.
+The [Atomic capture](capture.md) guide links to `spectre-capture` `jq` recipes.
 
 Recording needs the platform helper on the daemon host (`spectre-recording-macos` /
 `spectre-recording-linux` / `spectre-recording-windows` as appropriate), plus OS permissions
@@ -375,7 +371,8 @@ Recording needs the platform helper on the daemon host (`spectre-recording-macos
 
 ### macOS permissions
 
-Local helpers only (no daemon). Safe on other OSes as “not applicable”.
+These commands run locally without the daemon. On other operating systems, they report
+“not applicable”.
 
 | Command | Behaviour |
 | --- | --- |
@@ -387,13 +384,14 @@ spectre permissions check --json
 spectre permissions request
 ```
 
-Capture and recording never open the grant UI implicitly; they preflight and fail closed.
+Capture and recording check permission and fail when it is missing.
+They do not open the grant UI automatically.
 See [Recording — macOS TCC](recording.md).
 
 ## MCP
 
-Run `spectre mcp` when an MCP client should drive the UI. Tools share the **same per-user
-daemon and session ids** as ordinary CLI commands.
+Run `spectre mcp` to give an MCP client access to the UI.
+Its tools use the **same per-user daemon and session IDs** as CLI commands.
 
 ```json
 {
@@ -409,9 +407,9 @@ daemon and session ids** as ordinary CLI commands.
 `mcp` uses standard input and output for protocol messages. Do not wrap it in a command that
 writes banners or logs to standard output.
 
-When an agent also has Compose Hot Reload’s own MCP configured, follow the division of labor in
-[Compose Hot Reload awareness](hot-reload.md): HR MCP for quick reload-native sanity checks;
-Spectre for tree, input, capture, and evidence.
+If the agent also uses Compose Hot Reload's MCP, see
+[Compose Hot Reload awareness](hot-reload.md). Use HR MCP to check reload state. Use Spectre
+to inspect the tree, send input, and capture evidence.
 
 ### Lifecycle
 
@@ -421,13 +419,12 @@ Spectre for tree, input, capture, and evidence.
 | Attach | `attach` → retain `sessionId` |
 | Drive | `tree` / `find` / input tools / waits |
 | Capture | `screenshot` (inline image), `capture` (paths on daemon FS), `record_*` (paths) |
-| Release session | **`detach`** with `session_id` — ends **that** session only and returns leftover capture cleanup summary (same honesty as CLI `spectre detach`). Unknown / already-detached / blank `session_id` **fail closed** (`isError`). Sibling sessions stay attached. Detach does **not** delete capture files; prune stays explicit. Use `spectre daemon kill` only when you intend to drop **every** session. |
+| Release session | `detach` with `session_id` ends that session and reports leftover captures, as CLI detach does. Unknown, detached or blank IDs return `isError`. Other sessions stay attached. Captures remain on disk until explicitly pruned. Use `spectre daemon kill` only to close all sessions. |
 
-Sessions created by MCP remain in the daemon until **`detach`**, daemon kill, or daemon
-teardown. **MCP front-end exit does not detach** — kill/restart the MCP client or drop stdio
-and the daemon session stays until explicit `detach` / CLI / kill. Long agent workflows should
-call **`detach`** when finished so session and native resources do not leak. Successful detach
-leaves the **shared daemon running** so `list_processes` and a new `attach` still work.
+MCP sessions remain in the daemon until `detach`, daemon kill, or daemon teardown.
+Closing the MCP frontend or its standard streams does not detach a session.
+Call `detach` when finished to release session and native resources.
+The shared daemon remains available for `list_processes` and new attaches.
 
 **Preferred cleanup order (multi-step agents):**
 
@@ -440,8 +437,8 @@ Double-`detach` is the same fail-closed class as an unknown session.
 
 ### Tool inventory
 
-Inputs use snake_case JSON fields. Successful non-screenshot tools return **JSON text**
-(serialized daemon response). Errors set MCP `isError` with a message.
+Tool inputs use snake_case JSON fields. Successful tools other than screenshot return
+serialised daemon JSON as text. Errors set MCP `isError` and include a message.
 
 | Tool | Required inputs | Optional inputs (defaults) | Success output shape |
 | --- | --- | --- | --- |
@@ -463,14 +460,14 @@ Inputs use snake_case JSON fields. Successful non-screenshot tools return **JSON
 | `scroll_wheel` | `session_id`, `node_key`, `wheel_clicks` | — | completed; positive = down |
 | `press_key` | `session_id`, `key_code` | `modifiers` (**0**) | completed; AWT codes as CLI |
 | `type_text` | `session_id`, `text` | — | completed |
-| `screenshot` | `session_id` | `window_index`, `surface_id`, `fullscreen` | **Inline PNG** `ImageContent` (not a path). Only `fullscreen=true` succeeds on attach; window/surface fail closed |
+| `screenshot` | `session_id` | `window_index`, `surface_id`, `fullscreen` | **Inline PNG** `ImageContent`; no path is returned. Only `fullscreen=true` succeeds on attach; window/surface fail closed |
 | `capture` | `session_id` | `window_index` (**0**), `out_dir`, `include_image` (**false**) | Summary JSON with **daemon-local paths** (`directory`, `captureJsonPath`, `screenshotPngPath`, counts…). Optional second content part: inline PNG when `include_image=true` |
 | `record_start` | `session_id` | `output_path`, `window_index` (**0**), `fullscreen` (**false**) | `{ "sessionId", "outputPath" }` — path only |
 | `record_stop` | `session_id` | — | final `outputPath` |
 | `record_status` | `session_id` | — | `active`, optional `outputPath` / `captureDirectory` |
 
 **Swipe (MCP):** pass either `from_node_key` + `to_node_key`, or all of
-`start_x` / `start_y` / `end_x` / `end_y` — not both.
+`start_x` / `start_y` / `end_x` / `end_y`. Supplying both forms is invalid.
 
 **Example — attach, find, detach:**
 
@@ -499,9 +496,9 @@ Inputs use snake_case JSON fields. Successful non-screenshot tools return **JSON
 
 ### Detach success body (MCP vs CLI)
 
-MCP `detach` success content is the daemon’s serialized **`DaemonResponse.Detached`** payload
+MCP `detach` success content is the daemon’s serialised **`DaemonResponse.Detached`** payload
 (with `encodeDefaults`, plus the sealed-type discriminator field the codec emits). Field names
-match the daemon protocol, not the CLI human line and not necessarily CLI `--json`:
+match the daemon protocol. The CLI human line and CLI `--json` can have different shapes:
 
 | Field | MCP detach success | CLI `spectre detach --json` | Notes |
 | --- | --- | --- | --- |
@@ -513,12 +510,12 @@ match the daemon protocol, not the CLI human line and not necessarily CLI `--jso
 | Skill hint | `skillHint` (when leftovers) | `skillHint` | `spectre-capture` when leftovers exist |
 
 Do **not** treat MCP text and CLI `--json` as byte-identical envelopes. CLI human output is a
-prose line (`Detached <id>.` plus optional leftover lines), not this JSON.
+prose line (`Detached <id>.` plus optional leftover lines). It does not use this JSON shape.
 
-**Honesty rules (shared with CLI detach):** when the session left capture artifacts on disk,
+When the session left capture artefacts on disk,
 `captureCount` / `captureBytes` / `capturePaths` are non-zero and paths are real; `pruneCommand`
 and `skillHint` are populated. Empty sessions report zeros and omit prune/skill. Detach never
-auto-deletes files — run the reported prune command (or `spectre captures prune …`) explicitly.
+auto-deletes files. Run the reported prune command (or `spectre captures prune …`) explicitly.
 Malformed `session_id` (missing, empty, whitespace-only, non-string) fails closed at the MCP tool
 boundary without fabricating a summary.
 
@@ -534,24 +531,24 @@ Full tool row: [Tool inventory](#tool-inventory) above. Capture retention and pr
   omitted). They are **not** automatically transferred over MCP.
 - **Shared-filesystem implication:** the MCP client process must be able to **read those paths**
   (same host, or a shared mount that both daemon and client see). Remote agents without a shared
-  disk only get summaries / inline screenshots — use `include_image=true` on `capture` or
+  disk only get summaries / inline screenshots. Use `include_image=true` on `capture` or
   `screenshot` with `fullscreen=true` when the client needs pixels in-band.
 - **Recording** never streams video frames over MCP; only the final (or in-progress) path is
   reported. Ensure `spectre-recording-<os>` helpers and permissions exist on the **daemon** host.
 
-Same capture-mode distinctions as the CLI table above apply to MCP tool names
+The CLI table's capture-mode distinctions also apply to MCP tool names
 (`screenshot` vs `capture` vs `record_start`).
 
 ## Requirements and limits
 
 - `ps` and `attach` require **JDK 21+** in both the CLI and target JVM. The CLI needs a full
-  JDK with `jdk.attach`; a JRE is not enough.
+  JDK with `jdk.attach`. A JRE lacks the required attach module.
 - **Target shape (two paths, one attach command):**
   1. **Preferred — preinstalled `spectre-core`** on the target (instrumented attach). Use this
-     whenever you control the app build.
-  2. **Experimental inject** — when core is absent but Compose/Skiko is present, the agent
-     runtime can load a nested inject payload. Same `attach` surface; fine for inspect →
-     detach, not for high-frequency CI attach loops. Details:
+     for controlled app builds.
+  2. **Experimental inject** — when core is absent and Compose/Skiko is present, the agent
+     runtime can load a nested inject payload. The same `attach` command supports occasional
+     inspect → detach sessions. High-frequency CI attach loops require preinstalled core. See
      [Agent attach — injection](agent.md#injection-without-preinstalled-core).
 - Start the target JVM with **`-XX:+EnableDynamicAgentLoading`** to avoid JDK attach warnings
   and future incompatibility. The attaching process must be the **same OS user** as the target.

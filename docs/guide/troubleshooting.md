@@ -1,53 +1,51 @@
 # Troubleshooting
 
-Common surprises and their fixes, ordered roughly by how often they bite.
+Find a symptom below, then check its cause and suggested action.
 
 ## Launch-and-attach harness
 
 ### "Launched process exited with code N before attach (PROCESS_ALIVE)"
 
-The process died before Spectre could attach. The exception message includes the exit
-code, paths to stdout/stderr capture files, and a stderr excerpt. Fix the app startup
-failure first (missing main class, bad classpath, AWT headless, etc.).
+The process exited before attach. The exception includes its exit code, output file
+paths, and a stderr excerpt. Check app startup for a missing main class, classpath
+error, or headless AWT setting.
 
-On a **Gradle-ish** launch, if the `./gradlew` **client** exits before any app JVM is
-discovered (wrapper download failure, bad env, build script error), you get this same
-stage — often with detail that the Gradle client exited before an app JVM appeared —
-rather than a name-filter miss. Read the captured stderr first; do not assume
-`--app-name` is wrong until the client stays alive.
+During a **Gradle-ish** launch, the `./gradlew` client may exit before Spectre finds
+an app JVM. Wrapper downloads, the environment, or build scripts can cause this.
+Spectre reports the same stage and may state that the client exited first.
+Read captured stderr. Check `--app-name` after confirming that the client stays alive.
 
 ### "No attachable JVM … (JVM_ATTACHABLE)" on a Gradle launch
 
-`./gradlew :app:run` spawns the app JVM from the **Gradle daemon**, not the `gradlew`
-client. This stage means the **client is still running** but no matching app JVM was
+`./gradlew :app:run` spawns the app JVM from the **Gradle daemon**. The `gradlew`
+client remains a separate process. This stage means the **client is still running** and no matching app JVM was
 found in time. Pass `LaunchSpec.appJvmNameFilter` / `spectre launch --app-name
 <MainClass>` so discovery can match the app among daemon children. Never kill the
-Gradle daemon to "fix" teardown — the harness only tears down the discovered app JVM.
+Gradle daemon to "fix" teardown. The harness only tears down the discovered app JVM.
 
-Cold Gradle daemons (for example after `./gradlew --stop`) and first-time compile of
-the app module can take longer than a direct `java` boot. Spectre expands the default
-JVM_ATTACHABLE budget to **120s** for Gradle-ish launches that leave stage timeouts at
-defaults; set `LaunchStageTimeouts.jvmAttachableMs` explicitly if you need a different
-budget. If the timeout still fires, check captured stdout/stderr for compile errors
-before assuming a name-filter miss.
+Starting a Gradle daemon or compiling the app for the first time can delay JVM discovery.
+For Gradle launches with default stage timeouts, Spectre allows **120s** for
+`JVM_ATTACHABLE`. Set `LaunchStageTimeouts.jvmAttachableMs` for another limit.
+If discovery still times out, check captured output for compile errors.
 
-You will also see a loud **Gradle-ish** warning naming daemon, sandbox, and JEP 451
-caveats. Prefer a prod-like launch (`java -jar`, installDist) when you control the build.
+The **Gradle-ish** warning lists daemon, sandbox, and JEP 451 limits. For controlled
+builds, use a production-style launch such as `java -jar` or installDist.
 
 ### "Agent bootstrap failed (AGENT_BOOTSTRAP)"
 
-The target JVM was found but the agent did not bind its UDS in time, bootstrap
-could not find or inject `ComposeAutomator`, or the target has no Compose host.
+Spectre found the target JVM. The agent failed to bind its UDS in time.
+Bootstrap may have failed to find or inject `ComposeAutomator`, or the target
+may have no Compose host.
 On Linux and other POSIX hosts, a first `VirtualMachine.attach` can fail with
 `Connection refused` when a leftover `.java_pid` socket is still on disk (pid
 reuse after a force-kill). Launch-and-attach removes that orphaned endpoint and
 retries inside the `AGENT_BOOTSTRAP` budget so the target can start a real
 attach listener.
-Prefer a `spectre-core` dependency on the app (instrumented attach). If the target
-is Compose-only, current `spectre-agent-runtime` jars inject nested
-`META-INF/spectre/inject-runtime.jar` automatically — a missing core dependency is
-no longer a hard requirement. Direct launches that Spectre starts get
-`-XX:+EnableDynamicAgentLoading`; Gradle launches must set that flag in the build.
+Add `spectre-core` to a controlled app build.
+For a Compose-only target, current `spectre-agent-runtime` jars inject
+`META-INF/spectre/inject-runtime.jar` automatically. Spectre adds
+`-XX:+EnableDynamicAgentLoading` to direct launches. Set that flag in the build
+for Gradle launches.
 See [Agent attach](agent.md#injection-without-preinstalled-core).
 
 ### "Unix domain path too long" / `UdsPathTooLongException`
@@ -56,18 +54,17 @@ The socket path the agent binds must fit the operating system's `sockaddr_un.sun
 field: 102 usable bytes on macOS, 106 on Linux and Windows. Longer paths are refused by
 the kernel.
 
-Spectre picks a default path that fits. It uses `/tmp` on Linux and macOS. On Windows it
-uses `%TEMP%` when the result fits, and falls back to `%LOCALAPPDATA%\Temp` when it does
-not — build harnesses such as Bazel point `java.io.tmpdir` at a deep scratch directory,
-which used to push the path past the limit.
+Spectre chooses `/tmp` on Linux and macOS. On Windows it uses `%TEMP%` if the socket
+path fits, then `%LOCALAPPDATA%\Temp` if needed. A build harness may set
+`java.io.tmpdir` to a directory whose path exceeds the socket limit.
 
-You can still hit the limit if you set `AttachOptions.udsPath` yourself. Attach now
+Custom `AttachOptions.udsPath` values can still exceed the limit. Attach now
 rejects that up front with `UdsPathTooLongException`, which names the path, its size in
 bytes, and the limit. Pick a shorter directory, closer to the filesystem root.
 
 ### "Attached but no window (FIRST_WINDOW)"
 
-Attach succeeded but `windows()` stayed empty until timeout. The app may still be
+Attach succeeded. `windows()` stayed empty until timeout. The app may still be
 showing a splash screen, or the Compose tree never registered a window. Increase
 `LaunchStageTimeouts.firstWindowMs` or fix the UI startup path.
 
@@ -78,15 +75,14 @@ java.lang.IllegalStateException: waitForIdle must not be called from the AWT eve
 dispatch thread; wrap the call with withContext(Dispatchers.Default) or similar.
 ```
 
-All five wait helpers — `waitForNode`, `waitUntilGone`, `waitUntil`, `waitForIdle`, and
-`waitForVisualIdle` — refuse to run on the AWT event dispatch thread. They snapshot semantics via
-`invokeAndWait`/`readOnEdt`. Running them on the EDT would either deadlock or skip the
-bounded worker that enforces the timeout, so the helpers raise
-`IllegalStateException` instead. The exact wait name in the message tells you which
-call to wrap.
+All five waits reject calls from the AWT event dispatch thread: `waitForNode`,
+`waitUntilGone`, `waitUntil`, `waitForIdle`, and `waitForVisualIdle`.
+They read semantics through `invokeAndWait` or `readOnEdt`.
+An EDT call could deadlock or bypass the timeout worker, so the helper throws
+`IllegalStateException` and names the offending wait.
 
 JUnit test methods don't run on the EDT, so a `runSpectreTest { … }` body is fine (or plain `runBlocking` as a fallback)
-there — no `withContext` needed. The error appears when the call originates from a
+there, with no `withContext` needed. The error appears when the call originates from a
 coroutine on `Dispatchers.Main` or any Swing-backed dispatcher, e.g.:
 
 ```kotlin
@@ -103,13 +99,13 @@ See [Synchronization](synchronization.md#the-edt-rule).
 
 ## "My selector returns null or an empty list"
 
-In order of likelihood:
+Check these causes in order:
 
 1. **The UI hasn't rendered yet.** Spectre doesn't auto-wait. Use
    [`waitForNode(...)`](synchronization.md#waitfornode) before the first read.
-2. **The node is composed but offscreen.** It still appears in the semantics tree, but
+2. **The node is composed and offscreen.** It still appears in the semantics tree;
    `boundsOnScreen` may be empty. Scroll to it first.
-3. **You're reading after an interaction without waiting.** Add
+3. **A read follows an interaction without waiting.** Add
    `waitForIdle()`/`waitForVisualIdle()` after the click or type.
 4. **The selector doesn't match.** Run `println(automator.printTree())` and check the
    actual test tags/text/role. Localised text is the usual culprit.
@@ -119,8 +115,8 @@ In order of likelihood:
 
 ## "Tests fight over OS focus when run in parallel"
 
-Real `RobotDriver` dispatches OS-level input. Two parallel test JVMs racing for the
-same screen will collide.
+Real `RobotDriver` sends OS input. Parallel test JVMs can interfere when they share
+one desktop.
 
 For participating Spectre processes, enable cooperative coordination with
 `RobotDriver(InputLeasePolicy.Required)`, wrap a sequence in `withExclusiveInput`, or configure
@@ -133,16 +129,16 @@ spectre input-lock revoke --lease <id> --reason "test JVM is unresponsive"
 
 Normal revoke fences new work and waits for owner cleanup. If the owner cannot reach a checkpoint,
 `--force` advances after a bounded grace period and reports `unsafeTakeover=true`. That is an
-audited escape hatch, not proof that an already-running native call stopped. A stale lease ID can
+audited escape hatch. It provides no proof that an already-running native call stopped. A stale lease ID can
 never revoke a newer holder.
 
 If the coordinator process does not become ready, check that
 `spectre-input-coordinator-server` and its dependencies are present in `java.class.path`. This is
 especially relevant for thin `java -jar` launchers and module-path-only applications. Run the
-command returned by `CoordinatorProcessLauncher.command()` directly when you need to retain the
+command returned by `CoordinatorProcessLauncher.command()` directly to retain the
 child JVM's standard error; automatic launches intentionally discard child output. See
 ["Every input verb fails and the coordinator will not start"](#coordinator-unreachable) when the
-coordinator cannot be repaired and you need a way through.
+coordinator cannot be repaired and an alternative input path is needed.
 
 Use synthetic input:
 
@@ -155,9 +151,8 @@ val automator = ComposeAutomator.inProcess(
 )
 ```
 
-Synthetic input posts AWT events directly into the target window's event queue — no
-global focus, no cursor motion. The trade-off is that some interactions (system-level
-shortcuts, real OS drag-and-drop) won't behave the same way. See
+Synthetic input posts AWT events into the target window without changing global focus
+or moving the cursor. System shortcuts and OS drag-and-drop need real input. See
 [Driving input](interactions.md#real-vs-synthetic-input).
 
 ## "Every input verb fails and the coordinator will not start" {#coordinator-unreachable}
@@ -166,11 +161,11 @@ Symptom: semantics reads, `windows()`, `findByTestTag` and screenshots all keep 
 verbs that touch **shared OS state for the current driver** fail with a message about the input
 coordinator. On a real-OS `Required` driver that is `focusWindow`, `click`, `typeText`, and
 `pasteText` together. On the default synthetic `Required` driver (attach / in-process) only
-clipboard-backed `pasteText` and explicit exclusive scopes need a live coordinator — synthetic
+clipboard-backed `pasteText` and explicit exclusive scopes need a live coordinator. Synthetic
 `focusWindow` / `click` / `typeText` do not. That split is the signature: leased shared-desktop
 work fails, everything else does not.
 
-The failure now names its own way out:
+The failure reports the coordinator state:
 
 ```text
 … Spectre could not reach the desktop input coordinator (COORDINATOR_IO), and this driver runs
@@ -179,93 +174,86 @@ coordinator answered. Not measured: whether it is wedged, absent, or merely slow
 startup budget. …
 ```
 
-Read the error code first, because two of them mean different repairs:
+Use the error code to choose a repair:
 
 | Code | What it means | First thing to try |
 | --- | --- | --- |
-| `COORDINATOR_PROVIDER_MISSING` | the coordinator artifact is not on the classpath | add `spectre-input-coordinator-server` to the **attacher's** runtime classpath |
-| `COORDINATOR_IO` | a coordinator was launched but no client could reach it | run `CoordinatorProcessLauncher.command()` by hand and read the child's stderr |
+| `COORDINATOR_PROVIDER_MISSING` | the coordinator artefact is not on the classpath | add `spectre-input-coordinator-server` to the **attacher's** runtime classpath |
+| `COORDINATOR_IO` | a coordinator was launched; clients could not reach it | run `CoordinatorProcessLauncher.command()` by hand and read the child's stderr |
 | `ACQUIRE_TIMEOUT` | the coordinator is fine; another owner holds the desktop | `spectre input-lock status --json`, then revoke the exact lease ID |
 
 Do **not** answer `ACQUIRE_TIMEOUT` by turning coordination off: that failure means the lease is
-doing its job — see "Tests fight over OS focus when run in parallel" above.
+doing its job. See "Tests fight over OS focus when run in parallel" above.
 
-If the coordinator is genuinely unusable — for instance a host where the socket path itself is
-broken — there is one deliberate opt-out for the attach path. Set it on the **attaching** JVM:
+If the coordinator is genuinely unusable, such as a host with a broken socket path,
+the attach path has one deliberate opt-out. Set it on the **attaching** JVM:
 
 ```text
 -Ddev.sebastiano.spectre.agent.inputCoordination=disabled
 ```
 
-**Kill the running daemon first** — `spectre daemon kill`. A daemon resolves this mode once at
-startup and every target it injects inherits it, so the switch cannot reach the daemon that was
-already up when your attach failed. Spectre refuses the mismatch at the handshake and names that
-command, so you will be told rather than left wondering why the switch did nothing.
+Run `spectre daemon kill` before changing this mode. The daemon reads it at
+startup and passes it to every injected target. A running daemon keeps its earlier
+mode. Spectre rejects a mismatch during the handshake and reports the kill command.
 
-**And kill it again when you are done.** Dropping the property does not re-coordinate a daemon
-already running disabled — it keeps attaching new targets uncoordinated, and nothing on your
-terminal says so. Commands are refused until you restart it, on purpose: running without the
-property means asking for the default.
+Run `spectre daemon kill` again when finished. Removing the property does not
+change a running daemon in disabled mode. Spectre refuses commands until the daemon
+restarts with the default mode.
 
-`spectre` forwards the property to a daemon it starts; pass it through `JAVA_TOOL_OPTIONS` if you
-launch the daemon yourself. Only the exact word `disabled` opts out, and both the attacher and the
-target announce it on stderr while it is in force. It costs you the guarantee that nothing else is
-driving this desktop — read
+`spectre` forwards the property to a daemon it starts. For a separately started daemon,
+pass it through `JAVA_TOOL_OPTIONS`. Only the exact word `disabled` opts out.
+The attacher and target announce that mode on stderr. Other processes can then
+drive the same desktop. Read
 [When the coordinator cannot be reached](input-coordination.md#coordinator-unreachable) before
 using it.
 
 ## "`typeText` or `pasteText` didn't reach my field"
 
-`typeText` dispatches key press/release pairs and avoids the clipboard. It supports
-ASCII letters, digits, space, newline, and common US-keyboard punctuation. Use
-`pasteText` for arbitrary Unicode or large text: it writes to the system clipboard,
-dispatches the platform paste shortcut (<kbd>Cmd</kbd>+<kbd>V</kbd> on macOS,
-<kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere), waits for the paste to land, and restores the
-previous clipboard contents. A few failure modes follow from those contracts:
+`typeText` sends key press and release events without using the clipboard.
+It supports ASCII letters, digits, space, newline, and common US keyboard punctuation.
+For Unicode or large text, `pasteText` writes to the clipboard. It sends
+<kbd>Cmd</kbd>+<kbd>V</kbd> on macOS or <kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere.
+It waits for the paste, then restores the previous clipboard content.
+Check these possible failures:
 
-- **Nothing has focus.** `typeText` types into whatever the focused component is. With
-  the real `RobotDriver()` that means the OS/AWT focus owner. With
-  `RobotDriver.synthetic(rootWindow)`, Spectre can also route key events through the
-  key-listening Compose Desktop host when AWT has no focus owner (for example,
-  `apple.awt.UIElement=true` helper JVMs), but Compose still needs an internally
-  focused text field. If your test never clicked into the field — or the click landed
-  on something else, e.g., a parent that absorbed it — the input lands in the wrong
-  place, or does nothing. Use `clearAndTypeText(node, …)` (which clicks first) or
-  precede the call with an explicit `automator.click(field)`. On Windows, and for clicks
-  on X11, a node-targeted click that never reaches the target JVM now throws instead of
-  doing nothing quietly — see
+- **Nothing has focus.** `typeText` sends keys to the focused component.
+  `RobotDriver()` uses the OS or AWT focus owner. `RobotDriver.synthetic(rootWindow)`
+  can use a key-listening Compose Desktop host when AWT has no focus owner, as in
+  `apple.awt.UIElement=true` helper JVMs. Compose still needs a focused text field.
+  A missing click or a click absorbed by a parent can send input elsewhere.
+  Use `clearAndTypeText(node, …)`, which clicks first, or call
+  `automator.click(field)`. On Windows and X11, a node click that never reaches
+  the target JVM throws. See
   [undelivered input](interactions.md#undelivered-input-fails-loudly-on-windows-and-x11).
 - **The field doesn't accept paste.** Some Compose components (and any read-only
   text field) ignore the system paste shortcut. Verify the field accepts pasted
   input outside the test before assuming Spectre is at fault.
-- **macOS `apple.awt.UIElement=true`.** UI-element/helper mode is supported for
-  `RobotDriver.synthetic(rootWindow = ...)` per-character `typeText`: Spectre bypasses
-  the missing AWT focus owner and targets the key-listening Compose host under the
-  root window. It can still break clipboard-backed `pasteText`: the field may be
-  focused and the paste shortcut may be delivered, but Compose reads stale or empty
-  clipboard contents. Disable `apple.awt.UIElement=true` for the JVM hosting the test
-  window when you need `pasteText`, or use `typeText` for supported ASCII input.
+- **macOS `apple.awt.UIElement=true`.** With
+  `RobotDriver.synthetic(rootWindow = ...)`, per-character `typeText` reaches
+  the key-listening Compose host despite a missing AWT focus owner.
+  Clipboard-backed `pasteText` can fail in this mode. Compose may read stale or
+  empty clipboard content after the paste shortcut. For `pasteText`, disable
+  `apple.awt.UIElement=true` on the test window JVM. Supported ASCII can use
+  `typeText`.
 - **macOS pasteboard race.** macOS's `NSPasteboard` writes are asynchronous, so
   Spectre polls the clipboard until it reads back the requested text before
-  dispatching <kbd>Cmd</kbd>+<kbd>V</kbd>. If your environment has a clipboard
+  dispatching <kbd>Cmd</kbd>+<kbd>V</kbd>. If the environment has a clipboard
   manager or another process actively rewriting the clipboard, the poll can time
   out and the paste lands stale. Disable clipboard managers in the test
   environment.
-- **`RobotDriver.headless()` throws on `typeText` and `pasteText`.** It throws on every
-  input, clipboard, and screenshot call by design (see [Driving input](interactions.md#real-vs-synthetic-input)),
-  so text entry against a headless driver surfaces an `UnsupportedOperationException`
-  at the call site rather than silently dropping. Use the default
-  `RobotDriver.synthetic(rootWindow)` for input, or `RobotDriver()` for any real-OS
-  scenario.
+- **`RobotDriver.headless()` throws on `typeText` and `pasteText`.** Every input,
+  clipboard, and screenshot call throws `UnsupportedOperationException`.
+  See [Driving input](interactions.md#real-vs-synthetic-input). For input, use
+  `RobotDriver.synthetic(rootWindow)` or `RobotDriver()` for real OS actions.
 - **Compose's paste action runs on its own dispatcher.** After the keystroke,
   Spectre pumps the EDT and sleeps briefly so the paste handler can read the
-  clipboard before the previous contents are restored. If you stack many
-  `typeText` calls back-to-back in a tight loop and observe truncated text, give
-  the field a `waitForIdle()` between calls.
+  clipboard before the previous contents are restored. If many
+  `typeText` calls run back-to-back in a tight loop and text is truncated, call
+  `waitForIdle()` between calls.
 
 Use `pressKey(...)` for individual key events (modifier shortcuts, navigation keys,
-`<kbd>Tab</kbd>`, `<kbd>Esc</kbd>`) — those go through the AWT key map, not the
-clipboard, so none of the paste-specific caveats apply.
+`<kbd>Tab</kbd>`, `<kbd>Esc</kbd>`). They go through the AWT key map and bypass
+the clipboard, so none of the paste-specific caveats apply.
 
 ## Compose Hot Reload {#compose-hot-reload}
 
@@ -281,8 +269,9 @@ the process, so no Hot Reload client was created. Common causes:
    `orchestration.port` field. Confirm the app was started by an HR-aware run configuration that
    still exposes those properties.
 
-If properties **are** present but the orchestration server is down or the port is stale, wait
-returns **`timeout`**, not `hotReloadUnavailable` (the session is still treated as reload-aware).
+If properties **are** present while the orchestration server is down or the port is stale, wait
+returns **`timeout`** because the session remains reload-aware. `hotReloadUnavailable` applies
+when the HR properties are absent.
 
 See [Compose Hot Reload awareness](hot-reload.md).
 
@@ -302,13 +291,13 @@ On reload-aware sessions, node keys from `tree` / `find` are generation-stamped 
 after a successful reload settle. Pre-reload keys (and guessed `g{n}:…` stamps before a fresh
 tree) return `nodeNotFound`. Arm `spectre wait --reload-settled <session>` **before** the
 reload, then `tree` / `find` again and use the new stamped keys. Do not reuse keys from an
-older `capture.json` for clicks after settle — capture writes raw keys for inspection.
+older `capture.json` for clicks after settle. Capture writes raw keys for inspection.
 
 ### "Older Hot Reload builds"
 
 Spectre tests against the Compose Hot Reload **1.2** line (pinned **1.2.0**, minimum
 **1.2.0-alpha+211**). Older orchestration servers may omit message types Spectre needs; upgrade
-HR rather than expecting settle wait to work.
+HR. Settle wait requires an HR-aware run configuration.
 
 ## "The JVM is headless"
 
@@ -327,7 +316,7 @@ A modal Swing dialog with text such as `Error: No Component provided` usually me
 UI library threw an uncaught composition exception and JBR surfaced it as a blocking
 `JOptionPane`. Check stderr for the real exception and make sure required
 `CompositionLocal`s are provided. For Jewel standalone windows, use Jewel's window
-wrapper when your UI reads Jewel locals such as `LocalComponent`.
+wrapper when the UI reads Jewel locals such as `LocalComponent`.
 
 ## "Captured screenshot pixels look slightly off"
 
@@ -335,11 +324,11 @@ wrapper when your UI reads Jewel locals such as `LocalComponent`.
 `spectre-recording` is on the runtime classpath. They fail if that backend is unavailable or cannot
 identify the requested window; they never substitute a screen-region crop. `capture()` uses the
 same window-scoped still whenever recording is present (GitHub Actions hosted Windows is treated
-as non-interactive for WGC). If the helper cannot actually run — for example Linux without
-`gst-launch-1.0` — `capture()` fails rather than substituting a Robot crop of whatever sits
+as non-interactive for WGC). If the helper cannot actually run, such as Linux without
+`gst-launch-1.0`, `capture()` fails. It does not substitute a Robot crop of whatever sits
 under the window. Without recording (for example an inject payload that omits it) `capture()`
 uses Robot region capture of the Compose surface. On Linux X11/Xvfb native stills read visible
-framebuffer pixels — keep the target frontmost. Settle the UI
+framebuffer pixels; keep the target frontmost. Settle the UI
 (`waitForIdle` / `waitForVisualIdle`) before `capture()` so the semantics snapshot and PNG stay a
 usable pair across one-shot native still latency.
 
@@ -347,46 +336,38 @@ usable pair across one-shot native still latency.
 `spectre-recording` is present **and the platform helper can actually run** (same native still
 path as `screenshot(windowIndex)`). Class presence is not enough: on Linux the helper needs
 `gst-launch-1.0` (with `ximagesrc`, `videoconvert`, and `pngenc` for X11/Xvfb stills). If
-recording is on the classpath but GStreamer is missing, Spectre falls back to Robot region
-capture of each surface rectangle instead of marking every sample unsampleable. Keep the
+recording is on the classpath and GStreamer is missing, Spectre falls back to Robot region
+capture of each surface rectangle so samples remain usable. Keep the
 target frontmost and unobscured in that fallback mode (Linux X11 region and some embedded
-cases still need visibility). Install GStreamer, or keep `spectre-recording` off the test
-runtime classpath, when you want native window stills.
+cases still need visibility). For native window stills on Linux, install GStreamer and
+include `spectre-recording` with the platform helper on the test runtime classpath.
 
-**Rule of thumb: when you're validating colours from a `screenshot()`, always think
-about the node's interaction state first.** If the node is currently focused,
-hovered, or pressed, the captured pixels include whatever indication overlay the
-component's theme draws on top — a translucent state layer for press / hover, a focus
-halo, a ripple, etc. The overlay alpha-blends with the underlying colour, so the
-bytes that come out of `screenshot()` are the blended result, not the raw painted
-colour. The effect is platform-independent (same on macOS, Windows, and Linux) and
-easy to mistake for a colour-space or render-pipeline bug.
+Check the node's interaction state when comparing colours from `screenshot()`.
+A focused, hovered, or pressed node can display a theme overlay, such as a
+state layer, focus halo, or ripple. The overlay blends with the underlying
+colour. The screenshot contains that blended result on macOS, Windows, and Linux.
 
-The fix is to **assert against the right expected colour for the state you're
-actually capturing**, not to reach for tricks that bypass the indication. If your
-node is focused at capture time, your expected value is *raw colour + focus
-overlay*; if it's pressed, *raw colour + press overlay*; if it's idle, the raw
-colour. The indication is part of the rendered output, not noise to suppress.
+Use the colour expected for the captured state. A focused node includes its
+focus overlay. A pressed node includes its press overlay. An idle node shows
+the raw colour.
 
-In practice that means either:
+Choose one of these approaches:
 
 - **Pin the node to a known interaction state before capture** and compute the
-  expected colour for that state. If you want the raw colour, make sure the node
-  isn't focused / hovered / pressed when `screenshot()` runs. If you specifically
-  want to verify the focused appearance, focus the node first and compare against
+  expected colour for that state. For the raw colour, ensure the node
+  is unfocused, unhovered, and unpressed when `screenshot()` runs. To
+  verify the focused appearance, focus the node first and compare against
   the blended expected value.
-- **Compute the blended expected value at assertion time** if reproducing the
-  exact theme overlay yourself. Compose Foundation's default state-layer alphas
-  are part of the public theme contract; for ad-hoc baselines, capture the
-  expected pixels once from a known-good run and store those as the baseline
-  rather than hard-coding RGB literals derived from the unblended source colour.
+- **Compute the blended expected value at assertion time** if the test knows
+  the theme overlay. Compose Foundation defines the default state-layer alphas.
+  For an ad hoc baseline, save pixels from a known-good run. Raw source RGB
+  values do not include the overlay.
 
 ## "Linux Wayland recording — `UnsupportedOperationException` from `x11grab`"
 
-`FfmpegBackend.LinuxX11Grab` deliberately throws on Wayland sessions rather than
-silently capturing black frames (Wayland's security model blocks framebuffer reads by
-clients other than the compositor, so `x11grab` through XWayland would otherwise return
-uniform black). The error message points you at the fix:
+`FfmpegBackend.LinuxX11Grab` throws on Wayland. Wayland blocks framebuffer reads
+outside the compositor, so `x11grab` through XWayland would capture black frames.
+The error message gives the supported route:
 
 > ffmpeg's x11grab silently captures black frames on Wayland sessions even with
 > XWayland in the loop … Use Wayland-native capture instead: construct
@@ -394,10 +375,9 @@ uniform black). The error message points you at the fix:
 > through xdg-desktop-portal + PipeWire automatically), or instantiate
 > `WaylandPortalRecorder` directly.
 
-If you're driving `FfmpegRecorder` directly on Linux, switch to `AutoRecorder` — it
-detects the session type and routes through the portal-based recorder when the
-`spectre-recording-linux` helper artifact is on the runtime classpath. If you'd rather
-force an Xorg session, verify with:
+When using `FfmpegRecorder` directly on Linux, select `AutoRecorder` for Wayland.
+It detects the session and uses the portal when `spectre-recording-linux` is on
+the runtime classpath. To use Xorg, check the session with:
 
 ```shell
 echo "$XDG_SESSION_TYPE"               # should be "x11"
@@ -407,7 +387,7 @@ ls "$XDG_RUNTIME_DIR" | grep wayland   # should be empty
 
 (or pick "Ubuntu on Xorg" at the GDM login screen, or run under `Xvfb`).
 
-See [Recording limitations](../RECORDING-LIMITATIONS.md) for the full Wayland story.
+See [Recording limitations](../RECORDING-LIMITATIONS.md) for Wayland capture requirements.
 
 ## "Linux Wayland keeps asking to share the screen / remote interaction"
 
@@ -418,34 +398,35 @@ dialog for Spectre, then reuse the helper. If every JVM pops a new picker:
   `spectre-wayland-helper` is the binary in use (`SPECTRE_WAYLAND_HELPER` only for local
   helper iteration).
 - Check `$XDG_RUNTIME_DIR/spectre/wayland-session.sock` exists after the first grant. If it
-  exists but every call fails immediately, delete the socket (dead helper) and retry.
+  exists and every call fails immediately, delete the socket (dead helper) and retry.
 - Do not point token storage at `~/.java/robot/` — Spectre stores
   `wayland-rd-restore-token-*` under `$XDG_STATE_HOME/spectre/` (or
   `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`).
 - A rejected token is cleared and retried once. A second failure is fatal; delete the
-  token file only if you intend to re-consent.
+  token file only when re-consent is intended.
 
-SSH / headless sessions without a compositor seat cannot complete the dialog. That is a
-lab limitation, not a silent skip. See [Linux Wayland consent](recording.md#linux-wayland-consent).
+SSH or headless sessions without a compositor seat cannot complete the dialog.
+See [Linux Wayland consent](recording.md#linux-wayland-consent).
 
 ## "macOS `sandbox-exec` blocks my Compose Desktop/Spectre test"
 
 A macOS process sandbox can block AWT, Swing, Compose Desktop, and `java.awt.Robot`
-even when the JVM is not headless. If your Gradle test runs inside `sandbox-exec`,
+even when the JVM is not headless. If a Gradle test runs inside `sandbox-exec`,
 the sandbox profile must allow the desktop Mach services documented in
 [Running on CI](ci.md#macos-sandbox-exec-runners).
 
 | Symptom                                                                      | Likely cause                                                 | What to check                                                                                                       |
 |------------------------------------------------------------------------------|--------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
 | `Connection Invalid error for service com.apple.hiservices-xpcservice`       | Missing HiServices lookup                                    | Allow `com.apple.hiservices-xpcservice`.                                                                            |
-| `Frame.isVisible()`/`Frame.isShowing()` are `true`, but no window appears    | Missing render/window-manager services                       | Allow `com.apple.CARenderServer` and `com.apple.windowmanager.server`; also verify `com.apple.windowserver.active`. |
-| Pixel probes sample the desktop background instead of the test window colour | The window exists in Java state but macOS is not painting it | Check `com.apple.CARenderServer` first, then window-manager logs.                                                   |
+| `Frame.isVisible()`/`Frame.isShowing()` are `true`; no window appears        | Missing render/window-manager services                       | Allow `com.apple.CARenderServer` and `com.apple.windowmanager.server`; also verify `com.apple.windowserver.active`. |
+| Pixel probes sample the desktop background where the test window should appear | The window exists in Java state; macOS is not painting it | Check `com.apple.CARenderServer` first, then window-manager logs.                                                   |
 | `Robot.createScreenCapture(...)` hangs after the `Robot` is created          | Missing capture service or TCC grant                         | Grant Screen Recording to the launching app, restart that app, and allow `com.apple.replayd`.                       |
 | `log: Cannot run while sandboxed`                                            | `/usr/bin/log` is itself blocked by `sandbox-exec`           | Use a narrow read-only macOS log diagnostic lane outside the sandbox.                                               |
 | Spectre times out waiting for/capturing a window                             | Stale Gradle daemon or missing UI Mach services              | Re-run with `./gradlew --no-daemon spectreTest --tests '*SpectreSmokeTest'` and inspect sandbox denies.             |
 
-Screen Recording belongs to the app that launched the JVM, not to `java` itself.
-If you grant permission to Terminal.app, iTerm2, IntelliJ IDEA, or another launcher,
+Screen Recording belongs to the app that launched the JVM. Granting access to `java` itself
+does not cover that app.
+After granting permission to Terminal.app, iTerm2, IntelliJ IDEA, or another launcher,
 fully quit and restart that app before retrying. TCC permission alone is not enough
 inside a sandbox: `Robot` capture can still hang until `com.apple.replayd` is
 allowed.
@@ -475,21 +456,22 @@ Look for patterns such as `Sandbox: java(...) deny(1) mach-lookup`,
 
   The request command opens a small guide: Open Settings (Screen Recording deep
   link), drag the helper icon into the list if missing, wait until the UI shows
-  **Done ✓**, then close. Capture/record paths never open this guide themselves —
+  **Done ✓**, then close. Capture/record paths never open this guide themselves;
   they fail fast with a structured error agents can relay.
-- **Settings row should say Spectre Capture Helper**, not Terminal/IntelliJ/java.
-  If you only see the spawning app, upgrade Spectre and unset
+- **Settings row should say Spectre Capture Helper.** A Terminal/IntelliJ/java row identifies
+  the spawning app.
+  If only the spawning app appears, upgrade Spectre and unset
   `SPECTRE_SCREENCAPTURE_HELPER` so the bundled app is used.
 - **macOS may re-prompt after updates.** Run `spectre permissions request` again;
-  the guide uses re-approval copy when you re-open it after a prior grant lapsed.
-- **The SCK helper artifact is missing.** If `spectre-recording-macos` is not on the
+  the guide uses re-approval copy when opened after a prior grant lapsed.
+- **The SCK helper artefact is missing.** If `spectre-recording-macos` is not on the
   runtime classpath, the Swift helper is not present and `AutoRecorder.startWindow(...)`
-  throws instead of silently switching capture modes. Add the helper artifact as
+  throws and does not silently switch capture modes. Add the helper artefact as
   `runtimeOnly(...)` or `testRuntimeOnly(...)`. Use `startRegion(...)` explicitly if region
-  capture is an acceptable fallback for your test.
+  capture is an acceptable fallback for the test.
 - **Operational SCK errors propagate.** Permission denied, target window not found,
-  helper crashed during init — these all throw `IllegalStateException` rather than
-  silently falling back, so you see the real cause.
+  helper crashed during init: these all throw `IllegalStateException` and
+  preserve the cause without a silent fallback.
 
 ## "macOS RobotDriver throws `IllegalStateException` about TCC"
 
@@ -510,23 +492,22 @@ needs and throws on first use if either is denied:
   reports the console session as locked; if so, unlock the screen and retry. If
   the session is unlocked, the probe captures a small region near the screen
   origin (which on macOS overlaps the menu bar) and treats an all-black result as
-  denial. False positives are rare in practice; if your screen really is fully
+  denial. False positives are rare; if the screen really is fully
   black at the origin, switch to `RobotDriver.headless()` for tests or grant
   Screen Recording to silence the probe.
 
-Fix: grant System Settings → Privacy & Security → Accessibility (or → Screen &
-System Audio Recording) to whichever app launched the JVM — IntelliJ, Terminal,
-iTerm2, Claude.app, etc. macOS attributes Robot operations to the wrapping app
-that opened the JVM, **not** the JVM binary itself. Fully quit and relaunch the
-wrapping app afterwards so macOS picks up the new entitlement, and `./gradlew
---stop` the Gradle daemon if you launched from a shell.
+Open System Settings → Privacy & Security. Grant Accessibility or Screen &
+System Audio Recording to the app that launched the JVM. It may be IntelliJ,
+Terminal, iTerm2, or Claude.app. macOS attributes Robot operations to that app. Fully
+quit and relaunch it after granting access. If Gradle was launched from a
+shell, also stop its daemon with `./gradlew --stop`.
 
 !!! note "macOS 26+ Screen Recording"
     Starting with macOS 26, toggling Screen Recording in System Settings grants
     picker-based access only. The first direct `Robot.createScreenCapture` call
     (i.e. the first `automator.screenshot(...)`) pops a second system dialog —
-    "allow *App* to bypass the system private window picker" — that you must
-    accept. This dialog appears once per app per boot; subsequent calls are
+    "allow *App* to bypass the system private window picker". Accept this dialog.
+    It appears once per app per boot; subsequent calls are
     silent. CI runners that require fully-headless captures should use a notarised
     wrapper with the appropriate entitlement pre-granted.
 
@@ -534,43 +515,42 @@ The two probes are independent: a consumer who only takes screenshots is not
 punished for missing Accessibility, and vice versa. Probe results are cached
 after the first call, so subsequent operations have no extra cost.
 
-If you don't need real OS input or capture (in CI, in tests, etc.) use
-`RobotDriver.headless()` — it bypasses the AWT Robot entirely and skips the TCC
+When real OS input or capture is unnecessary (in CI, in tests, etc.), use
+`RobotDriver.headless()`. It bypasses the AWT Robot entirely and skips the TCC
 probe.
 
 For a passive, opt-in startup rollup of both entries (handy for harnesses that
 want to log a banner), `MacOsRecordingPermissions.diagnose()` in `:recording`
 returns a human-readable diagnostic without throwing.
 
-## "JBR vs Temurin: which JDK should I use?"
+## Choosing JBR or Temurin
 
 - **Locally**: JBR 21 is the dev-loop default. JBR 25 is exercised by the scheduled
   [runtime matrix](https://github.com/rock3r/spectre/blob/main/.github/workflows/runtime-matrix.yml)
   and by the IDE-hosted UI test (IntelliJ 2026.2 / platform 262 bundles JBR 25).
 - **On CI (per-PR)**: Temurin 25 (the CLI requires JDK 25). The full JBR/Temurin × OS matrix is
   scheduled and **release-gated**, not per-PR.
-- **For consumers**: any JDK **21+** works for non-IDE library modules; the `spectre`
-  CLI and its daemon require JDK **25+** (the packaged CLI bundles its own runtime).
-  The codified supported
+- **For consumers**: any JDK **21+** works for non-IDE modules; the `spectre`
+  CLI and its daemon require JDK **25+** (the packaged CLI bundles its own runtime). The codified supported
   set and what “supported” means operationally live in
   [Stability policy — JVM runtime support tiers](../STABILITY.md#jvm-runtime-support-tiers).
 
-**Agent attach** needs a real JDK (with `jdk.attach`) on the **attacher** process; the
-target only needs to allow dynamic agent loading. **IntelliJ-hosted Compose** always
-implies the IDE’s bundled JBR — do not ship a second skiko into the plugin classloader
-(see [IntelliJ guide](intellij.md)).
+**Agent attach** needs a JDK with `jdk.attach` in the attacher process. The
+target must allow dynamic agent loading. **IntelliJ-hosted Compose** uses the
+IDE's bundled JBR. Keep a second skiko out of the plugin classloader. See the
+[IntelliJ guide](intellij.md).
 
-If an attached session can inspect semantics but real input reports that the coordinator provider
+If an attached session can inspect semantics while real input reports that the coordinator provider
 is missing, add `spectre-input-coordinator-server` to the attacher's runtime classpath and retry.
 Read-only attach deliberately remains available when the experimental coordinator cannot start;
-current-core real input uses `Required` and fails closed instead of running uncoordinated. When the
+current-core real input uses `Required` and fails closed if coordination is unavailable. When the
 coordinator cannot be repaired, see
 ["Every input verb fails and the coordinator will not start"](#coordinator-unreachable).
 
 The sample IntelliJ plugin module configures its sandbox JDK via the IntelliJ Platform
-Gradle plugin; you do not pick Temurin for that path.
+Gradle plugin; the IDE's bundled JBR supplies that path.
 
-## Still stuck?
+## Further help
 
 - Read [Architecture](../ARCHITECTURE.md) for the module-level invariants.
 - Check the [open issues](https://github.com/rock3r/spectre/issues) — the platform

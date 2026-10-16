@@ -44,7 +44,7 @@ val MultiWindowScenario: Scenario =
     Scenario(
         title = "Multi-window (secondary Window)",
         testTag = "scenario.multiwindow",
-        unblocks = "#7 multi-window discovery, #8 surfaceId stability across windows.",
+        unblocks = "Checks window discovery and stable surface IDs across windows.",
         content = { MultiWindowContent() },
     )
 

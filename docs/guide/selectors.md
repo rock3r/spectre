@@ -1,12 +1,12 @@
 # Finding nodes
 
-Selectors are how you locate a Compose node in the semantics tree. The `ComposeAutomator`
-exposes four families of selectors plus a handful of convenience overloads.
+Selectors locate Compose nodes in the semantics tree. `ComposeAutomator` provides selectors
+for test tags, text, content descriptions, and roles.
 
 !!! note "All selectors are non-waiting"
-    Every `findBy…`/`findOneBy…`/`hasTag`/`hasText` call is a single read against the
-    current semantics state. If you need to wait for a node to appear, use
-    [`waitForNode(...)`](synchronization.md#waitfornode) instead.
+    Each `findBy…`, `findOneBy…`, `hasTag`, or `hasText` call reads the current semantics
+    state once. Use [`waitForNode(...)`](synchronization.md#waitfornode) when a node
+    may appear later.
 
 ## By test tag
 
@@ -15,8 +15,8 @@ val nodes: List<AutomatorNode> = automator.findByTestTag("Submit")
 val node: AutomatorNode? = automator.findOneByTestTag("Submit")
 ```
 
-This is the most reliable selector — it relies on a deliberate
-`Modifier.testTag("...")` on the composable. Use it as your default.
+A test tag gives a test a stable selector when the composable defines
+`Modifier.testTag("...")`. Prefer it for elements the test will interact with.
 
 ```kotlin
 @Composable
@@ -38,7 +38,7 @@ val nodes = automator.findByText("Sub", exact = false) // substring, case-insens
 val node  = automator.findOneByText("Submit")
 ```
 
-Or with the structured `TextQuery`:
+Use `TextQuery` when a text match needs explicit options:
 
 ```kotlin
 import dev.sebastiano.spectre.core.TextQuery
@@ -48,8 +48,8 @@ val nodes = automator.findByText(
 )
 ```
 
-`TextQuery` covers `exact`, `substring`, and case-insensitive variants. Prefer test tags
-when the UI is yours — text matchers are brittle to copy changes and localisation.
+`TextQuery` supports exact, substring, and case-insensitive matching.
+Text selectors can fail after copy or translation changes. Add test tags when the UI is under test control.
 
 ## By content description
 
@@ -57,9 +57,8 @@ when the UI is yours — text matchers are brittle to copy changes and localisat
 val nodes = automator.findByContentDescription("Send message")
 ```
 
-Matches `Modifier.semantics { contentDescription = "..." }` — the Compose accessibility
-hook. Use this for icon-only buttons that have no visible text but should be announced
-to assistive tech.
+This selector reads `Modifier.semantics { contentDescription = "..." }`.
+Use it for icon buttons that have no visible text and expose an accessibility description.
 
 ## By role
 
@@ -70,14 +69,13 @@ val buttons = automator.findByRole(Role.Button)
 val checkboxes = automator.findByRole(Role.Checkbox)
 ```
 
-Roles come from `Modifier.semantics { role = Role.Button }` (or, more often, are set
-implicitly by the standard Material/Compose components). Use this for "all buttons in
-this dialog" style assertions, not as a primary selector.
+Roles come from `Modifier.semantics { role = Role.Button }` or standard Material and
+Compose components. A role query can check all buttons in a dialog.
+Use a test tag when a test needs one specific button.
 
 ## Presence checks
 
-When you only need a boolean — state-snapshot tests, `"popupOpen=" + hasTag(POPUP_TAG)` —
-use the presence helpers instead of `findByTestTag(tag).isNotEmpty()`:
+Use the presence helpers when a test needs a Boolean result, such as a popup state:
 
 ```kotlin
 import dev.sebastiano.spectre.core.TextQuery
@@ -88,14 +86,14 @@ val showsPartial: Boolean = automator.hasText("Sub", exact = false)
 val caseInsensitive: Boolean = automator.hasText(TextQuery.exact("submit", ignoreCase = true))
 ```
 
-These are the same single snapshot read as the finders: they do **not** call
-`refreshWindows()`. If a popup window may have just appeared or vanished, call
-`refreshWindows()` (or `tree()`) first — or, when you are waiting for the popup to close,
-use [`waitUntilGone`](synchronization.md#waituntilgone), which refreshes before every poll.
+Presence helpers read one snapshot and do **not** call `refreshWindows()`.
+Call `refreshWindows()` or `tree()` after a popup window appears or closes.
+To wait for a popup to close, use [`waitUntilGone`](synchronization.md#waituntilgone).
+It refreshes windows before every poll.
 
 ## Working with the result
 
-`AutomatorNode` exposes the bits you usually want:
+`AutomatorNode` exposes these properties:
 
 | Property                    | Meaning                                                           |
 | --------------------------- | ----------------------------------------------------------------- |
@@ -115,15 +113,15 @@ use [`waitUntilGone`](synchronization.md#waituntilgone), which refreshes before 
 | `node.children`             | Child nodes in the semantics tree.                                |
 | `node.parent`               | Parent node in the semantics tree, or `null` at a root.           |
 
-Use `boundsOnScreen` and `centerOnScreen` for screenshot regions or custom input. The
-[`HiDpiMapper`](https://github.com/rock3r/spectre/blob/main/core/src/main/kotlin/dev/sebastiano/spectre/core/HiDpiMapper.kt)
+Use `boundsOnScreen` and `centerOnScreen` for screenshot regions or custom input.
+The [`HiDpiMapper`](https://github.com/rock3r/spectre/blob/main/core/src/main/kotlin/dev/sebastiano/spectre/core/HiDpiMapper.kt)
 handles macOS Retina, Windows DPI scaling (100/125/150/200%), and mixed-DPI multi-monitor
 setups.
 
 ## Walking the tree by hand
 
-When you need more than the canonical selectors, drop down to
-[`automator.tree()`](automator.md#surfaces-and-the-semantics-tree) and walk it directly:
+Call [`automator.tree()`](automator.md#surfaces-and-the-semantics-tree) when a selector
+cannot express the query. Inspect the returned tree directly:
 
 ```kotlin
 val secondWindow = automator.tree(windowIndex = 1)
@@ -131,22 +129,21 @@ val matching = secondWindow.allNodes()
     .filter { it.isFocused && it.role == Role.Button }
 ```
 
-`AutomatorWindow.allNodes()` returns every node in the window in tree order.
-`AutomatorWindow.roots()` returns the top-level nodes only; from there you can recurse
-through `node.children` to walk the tree manually.
+`AutomatorWindow.allNodes()` returns every window node in tree order.
+`AutomatorWindow.roots()` returns top-level nodes. Traverse `node.children` to inspect
+their descendants.
 
 ## Debugging
 
-If a selector doesn't return what you expect, dump the tree:
+Print the tree when a selector returns an unexpected result:
 
 ```kotlin
 println(automator.printTree())
 ```
 
-You'll see every window, every node, and the test tags, text, and roles attached to them.
-This is usually the fastest way to find out whether the node simply isn't where you
-think it is, or hasn't been composed yet.
+The output lists windows, nodes, tags, text, and roles.
+Check whether the expected node has composed and whether its actual semantics match the query.
 
-If `printTree()` returns an empty string, the composition probably crashed before any
-node registered. Check the test JVM's stderr for exceptions from the EDT or composition
-thread; those exceptions do not always propagate to the test method.
+If `printTree()` returns an empty string, the composition may have failed before registering
+a node. Check test JVM stderr for EDT or composition exceptions.
+Those exceptions may not reach the test method.

@@ -1,38 +1,38 @@
 # Server
 
-Opt-in HTTP transport so a `ComposeAutomator` can be driven from a different JVM.
+The optional HTTP transport lets another JVM control a `ComposeAutomator`.
 
-**Experimental.** The transport's entire public surface is gated by the
-`@ExperimentalSpectreHttpApi` opt-in marker and is not covered by Spectre's binary-compatibility
-guarantees. See [`docs/SECURITY.md`](../docs/SECURITY.md) for the trust model and
-[`docs/STABILITY.md`](../docs/STABILITY.md) for the API-tier definitions.
+The HTTP API is experimental. Callers must opt in with `@ExperimentalSpectreHttpApi`.
+Spectre does not guarantee binary compatibility for this API. The
+[security notes](../docs/SECURITY.md) describe its trust model, and the
+[stability policy](../docs/STABILITY.md) defines the API tiers.
 
 ## Public surface
 
-- `SpectreHttpSecurity(bearerToken, allowedOrigins, allowInsecureLoopback)` — required,
-  deployment-scoped bearer and exposure policy. CORS is disabled and HTTPS is required by default.
-- `Application.installSpectreRoutes(automator, security, basePath = "/spectre")` — mount the routes
-  on any Ktor `Application` (CIO, Netty, embedded test server, etc.). The caller owns TLS connector
-  configuration and the `Application` lifecycle.
-- `ComposeAutomator.http(security, host, port, basePath)` — companion extension that returns an
-  `HttpComposeAutomator` connected to a remote `installSpectreRoutes` host. The instance owns
-  its `HttpClient`, sends the bearer automatically, uses HTTPS by default, and must be `close()`d.
-- `HttpComposeAutomator` — client class with the current transport surface: `windows`,
+- `SpectreHttpSecurity(bearerToken, allowedOrigins, allowInsecureLoopback)` sets the required
+  deployment bearer and exposure policy. CORS is disabled by default, and HTTPS is required.
+- `Application.installSpectreRoutes(automator, security, basePath = "/spectre")` mounts routes
+  on a Ktor `Application`, including CIO, Netty, or an embedded test server. The caller
+  configures TLS and manages the `Application` lifecycle.
+- `ComposeAutomator.http(security, host, port, basePath)` returns an `HttpComposeAutomator`.
+  The client owns its `HttpClient`, sends the bearer, and uses HTTPS by default.
+  Call `close()` when the client is no longer needed.
+- `HttpComposeAutomator` supports `windows`,
   `allNodes`, selectors (`findBy*` / `findOneBy*` including structured `TextQuery`), input
   verbs (`click`, `doubleClick`, `longClick`, `swipe`, `scrollWheel`, `pressKey`, `typeText`,
   `clearAndTypeText`), `tree` / `printTree`, and screenshot (full-frame or node-targeted).
-- DTOs in `dev.sebastiano.spectre.server.dto` — kotlinx-serialization wire shapes that pin the
-  request/response contract. `DtoSerializationTest` round-trips every one.
+- DTOs in `dev.sebastiano.spectre.server.dto` define the kotlinx-serialization wire contract.
+  `DtoSerializationTest` verifies that each DTO survives serialisation and deserialisation.
 
 ## Current scope
 
-Endpoints land the data-only queries and actions. Advanced features — `registerIdlingResource`,
-`waitForIdle` / `waitForVisualIdle`, `withTracing` — are intentionally in-process-only:
+The endpoints expose data queries and actions. `registerIdlingResource`, `waitForIdle`,
+`waitForVisualIdle`, and `withTracing` require an in-process automator:
 
-- Idling resources are JVM objects without a serializable shape; HTTP-side polling would need a
-  pluggable driver design out of scope for the current transport.
-- `withTracing` requires a `Tracer` instance the server can't accept across processes.
-- The wait helpers are stateful long-poll semantics that the current transport doesn't model.
+- Idling resources are JVM objects without a serialisable form. Remote polling would require
+  a driver design that this transport does not provide.
+- `withTracing` needs a `Tracer` instance that cannot cross the process boundary.
+- The current transport has no protocol for stateful long polling.
 
-The contract test suite (`DtoSerializationTest`, `SpectreServerRoundTripTest`) covers the wire
-boundary; runtime parity against a live Compose UI is part of the validation issues.
+`DtoSerializationTest` and `SpectreServerRoundTripTest` check the wire contract.
+The validation issues track runtime parity against a live Compose UI.

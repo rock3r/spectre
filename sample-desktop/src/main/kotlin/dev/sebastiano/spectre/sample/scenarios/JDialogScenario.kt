@@ -36,7 +36,7 @@ val JDialogScenario: Scenario =
     Scenario(
         title = "JDialog hosting ComposePanel",
         testTag = "scenario.jdialog",
-        unblocks = "#7 ComposePanel.semanticsOwners coverage for JDialog-hosted popup content.",
+        unblocks = "Checks semantics discovery for popup content hosted in a JDialog ComposePanel.",
         content = { JDialogContent() },
     )
 
@@ -51,7 +51,7 @@ private fun JDialogContent() {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "Open a Swing JDialog hosting a Compose ComposePanel. The automator should " +
+                "Open a Swing JDialog hosting a ComposePanel. The automator should " +
                     "surface the dialog as its own tracked window with discoverable Compose nodes."
             )
             Button(

@@ -34,7 +34,7 @@ val RecompositionStressScenario: Scenario =
     Scenario(
         title = "Recomposition stress",
         testTag = "scenario.recomposition",
-        unblocks = "#8 thread-safety / snapshot coherence under heavy recomposition.",
+        unblocks = "Checks thread safety and consistent snapshots during frequent recomposition.",
         content = { RecompositionStressContent() },
     )
 

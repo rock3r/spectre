@@ -13,23 +13,32 @@ compatibility: Requires a Compose Desktop or Compose Multiplatform (desktop targ
 
 # Spectre UI Automation
 
-Spectre automates live Compose Desktop UIs by reading the semantics tree and dispatching real OS input. Full docs and API reference: **[spectre.sebastiano.dev](https://spectre.sebastiano.dev)**
+Spectre reads the semantics tree of a running Compose Desktop UI.
+It sends synthetic input by default. Tests can opt into real OS input.
+See the [user guide](https://spectre.sebastiano.dev) for setup and API details.
 
-For the longer agent skill (selectors, recording, agent attach, IntelliJ), use **`spectre`** /
-`skills/spectre/SKILL.md`. For atomic `capture.json` workflows, use **`spectre-capture`**.
+Use **`spectre`** in `skills/spectre/SKILL.md` for selectors, recording, attach, and IntelliJ.
+Use **`spectre-capture`** for atomic `capture.json` workflows.
 
-## Spectre vs `ComposeTestRule`
+## Choosing a test framework
 
-- **`ComposeTestRule`** (`compose-ui-test`) — tests a composable in isolation, without launching a real app. Right for unit and component tests.
-- **Spectre** — automates a fully running app end-to-end: the local process, a separate JVM via HTTP or Java-agent attach, or an IntelliJ plugin hosting Compose UI. Right when you need the whole app stack in motion, for UI automation and user-journey level validation.
+- **`ComposeTestRule`** (`compose-ui-test`) — tests a composable in isolation, without launching a real app. Use it for unit and component tests.
+- **Spectre** — automates a running app in the local process, a separate JVM via HTTP or Java-agent attach, or an IntelliJ plugin hosting Compose UI. Use it to test interactions across the application.
 
-If you're testing an individual composable in isolation → use `ComposeTestRule`. If you're automating a full app → use Spectre.
+Use `ComposeTestRule` for an isolated composable. Use Spectre for a running application.
 
-## Gotchas
+## Common constraints
 
-- **Use `runSpectreTest`, not `runTest`.** `runTest` collapses `delay()` to zero, which silently breaks `longClick` hold durations, `swipe` step pacing, and clipboard-settle polling. Prefer `runSpectreTest` from the testing module (real wall time + leak detection); plain `runBlocking` is a fallback.
-- **Selectors are non-waiting.** Every `findBy...` / `findOneBy...` call reads the semantics tree once. Call `waitForNode` before querying any node that might not exist yet, and `waitUntilGone` after dismissing a popup, menu, or dialog before touching what was behind it. For barriers no selector expresses — a node count, a combination — use `waitUntil(description) { ... }`.
-- **EDT rule.** All five wait helpers (`waitForNode`, `waitUntilGone`, `waitUntil`, `waitForIdle`, and `waitForVisualIdle`) throw `IllegalStateException` when called from the AWT event dispatch thread. Standard JUnit test methods run off the EDT so this isn't normally an issue; if you call them from the EDT, wrap with `withContext(Dispatchers.Default)`.
+- **Use `runSpectreTest`.** `runTest` collapses `delay()` to zero.
+  That breaks `longClick` holds, `swipe` pacing, and clipboard polling.
+  `runSpectreTest` uses real time and detects leaks. Plain `runBlocking` remains a fallback.
+- **Selectors read once.** `findBy...` and `findOneBy...` do not wait.
+  Call `waitForNode` when a node may appear later. Call `waitUntilGone` after dismissing
+  a popup, menu, or dialog. Use `waitUntil(description) { ... }` for tree conditions
+  such as a node count.
+- **Keep waits off the EDT.** All five wait helpers throw `IllegalStateException` on
+  the AWT event dispatch thread. JUnit test methods normally run outside the EDT.
+  Move EDT calls with `withContext(Dispatchers.Default)`.
 - **Expression-body tests.** Write `@Test fun mySpec(): Unit = runSpectreTest { ... }`. JUnit 5.14+ rejects non-void test methods, and Kotlin infers the return type from the last expression in the `runSpectreTest` body.
 
 ## Setup
@@ -53,11 +62,11 @@ dependencies {
 }
 ```
 
-Check [spectre.sebastiano.dev](https://spectre.sebastiano.dev) for the latest version and full user guide.
+Check the [user guide](https://spectre.sebastiano.dev) for the current release and setup.
 
 ## Test structure (JUnit 5)
 
-Sequential tests — own the extension on the class:
+For sequential tests, put the extension on the test class:
 
 ```kotlin
 import dev.sebastiano.spectre.testing.ComposeAutomatorExtension
@@ -79,9 +88,11 @@ class MyTest {
 }
 ```
 
-`launchMyApp()` is whatever starts your app's window — a daemon thread calling `main()`, a purpose-built test harness, anything that opens a Compose Desktop window. Spectre's extension/rule only manages the `ComposeAutomator` lifecycle.
+`launchMyApp()` must open a Compose Desktop window, through the app or a test harness.
+The Spectre extension and rule manage the `ComposeAutomator`. The test harness manages the window.
 
-**Parallel tests** — use `@ExtendWith` with parameter injection instead. Each test gets its own automator from the per-invocation store, avoiding races:
+For **parallel tests**, use `@ExtendWith` and parameter injection.
+Each invocation receives its own automator:
 
 ```kotlin
 import dev.sebastiano.spectre.core.ComposeAutomator
@@ -114,13 +125,15 @@ automator.findByRole(Role.Button)
 automator.printTree()                        // dump the full semantics tree — use this first when debugging
 ```
 
-For anything you'll click, scroll, or type into, **prefer `testTag` over text selectors** — text selectors break when copy changes or when the app is localized. Use text selectors for asserting visible content, not for navigation.
+Prefer `testTag` for nodes that tests click, scroll, or type into.
+Copy and translation changes can break text selectors. Use text queries to check visible content.
 
 Key `AutomatorNode` properties: `testTag`, `text`, `texts`, `contentDescription`, `role`, `isFocused`, `isDisabled`, `isSelected`, `editableText`, `boundsInWindow`, `boundsOnScreen`, `centerOnScreen`, `children`, `parent`.
 
 ## Interactions
 
-All interaction methods are `suspend` — they must be called from inside `runSpectreTest { ... }` (or `runBlocking` as a fallback).
+Interaction methods are `suspend`. Call them inside `runSpectreTest { ... }`.
+Plain `runBlocking` is a fallback.
 
 ```kotlin
 automator.click(node)
@@ -175,11 +188,13 @@ automator.waitForVisualIdle()  // pixels settled
 val result = automator.findOneByTestTag("Result")
 ```
 
-All five wait helpers are `suspend` and **must not** be called from the AWT EDT. Default timeout is 5 s; all parameters are tunable. `waitUntil` is scoped to the semantics tree it hands the predicate — wait for non-Spectre state (a service flag, a file, an HTTP response) with the tool that owns it, not inside the lambda.
+All five waits are `suspend` and reject EDT callers. Their default timeout is 5 s.
+`waitUntil` polls the semantics tree supplied to its predicate.
+Use another tool to wait for a service flag, file, or HTTP response.
 
 ## Input drivers
 
-Use `ComposeAutomator.inProcess()` (the default) for most tests — it defaults to
+Use `ComposeAutomator.inProcess()` for most tests. By default, it sends
 synthetic AWT events (`RobotDriver.synthetic()`) posted into the window hierarchy.
 Switch drivers only when needed:
 
@@ -188,10 +203,10 @@ Switch drivers only when needed:
 - `RobotDriver.headless()` — read-only; every input or screenshot call throws `UnsupportedOperationException`. Semantics-tree reads still work.
 - `ComposeAutomator.http(security, host = "localhost", port = 7654)` — experimental authenticated
   cross-JVM HTTPS (bearer required); deliberate **subset** of in-process (windows/nodes/input/
-  screenshots; no live idling resources / `withTracing`). Needs matching `SpectreHttpSecurity`
+  screenshots; no live idling resources / `withTracing`). It needs matching `SpectreHttpSecurity`
   and `:server` in the target. Plaintext requires the explicit loopback-only test escape hatch.
   See <https://spectre.sebastiano.dev/guide/cross-jvm/>.
-- `AgentAttach.attach(pid)` — attach to a **running** Compose JVM. The target does **not** need `spectre-core` preinstalled: when core is absent, the agent runtime injects nested `META-INF/spectre/inject-runtime.jar`. Prefer a `spectre-core` dependency when you control the target build. The attacher needs `spectre-agent` plus `spectre-agent-runtime`.
+- `AgentAttach.attach(pid)` — attach to a **running** Compose JVM. The target does **not** need `spectre-core` preinstalled: when core is absent, the agent runtime injects nested `META-INF/spectre/inject-runtime.jar`. Prefer a `spectre-core` dependency for controlled target builds. The attacher needs `spectre-agent` plus `spectre-agent-runtime`.
 
 ---
 

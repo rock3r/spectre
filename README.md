@@ -4,43 +4,43 @@
   Spectre
 </h1>
 
-A Kotlin library for driving Compose Desktop UIs from automated tests. Reads the semantics
-tree, drives mouse and keyboard input — synthetic AWT events dispatched straight into the
-window hierarchy by default (`RobotDriver.synthetic()`), or real OS-level events via
-`java.awt.Robot` when you pass `RobotDriver()` — and records the screen,
-against IDE-hosted Compose surfaces (IntelliJ, Jewel) and standalone desktop apps alike.
+Spectre is a Kotlin library that automates running Compose Desktop UIs.
+It reads the semantics tree, sends mouse and keyboard events, and records the screen.
+It works with standalone applications and Compose surfaces hosted by IntelliJ or Jewel.
+
+`RobotDriver.synthetic()` sends AWT events by default. Pass `RobotDriver()` when a test
+needs real operating system input through `java.awt.Robot`.
 
 > [!IMPORTANT]
-> Spectre is pre-1.0. Stable APIs are covered by the compatibility policy in
-> [`docs/STABILITY.md`](docs/STABILITY.md); experimental APIs, especially the HTTP transport,
-> may change between releases. Read [`docs/SECURITY.md`](docs/SECURITY.md) before enabling
-> cross-JVM control or recording in environments that handle untrusted input.
+> Spectre is pre-1.0. The [stability policy](docs/STABILITY.md) covers stable APIs.
+> Experimental APIs, including HTTP transport, may change between releases.
+> Read the [security notes](docs/SECURITY.md) before enabling cross-JVM control or recording
+> where an application handles untrusted input.
 
-macOS, Windows, Linux Xorg, and Linux Wayland. The Wayland path goes through a small
-out-of-process Rust helper (`recording/native/linux/`) that owns the xdg-desktop-portal
-handshake, the PipeWire FD lifetime, and the `gst-launch-1.0` subprocess; the JVM-side
-recorder talks to it over stdin/stdout via a tiny JSON protocol. Same out-of-process
-architecture as the macOS Swift helper.
+Spectre supports macOS, Windows, Linux Xorg, and Linux Wayland.
+On Wayland, a separate Rust helper in `recording/native/linux/` manages portal consent,
+the PipeWire file descriptor, and `gst-launch-1.0`. The JVM recorder exchanges JSON
+with the helper through standard input and output. The macOS Swift helper also runs
+in a separate process.
 
 > [!NOTE]
-> **Linux support is best-effort.** Routine validation runs on one machine: Ubuntu 22.04,
-> exercising the Xorg session (input + popup + HiDPI + `x11grab`) and the GNOME / mutter
-> Wayland session (the portal-based recording path). Other distros, compositors (KDE /
-> Plasma, sway, wlroots), window managers, and Ubuntu versions aren't covered. Reports
-> and PRs widening the coverage are very welcome — open an issue with your distro /
-> compositor / session combo and we'll work through it.
+> **Linux support is best-effort.** Routine validation covers Ubuntu 22.04 on one machine.
+> The Xorg run checks input, popups, HiDPI, and `x11grab`. The GNOME/Mutter Wayland run
+> checks portal recording. Other distributions, compositors such as KDE/Plasma,
+> sway, and wlroots, window managers, and Ubuntu versions have no routine coverage.
+> For problems on untested systems, open an issue with the distribution, compositor,
+> and session type.
 
 ## Documentation
 
 User guide and API documentation: **<https://spectre.sebastiano.dev>**.
 
-Install released versions from Maven Central, or consume the current checkout as a
-Gradle composite build while working ahead of a release:
+Install a release from Maven Central. For changes that have not shipped, use the current
+checkout as a Gradle composite build:
 [Installation](https://spectre.sebastiano.dev/guide/installation/).
 
-Start at [Getting started](https://spectre.sebastiano.dev/guide/getting-started/) for the
-shape of a Spectre test, or [The automator](https://spectre.sebastiano.dev/guide/automator/)
-for the mental model.
+Use [Getting started](https://spectre.sebastiano.dev/guide/getting-started/) to write a test.
+[The automator](https://spectre.sebastiano.dev/guide/automator/) explains the API model.
 
 Agent skill:
 
@@ -69,8 +69,8 @@ npx skills add rock3r/spectre --skill spectre
 - `agent-runtime` — loadable Java-agent runtime jar used by `agent` when attaching to a target JVM.
 - `testing` — JUnit 5 extension and JUnit 4 rule.
 - `sample-desktop` — Compose Desktop app for manual smokes.
-- `sample-intellij-plugin` — in-tree IntelliJ plugin hosting a Jewel tool window. Unpublished;
-  serves as the IDE-hosted test bed.
+- `sample-intellij-plugin` — unpublished IntelliJ plugin with a Jewel tool window for
+  IDE-hosted tests.
 
 ## Run the samples
 
@@ -80,7 +80,7 @@ Standalone Compose Desktop app:
 ./gradlew :sample-desktop:run
 ```
 
-IntelliJ plugin — then `Tools → Run Spectre Against the Sample Tool Window`, or pass
+For the IntelliJ plugin, use `Tools → Run Spectre Against the Sample Tool Window`, or pass
 `-PspectreAutorun=true` to fire the action on project open:
 
 ```shell
@@ -94,7 +94,7 @@ IntelliJ plugin — then `Tools → Run Spectre Against the Sample Tool Window`,
 ./gradlew ktfmtFormat  # rewrite Kotlin / .gradle.kts in place
 ```
 
-Two heavier checks live outside `:check`:
+Two additional checks run outside `:check`:
 
 - `:sample-intellij-plugin:uiTest` — boots IntelliJ via `intellij-ide-starter`, installs the
   plugin, fires `RunSpectreAction`, and asserts every tagged Compose node shows up in
@@ -103,12 +103,12 @@ Two heavier checks live outside `:check`:
 
 ## Supported JVMs
 
-JBR 21 (dev-loop default), JBR 25, and Temurin LTS (toolchain major) are the codified
-supported set — see [docs/STABILITY.md](docs/STABILITY.md#jvm-runtime-support-tiers).
-They are exercised by the scheduled [runtime matrix](.github/workflows/runtime-matrix.yml)
-and re-run as a **release gate**. Per-PR CI runs on a Temurin 25 host so the JDK 25
-CLI verifies alongside the JDK 21 libraries. Pins and the
-bump procedure live in [`.github/jbr-pins.env`](.github/jbr-pins.env).
+The supported runtime set includes JBR 21, JBR 25, and Temurin LTS at the toolchain major.
+JBR 21 is the local development default. The scheduled
+[runtime matrix](.github/workflows/runtime-matrix.yml) also runs before a release.
+Pull request CI uses Temurin 25 (the CLI requires JDK 25; libraries still target 21).
+See the [runtime support tiers](docs/STABILITY.md#jvm-runtime-support-tiers)
+and [version pins](.github/jbr-pins.env).
 
 ## CI
 

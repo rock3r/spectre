@@ -1,57 +1,37 @@
 # Docs style guide
 
-Internal note for whoever (human or agent) writes or revises the user-facing docs at
-<https://spectre.sebastiano.dev>. **This file is excluded from the published site** via
-`exclude_docs` in `mkdocs.yml` — it's a maintainer reference, not user content.
+This guide applies to anyone who writes the Spectre docs at
+<https://spectre.sebastiano.dev>. `mkdocs.yml` excludes it from the published site.
 
-The user guide lives under `docs/index.md` and `docs/guide/`; supporting reference
-material lives at `docs/ARCHITECTURE.md`, `docs/TESTING.md`, `docs/CONVENTIONS.md`,
-`docs/STATIC-ANALYSIS.md`, and `docs/RECORDING-LIMITATIONS.md`. All of those render
-into the same site and follow the same rules.
+The user guide lives in `docs/index.md` and `docs/guide/`.
+Reference pages include `docs/ARCHITECTURE.md`, `docs/TESTING.md`, `docs/CONVENTIONS.md`,
+`docs/STATIC-ANALYSIS.md`, and `docs/RECORDING-LIMITATIONS.md`.
+All these pages appear on the same site and follow these rules.
 
-## The five rules that catch the most regressions
+## Rules for accurate docs
 
-1. **Verify every API claim against source before writing.** Type signatures, default
-   values, parameter names, visibility, exceptions, and behavioural notes drift the
-   moment you stop checking. Read the relevant `.kt` file before claiming what an API
-   does.
-2. **Code samples must compile mentally.** Imports at the top of the block before any
-   statement. No phantom APIs, no fictional companion functions, no wrong package
-   paths. If a sample uses an extension function, import it explicitly.
-3. **No milestone language in public-facing prose.** No `v1`, `v2`, `v3`, `v4`. No
-   GitHub issue numbers like `#18` or `#77 stage 2`. No "future backend" speculation
-   or "not currently scoped" parentheticals. Public docs describe what ships now.
-4. **Be honest about pre-release state, but only when the user needs to know.** The
-   project README is upfront that the codebase is rough; the user guide should match
-   that energy where consumption is affected (no published artifacts, snapshot-only
-   versions) and stay neutral elsewhere. No marketing tone.
-5. **`mkdocs build --strict` is part of the contract.** It catches broken links,
-   missing anchors, and pages-not-in-nav. Run it before pushing any docs change.
-6. **Don't leak implementation details into the user guide.** Users care about the
-   public contract: what they call, what they get back, what behaviour to expect.
-   They do not care about visibility modifiers (no "the X constructor is
-   `internal`"), about test-source helpers (no "`newHeadlessAutomator()` is
-   internal but you can copy the recipe"), or about how the implementation
-   achieves the contract (no "the implementation hashes each surface…", just
-   "Spectre/`waitForVisualIdle` hashes each surface…"). If you're tempted to
-   write "the implementation does X", ask whether the user needs to know X is
-   load-bearing or whether you're just narrating the source. If it's narration,
-   cut it.
+1. **Check API claims against source.** Read the relevant `.kt` file for signatures,
+   defaults, parameter names, visibility, exceptions, and behaviour before documenting them.
+2. **Write valid code samples.** Put imports before declarations. Use real APIs and package
+   paths. Import every extension function the sample calls.
+3. **Describe released behaviour in public pages.** Omit internal milestones, issue numbers,
+   and plans for future backends unless a user needs an actionable issue reference.
+4. **State prerelease limits where they affect use.** Explain missing published artefacts
+   or snapshot-only versions. Keep other pages factual and free of marketing claims.
+5. **Run `mkdocs build --strict` before pushing docs.** Strict mode checks links,
+   anchors, and navigation entries.
+6. **Document the public contract.** Explain calls, results, and observable behaviour.
+   Keep visibility modifiers and test-only helpers in contributor docs unless consumers need them.
 
 ## Writing for the user
 
-- **Audience: someone testing a Compose Desktop app for the first time.** They know
-  Kotlin and have a Gradle project. They've never used Spectre. They don't care about
+- **Assume Kotlin and Gradle knowledge.** Explain Spectre concepts without relying on
   internal milestones or refactoring history.
-- **Lead with the task, not the architecture.** "Click a button" comes before "what
-  an automator owns". Mental-model pages exist (e.g. `automator.md`) but the entry
-  points are `installation.md` → `getting-started.md`.
-- **Tone is precise, slightly dry, comfortable with technical detail.** Match the
-  voice of `README.md` and `ARCHITECTURE.md`. Don't oversell. Don't apologise.
-- **Show, don't enumerate.** A working code sample beats a bullet list of method
-  signatures. If you do list APIs, link each to a sample.
-- **Cross-link liberally.** A user reading `selectors.md` shouldn't have to guess
-  where `waitForNode` is documented — link it inline.
+- **Start with the user's task.** `installation.md` and `getting-started.md` lead to
+  concept pages, including `automator.md`.
+- **Use precise, plain language.** Include technical detail when it changes what a user does.
+- **Provide working examples.** Link listed APIs to examples that show how to call them.
+- **Link related guidance.** For example, `selectors.md` should link to `waitForNode`.
 
 ## Code samples
 
@@ -60,8 +40,8 @@ the following are true:
 
 - An imported symbol doesn't exist in the source.
 - A function call uses a non-existent named argument.
-- A modifier mask is on the wrong class (e.g. `KeyEvent.CTRL_DOWN_MASK` instead of
-  `InputEvent.CTRL_DOWN_MASK`).
+- A modifier mask uses `KeyEvent.CTRL_DOWN_MASK`; the correct class is
+  `InputEvent.CTRL_DOWN_MASK`.
 - An interface is "constructed" as if it were a data class.
 - An import sits below executable statements (Kotlin imports must precede
   declarations).
@@ -71,10 +51,10 @@ the following are true:
 - The sample claims behaviour the implementation doesn't honour (e.g. "auto-wait
   finds the node" when queries are explicitly non-waiting).
 
-When in doubt, grep the source. In-process `findOneByContentDescription` doesn't exist;
-`findByContentDescription(...).firstOrNull()` is what in-process callers write. The HTTP
-client exposes `findOneByContentDescription` / `findOneByRole` as convenience wrappers over
-`GET /node`.
+Check the source when a signature is unclear. In-process callers use
+`findByContentDescription(...).firstOrNull()`. The in-process API has no
+`findOneByContentDescription`. The HTTP client offers `findOneByContentDescription`
+and `findOneByRole` as wrappers over `GET /node`.
 
 ### Imports in samples
 
@@ -85,55 +65,51 @@ Show the imports the sample actually needs, including extension-function imports
 
 ### Default arguments and named parameters
 
-If a sample uses `foo(bar = 5)`, that named argument has to actually be the parameter
-name in source. `synthetic(window = …)` was wrong; the source parameter is
-`rootWindow`. These mistakes cluster around recent renames — re-check after any source
-change that touches a public signature.
+For a call such as `foo(bar = 5)`, verify that the source names its parameter `bar`.
+The parameter for `synthetic(...)` is `rootWindow`, so `synthetic(window = …)` is
+invalid. Recheck samples whenever a public signature changes.
 
 ## API and behaviour invariants worth re-checking
 
-These have bitten reviews already; they're worth re-verifying every time the
-corresponding doc page is touched:
+Check these API contracts when editing the corresponding page:
 
 - **No auto-wait.** Queries (`findByTestTag`, `findByText`, `hasTag`, `hasText`, etc.)
   do a single read. They never retry. Document them as such.
 - **EDT rule applies to all five waits.** `waitForNode`, `waitUntilGone`, `waitUntil`,
   `waitForIdle`, and `waitForVisualIdle` all reject EDT callers via `rejectEdtCaller`
   (see `WaitForNodeTest.waitForNode rejects EDT callers with valid arguments`). Earlier
-  drafts of the docs carved out `waitForNode` as exempt — that exemption is gone in
-  current code. Do say "all wait helpers reject the EDT".
+  drafts of the docs carved out `waitForNode` as exempt. Current code rejects EDT callers
+  for all five waits. Document that all wait helpers reject the EDT.
 - **`refreshWindows` is only auto-called by `tree()`.** `findBy*`, `hasTag`/`hasText`,
   and `allNodes` read against the last refresh. If a popup may have appeared since the
-  last call, the user has to refresh.
-- **`findOneBy*` exists only for `testTag` and `text` on the in-process automator.** Not for
-  content description, not for role. `HttpComposeAutomator` adds `findOneByContentDescription`
+  last call, call `refreshWindows()` explicitly.
+- **`findOneBy*` exists only for `testTag` and `text` on the in-process automator.**
+  Content description and role lack in-process `findOneBy*` helpers. `HttpComposeAutomator` adds `findOneByContentDescription`
   and `findOneByRole` as HTTP-only conveniences.
-- **`waitForNode(tag, text)` is AND, not OR.** Both criteria must match the same
+- **`waitForNode(tag, text)` combines criteria with AND.** Both criteria must match the same
   node. `waitUntilGone(tag, text)` mirrors it: it returns once no single node carries
-  both, and it refreshes windows before every poll (unlike the finders).
-- **`waitUntil` takes a required non-blank `description` and an `AutomatorTree`
-  receiver.** The predicate is `AutomatorTree.() -> Boolean`, not `() -> Boolean`: the
-  tree snapshot is the only thing it is handed. Don't document it as a general-purpose
-  "wait for anything" helper — waiting on non-Spectre state is the user's own job. Do
-  say the receiver is a boundary the API declines to invite, not one it enforces
-  (closures can still capture).
-- **`AutomatorIdlingResource.isIdleNow` and `diagnosticMessage()`.** Not `isIdle()`,
-  not `name`. Identity-based register/unregister.
-- **`AutoRecorder` has explicit capture modes.** `startWindow(...)` uses true
-  window-targeted backends and fails loudly if unavailable. `startRegion(...)` uses
-  region capture backends and fails loudly if unavailable. Do not document silent
-  fallback between the two modes.
+  both, and it refreshes windows before every poll. Finder calls use the last refresh.
+- **`waitUntil` requires a non-blank `description` and an `AutomatorTree` receiver.**
+  Its predicate has type `AutomatorTree.() -> Boolean`. Spectre passes only the tree
+  snapshot. Callers must handle waits on other state themselves. A closure can still
+  capture other state, so the receiver guides use without enforcing that limit.
+- **`AutomatorIdlingResource.isIdleNow` and `diagnosticMessage()`.** The API has no
+  `isIdle()` or `name` member. Register and unregister resources by identity.
+- **`AutoRecorder` has explicit capture modes.** `startWindow(...)` requires a
+  window-targeted backend. `startRegion(...)` requires a region backend. Each call
+  fails if its backend is unavailable. Document the failure. The call never switches
+  modes silently.
 - **`TitledWindow` is an interface.** Production adapter is `Frame.asTitledWindow()`.
   Tests provide minimal `TitledWindow` implementations with title and bounds.
 - **`installSpectreRoutes` is engine-agnostic.** The `server` module deliberately
-  doesn't bundle Netty/CIO/Jetty — consumers add the engine themselves.
+  doesn't bundle Netty/CIO/Jetty. Consumers add the engine themselves.
 - **`HttpComposeAutomator.DEFAULT_PORT` is `9274`.** That's the *client* default;
   the server-side port is whatever the consumer's Ktor engine listens on.
 - **`RobotDriver` public constructors.** `RobotDriver.synthetic()` /
   `RobotDriver.synthetic(rootWindow)` (the `ComposeAutomator.inProcess()` default),
   `RobotDriver()` (explicit real-OS AWT Robot), `RobotDriver(robot)`,
-  `RobotDriver.headless()`. The adapter-injecting constructor is `internal` and not
-  for consumers.
+  `RobotDriver.headless()`. The adapter-injecting constructor is `internal` and
+  unavailable to consumers.
 - **`RobotDriver.headless()` throws on input/screenshot/clipboard.** Every input,
   clipboard, and screenshot call raises `UnsupportedOperationException` so accidental
   real-I/O calls fail at the call site. `WindowTracker`/`SemanticsReader` are
@@ -150,60 +126,51 @@ corresponding doc page is touched:
 - **Desktop input coordination is experimental and opt-in.** Consumer examples use
   `ExperimentalSpectreInputCoordinationApi`; no-argument `RobotDriver()` remains uncoordinated.
   `--force` is documented only as unsafe recovery with possible native-input overlap and
-  `unsafeTakeover=true`. The coordinator serialises participating Spectre clients, not people or
-  other automation tools.
+  `unsafeTakeover=true`. The coordinator serialises participating Spectre clients. People and
+  other automation tools remain outside its scope.
 - **Linux Wayland routes through the portal.** Xorg/Xvfb capture uses the Linux
   helper's GStreamer `ximagesrc` path; native Wayland capture uses the portal helper.
   Do not document a silent X11 fallback on Wayland.
 
 ## Style conventions
 
-- **British spelling in prose. American spelling in code.** Markdown text uses
-  `behaviour`, `serialisation`, `serialise`, `colour`, etc. **Do not** rewrite
-  identifiers, package names, framework symbols, or anything inside a code fence —
-  Kotlin's `@Serializable`, `Color`, `BehaviorSubject`, `Initializer`, kotlinx
-  `serialization`, etc., stay en-US because that's how the JVM ecosystem spells them.
-  Bulk-rename scripts must use `\b…\b` boundaries and skip code fences. Words inside
-  backticks (e.g. ``` `Initializer` ```) are code: leave them en-US.
+- **Use British spelling in prose and preserve code spelling.** Write `behaviour`,
+  `serialisation`, `serialise`, and `colour` in Markdown text. Keep identifiers,
+  packages, framework symbols, fenced code, and text in backticks unchanged. Examples
+  include `@Serializable`, `Color`, `BehaviorSubject`, `Initializer`, and kotlinx
+  `serialization`. Bulk rename scripts must use `\b…\b` boundaries and skip code fences.
 - **Comma after `e.g.` and `i.e.`** ("e.g., foo", "i.e., bar"). Always.
-- **Slashes are tight.** `mouse/keyboard/typing`, not `mouse / keyboard / typing`.
-  For two-item alternatives prefer "or"/"and": `clipboard or screen`, not
-  `clipboard / screen`. For two named code symbols, `\`A\`/\`B\`` rather than
-  `\`A\` / \`B\``.
+- **Slashes are tight.** Write `mouse/keyboard/typing` with no spaces around slashes.
+  For two-item alternatives, use "or"/"and", as in `clipboard or screen`.
+  For two named code symbols, use `\`A\`/\`B\`` with no spaces around the slash.
 - **Em dashes don't end lines wrapped to the next line.** Either keep the dash with
   text on both sides on one line, or move it to the start of the wrapped line.
-- **Headings sentence-case.** "Real vs. synthetic input", not "Real vs. Synthetic
-  Input".
+- **Headings sentence-case.** Capitalise the first word in "Real vs. synthetic input"
+  and keep subsequent words in lower case unless they are proper names.
 - **Code identifiers in backticks.** Class names, method names, property names,
   package names. Module names too: `core`, `testing`, `server`, `recording`.
-- **Don't pack multi-paragraph content into a single list item.** Mixing 2-space
-  list-continuation indent with 4-space sub-block indent breaks mkdocs-material's
-  list parser — subsequent top-level bullets get folded into the previous item as
-  continuation prose. If a bullet needs more than one paragraph plus a nested
-  list, promote the topic to its own H3 / H4 subsection or use prose paragraphs
-  instead. Verify in the rendered output that subsequent siblings still render as
-  siblings.
-- **Always leave a blank line between a paragraph and a list that follows it.**
-  Pattern: a line ending in `:` (or any prose continuation) directly above a `-`
-  list item without a blank line in between. CommonMark / mkdocs-material renders
-  the whole thing as a single paragraph with literal `- ` separators inline. The
-  cure is one blank line between the paragraph and the first list item.
+- **Keep list items short.** MkDocs Material can fold later bullets into an earlier
+  item when continuation paragraphs use two spaces and nested blocks use four.
+  Move a topic with several paragraphs and a nested list into an H3 or H4 section.
+  Check the rendered list after editing.
+- **Leave a blank line before a list.** CommonMark and MkDocs Material can render a
+  following `-` as paragraph text when no blank line separates it from prose.
 
 ## Linking
 
-- **Inside `docs/`: relative links only.** `[Synchronization](synchronization.md)`,
-  `[Architecture](../ARCHITECTURE.md)`. `mkdocs build --strict` resolves these.
+- **Use relative links inside `docs/`.** For example, link to
+  `[Synchronization](synchronization.md)` or `[Architecture](../ARCHITECTURE.md)`.
+  `mkdocs build --strict` checks these links.
 - **Outside `docs/` (workflows, repo-root files, source code): absolute
   `https://github.com/rock3r/spectre/...` URLs.** A relative path like
-  `../.github/workflows/...` works in GitHub's preview but fails the strict build,
+  `../.github/workflows/...` works in GitHub's preview. The strict build rejects it
   because the target lives outside `docs_dir`.
-- **Anchor links: re-verify when renaming sections.** Strict mode catches missing
-  files, but anchor mismatches (`#build-from-source` after renaming the heading to
-  "Consume as a composite build") slip past the file-level check.
+- **Check anchor links after renaming headings.** A file can exist while an anchor
+  such as `#build-from-source` points to a heading that no longer exists.
 
 ## Workflow/CI
 
-- **Permissions scoped per job, not per workflow.** The build job (which runs
+- **Permissions scoped per job.** The build job (which runs
   PR-controlled mkdocs config and pip dependencies) gets `contents: read` only.
   `pages: write` and `id-token: write` belong on the deploy job.
 - **PRs build, only push-to-main + workflow_dispatch deploys.** Don't surface a
@@ -213,10 +180,10 @@ corresponding doc page is touched:
 
 ## When the source changes
 
-When a public API in `core`, `testing`, `server`, or `recording` changes, walk the
-affected docs:
+When a public API changes in `core`, `testing`, `server`, or `recording`, review
+the related pages:
 
-| If you touch…                                                           | Re-read…                                    |
+| Source changed                                                         | Pages to review                             |
 | ----------------------------------------------------------------------- | ------------------------------------------- |
 | `ComposeAutomator`, query/interaction methods, wait helpers              | `automator.md`, `selectors.md`, `interactions.md`, `synchronization.md` |
 | `RobotDriver` factories, public constructors                            | `interactions.md`, `automator.md`           |
@@ -240,7 +207,7 @@ affected docs:
 
 ## Out of scope for the user guide
 
-Things that don't belong on the public site, even if they're true:
+Keep these details off the public site:
 
 - Internal milestone narrative (kept out of `docs/` entirely now that
   `bootstrap-plan.md` is gone).
@@ -249,8 +216,7 @@ Things that don't belong on the public site, even if they're true:
 - Roadmap speculation, "future backends", "not currently scoped" parentheticals.
 - Build-system internals beyond what the consumer needs to invoke.
 - Test-suite layout (`testing` module's test sources can be referenced as a
-  recipe, but only when the recipe is genuinely useful — flag it as internal).
+  recipe when genuinely useful; flag it as internal).
 
-If a piece of information is interesting to maintainers but not consumers, it
-belongs in `AGENTS.md`, an `ARCHITECTURE.md`-shaped doc, or this file — not the
-guide.
+Put maintainer guidance in `AGENTS.md`, `ARCHITECTURE.md`, or this file. Keep the
+user guide focused on tasks that consumers perform.

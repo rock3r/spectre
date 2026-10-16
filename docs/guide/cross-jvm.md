@@ -1,30 +1,24 @@
 # Cross-JVM access
 
-When the UI you want to drive lives in a different JVM than the test process — most
-commonly a Compose Desktop app you've launched as a separate process — Spectre's
-`server` module gives you an HTTP transport. The hosting JVM mounts a Ktor route on
-top of an in-process `ComposeAutomator`; the test JVM talks to it through
-`HttpComposeAutomator`.
+The `server` module lets a test control a Compose Desktop UI in another JVM over HTTP.
+The application JVM mounts Ktor routes backed by an in-process `ComposeAutomator`.
+The test JVM sends requests through `HttpComposeAutomator`.
 
 !!! tip "IntelliJ-hosted Compose has its own page"
-    For driving Jewel-on-IntelliJ tool windows or any Compose surface hosted inside
-    an IntelliJ plugin, the in-process pattern with `intellij-ide-starter` for the
-    test side is the recommended path — it sidesteps the IDE's classloader isolation
-    and uses JetBrains' own IPC for the test ↔ IDE bridge. See
-    [IntelliJ-hosted Compose](intellij.md). The HTTP transport on this page is
-    aimed at the standalone-app case.
+    For an IntelliJ plugin or Jewel tool window, run the automator inside the IDE.
+    Use `intellij-ide-starter` to drive the IDE from the test JVM.
+    This setup handles IDE classloader isolation through JetBrains IPC.
+    See [IntelliJ-hosted Compose](intellij.md). The HTTP setup below targets standalone apps.
 
 !!! note "HTTP transport scope"
-    The HTTP transport is a deliberate subset of the in-process automator: windows,
-    nodes (selectors including text / content-description / role, structured
-    `TextQuery`, and `findOneBy*`), click and richer input verbs (`doubleClick` /
-    `longClick` / `swipe` / `scrollWheel` / `pressKey` / `typeText` /
-    `clearAndTypeText`), `tree()` / `tree(windowIndex)` / `printTree()`, and
-    screenshot (full-frame or node-targeted). Advanced features that need live JVM
-    objects (idling resources, `withTracing`) remain in-process only. If you need
-    them, run the test JVM in the same process as the UI. The full ops × transports
-    × platforms picture — with multi-state cells and fail-closed CI evidence — lives
-    in the [capability matrix](capability-matrix.md).
+    The HTTP transport supports windows and node queries. Selectors include text,
+    content description, role, structured `TextQuery`, and `findOneBy*`. Input
+    includes click, `doubleClick`, `longClick`, `swipe`, `scrollWheel`, `pressKey`,
+    `typeText`, and `clearAndTypeText`. It also supports `tree()`,
+    `tree(windowIndex)`, `printTree()`, and full-frame or node screenshots.
+    Idling resources and `withTracing` need live JVM objects and work in-process.
+    The [capability matrix](capability-matrix.md) lists transport and platform
+    support with CI evidence.
 
 !!! warning "Trust boundary"
     The HTTP transport is **experimental** and exposes privileged desktop automation.
@@ -37,26 +31,25 @@ top of an in-process `ComposeAutomator`; the test JVM talks to it through
       a non-loopback peer.
     - Browser cross-origin access is disabled unless the server is given an exact
       origin allowlist. Wildcard origins are not supported.
-    - `click` and `typeText` drive the host automator's input driver (synthetic AWT
-      events by default; real OS input if that host opted into `RobotDriver()`);
-      `screenshot` captures whatever pixels the host JVM can see, including content
-      from other windows.
+    - `click` and `typeText` use the host automator's input driver. It sends
+      synthetic AWT events by default. A host configured with `RobotDriver()`
+      sends real OS input. `screenshot` captures pixels visible to the host JVM,
+      which can include other windows.
 
     See [Security notes](../SECURITY.md) for deployment and proxy guidance.
 
-    All entry points in this guide require `@OptIn(ExperimentalSpectreHttpApi::class)`
-    — see [Stability policy](../STABILITY.md) for the API tier definitions.
+    All entry points in this guide require `@OptIn(ExperimentalSpectreHttpApi::class)`.
+    See [Stability policy](../STABILITY.md) for the API tier definitions.
 
 ## Server side: mount the routes
 
-In the hosting JVM, build an in-process automator and install Spectre's routes on a
-Ktor application. `installSpectreRoutes` is engine-agnostic — Spectre intentionally
-doesn't bundle a Ktor server engine, so add one yourself:
+In the application JVM, create an in-process automator and mount Spectre routes on Ktor.
+`installSpectreRoutes` works with any Ktor server engine. Add the application's engine:
 
 ```kotlin
 dependencies {
     // ...your existing Spectre + ktor-server-core comes via the server module
-    implementation("io.ktor:ktor-server-netty:2.3.12") // or :ktor-server-cio, :ktor-server-jetty
+    implementation("io.ktor:ktor-server-netty:3.4.1") // or :ktor-server-cio, :ktor-server-jetty
 }
 ```
 
@@ -83,30 +76,25 @@ embeddedServer(Netty, host = "127.0.0.1", port = 9274) {
 }.start(wait = false)
 ```
 
-`9274` is the default port the **client** uses
-(`HttpComposeAutomator.DEFAULT_PORT`) — `installSpectreRoutes` itself only mounts routes
-on whatever Ktor `Application` you give it, so the hosting engine picks the listener.
-Using `9274` on both sides keeps the defaults aligned; otherwise pass a matching port
-to both `embeddedServer(...)` and `ComposeAutomator.http(...)`.
+`HttpComposeAutomator.DEFAULT_PORT` is `9274`. The Ktor engine sets the server port;
+`installSpectreRoutes` only mounts routes. If the server uses another port, pass that port
+to `ComposeAutomator.http(...)` too.
 
-`installSpectreRoutes` mounts everything under `/spectre` by default; pass `basePath =
-"/foo"` if you need it elsewhere.
+`installSpectreRoutes` uses `/spectre` by default. Pass `basePath = "/foo"` for another path.
 
-For a network deployment, configure an HTTPS connector on the Ktor engine and leave
-`allowInsecureLoopback` at its default `false`. If TLS terminates at a reverse proxy,
-install Ktor's forwarded-header support only when the direct peer is a trusted proxy;
-Spectre uses Ktor's resolved request origin to enforce HTTPS. Do not blindly trust
-client-supplied `Forwarded` or `X-Forwarded-Proto` headers.
+For network use, configure an HTTPS connector and keep `allowInsecureLoopback = false`.
+If a reverse proxy terminates TLS, enable Ktor forwarded headers only for a trusted
+direct proxy peer. Spectre checks Ktor's resolved origin to enforce HTTPS.
+Do not trust `Forwarded` or `X-Forwarded-Proto` headers from clients.
 
 ### Bearer and CORS configuration
 
-Use one high-entropy bearer per deployment and give the same value to the hosting and
-test JVMs. Bearers must contain at least 32 RFC 6750 characters;
-`openssl rand -base64 32` produces a suitable value. Rotate it through your normal
-secret-management mechanism; Spectre never prints or returns it.
+Create one high-entropy bearer for each deployment and give it to both JVMs.
+The bearer needs at least 32 RFC 6750 characters. `openssl rand -base64 32` produces
+a suitable value. Use a secret manager for rotation. Spectre does not print the bearer.
 
-`allowedOrigins` is empty by default, so browser CORS requests fail closed. If a browser
-runner is intentional, list exact origins:
+`allowedOrigins` defaults to an empty set, which rejects browser CORS requests.
+List exact origins when a browser runner needs access:
 
 ```kotlin
 val security = SpectreHttpSecurity(
@@ -115,28 +103,24 @@ val security = SpectreHttpSecurity(
 )
 ```
 
-Preflight (`OPTIONS`) requests do not carry the bearer, but still require HTTPS and an
-allowed origin. Every other request requires the bearer, including requests without an
-`Origin` header.
+Preflight `OPTIONS` requests require HTTPS and an allowed origin. They do not require a bearer.
+Every other request requires the bearer, including requests without an `Origin` header.
 
 ### ContentNegotiation
 
-The routes exchange JSON. If `ContentNegotiation` isn't already installed on the
-application, `installSpectreRoutes` installs it with the kotlinx JSON converter. If you
-have already installed it for your own routes, **make sure your configuration includes
-a JSON converter** — Ktor doesn't let plugins merge converters into an existing
-installation, so Spectre leaves yours alone.
+Spectre routes exchange JSON. `installSpectreRoutes` installs `ContentNegotiation` with
+the kotlinx JSON converter when the application has no existing installation.
+If the application already installed the plugin, configure a JSON converter yourself.
+Ktor cannot merge converters into an existing installation.
 
 ### Engine choice
 
-Spectre doesn't pick an engine for you — you bring your own (`Netty`, `CIO`, `Jetty`,
-etc.) and configure it however you need. The example above uses Netty; a lighter test
-embedded server might use `CIO`.
+The application selects and configures its Ktor engine. The example uses Netty.
+An embedded test server can use CIO or another available engine.
 
 ## Client side: drive it
 
-In the test JVM, the canonical entry point is the `ComposeAutomator.http(...)`
-companion extension:
+In the test JVM, connect through the `ComposeAutomator.http(...)` companion extension:
 
 ```kotlin
 @file:OptIn(ExperimentalSpectreHttpApi::class)
@@ -163,14 +147,12 @@ ComposeAutomator.http(security, host = "127.0.0.1", port = 9274).use { remote ->
 }
 ```
 
-`HttpComposeAutomator` is `AutoCloseable` and owns its underlying Ktor `HttpClient`;
-use `use { ... }` (or call `close()` yourself) so the connection pool and selector
-threads are released.
+`HttpComposeAutomator` owns a Ktor `HttpClient` and implements `AutoCloseable`.
+Use `use { ... }` or call `close()` to release connections and selector threads.
 
 ## What's on the wire
 
-Everything is JSON, modelled by DTOs in `dev.sebastiano.spectre.server.dto`. Notable
-shapes:
+The transport serialises JSON using DTOs in `dev.sebastiano.spectre.server.dto`:
 
 | DTO                       | Role                                                        |
 | ------------------------- | ----------------------------------------------------------- |
@@ -187,9 +169,8 @@ shapes:
 | `TypeTextRequest`         | `{ "text": "..." }`. Types into whatever has focus.         |
 | `ScreenshotResponse`      | Base64-encoded PNG bytes.                                   |
 
-Node keys travel as the canonical string form `surfaceId:ownerIndex:nodeId` — the
-stable string form used by the transport contract and pinned by `NodeKeyContractTest`
-in the testing module.
+Node keys use `surfaceId:ownerIndex:nodeId`. `NodeKeyContractTest` in `testing` pins
+this transport format.
 
 Structured text matching uses query parameters on `GET /nodes` and `GET /node`:
 
@@ -203,16 +184,15 @@ the older `exact` shorthand. Node-targeted screenshots use
 
 ## Use cases
 
-The server module pays for itself when:
+Use the server module for these situations:
 
-- The UI under test is **an IntelliJ IDE** or a third-party application whose run-loop
-  you can't modify — install the routes inside a plugin and drive from a separate test
+- The UI under test is **an IntelliJ IDE** or a third-party application with an unmodifiable run loop. Install the routes inside a plugin and drive from a separate test
   process.
-- You're running **multiple test JVMs in parallel** against a long-lived UI host (e.g.,
+- **Multiple test JVMs run in parallel** against a long-lived UI host (e.g.,
   a sample app launched once, hit by many tests). Combine with `RobotDriver.synthetic`
   on the server side so each test doesn't fight for global focus.
-- You want to **separate test orchestration from rendering** for performance reasons,
+- **Test orchestration and rendering need separate processes** for performance reasons,
   e.g., to run the test JVM with aggressive coroutine debugging while the UI runs lean.
 
-If your test owns the UI and runs in the same JVM, stick with `ComposeAutomator.inProcess()`
-— it's cheaper and exposes the full automator surface.
+When the test and UI share a JVM, `ComposeAutomator.inProcess()` avoids HTTP overhead
+and exposes the full automator API.
