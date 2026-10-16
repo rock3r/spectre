@@ -119,16 +119,43 @@ class AotCacheTest {
 
     @Test
     fun `a changed jar fingerprints to a different cache file`() {
-        val before = plan(jar(modifiedMillis = 1_000_000L))
-        val after = plan(jar(modifiedMillis = 2_000_000L))
+        val jar = jar()
+        val before = plan(jar)
+
+        Files.write(jar, byteArrayOf(9, 8, 7, 6, 5))
+        val after = plan(jar)
 
         assertNotEquals(before.cacheFile(), after.cacheFile())
         assertEquals(AotCache.Mode.TRAINING, after.mode())
+
+        // A timestamp-only change (same bytes) keeps the cache: the archive is
+        // still valid for the jar it was trained against.
+        Files.setLastModifiedTime(jar, FileTime.fromMillis(2_000_000L))
+        assertEquals(after.cacheFile(), plan(jar).cacheFile())
     }
 
     @Test
     fun `fingerprint is stable for an unchanged jar`() {
         assertEquals(plan(jar()).cacheFile(), plan(jar()).cacheFile())
+    }
+
+    @Test
+    fun `same size and timestamp but different contents fingerprint differently`() {
+        // Deployment tooling that preserves timestamps (reproducible installs,
+        // restores) can replace the jar with different bytes of the same size
+        // and mtime; path+size+mtime would keep selecting the old cache, so
+        // the identity must come from the jar contents themselves.
+        val jar = jar()
+        val first = plan(jar)
+        Files.createDirectories(first.cacheFile().parent)
+        Files.write(first.cacheFile(), byteArrayOf(9))
+
+        Files.write(jar, byteArrayOf(5, 6, 7, 8))
+        Files.setLastModifiedTime(jar, FileTime.fromMillis(1_000_000L))
+
+        val second = plan(jar)
+        assertNotEquals(first.cacheFile(), second.cacheFile())
+        assertEquals(AotCache.Mode.TRAINING, second.mode())
     }
 
     @Test

@@ -21,7 +21,7 @@ import java.util.Optional;
  * (see {@link SpectreBootstrap}), and later runs pass {@code -XX:AOTCache} to skip class
  * loading/linking and replay method profiles. A missing or invalid cache is not fatal — the
  * JVM logs an {@code [error][aot]} line and continues uncached — but the fingerprint in the
- * file name (jar path, size, modification time, runtime version) means a replaced jar plans
+ * file name (jar path and content digest, runtime version) means a replaced jar plans
  * a fresh training run instead of pointing the JVM at a cache it would reject. An invalid
  * cache that does land on the fingerprint path (corrupt or foreign file) is likewise not
  * fatal: the JVM logs an {@code [error][aot]} line — silenced for foreground launches,
@@ -381,9 +381,15 @@ public final class AotCache {
                 moduleOptions == null
                         ? ""
                         : String.join("\n", moduleOptions.stream().sorted().distinct().toList());
+        // The jar's content digest is part of the identity: size and modification
+        // time are not, because deployment tooling that preserves timestamps can
+        // replace the jar with different bytes of the same size, and the old
+        // cache would then be selected (and rejected, or worse, used) forever.
+        // Hashing the jar on every launch costs a few tens of milliseconds —
+        // the price of an identity that cannot point at the wrong archive.
         String identity = jarFile.toAbsolutePath().normalize()
                 + "\n" + Files.size(jarFile)
-                + "\n" + Files.getLastModifiedTime(jarFile).toMillis()
+                + "\n" + contentDigest(jarFile)
                 + "\n" + runtimeVersion
                 + "\n" + osName
                 + "\n" + osArch
@@ -395,6 +401,24 @@ public final class AotCache {
         } catch (NoSuchAlgorithmException e) {
             throw new IOException("SHA-256 is not available", e);
         }
+    }
+
+    /** SHA-256 of the jar's bytes, streamed so large jars are not held in memory. */
+    private static String contentDigest(Path jarFile) throws IOException {
+        final MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IOException("SHA-256 is not available", e);
+        }
+        try (var input = Files.newInputStream(jarFile)) {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                digest.update(buffer, 0, read);
+            }
+        }
+        return HexFormat.of().formatHex(digest.digest());
     }
 
     private static Plan unavailable(Path cacheFile) {

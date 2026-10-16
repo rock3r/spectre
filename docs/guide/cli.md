@@ -69,7 +69,7 @@ contents it was trained against, so Spectre never ships one. Instead:
    startup (for example `spectre --help` from ~330 ms to ~135 ms before the small
    bootstrap launcher's overhead).
 3. **Upgrades retrain automatically.** The cache file name fingerprints the jar's
-   path, size, modification time, OS/architecture, and runtime identity (version,
+   path and contents, the caller's module options, OS/architecture, and runtime identity (version,
    vendor, and VM build), so a replaced jar plans a
    fresh training run instead of pointing the JVM at a cache it would reject.
    Relocating the installation likewise retrains once. At most three caches are
@@ -83,10 +83,13 @@ Windows. Deleting the directory is safe; the next run retrains.
 The CLI's short-lived frontend JVMs run with an explicit G1 collector and a
 pinned heap representation: JDK 25's AOT cache does not support the ZGC
 collector a stock launcher would otherwise select, and the cache is only valid
-for the representation it was trained with. The long-lived daemon keeps its
-own JVM settings; it only *consumes* a ready cache (it never trains, so its detached start
-can never race the foreground's training), which means the first daemon start
-after an upgrade is uncached and later daemon starts are cached. Set
+for the representation it was trained with. A cache-consuming daemon runs with
+that same pinned layout; it only *consumes* a ready cache and never trains, so
+its detached start can never race the foreground's training. Because the
+foreground trains and promotes the cache before running your first command
+after an install or upgrade, a daemon started afterwards can already consume
+it; a daemon that starts before any foreground launch has trained simply
+starts uncached, and later daemon starts are cached. Set
 `SPECTRE_AOT=off` to disable caching entirely. AOT options you supply yourself
 through `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, or `_JAVA_OPTIONS` also win:
 Spectre then launches without managing a cache.
