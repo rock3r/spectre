@@ -108,7 +108,9 @@ public final class AotCache {
         try {
             cacheFile = cacheDirectory(environment, userHome, osName)
                     .resolve("spectre-" + fingerprint(jarFile, runtimeVersion, osName, osArch) + ".aot");
-        } catch (IOException | SecurityException e) {
+        } catch (IOException | SecurityException | java.nio.file.InvalidPathException e) {
+            // A malformed SPECTRE_AOT_CACHE_DIR or LOCALAPPDATA must degrade to an
+            // uncached launch, never terminate the bootstrap.
             return unavailable(null);
         }
         try {
@@ -208,7 +210,12 @@ public final class AotCache {
         if (entries.length != 1) {
             return Optional.empty();
         }
-        Path candidate = Path.of(entries[0]);
+        final Path candidate;
+        try {
+            candidate = Path.of(entries[0]);
+        } catch (java.nio.file.InvalidPathException e) {
+            return Optional.empty();
+        }
         return isJarFile(candidate) ? Optional.of(candidate.toAbsolutePath().normalize()) : Optional.empty();
     }
 
