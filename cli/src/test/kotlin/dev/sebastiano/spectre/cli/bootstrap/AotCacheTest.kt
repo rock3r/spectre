@@ -91,9 +91,16 @@ class AotCacheTest {
         assertEquals(listOf("-XX:AOTCache=" + training.cacheFile()), warm.jvmArguments())
 
         // The daemon consumes the same cache, so its arguments must carry the
-        // module option the cache was trained with, or the JVM rejects it.
+        // frontend layout the cache was recorded with (collector and heap
+        // representation) plus the module option, or the JVM rejects it — on a
+        // machine whose ergonomics would pick a different collector, that
+        // rejection would repeat on every daemon start.
         assertEquals(
             listOf(
+                "-XX:+UseG1GC",
+                "-XX:+UseCompressedOops",
+                "-XX:-UseCompactObjectHeaders",
+                "-XX:ObjectAlignmentInBytes=8",
                 "-XX:AOTCache=" + training.cacheFile(),
                 "--enable-native-access=ALL-UNNAMED",
             ),

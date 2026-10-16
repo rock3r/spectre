@@ -165,7 +165,15 @@ public final class AotCache {
                     if (plan.mode() != Mode.PRODUCTION) {
                         return plan.jvmArguments();
                     }
-                    List<String> arguments = new java.util.ArrayList<>(plan.jvmArguments());
+                    // The cache was recorded and assembled under the frontend
+                    // layout (explicit G1 and the pinned heap representation in
+                    // SpectreBootstrap.FRONTEND_JVM_ARGUMENTS); the daemon must
+                    // run with that same layout or the JVM rejects the archive —
+                    // on a machine whose ergonomics would pick another collector
+                    // or representation, on every start.
+                    List<String> arguments =
+                            new java.util.ArrayList<>(SpectreBootstrap.FRONTEND_JVM_ARGUMENTS);
+                    arguments.addAll(plan.jvmArguments());
                     arguments.add("--enable-native-access=ALL-UNNAMED");
                     return List.copyOf(arguments);
                 })
@@ -174,8 +182,12 @@ public final class AotCache {
 
     /** {@link #daemonJvmArguments} resolved against this process's environment and runtime. */
     public static List<String> daemonJvmArguments(String classPath) {
-        if (hasUserAotArguments(
-                java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments())) {
+        List<String> inputArguments =
+                java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments();
+        if (hasUserAotArguments(inputArguments)
+                || SpectreBootstrap.hasInstrumentationAgent(inputArguments)) {
+            // User-managed AOT, or an instrumentation agent whose JVMTI hooks can
+            // make a cache unloadable: the daemon consumes no managed cache.
             return List.of();
         }
         return daemonJvmArguments(

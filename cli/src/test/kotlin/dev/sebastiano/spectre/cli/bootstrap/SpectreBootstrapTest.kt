@@ -264,6 +264,22 @@ class SpectreBootstrapTest {
     }
 
     @Test
+    fun `instrumentation agents make the launch user-managed`() {
+        // A JVMTI agent (coverage, profiling) can install a class-file-load
+        // hook; JDK 25 lists such hooks as a reason an AOT cache cannot load.
+        // Training records without the caller's agent, so a cache trained
+        // agent-free could be silently rejected by every agent-bearing
+        // production launch. Agent-bearing launches therefore skip managed
+        // caching entirely and run user-managed, agent and all.
+        assertTrue(SpectreBootstrap.hasInstrumentationAgent(listOf("-javaagent:/tmp/jacoco.jar")))
+        assertTrue(
+            SpectreBootstrap.hasInstrumentationAgent(listOf("-agentlib:jdwp=transport=dt_socket"))
+        )
+        assertTrue(SpectreBootstrap.hasInstrumentationAgent(listOf("-agentpath:/tmp/profiler.so")))
+        assertFalse(SpectreBootstrap.hasInstrumentationAgent(listOf("-Xmx1g", "-XX:+UseG1GC")))
+    }
+
+    @Test
     fun `user-managed child carries the caller's options without the frontend contract`() {
         // A caller who supplies their own AOT cache or collector gets a child JVM
         // with exactly their options: no managed frontend arguments, no managed

@@ -68,7 +68,9 @@ public final class SpectreBootstrap {
         List<String> inputArguments =
                 java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments();
         Optional<Path> jarFile = currentJarFile();
-        if ((AotCache.hasUserAotArguments(inputArguments) || hasForeignCollector(inputArguments))
+        if ((AotCache.hasUserAotArguments(inputArguments)
+                        || hasForeignCollector(inputArguments)
+                        || hasInstrumentationAgent(inputArguments))
                 && jarFile.isPresent()) {
             // The caller manages AOT or the collector themselves (java
             // -XX:AOTCache=..., or a start script's JAVA_OPTS/SPECTRE_OPTS): their
@@ -334,6 +336,23 @@ public final class SpectreBootstrap {
                 .anyMatch(arg ->
                         (isCollectorSelector(arg) && !arg.equals("-XX:+UseG1GC"))
                                 || arg.equals("-XX:-UseG1GC"));
+    }
+
+    /**
+     * Whether the caller attached an instrumentation agent ({@code -javaagent},
+     * {@code -agentlib}, {@code -agentpath}: coverage, profilers, debuggers). Such
+     * an agent can install a JVMTI class-file-load hook, which JDK 25 lists as a
+     * reason an AOT cache cannot load; training records without the caller's agent,
+     * so an agent-bearing launch would plan PRODUCTION against a cache its JVM
+     * then silently rejects on every invocation. Agent-bearing launches are
+     * user-managed instead: the agent applies, no managed cache is involved.
+     */
+    static boolean hasInstrumentationAgent(List<String> inputArguments) {
+        return inputArguments.stream()
+                .anyMatch(arg ->
+                        arg.startsWith("-javaagent:")
+                                || arg.startsWith("-agentlib:")
+                                || arg.startsWith("-agentpath:"));
     }
 
     /**
