@@ -322,6 +322,7 @@ public final class SpectreBootstrap {
                     "--patch-module",
                     "--module-path",
                     "--upgrade-module-path",
+                    "--limit-modules",
                     "-p");
 
     /** Whether {@code argument} selects a garbage collector ({@code -XX:+Use…GC}). */
@@ -449,15 +450,16 @@ public final class SpectreBootstrap {
 
     /**
      * The caller's module options ({@code --add-*}, {@code --patch-module}, {@code
-     * --module-path}, and {@code --upgrade-module-path}, with their values) from
-     * the input arguments. These shape the module graph JEP 483
+     * --module-path}, {@code --upgrade-module-path}, and {@code --limit-modules},
+     * with their values) from the input arguments. These shape the module graph JEP 483
      * archives, so the record run and the cache-assembly JVM must carry exactly the
      * ones the production child carries, or the JVM rejects the trained cache on
      * every launch. The caller's {@code --enable-native-access} targets belong to
      * this list for the same reason (they shape the archived {@code
      * jdk.module.enable.native.access} property); every phase additionally adds
      * the contract's {@code ALL-UNNAMED} itself (see {@link
-     * #addNativeAccessArgument}), and repeated occurrences accumulate. Heap,
+     * #addNativeAccessArgument}), and repeated occurrences accumulate — which is
+     * also why the {@code ALL-UNNAMED} token itself is excluded below. Heap,
      * agent, and tuning options do not shape the archived module graph and stay
      * production-only.
      */
@@ -465,10 +467,20 @@ public final class SpectreBootstrap {
         List<String> options = new ArrayList<>();
         for (int i = 0; i < inputArguments.size(); i++) {
             String argument = inputArguments.get(i);
+            if (argument.equals("--enable-native-access=ALL-UNNAMED")) {
+                // The frontend contract's own token, injected by every cache
+                // phase itself. It is not a caller option: the managed child's
+                // input arguments always contain it (injected after the
+                // foreground fingerprint was computed), so counting it here
+                // would give a daemon spawned by that child a different
+                // fingerprint and an eternally unavailable cache.
+                continue;
+            }
             if (!argument.startsWith("--add-")
                     && !argument.startsWith("--patch-module")
                     && !argument.startsWith("--module-path")
                     && !argument.startsWith("--upgrade-module-path")
+                    && !argument.startsWith("--limit-modules")
                     && !argument.equals("-p")
                     && !argument.startsWith("--enable-native-access")) {
                 continue;
@@ -589,6 +601,7 @@ public final class SpectreBootstrap {
                 || argument.startsWith("--patch-module")
                 || argument.startsWith("--module-path")
                 || argument.startsWith("--upgrade-module-path")
+                || argument.startsWith("--limit-modules")
                 || argument.equals("-p")
                 || argument.equals("-ea")
                 || argument.equals("-da")

@@ -358,6 +358,39 @@ class SpectreBootstrapTest {
             ),
         )
         assertEquals(nativeAccessInput, SpectreBootstrap.callerModuleOptions(nativeAccessInput))
+
+        // The contract's own ALL-UNNAMED token is not a caller module option:
+        // every cache phase injects it itself, and the managed child's input
+        // arguments always contain it (injected after the foreground
+        // fingerprint was computed), so counting it here would give the
+        // daemon a different fingerprint and an eternally unavailable cache.
+        assertEquals(
+            nativeAccessInput,
+            SpectreBootstrap.callerModuleOptions(
+                listOf("--enable-native-access=ALL-UNNAMED", "--enable-native-access=my.plugin")
+            ),
+        )
+
+        // --limit-modules limits the observable module universe: the same
+        // module-graph treatment, in equals and two-token forms.
+        val limitInput = listOf("--limit-modules", "java.base,my.plugin")
+        assertEquals(limitInput, SpectreBootstrap.callerModuleOptions(limitInput))
+        assertEquals(
+            listOf("--limit-modules=java.base,my.plugin"),
+            SpectreBootstrap.callerModuleOptions(listOf("--limit-modules=java.base,my.plugin")),
+        )
+        assertEquals(
+            limitInput,
+            SpectreBootstrap.callerJvmOptions(
+                limitInput,
+                AotCache.Plan(
+                    AotCache.Mode.PRODUCTION,
+                    Path.of("/tmp", "aot", "spectre.aot"),
+                    null,
+                    emptyList(),
+                ),
+            ),
+        )
     }
 
     @Test
