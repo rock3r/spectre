@@ -37,8 +37,8 @@ import java.util.Optional;
  *       themselves, or
  *   <li>runs the real CLI in-process when caching is unavailable (JDK &lt; 25, exploded
  *       or multi-entry classpath — the latter is the thin start-script distribution,
- *       whose child could not be built from the CLI jar alone) or when the caller
- *       attached an instrumentation agent, which belongs to exactly one JVM, so
+ *       whose child could not be built from the CLI jar alone) or when the caller's
+ *       instrumentation agent already holds a fixed listen address in this JVM, so
  *       behaviour is unchanged.
  * </ul>
  *
@@ -68,17 +68,20 @@ public final class SpectreBootstrap {
     public static void main(String[] args) {
         List<String> inputArguments =
                 java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments();
-        if (hasInstrumentationAgent(inputArguments)) {
-            // An agent belongs to exactly one JVM: it may already hold a fixed
-            // resource in this process (a JDWP listen address, a profiler port)
-            // that a re-exec'd child carrying the identical agent could not
-            // bind, and its JVMTI hooks can make a managed cache unloadable.
-            // Run the real CLI here, agent and all, as before the bootstrap.
+        if (hasFixedAddressAgent(inputArguments)) {
+            // This agent already holds a fixed resource in this process (a JDWP
+            // listen address) that a re-exec'd child carrying the identical
+            // agent could not bind. Debugging this process is also the point of
+            // such an agent, so run the real CLI here, agent and all, as before
+            // the bootstrap — accepting this JVM's lean packaged-launcher
+            // limits for a launch shape that is inherently interactive.
             runInProcess(args);
             return;
         }
         Optional<Path> jarFile = currentJarFile();
-        if ((AotCache.hasUserAotArguments(inputArguments) || hasForeignCollector(inputArguments))
+        if ((AotCache.hasUserAotArguments(inputArguments)
+                        || hasForeignCollector(inputArguments)
+                        || hasInstrumentationAgent(inputArguments))
                 && jarFile.isPresent()) {
             // The caller manages AOT or the collector themselves (java
             // -XX:AOTCache=..., or a start script's JAVA_OPTS/SPECTRE_OPTS): their
@@ -353,8 +356,9 @@ public final class SpectreBootstrap {
      * reason an AOT cache cannot load; training records without the caller's agent,
      * so an agent-bearing launch would plan PRODUCTION against a cache its JVM
      * then silently rejects on every invocation. Agent-bearing launches therefore
-     * run in-process (see {@link #main}): the agent applies, no managed cache is
-     * involved, and no second JVM tries to bind the agent's resources again.
+     * skip managed caching (see {@link #main}): ordinary agents re-exec
+     * user-managed, and a fixed-address agent (see {@link #hasFixedAddressAgent})
+     * stays in this JVM.
      */
     static boolean hasInstrumentationAgent(List<String> inputArguments) {
         return inputArguments.stream().anyMatch(SpectreBootstrap::isInstrumentationAgentArgument);
@@ -365,6 +369,20 @@ public final class SpectreBootstrap {
         return argument.startsWith("-javaagent:")
                 || argument.startsWith("-agentlib:")
                 || argument.startsWith("-agentpath:");
+    }
+
+    /**
+     * Whether the caller attached a JDWP agent in listen mode ({@code
+     * -agentlib:jdwp=…,server=y,…} or the legacy {@code -Xrunjdwp} form). That
+     * agent has already bound its listen address in this JVM, so no second JVM
+     * may carry it; other agents hold no such fixed resource and re-exec
+     * user-managed like any other caller option.
+     */
+    static boolean hasFixedAddressAgent(List<String> inputArguments) {
+        return inputArguments.stream()
+                .anyMatch(arg ->
+                        (arg.startsWith("-agentlib:jdwp") || arg.startsWith("-Xrunjdwp"))
+                                && arg.toLowerCase(java.util.Locale.ROOT).contains("server=y"));
     }
 
     /**

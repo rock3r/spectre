@@ -225,6 +225,33 @@ class AotCacheTest {
         val other = plan(jar, moduleOptions = opensSql)
         assertNotEquals(first.cacheFile(), other.cacheFile())
         assertEquals(AotCache.Mode.TRAINING, other.mode())
+
+        // Option/value pairs must stay associated: the same tokens paired
+        // differently describe a different module graph and need different
+        // caches, even though the flattened token multiset is identical.
+        val opensFirst =
+            plan(
+                jar,
+                moduleOptions =
+                    listOf(
+                        "--add-opens",
+                        "java.base/java.lang=ALL-UNNAMED",
+                        "--add-exports",
+                        "java.base/java.io=ALL-UNNAMED",
+                    ),
+            )
+        val exportsFirst =
+            plan(
+                jar,
+                moduleOptions =
+                    listOf(
+                        "--add-opens",
+                        "java.base/java.io=ALL-UNNAMED",
+                        "--add-exports",
+                        "java.base/java.lang=ALL-UNNAMED",
+                    ),
+            )
+        assertNotEquals(opensFirst.cacheFile(), exportsFirst.cacheFile())
     }
 
     @Test

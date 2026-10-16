@@ -377,10 +377,7 @@ public final class AotCache {
         // cache instead of a PRODUCTION plan against an incompatible one. The
         // options are sorted and deduplicated first — their order does not
         // change the module graph, so it must not change the identity either.
-        String moduleIdentity =
-                moduleOptions == null
-                        ? ""
-                        : String.join("\n", moduleOptions.stream().sorted().distinct().toList());
+        String moduleIdentity = moduleIdentity(moduleOptions);
         // The jar's content digest is part of the identity: size and modification
         // time are not, because deployment tooling that preserves timestamps can
         // replace the jar with different bytes of the same size, and the old
@@ -401,6 +398,29 @@ public final class AotCache {
         } catch (NoSuchAlgorithmException e) {
             throw new IOException("SHA-256 is not available", e);
         }
+    }
+
+    /**
+     * Normalized identity of a module-option list: option/value pairs are kept
+     * associated (a token not starting with {@code --} belongs to the option
+     * before it), then the pairs are sorted and deduplicated. Sorting the
+     * flattened tokens instead would conflate different module graphs — {@code
+     * --add-opens A --add-exports B} and {@code --add-opens B --add-exports A}
+     * share a token multiset but are not the same graph.
+     */
+    private static String moduleIdentity(List<String> moduleOptions) {
+        if (moduleOptions == null || moduleOptions.isEmpty()) {
+            return "";
+        }
+        List<String> pairs = new java.util.ArrayList<>();
+        for (String token : moduleOptions) {
+            if (token.startsWith("--") || pairs.isEmpty()) {
+                pairs.add(token);
+            } else {
+                pairs.set(pairs.size() - 1, pairs.get(pairs.size() - 1) + " " + token);
+            }
+        }
+        return String.join("\n", pairs.stream().sorted().distinct().toList());
     }
 
     /** SHA-256 of the jar's bytes, streamed so large jars are not held in memory. */

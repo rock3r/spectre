@@ -268,11 +268,10 @@ class SpectreBootstrapTest {
         // A JVMTI agent (coverage, profiling) can install a class-file-load
         // hook; JDK 25 lists such hooks as a reason an AOT cache cannot load,
         // and training records without the caller's agent. Agent-bearing
-        // launches therefore skip managed caching entirely. They also cannot
-        // re-exec: an agent with a fixed resource (a JDWP listen address, a
-        // profiler port) is already bound by this JVM, and a child carrying
-        // the identical agent would fail to bind it. The real CLI runs in
-        // this JVM, agent and all — exactly as it did before the bootstrap.
+        // launches therefore skip managed caching entirely: ordinary agents
+        // re-exec user-managed (no cache, no bootstrap caps), while an agent
+        // already holding a fixed listen address in this JVM (a JDWP server)
+        // cannot be bound a second time by a child and stays in-process.
         assertTrue(SpectreBootstrap.hasInstrumentationAgent(listOf("-javaagent:/tmp/jacoco.jar")))
         assertTrue(
             SpectreBootstrap.hasInstrumentationAgent(listOf("-agentlib:jdwp=transport=dt_socket"))
@@ -281,6 +280,20 @@ class SpectreBootstrapTest {
         assertFalse(SpectreBootstrap.hasInstrumentationAgent(listOf("-Xmx1g", "-XX:+UseG1GC")))
         assertTrue(SpectreBootstrap.isInstrumentationAgentArgument("-javaagent:/tmp/jacoco.jar"))
         assertFalse(SpectreBootstrap.isInstrumentationAgentArgument("-Xmx1g"))
+
+        assertTrue(
+            SpectreBootstrap.hasFixedAddressAgent(
+                listOf("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005")
+            )
+        )
+        assertFalse(
+            SpectreBootstrap.hasFixedAddressAgent(
+                listOf("-agentlib:jdwp=transport=dt_socket,server=n,address=5005")
+            )
+        )
+        assertFalse(
+            SpectreBootstrap.hasFixedAddressAgent(listOf("-javaagent:/tmp/jacoco.jar=output=file"))
+        )
     }
 
     @Test
