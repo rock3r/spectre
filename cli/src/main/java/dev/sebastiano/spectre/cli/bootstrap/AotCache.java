@@ -170,6 +170,10 @@ public final class AotCache {
 
     /** {@link #daemonJvmArguments} resolved against this process's environment and runtime. */
     public static List<String> daemonJvmArguments(String classPath) {
+        if (hasUserAotArguments(
+                java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments())) {
+            return List.of();
+        }
         return daemonJvmArguments(
                 classPath,
                 System.getenv(),
@@ -322,6 +326,18 @@ public final class AotCache {
             }
         }
         return false;
+    }
+
+    /**
+     * Whether the caller put AOT options on this JVM's own command line (directly, or
+     * through a start script's {@code JAVA_OPTS}/{@code SPECTRE_OPTS}). Those reach the
+     * JVM as input arguments rather than through the option environment variables, and
+     * user-managed AOT options take precedence over Spectre's managed cache: callers
+     * must run the CLI in-process (where their flags apply) or skip managed arguments.
+     */
+    public static boolean hasUserAotArguments(List<String> inputArguments) {
+        return inputArguments.stream()
+                .anyMatch(arg -> arg.contains("AOTCache") || arg.contains("AOTMode"));
     }
 
     private static String fingerprint(Path jarFile, String runtimeVersion, String osName, String osArch)

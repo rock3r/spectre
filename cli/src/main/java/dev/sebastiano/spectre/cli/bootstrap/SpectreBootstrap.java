@@ -60,6 +60,14 @@ public final class SpectreBootstrap {
     private SpectreBootstrap() {}
 
     public static void main(String[] args) {
+        if (AotCache.hasUserAotArguments(
+                java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments())) {
+            // The caller manages AOT themselves (java -XX:AOTCache=..., or a start
+            // script's JAVA_OPTS/SPECTRE_OPTS): run in-process so their options —
+            // which apply to this JVM — govern the launch, exactly as documented.
+            runInProcess(args);
+            return;
+        }
         Optional<Path> jarFile = currentJarFile();
         AotCache.Plan plan = jarFile
                 .map(SpectreBootstrap::planFor)

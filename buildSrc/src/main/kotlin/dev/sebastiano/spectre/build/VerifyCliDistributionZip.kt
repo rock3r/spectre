@@ -104,7 +104,7 @@ abstract class VerifyCliDistributionZip : DefaultTask() {
         // cache directory, and promotion prunes that directory to three entries,
         // evicting caches belonging to installed Spectre versions.
         processBuilder.environment()["SPECTRE_AOT_CACHE_DIR"] =
-            java.nio.file.Files.createTempDirectory("spectre-verify-aot-").toFile().absolutePath
+            File(temporaryDir, "aot-cache").apply { mkdirs() }.absolutePath
         // Prefer the ZIP's jlink runtime: clear JAVA_HOME so an invalid or host JDK cannot win
         // before the launcher's bundled-runtime probe. Setting JAVA_HOME to a non-existent path
         // made Windows spectre.bat take the invalid-home branch when the probe failed to match.

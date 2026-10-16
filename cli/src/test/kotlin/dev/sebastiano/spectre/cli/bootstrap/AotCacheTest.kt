@@ -6,6 +6,7 @@ import java.nio.file.Path
 import java.nio.file.attribute.FileTime
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.io.TempDir
@@ -165,6 +166,19 @@ class AotCacheTest {
 
         assertEquals(AotCache.Mode.UNAVAILABLE, plan.mode())
         assertEquals(emptyList(), plan.jvmArguments())
+    }
+
+    @Test
+    fun `user AOT options are detected on the JVM command line too`() {
+        // Start scripts pass JAVA_OPTS/SPECTRE_OPTS as JVM arguments, not through
+        // the option environment variables the planner checks.
+        assertTrue(AotCache.hasUserAotArguments(listOf("-Xmx512m", "-XX:AOTCache=/tmp/user.aot")))
+        assertTrue(AotCache.hasUserAotArguments(listOf("-XX:AOTMode=record")))
+        assertFalse(
+            AotCache.hasUserAotArguments(
+                listOf("-Xmx512m", "-Ddev.sebastiano.spectre.agent.runtimeJar=/tmp/a.jar")
+            )
+        )
     }
 
     @Test

@@ -45,9 +45,10 @@ abstract class VerifyCliShadowJar : DefaultTask() {
     // The jar's main class is the AOT bootstrap: without isolation a verification
     // launch would train a cache for the build jar into the developer's real
     // per-user cache directory, and promotion would prune that directory to
-    // three entries, evicting caches of installed Spectre versions.
-    private val aotCacheDir: File =
-        java.nio.file.Files.createTempDirectory("spectre-verify-aot-").toFile()
+    // three entries, evicting caches of installed Spectre versions. The task's
+    // Gradle temporary directory keeps the trained cache out of the system
+    // temp area and lets Gradle clean it up.
+    private val aotCacheDir: File = File(temporaryDir, "aot-cache").apply { mkdirs() }
 
     private fun launch(jar: File, vararg arguments: String): ProcessBuilder =
         ProcessBuilder(javaExecutable(), "-jar", jar.absolutePath, *arguments)
