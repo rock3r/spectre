@@ -63,6 +63,49 @@ class AotCacheTest {
     }
 
     @Test
+    fun `daemon consumes no managed cache when the caller chose the collector`() {
+        val jar = jar()
+        val training = plan(jar)
+        Files.createDirectories(training.cacheFile().parent)
+        Files.write(training.cacheFile(), byteArrayOf(9))
+
+        // A caller-selected collector (or G1 disabled) makes the whole launch
+        // chain user-managed: the daemon must not be handed the G1-trained
+        // managed cache behind the caller's back.
+        for (collector in listOf("-XX:+UseZGC", "-XX:-UseG1GC")) {
+            assertEquals(
+                emptyList(),
+                AotCache.daemonJvmArguments(
+                    jar.toString(),
+                    emptyMap(),
+                    root.resolve("home"),
+                    "Linux",
+                    "x86_64",
+                    "25.0.1",
+                    25,
+                    emptyList(),
+                    listOf(collector),
+                ),
+            )
+        }
+        // Naming the contract's own collector explicitly changes nothing.
+        assertTrue(
+            AotCache.daemonJvmArguments(
+                    jar.toString(),
+                    emptyMap(),
+                    root.resolve("home"),
+                    "Linux",
+                    "x86_64",
+                    "25.0.1",
+                    25,
+                    emptyList(),
+                    listOf("-XX:+UseG1GC"),
+                )
+                .isNotEmpty()
+        )
+    }
+
+    @Test
     fun `planning tolerates a missing or invalid user home`() {
         // A malformed -Duser.home (supplied via JAVA_OPTS, SPECTRE_OPTS, or an
         // inherited JVM-option variable) must degrade to an uncached launch,

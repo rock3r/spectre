@@ -289,6 +289,37 @@ class SpectreBootstrapTest {
     }
 
     @Test
+    fun `standard X options survive when the plan consumes no cache`() {
+        // -Xcomp, -Xint, -Xlog and friends are outside the managed child's
+        // forwarding whitelist because an unknown option shape could risk the
+        // cache or the protocol stdout. When the plan consumes no cache
+        // (SPECTRE_AOT=off, or unavailable) that reason is gone, and dropping
+        // them would silently change the real CLI's behavior.
+        val inputArguments = listOf("-Xcomp", "-Xint", "-Xlog:class+load", "-Xmx1g")
+        for (mode in listOf(AotCache.Mode.DISABLED, AotCache.Mode.UNAVAILABLE)) {
+            assertEquals(
+                inputArguments,
+                SpectreBootstrap.callerJvmOptions(
+                    inputArguments,
+                    AotCache.Plan(mode, null, null, emptyList()),
+                ),
+            )
+        }
+        assertEquals(
+            listOf("-Xmx1g"),
+            SpectreBootstrap.callerJvmOptions(
+                inputArguments,
+                AotCache.Plan(
+                    AotCache.Mode.PRODUCTION,
+                    Path.of("/tmp", "aot", "spectre.aot"),
+                    null,
+                    emptyList(),
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun `foreign collector selection makes the launch user-managed`() {
         assertFalse(SpectreBootstrap.hasForeignCollector(listOf("-XX:+UseG1GC")))
         assertFalse(SpectreBootstrap.hasForeignCollector(listOf("-XX:+UseCompressedOops")))

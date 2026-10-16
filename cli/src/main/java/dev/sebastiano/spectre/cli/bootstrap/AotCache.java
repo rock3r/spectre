@@ -163,6 +163,13 @@ public final class AotCache {
                 .map(jar -> {
                     Plan plan = plan(jar, environment, userHome, osName, osArch, runtimeVersion,
                             featureVersion, false, "daemon", moduleOptions);
+                    if (SpectreBootstrap.hasForeignCollector(inputArguments)) {
+                        // The caller chose the collector, so the whole launch
+                        // chain is user-managed: handing the daemon the
+                        // G1-trained managed cache would override that choice
+                        // in the long-lived process doing the attach work.
+                        return List.<String>of();
+                    }
                     if (hasUserAotArguments(inputArguments, plan.cacheFile())) {
                         // The caller manages AOT for this launch chain; the
                         // daemon consumes no managed cache. (An -XX:AOTCache

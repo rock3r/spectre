@@ -395,23 +395,23 @@ public final class SpectreBootstrap {
      * set stays behind rather than risking the child's cache or protocol stdout.
      */
     public static List<String> callerJvmOptions(List<String> inputArguments) {
-        return filterCallerOptions(inputArguments, false, false);
+        return filterCallerOptions(inputArguments, false, true);
     }
 
     /**
      * {@link #callerJvmOptions} for a managed child running {@code plan}. When the
      * plan consumes no cache ({@code DISABLED} — {@code SPECTRE_AOT=off} — or {@code
      * UNAVAILABLE}), nothing on the child's command line was trained under the
-     * frontend contract, so the caller's heap-representation flags are preserved
-     * instead of being silently replaced by the pinned opposites: {@link
-     * #childCommand} places the forwarded options after the pinned ones, and the
-     * last value wins. A cache-consuming (production) child keeps the pinned
-     * representation non-negotiable.
+     * frontend contract, so the caller keeps both their heap-representation flags
+     * (forwarded after the pinned ones by {@link #childCommand}, where the last
+     * value wins) and the standard {@code -X} options the cache-consuming
+     * whitelist withholds. A cache-consuming child keeps the contract's filtering:
+     * an unknown option shape could risk the cache or the protocol stdout.
      */
     static List<String> callerJvmOptions(List<String> inputArguments, AotCache.Plan plan) {
-        boolean preserveRepresentation =
-                plan.mode() == AotCache.Mode.DISABLED || plan.mode() == AotCache.Mode.UNAVAILABLE;
-        return filterCallerOptions(inputArguments, false, preserveRepresentation);
+        boolean cacheConsumed =
+                plan.mode() == AotCache.Mode.PRODUCTION || plan.mode() == AotCache.Mode.TRAINING;
+        return filterCallerOptions(inputArguments, false, cacheConsumed);
     }
 
     /**
@@ -488,14 +488,18 @@ public final class SpectreBootstrap {
      * without it, only options compatible with the frontend contract are kept.
      */
     private static List<String> filterCallerOptions(
-            List<String> inputArguments, boolean userManaged, boolean preserveRepresentation) {
+            List<String> inputArguments, boolean userManaged, boolean cacheConsumed) {
+        // Only a cache-consuming child needs the caller's options restricted to
+        // shapes that cannot invalidate what the frontend contract trained; a
+        // user-managed or cache-free child keeps the caller's options as given.
+        boolean permissive = userManaged || !cacheConsumed;
         List<String> options = new ArrayList<>();
         for (int i = 0; i < inputArguments.size(); i++) {
             String argument = inputArguments.get(i);
             if (BOOTSTRAP_ONLY_ARGUMENTS.contains(argument)) {
                 continue;
             }
-            if (!userManaged && !preserveRepresentation && isPinnedRepresentationArgument(argument)) {
+            if (!permissive && isPinnedRepresentationArgument(argument)) {
                 continue;
             }
             if (argument.startsWith("-D")
@@ -508,7 +512,7 @@ public final class SpectreBootstrap {
                 }
                 continue;
             }
-            if (!isForwardableOption(argument)) {
+            if (!isForwardableOption(argument, permissive)) {
                 continue;
             }
             options.add(argument);
@@ -521,8 +525,17 @@ public final class SpectreBootstrap {
         return options;
     }
 
-    /** Whether {@code argument} has a JVM-option shape a managed child may inherit. */
-    private static boolean isForwardableOption(String argument) {
+    /**
+     * Whether {@code argument} has a JVM-option shape a child may inherit. A
+     * permissive child (user-managed, or consuming no cache) also keeps the
+     * standard {@code -X} options outside the cache-consuming whitelist
+     * ({@code -Xcomp}, {@code -Xint}, {@code -Xlog:…}, …): with no trained cache
+     * at stake, dropping them would silently change the real CLI's behavior.
+     */
+    private static boolean isForwardableOption(String argument, boolean permissive) {
+        if (permissive && argument.startsWith("-X")) {
+            return true;
+        }
         return argument.startsWith("-Xmx")
                 || argument.startsWith("-Xms")
                 || argument.startsWith("-Xss")

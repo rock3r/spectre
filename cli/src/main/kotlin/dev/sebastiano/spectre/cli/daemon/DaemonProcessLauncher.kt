@@ -84,7 +84,10 @@ public class DaemonProcessLauncher(
         // collide with the frontend contract, and re-applied the supported options on
         // the CLI's own command line — which is where this list reads them from.
         // Collector selectors and AOT options stay behind (see SpectreBootstrap):
-        // the daemon keeps its own ergonomics and consumes the managed cache.
+        // the daemon keeps its own ergonomics. It consumes the managed cache only
+        // for Spectre-managed launches — a caller-chosen collector, caller AOT
+        // options, or an instrumentation agent suppresses daemon cache
+        // consumption entirely (see AotCache.daemonJvmArguments).
         // Instrumentation agents stay behind too: an agent belongs to the CLI
         // process that was launched with it — a JDWP agent would fail to bind its
         // listen address a second time in the daemon.
