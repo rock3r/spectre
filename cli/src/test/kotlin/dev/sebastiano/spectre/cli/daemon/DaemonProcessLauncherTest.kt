@@ -12,6 +12,7 @@ class DaemonProcessLauncherTest {
                     socketPath = Path.of("/tmp/spectre/daemon.sock"),
                     javaExecutable = "/jdk/bin/java",
                     classPath = "spectre.jar",
+                    callerJvmOptions = { emptyList() },
                 )
                 .command()
 
@@ -36,6 +37,7 @@ class DaemonProcessLauncherTest {
                     javaExecutable = "/jdk/bin/java",
                     classPath = "spectre.jar",
                     aotJvmArguments = { listOf("-XX:AOTCache=/tmp/aot/spectre.aot") },
+                    callerJvmOptions = { emptyList() },
                 )
                 .command()
 
@@ -72,6 +74,7 @@ class DaemonProcessLauncherTest {
                         "disabled"
                             .takeIf { name == "dev.sebastiano.spectre.agent.inputCoordination" }
                     },
+                    callerJvmOptions = { emptyList() },
                 )
                 .command()
 
@@ -92,12 +95,49 @@ class DaemonProcessLauncherTest {
                         "/jars/agent.jar"
                             .takeIf { name == "dev.sebastiano.spectre.agent.runtimeJar" }
                     },
+                    callerJvmOptions = { emptyList() },
                 )
                 .command()
 
         assertEquals(
             listOf("-Ddev.sebastiano.spectre.agent.runtimeJar=/jars/agent.jar"),
             command.filter { it.startsWith("-D") },
+        )
+    }
+
+    @Test
+    fun `forwards caller JVM options to the daemon`() {
+        // JVM options the caller gave the CLI (via JAVA_TOOL_OPTIONS & friends, or
+        // JAVA_OPTS/SPECTRE_OPTS) are reconstructed onto the CLI's own command line
+        // by the bootstrap; the daemon is a fresh JVM, so they reach it only if this
+        // launcher passes them on — a caller's -Xmx1g or -javaagent must not stop
+        // at the short-lived CLI front end.
+        val command =
+            DaemonProcessLauncher(
+                    socketPath = Path.of("/tmp/spectre/daemon.sock"),
+                    javaExecutable = "/jdk/bin/java",
+                    classPath = "spectre.jar",
+                    aotJvmArguments = { listOf("-XX:AOTCache=/tmp/aot/spectre.aot") },
+                    callerJvmOptions = {
+                        listOf("-Xmx1g", "-javaagent:/tmp/agent.jar", "-XX:MaxGCPauseMillis=50")
+                    },
+                )
+                .command()
+
+        assertEquals(
+            listOf(
+                "/jdk/bin/java",
+                "-XX:AOTCache=/tmp/aot/spectre.aot",
+                "-Xmx1g",
+                "-javaagent:/tmp/agent.jar",
+                "-XX:MaxGCPauseMillis=50",
+                "-cp",
+                "spectre.jar",
+                "dev.sebastiano.spectre.cli.daemon.DaemonMainKt",
+                "--socket",
+                Path.of("/tmp", "spectre", "daemon.sock").toString(),
+            ),
+            command,
         )
     }
 
@@ -109,6 +149,7 @@ class DaemonProcessLauncherTest {
                     javaExecutable = "/jdk/bin/java",
                     classPath = "spectre.jar",
                     readProperty = { null },
+                    callerJvmOptions = { emptyList() },
                 )
                 .command()
 

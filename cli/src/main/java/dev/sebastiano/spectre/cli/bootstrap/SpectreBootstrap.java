@@ -322,7 +322,7 @@ public final class SpectreBootstrap {
      * which the frontend contract adds itself. An option shape outside the forwarded
      * set stays behind rather than risking the child's cache or protocol stdout.
      */
-    static List<String> callerJvmOptions(List<String> inputArguments) {
+    public static List<String> callerJvmOptions(List<String> inputArguments) {
         return filterCallerOptions(inputArguments, false);
     }
 

@@ -4,6 +4,7 @@ import dev.sebastiano.spectre.agent.AttachInputCoordination
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.cli.bootstrap.AotCache
+import dev.sebastiano.spectre.cli.bootstrap.SpectreBootstrap
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -16,6 +17,11 @@ public class DaemonProcessLauncher(
     private val classPath: String = System.getProperty("java.class.path"),
     private val readProperty: (String) -> String? = System::getProperty,
     private val aotJvmArguments: () -> List<String> = { AotCache.daemonJvmArguments(classPath) },
+    private val callerJvmOptions: () -> List<String> = {
+        SpectreBootstrap.callerJvmOptions(
+            java.lang.management.ManagementFactory.getRuntimeMXBean().inputArguments
+        )
+    },
 ) {
     private var startupErrorLog: Path? = null
     private var daemonProcess: Process? = null
@@ -61,6 +67,14 @@ public class DaemonProcessLauncher(
         // jar. The daemon never trains: it is detached and long-lived, so a training run here
         // would race the foreground's cache promotion and could not be promoted on exit.
         addAll(aotJvmArguments())
+        // The caller's JVM options (heap, agents, module access) reach the daemon only
+        // through this list: the bootstrap scrubbed the option environment variables
+        // (JAVA_TOOL_OPTIONS & friends) out of the CLI's environment so they could not
+        // collide with the frontend contract, and re-applied the supported options on
+        // the CLI's own command line — which is where this list reads them from.
+        // Collector selectors and AOT options stay behind (see SpectreBootstrap):
+        // the daemon keeps its own ergonomics and consumes the managed cache.
+        addAll(callerJvmOptions())
         addAll(forwardedPropertyArguments())
         add("-cp")
         add(classPath)
