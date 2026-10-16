@@ -93,8 +93,7 @@ public final class SpectreBootstrap {
             System.exit(
                     runChild(
                             userManagedChildCommand(
-                                    childJavaExecutable(), jarFile.get(), args, inputArguments),
-                            args));
+                                    childJavaExecutable(), jarFile.get(), args, inputArguments)));
             return;
         }
         if (AotCache.hasUserAotArguments(inputArguments)) {
@@ -581,11 +580,10 @@ public final class SpectreBootstrap {
                         args,
                         Runtime.version().feature(),
                         callerJvmOptions(inputArguments),
-                        callerSystemProperties(inputArguments)),
-                args);
+                        callerSystemProperties(inputArguments)));
     }
 
-    private static int runChild(List<String> command, String[] args) {
+    static int runChild(List<String> command) {
         try {
             ProcessBuilder childBuilder = new ProcessBuilder(command).inheritIO();
             sanitizeChildEnvironment(childBuilder.environment());
@@ -600,10 +598,15 @@ public final class SpectreBootstrap {
                 }
             }
         } catch (IOException e) {
-            // The JVM we are running on exists, so this is unexpected; fall back to running
-            // in-process rather than failing a command that would otherwise work.
-            runInProcess(args);
-            return 0;
+            // No in-process fallback: this JVM carries the packaged launcher's
+            // lean startup flags (-Xmx64m, -XX:TieredStopAtLevel=1), so running
+            // the full CLI here would let a long-lived `spectre mcp` inherit
+            // them and die later with an OOM that hides the real problem.
+            // Report the launch failure itself instead.
+            System.err.println(
+                    "spectre: failed to launch the CLI process (" + command.get(0) + "): "
+                            + e.getMessage());
+            return 1;
         } catch (InterruptedException e) {
             Process child = currentChild;
             if (child != null && child.isAlive()) {

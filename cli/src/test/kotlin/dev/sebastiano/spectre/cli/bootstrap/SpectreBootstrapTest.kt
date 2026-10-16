@@ -306,6 +306,19 @@ class SpectreBootstrapTest {
     }
 
     @Test
+    fun `child spawn failure is reported instead of falling back to the bootstrap JVM`() {
+        // The bootstrap JVM carries the packaged launcher's caps (-Xmx64m,
+        // TieredStopAtLevel=1); running the full CLI there after a failed child
+        // spawn would let a long-lived `spectre mcp` die later with an OOM
+        // instead of failing here with the actual launch error. A command that
+        // cannot be spawned at all must surface as a non-zero exit.
+        assertEquals(
+            1,
+            SpectreBootstrap.runChild(listOf("/definitely/not/a/java-executable", "-version")),
+        )
+    }
+
+    @Test
     fun `user-managed child carries the caller's options without the frontend contract`() {
         // A caller who supplies their own AOT cache or collector gets a child JVM
         // with exactly their options: no managed frontend arguments, no managed
