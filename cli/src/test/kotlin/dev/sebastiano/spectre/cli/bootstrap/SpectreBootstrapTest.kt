@@ -286,9 +286,18 @@ class SpectreBootstrapTest {
                 listOf("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005")
             )
         )
-        assertFalse(
+        // Client mode (server=n, or omitted — n is the default) has already
+        // attached this JVM to the debugger before main runs; a re-exec'd
+        // child would attach a second time. JDWP in either mode therefore
+        // stays in the original JVM.
+        assertTrue(
             SpectreBootstrap.hasFixedAddressAgent(
                 listOf("-agentlib:jdwp=transport=dt_socket,server=n,address=5005")
+            )
+        )
+        assertTrue(
+            SpectreBootstrap.hasFixedAddressAgent(
+                listOf("-agentlib:jdwp=transport=dt_socket,address=5005")
             )
         )
         assertFalse(

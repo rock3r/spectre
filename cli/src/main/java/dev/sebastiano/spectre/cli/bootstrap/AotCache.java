@@ -157,11 +157,20 @@ public final class AotCache {
             String osArch,
             String runtimeVersion,
             int featureVersion,
-            List<String> moduleOptions) {
+            List<String> moduleOptions,
+            List<String> inputArguments) {
         return singleJarFile(classPath)
                 .map(jar -> {
                     Plan plan = plan(jar, environment, userHome, osName, osArch, runtimeVersion,
                             featureVersion, false, "daemon", moduleOptions);
+                    if (hasUserAotArguments(inputArguments, plan.cacheFile())) {
+                        // The caller manages AOT for this launch chain; the
+                        // daemon consumes no managed cache. (An -XX:AOTCache
+                        // naming the managed cache itself is not the caller's:
+                        // it is the flag the bootstrap put on this CLI's own
+                        // command line, and must not trip this guard.)
+                        return List.<String>of();
+                    }
                     if (plan.mode() != Mode.PRODUCTION) {
                         return plan.jvmArguments();
                     }
@@ -184,10 +193,9 @@ public final class AotCache {
     public static List<String> daemonJvmArguments(String classPath) {
         List<String> inputArguments =
                 java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments();
-        if (hasUserAotArguments(inputArguments)
-                || SpectreBootstrap.hasInstrumentationAgent(inputArguments)) {
-            // User-managed AOT, or an instrumentation agent whose JVMTI hooks can
-            // make a cache unloadable: the daemon consumes no managed cache.
+        if (SpectreBootstrap.hasInstrumentationAgent(inputArguments)) {
+            // An instrumentation agent whose JVMTI hooks can make a cache
+            // unloadable: the daemon consumes no managed cache.
             return List.of();
         }
         return daemonJvmArguments(
@@ -198,9 +206,30 @@ public final class AotCache {
                 System.getProperty("os.arch"),
                 runtimeIdentity(),
                 Runtime.version().feature(),
-                SpectreBootstrap.callerModuleOptions(
-                        java.lang.management.ManagementFactory.getRuntimeMXBean()
-                                .getInputArguments()));
+                SpectreBootstrap.callerModuleOptions(inputArguments),
+                inputArguments);
+    }
+
+    /**
+     * Whether the input arguments carry caller-supplied AOT options, ignoring an
+     * {@code -XX:AOTCache} that names {@code managedCacheFile}: the bootstrap puts
+     * exactly that flag on the managed CLI's own command line, so its presence
+     * proves a Spectre-managed launch, not a caller-managed one. Any {@code
+     * AOTMode} option, or a cache pointing anywhere else, is the caller's.
+     */
+    public static boolean hasUserAotArguments(List<String> inputArguments, Path managedCacheFile) {
+        return inputArguments.stream()
+                .anyMatch(arg -> {
+                    if (arg.contains("AOTMode")) {
+                        return true;
+                    }
+                    if (arg.startsWith("-XX:AOTCache=")) {
+                        String value = arg.substring("-XX:AOTCache=".length());
+                        return managedCacheFile == null
+                                || !value.equals(managedCacheFile.toString());
+                    }
+                    return arg.contains("AOTCache");
+                });
     }
 
     /**

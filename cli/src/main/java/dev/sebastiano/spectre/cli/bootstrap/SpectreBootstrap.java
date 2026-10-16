@@ -372,17 +372,16 @@ public final class SpectreBootstrap {
     }
 
     /**
-     * Whether the caller attached a JDWP agent in listen mode ({@code
-     * -agentlib:jdwp=…,server=y,…} or the legacy {@code -Xrunjdwp} form). That
-     * agent has already bound its listen address in this JVM, so no second JVM
-     * may carry it; other agents hold no such fixed resource and re-exec
-     * user-managed like any other caller option.
+     * Whether the caller attached a JDWP agent ({@code -agentlib:jdwp=…} or the
+     * legacy {@code -Xrunjdwp} form, either mode). That agent has already
+     * connected in this JVM before {@code main} runs — listening on its address
+     * in server mode, attached to the debugger in client mode (the default) —
+     * so no second JVM may carry it; other agents hold no such fixed connection
+     * and re-exec user-managed like any other caller option.
      */
     static boolean hasFixedAddressAgent(List<String> inputArguments) {
         return inputArguments.stream()
-                .anyMatch(arg ->
-                        (arg.startsWith("-agentlib:jdwp") || arg.startsWith("-Xrunjdwp"))
-                                && arg.toLowerCase(java.util.Locale.ROOT).contains("server=y"));
+                .anyMatch(arg -> arg.startsWith("-agentlib:jdwp") || arg.startsWith("-Xrunjdwp"));
     }
 
     /**

@@ -113,6 +113,63 @@ class AotCacheTest {
                 "25.0.1",
                 25,
                 emptyList(),
+                emptyList(),
+            ),
+        )
+
+        // The managed production child itself carries -XX:AOTCache=<managed
+        // cache> in its input arguments; that must not be mistaken for a
+        // caller-managed cache when this CLI spawns its daemon, or the daemon
+        // would never consume the cache in the real packaged flow.
+        assertEquals(
+            listOf(
+                "-XX:+UseG1GC",
+                "-XX:+UseCompressedOops",
+                "-XX:-UseCompactObjectHeaders",
+                "-XX:ObjectAlignmentInBytes=8",
+                "-XX:AOTCache=" + training.cacheFile(),
+                "--enable-native-access=ALL-UNNAMED",
+            ),
+            AotCache.daemonJvmArguments(
+                jar.toString(),
+                emptyMap(),
+                root.resolve("home"),
+                "Linux",
+                "x86_64",
+                "25.0.1",
+                25,
+                emptyList(),
+                listOf("-XX:AOTCache=" + training.cacheFile()),
+            ),
+        )
+        // A caller's own AOT flag, by contrast, still suppresses daemon cache
+        // consumption entirely.
+        assertEquals(
+            emptyList(),
+            AotCache.daemonJvmArguments(
+                jar.toString(),
+                emptyMap(),
+                root.resolve("home"),
+                "Linux",
+                "x86_64",
+                "25.0.1",
+                25,
+                emptyList(),
+                listOf("-XX:AOTCache=/tmp/caller.aot"),
+            ),
+        )
+        assertEquals(
+            emptyList(),
+            AotCache.daemonJvmArguments(
+                jar.toString(),
+                emptyMap(),
+                root.resolve("home"),
+                "Linux",
+                "x86_64",
+                "25.0.1",
+                25,
+                emptyList(),
+                listOf("-XX:AOTMode=on"),
             ),
         )
     }
@@ -394,6 +451,7 @@ class AotCacheTest {
                 "x86_64",
                 "25.0.1",
                 25,
+                emptyList(),
                 emptyList(),
             ),
         )
