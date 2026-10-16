@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.cli.daemon
 import dev.sebastiano.spectre.agent.AttachInputCoordination
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.FrameLimits
+import dev.sebastiano.spectre.cli.bootstrap.AotCache
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -14,6 +15,7 @@ public class DaemonProcessLauncher(
     private val javaExecutable: String = defaultJavaExecutable(),
     private val classPath: String = System.getProperty("java.class.path"),
     private val readProperty: (String) -> String? = System::getProperty,
+    private val aotJvmArguments: () -> List<String> = { AotCache.daemonJvmArguments(classPath) },
 ) {
     private var startupErrorLog: Path? = null
     private var daemonProcess: Process? = null
@@ -55,6 +57,10 @@ public class DaemonProcessLauncher(
     /** Returns the isolated daemon command without starting a process. */
     public fun command(): List<String> = buildList {
         add(javaExecutable)
+        // JDK 25 Leyden cache, when the foreground launch already trained one for this exact
+        // jar. The daemon never trains: it is detached and long-lived, so a training run here
+        // would race the foreground's cache promotion and could not be promoted on exit.
+        addAll(aotJvmArguments())
         addAll(forwardedPropertyArguments())
         add("-cp")
         add(classPath)

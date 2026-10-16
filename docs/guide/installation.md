@@ -44,11 +44,14 @@ on `PATH`.
 
 ## Requirements
 
-- **JDK 21 or newer.** JBR 21 is the project's dev-loop default; JBR 25 and Temurin LTS
-  are matrix-exercised (see [Stability policy](../STABILITY.md#jvm-runtime-support-tiers)
+- **JDK 21 or newer for the libraries; JDK 25 or newer for the CLI.** JBR 21 is the
+  project's dev-loop default; JBR 25 and Temurin LTS are matrix-exercised (see
+  [Stability policy](../STABILITY.md#jvm-runtime-support-tiers)
   and the [runtime matrix](https://github.com/rock3r/spectre/blob/main/.github/workflows/runtime-matrix.yml)).
-  Any JDK 21+ works for the non-IDE modules; IntelliJ-hosted Compose uses the IDE’s
-  bundled JBR.
+  Any JDK 21+ works for the non-IDE library modules; IntelliJ-hosted Compose uses the
+  IDE’s bundled JBR. The `spectre` CLI and its daemon require JDK 25+ for the Leyden
+  AOT cache — packaged CLI distributions bundle a Temurin 25 runtime, so this only
+  matters for `java -jar` / start-script launches against a system JDK.
 - **Windows 10 version 1903 or newer**, **.NET 8 Desktop Runtime**, and
   **Windows App Runtime 1.8** for native window/region recording and still-window screenshots
   through Windows Graphics Capture. Contributors and CI that build the helper from source

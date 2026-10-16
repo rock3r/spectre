@@ -36,15 +36,17 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up JDK 21
-        # CI uses Temurin 21; local dev keeps using JBR 21 via `JAVA_HOME`. The toolchain
-        # version is what matters here (production code targets 21) — no Compose Desktop
-        # runtime test in `:check` relies on JBR-only patches, so Temurin is the simpler
-        # CI choice.
+      - name: Set up JDK 25
+        # CI uses Temurin 25; local dev keeps using JBR 21 via `JAVA_HOME` for the
+        # libraries. The host JDK is 25 because `:cli` compiles to JDK 25 bytecode and
+        # its verification tasks run the packaged jar; library modules still compile
+        # and test against their `jvmToolchain(21)` via toolchain provisioning. No
+        # Compose Desktop runtime test in `:check` relies on JBR-only patches, so
+        # Temurin is the simpler CI choice.
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5

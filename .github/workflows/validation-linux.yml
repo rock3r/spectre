@@ -93,11 +93,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up JDK 21
+      - name: Set up JDK 25
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
@@ -155,7 +155,7 @@ jobs:
         # capture work end-to-end.
         #
         # Extending this workflow rather than adding a sibling because the runner setup
-        # (Xvfb + JDK 21 + Gradle + Rust) is identical and the path filters already cover
+        # (Xvfb + JDK 25 + Gradle + Rust) is identical and the path filters already cover
         # `sample-desktop/**`. A separate workflow file would just duplicate that setup with
         # no scope difference.
         #

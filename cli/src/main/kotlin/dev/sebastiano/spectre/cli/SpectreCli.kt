@@ -132,7 +132,10 @@ internal fun minimumJdkPreflightError(featureVersion: Int = Runtime.version().fe
         null
     }
 
-private const val MINIMUM_JDK_FEATURE_VERSION: Int = 21
+// The CLI requires JDK 25 for the Leyden AOT cache (JEP 514/515). The published
+// libraries and the injected agent-runtime still target 21 so they keep loading into
+// JDK 21 target JVMs; only this entry point and the daemon it spawns require 25.
+private const val MINIMUM_JDK_FEATURE_VERSION: Int = 25
 
 private class RootCommand(
     request: (DaemonRequest) -> DaemonResponse,

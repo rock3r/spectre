@@ -371,7 +371,8 @@ subprojects {
             }
     }
 
-    // Runtime matrix (#216 / epic #215): modules keep `jvmToolchain(21)` for compile, but
+    // Runtime matrix (#216 / epic #215): library modules keep `jvmToolchain(21)` for
+    // compile (the CLI uses 25 and is not in the matrix suites), but
     // matrix cells must *execute* Test / JavaExec workers on the provisioned JBR/Temurin.
     // When SPECTRE_MATRIX_JAVA_HOME is set (by `.github/workflows/runtime-matrix.yml`), force
     // the worker JVM onto that home so JBR 25 cells do not silently fall back to a toolchain

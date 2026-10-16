@@ -79,12 +79,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up JDK 21
-        # Same Temurin choice as ci.yml + windows.yml — local dev uses JBR 21 via `JAVA_HOME`.
+      - name: Set up JDK 25
+        # Same Temurin choice as ci.yml + windows.yml — host is 25 for the JDK 25 CLI;
+        # local dev uses JBR 21 via `JAVA_HOME` for libraries.
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5

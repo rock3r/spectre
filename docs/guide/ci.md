@@ -161,7 +161,8 @@ Useful patterns to search for include `Sandbox: java(...) deny(1) mach-lookup`,
 
 ## Runtime matrix (JBR / Temurin)
 
-Per-PR CI stays on a single Temurin 21 JDK for speed. Compatibility across **JBR 21**,
+Per-PR CI runs on a single Temurin 25 host JDK (the CLI requires JDK 25; libraries
+still target 21). Compatibility across **JBR 21**,
 **JBR 25**, and **Temurin LTS** (toolchain major) on macOS, Linux, and Windows is covered by
 the scheduled [runtime-matrix](https://github.com/rock3r/spectre/blob/main/.github/workflows/runtime-matrix.yml)
 workflow (epic #215 / issue #216):
@@ -182,7 +183,8 @@ before helper builds and publish. A red cell blocks the release; scheduled failu
 issues labelled `runtime-matrix` rather than vanishing into Actions noise.
 
 Test/JavaExec workers are forced onto the matrix JDK via `SPECTRE_MATRIX_JAVA_HOME`
-(root `build.gradle.kts`); modules still **compile** with `jvmToolchain(21)`. Without that
+(root `build.gradle.kts`); library modules still **compile** with `jvmToolchain(21)`
+(the CLI, which is not part of the matrix suites, compiles with 25). Without that
 env, Gradle would execute JBR 25 cells on a toolchain-provisioned JDK 21 and the matrix
 would not prove runtime compatibility.
 

@@ -179,6 +179,12 @@ for non-IDE modules; claims are fail-closed on **executable evidence** (same rul
 | **Other vanilla LTS JDKs ≥ toolchain** (e.g. other Temurin/Zulu majors ≥ 21) | Best-effort | Not every vendor/major is matrixed. Expect to work for non-IDE modules; regressions should be filed. |
 | **JVM &lt; 21** | Unsupported | Toolchain and published bytecode target 21. |
 
+The **`spectre` CLI and its daemon are the exception**: they require **JDK 25+**
+(bundled Temurin 25 in packaged distributions) so they can use the JDK 25 Leyden
+AOT cache for startup. That requirement does not change the library tiers above:
+published library bytecode still targets 21, and the injected `agent-runtime`
+still loads into JDK 21 target JVMs. See [CLI — startup and the AOT cache](guide/cli.md#startup-and-the-aot-cache).
+
 ### What “supported” means operationally
 
 1. **Exercised** by the scheduled + release-gated runtime matrix

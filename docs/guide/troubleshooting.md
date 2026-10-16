@@ -547,9 +547,11 @@ returns a human-readable diagnostic without throwing.
 - **Locally**: JBR 21 is the dev-loop default. JBR 25 is exercised by the scheduled
   [runtime matrix](https://github.com/rock3r/spectre/blob/main/.github/workflows/runtime-matrix.yml)
   and by the IDE-hosted UI test (IntelliJ 2026.2 / platform 262 bundles JBR 25).
-- **On CI (per-PR)**: Temurin 21 for speed. The full JBR/Temurin × OS matrix is
+- **On CI (per-PR)**: Temurin 25 (the CLI requires JDK 25). The full JBR/Temurin × OS matrix is
   scheduled and **release-gated**, not per-PR.
-- **For consumers**: any JDK **21+** works for non-IDE modules. The codified supported
+- **For consumers**: any JDK **21+** works for non-IDE library modules; the `spectre`
+  CLI and its daemon require JDK **25+** (the packaged CLI bundles its own runtime).
+  The codified supported
   set and what “supported” means operationally live in
   [Stability policy — JVM runtime support tiers](../STABILITY.md#jvm-runtime-support-tiers).
 

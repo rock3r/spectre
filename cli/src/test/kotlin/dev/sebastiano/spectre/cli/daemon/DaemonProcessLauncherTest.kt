@@ -28,6 +28,31 @@ class DaemonProcessLauncherTest {
         )
     }
 
+    @Test
+    fun `includes ready AOT cache arguments for the daemon JVM`() {
+        val command =
+            DaemonProcessLauncher(
+                    socketPath = Path.of("/tmp/spectre/daemon.sock"),
+                    javaExecutable = "/jdk/bin/java",
+                    classPath = "spectre.jar",
+                    aotJvmArguments = { listOf("-XX:AOTCache=/tmp/aot/spectre.aot") },
+                )
+                .command()
+
+        assertEquals(
+            listOf(
+                "/jdk/bin/java",
+                "-XX:AOTCache=/tmp/aot/spectre.aot",
+                "-cp",
+                "spectre.jar",
+                "dev.sebastiano.spectre.cli.daemon.DaemonMainKt",
+                "--socket",
+                Path.of("/tmp", "spectre", "daemon.sock").toString(),
+            ),
+            command,
+        )
+    }
+
     // ---- forwarded switches (#472) ----
     //
     // The daemon is a fresh JVM with an explicit command line, so a system property set on the CLI

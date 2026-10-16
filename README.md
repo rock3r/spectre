@@ -106,7 +106,8 @@ Two heavier checks live outside `:check`:
 JBR 21 (dev-loop default), JBR 25, and Temurin LTS (toolchain major) are the codified
 supported set — see [docs/STABILITY.md](docs/STABILITY.md#jvm-runtime-support-tiers).
 They are exercised by the scheduled [runtime matrix](.github/workflows/runtime-matrix.yml)
-and re-run as a **release gate**. Per-PR CI stays on Temurin 21 for speed. Pins and the
+and re-run as a **release gate**. Per-PR CI runs on a Temurin 25 host so the JDK 25
+CLI verifies alongside the JDK 21 libraries. Pins and the
 bump procedure live in [`.github/jbr-pins.env`](.github/jbr-pins.env).
 
 ## CI
