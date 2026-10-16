@@ -31,7 +31,7 @@ public class DaemonProcessLauncher(
     public fun start(): Process {
         val errorLog = Files.createTempFile("spectre-daemon-startup-", ".log")
         startupErrorLog = errorLog
-        return ProcessBuilder(command())
+        return processBuilder()
             .also { restoreBundledRuntimeExecutePermissions() }
             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
             .redirectError(errorLog.toFile())
@@ -60,6 +60,17 @@ public class DaemonProcessLauncher(
         }
     }
 
+    /**
+     * The builder for the daemon process: the isolated command, with the JVM option environment
+     * variables removed from the inherited environment. The daemon's options are reconstructed
+     * explicitly on its command line (see [command]); a thin start-script launch keeps
+     * `JAVA_TOOL_OPTIONS` & friends in the CLI's environment, and leaving them in the daemon's
+     * would apply them a second time — agents initialized twice, an environment collector colliding
+     * with the cache-consuming daemon's pinned G1.
+     */
+    internal fun processBuilder(): ProcessBuilder =
+        ProcessBuilder(command()).also { sanitizeDaemonEnvironment(it.environment()) }
+
     /** Returns the isolated daemon command without starting a process. */
     public fun command(): List<String> = buildList {
         add(javaExecutable)
@@ -67,14 +78,17 @@ public class DaemonProcessLauncher(
         // jar. The daemon never trains: it is detached and long-lived, so a training run here
         // would race the foreground's cache promotion and could not be promoted on exit.
         addAll(aotJvmArguments())
-        // The caller's JVM options (heap, agents, module access) reach the daemon only
+        // The caller's JVM options (heap, module access) reach the daemon only
         // through this list: the bootstrap scrubbed the option environment variables
         // (JAVA_TOOL_OPTIONS & friends) out of the CLI's environment so they could not
         // collide with the frontend contract, and re-applied the supported options on
         // the CLI's own command line — which is where this list reads them from.
         // Collector selectors and AOT options stay behind (see SpectreBootstrap):
         // the daemon keeps its own ergonomics and consumes the managed cache.
-        addAll(callerJvmOptions())
+        // Instrumentation agents stay behind too: an agent belongs to the CLI
+        // process that was launched with it — a JDWP agent would fail to bind its
+        // listen address a second time in the daemon.
+        addAll(callerJvmOptions().filterNot(SpectreBootstrap::isInstrumentationAgentArgument))
         addAll(forwardedPropertyArguments())
         add("-cp")
         add(classPath)
@@ -117,7 +131,12 @@ public class DaemonProcessLauncher(
             .setExecutable(true, false)
     }
 
-    private companion object {
+    public companion object {
+        /** Removes the JVM option environment variables from a daemon environment. */
+        internal fun sanitizeDaemonEnvironment(environment: MutableMap<String, String>) {
+            SpectreBootstrap.sanitizeChildEnvironment(environment)
+        }
+
         private const val DAEMON_MAIN_CLASS: String =
             "dev.sebastiano.spectre.cli.daemon.DaemonMainKt"
 

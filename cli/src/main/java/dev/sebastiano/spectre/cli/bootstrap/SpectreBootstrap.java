@@ -37,8 +37,9 @@ import java.util.Optional;
  *       themselves, or
  *   <li>runs the real CLI in-process when caching is unavailable (JDK &lt; 25, exploded
  *       or multi-entry classpath — the latter is the thin start-script distribution,
- *       whose child could not be built from the CLI jar alone), so behaviour is
- *       unchanged.
+ *       whose child could not be built from the CLI jar alone) or when the caller
+ *       attached an instrumentation agent, which belongs to exactly one JVM, so
+ *       behaviour is unchanged.
  * </ul>
  *
  * <p>Training never touches the real command's stdio: a record run appends an {@code
@@ -67,10 +68,17 @@ public final class SpectreBootstrap {
     public static void main(String[] args) {
         List<String> inputArguments =
                 java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments();
+        if (hasInstrumentationAgent(inputArguments)) {
+            // An agent belongs to exactly one JVM: it may already hold a fixed
+            // resource in this process (a JDWP listen address, a profiler port)
+            // that a re-exec'd child carrying the identical agent could not
+            // bind, and its JVMTI hooks can make a managed cache unloadable.
+            // Run the real CLI here, agent and all, as before the bootstrap.
+            runInProcess(args);
+            return;
+        }
         Optional<Path> jarFile = currentJarFile();
-        if ((AotCache.hasUserAotArguments(inputArguments)
-                        || hasForeignCollector(inputArguments)
-                        || hasInstrumentationAgent(inputArguments))
+        if ((AotCache.hasUserAotArguments(inputArguments) || hasForeignCollector(inputArguments))
                 && jarFile.isPresent()) {
             // The caller manages AOT or the collector themselves (java
             // -XX:AOTCache=..., or a start script's JAVA_OPTS/SPECTRE_OPTS): their
@@ -344,15 +352,19 @@ public final class SpectreBootstrap {
      * an agent can install a JVMTI class-file-load hook, which JDK 25 lists as a
      * reason an AOT cache cannot load; training records without the caller's agent,
      * so an agent-bearing launch would plan PRODUCTION against a cache its JVM
-     * then silently rejects on every invocation. Agent-bearing launches are
-     * user-managed instead: the agent applies, no managed cache is involved.
+     * then silently rejects on every invocation. Agent-bearing launches therefore
+     * run in-process (see {@link #main}): the agent applies, no managed cache is
+     * involved, and no second JVM tries to bind the agent's resources again.
      */
     static boolean hasInstrumentationAgent(List<String> inputArguments) {
-        return inputArguments.stream()
-                .anyMatch(arg ->
-                        arg.startsWith("-javaagent:")
-                                || arg.startsWith("-agentlib:")
-                                || arg.startsWith("-agentpath:"));
+        return inputArguments.stream().anyMatch(SpectreBootstrap::isInstrumentationAgentArgument);
+    }
+
+    /** Whether {@code argument} attaches an instrumentation agent to this JVM. */
+    public static boolean isInstrumentationAgentArgument(String argument) {
+        return argument.startsWith("-javaagent:")
+                || argument.startsWith("-agentlib:")
+                || argument.startsWith("-agentpath:");
     }
 
     /**
@@ -509,7 +521,7 @@ public final class SpectreBootstrap {
      * the child would exit with "Multiple garbage collectors selected", even with
      * {@code SPECTRE_AOT=off}.
      */
-    static void sanitizeChildEnvironment(java.util.Map<String, String> environment) {
+    public static void sanitizeChildEnvironment(java.util.Map<String, String> environment) {
         INHERITED_OPTION_ENV.forEach(environment::remove);
     }
 

@@ -264,19 +264,23 @@ class SpectreBootstrapTest {
     }
 
     @Test
-    fun `instrumentation agents make the launch user-managed`() {
+    fun `instrumentation agents keep the launch in one JVM`() {
         // A JVMTI agent (coverage, profiling) can install a class-file-load
-        // hook; JDK 25 lists such hooks as a reason an AOT cache cannot load.
-        // Training records without the caller's agent, so a cache trained
-        // agent-free could be silently rejected by every agent-bearing
-        // production launch. Agent-bearing launches therefore skip managed
-        // caching entirely and run user-managed, agent and all.
+        // hook; JDK 25 lists such hooks as a reason an AOT cache cannot load,
+        // and training records without the caller's agent. Agent-bearing
+        // launches therefore skip managed caching entirely. They also cannot
+        // re-exec: an agent with a fixed resource (a JDWP listen address, a
+        // profiler port) is already bound by this JVM, and a child carrying
+        // the identical agent would fail to bind it. The real CLI runs in
+        // this JVM, agent and all — exactly as it did before the bootstrap.
         assertTrue(SpectreBootstrap.hasInstrumentationAgent(listOf("-javaagent:/tmp/jacoco.jar")))
         assertTrue(
             SpectreBootstrap.hasInstrumentationAgent(listOf("-agentlib:jdwp=transport=dt_socket"))
         )
         assertTrue(SpectreBootstrap.hasInstrumentationAgent(listOf("-agentpath:/tmp/profiler.so")))
         assertFalse(SpectreBootstrap.hasInstrumentationAgent(listOf("-Xmx1g", "-XX:+UseG1GC")))
+        assertTrue(SpectreBootstrap.isInstrumentationAgentArgument("-javaagent:/tmp/jacoco.jar"))
+        assertFalse(SpectreBootstrap.isInstrumentationAgentArgument("-Xmx1g"))
     }
 
     @Test
