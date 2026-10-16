@@ -314,7 +314,14 @@ public final class SpectreBootstrap {
 
     /** Module options that take their value as the following argument token. */
     private static final List<String> TWO_TOKEN_MODULE_OPTIONS =
-            List.of("--add-modules", "--add-opens", "--add-exports", "--add-reads", "--patch-module");
+            List.of(
+                    "--add-modules",
+                    "--add-opens",
+                    "--add-exports",
+                    "--add-reads",
+                    "--patch-module",
+                    "--module-path",
+                    "--upgrade-module-path");
 
     /** Whether {@code argument} selects a garbage collector ({@code -XX:+Use…GC}). */
     private static boolean isCollectorSelector(String argument) {
@@ -379,8 +386,31 @@ public final class SpectreBootstrap {
      * and re-exec user-managed like any other caller option.
      */
     static boolean hasFixedAddressAgent(List<String> inputArguments) {
-        return inputArguments.stream()
-                .anyMatch(arg -> arg.startsWith("-agentlib:jdwp") || arg.startsWith("-Xrunjdwp"));
+        return inputArguments.stream().anyMatch(SpectreBootstrap::isJdwpAgentArgument);
+    }
+
+    /**
+     * Whether {@code argument} loads the JDWP agent, by name ({@code
+     * -agentlib:jdwp}, legacy {@code -Xrunjdwp}) or by library path ({@code
+     * -agentpath:…/libjdwp.so}, {@code jdwp.dll}), whose file name is what
+     * identifies it.
+     */
+    private static boolean isJdwpAgentArgument(String argument) {
+        if (argument.startsWith("-agentlib:jdwp") || argument.startsWith("-Xrunjdwp")) {
+            return true;
+        }
+        if (!argument.startsWith("-agentpath:")) {
+            return false;
+        }
+        String library = argument.substring("-agentpath:".length());
+        int optionsStart = library.indexOf('=');
+        if (optionsStart >= 0) {
+            library = library.substring(0, optionsStart);
+        }
+        int fileNameStart = Math.max(library.lastIndexOf('/'), library.lastIndexOf('\\')) + 1;
+        return library.substring(fileNameStart)
+                .toLowerCase(java.util.Locale.ROOT)
+                .contains("jdwp");
     }
 
     /**
@@ -415,8 +445,9 @@ public final class SpectreBootstrap {
     }
 
     /**
-     * The caller's module options ({@code --add-*} and {@code --patch-module}, with
-     * their values) from the input arguments. These shape the module graph JEP 483
+     * The caller's module options ({@code --add-*}, {@code --patch-module}, {@code
+     * --module-path}, and {@code --upgrade-module-path}, with their values) from
+     * the input arguments. These shape the module graph JEP 483
      * archives, so the record run and the cache-assembly JVM must carry exactly the
      * ones the production child carries, or the JVM rejects the trained cache on
      * every launch. {@code --enable-native-access} is not part of this list: every
@@ -428,7 +459,10 @@ public final class SpectreBootstrap {
         List<String> options = new ArrayList<>();
         for (int i = 0; i < inputArguments.size(); i++) {
             String argument = inputArguments.get(i);
-            if (!argument.startsWith("--add-") && !argument.startsWith("--patch-module")) {
+            if (!argument.startsWith("--add-")
+                    && !argument.startsWith("--patch-module")
+                    && !argument.startsWith("--module-path")
+                    && !argument.startsWith("--upgrade-module-path")) {
                 continue;
             }
             options.add(argument);
@@ -546,6 +580,8 @@ public final class SpectreBootstrap {
                 || argument.startsWith("--add-")
                 || argument.startsWith("--enable-")
                 || argument.startsWith("--patch-module")
+                || argument.startsWith("--module-path")
+                || argument.startsWith("--upgrade-module-path")
                 || argument.equals("-ea")
                 || argument.equals("-da")
                 || argument.startsWith("-ea:")

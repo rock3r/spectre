@@ -289,6 +289,36 @@ class SpectreBootstrapTest {
     }
 
     @Test
+    fun `module path options travel with the module options they serve`() {
+        // --add-modules without --module-path leaves the child unable to find
+        // the very modules the caller asked for; the two shape the module
+        // graph together, so both the forwarded options and the module-option
+        // set (which training, assembly, and the fingerprint all consume)
+        // must carry them, in equals and two-token forms alike.
+        val inputArguments =
+            listOf(
+                "--module-path",
+                "/plugins",
+                "--add-modules=my.plugin",
+                "--upgrade-module-path=/upgrades",
+            )
+
+        assertEquals(inputArguments, SpectreBootstrap.callerModuleOptions(inputArguments))
+        assertEquals(
+            inputArguments,
+            SpectreBootstrap.callerJvmOptions(
+                inputArguments,
+                AotCache.Plan(
+                    AotCache.Mode.PRODUCTION,
+                    Path.of("/tmp", "aot", "spectre.aot"),
+                    null,
+                    emptyList(),
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun `standard X options survive when the plan consumes no cache`() {
         // -Xcomp, -Xint, -Xlog and friends are outside the managed child's
         // forwarding whitelist because an unknown option shape could risk the
@@ -371,6 +401,21 @@ class SpectreBootstrapTest {
         )
         assertFalse(
             SpectreBootstrap.hasFixedAddressAgent(listOf("-javaagent:/tmp/jacoco.jar=output=file"))
+        )
+        // JDWP can also be loaded by path; the agent library's name is what
+        // identifies it, and it holds the same already-connected session.
+        assertTrue(
+            SpectreBootstrap.hasFixedAddressAgent(
+                listOf("-agentpath:/jdk/lib/libjdwp.so=transport=dt_socket,server=y,address=5005")
+            )
+        )
+        assertTrue(
+            SpectreBootstrap.hasFixedAddressAgent(
+                listOf("-agentpath:C:\\jdk\\bin\\jdwp.dll=transport=dt_socket,address=5005")
+            )
+        )
+        assertFalse(
+            SpectreBootstrap.hasFixedAddressAgent(listOf("-agentpath:/tmp/libprofiler.so=x"))
         )
     }
 
