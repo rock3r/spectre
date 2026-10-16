@@ -1,32 +1,31 @@
 # Synchronization
 
-Spectre reads and actions do not wait for idle automatically. Use the five explicit wait
-helpers below where your test needs them.
+Spectre reads and actions do not wait for idle automatically.
+Add an explicit wait when the next test step depends on a UI change.
 
 ## Interactive-only: Compose Hot Reload settle
 
-JUnit / `:testing` has **no** hot-reload wait. For the CLI and MCP attach path only, Spectre
-exposes `wait --reload-settled` / `wait_for_reload_settled` when the target process is already
-running under Compose Hot Reload. That wait is optional, fails closed without HR, and is
-documented under [Compose Hot Reload awareness](hot-reload.md). Prefer
-`waitForNode` / `waitForIdle` / `waitForVisualIdle` in automated tests.
+JUnit and `:testing` have **no** Hot Reload wait. CLI and MCP attach expose
+`wait --reload-settled` and `wait_for_reload_settled` for targets running under
+Compose Hot Reload. These calls fail when Hot Reload is unavailable.
+See [Compose Hot Reload awareness](hot-reload.md).
+Automated tests can use `waitForNode`, `waitForIdle`, and `waitForVisualIdle`.
 
 ## The EDT rule
 
-All five wait helpers — `waitForNode`, `waitUntilGone`, `waitUntil`, `waitForIdle`,
-and `waitForVisualIdle` — refuse to run on the AWT event dispatch thread:
+All five wait helpers (`waitForNode`, `waitUntilGone`, `waitUntil`, `waitForIdle`,
+and `waitForVisualIdle`) refuse to run on the AWT event dispatch thread:
 
 ```
 waitForNode must not be called from the AWT event dispatch thread;
 wrap the call with withContext(Dispatchers.Default) or similar.
 ```
 
-This is enforced because their loops snapshot semantics via `invokeAndWait`/`readOnEdt`
-— running on the EDT would either deadlock or skip the bounded worker that enforces the
-timeout. None of the five are exempt.
+Their loops read semantics through `invokeAndWait` and `readOnEdt`.
+An EDT caller could deadlock or bypass the worker that enforces timeouts.
+All five helpers reject EDT callers.
 
-The standard pattern in tests — JUnit runs tests off the EDT, so no `withContext` is
-needed:
+JUnit runs test methods outside the EDT. A normal test can call waits directly:
 
 ```kotlin
 @Test
@@ -37,22 +36,21 @@ fun mySpec(): Unit = runSpectreTest {
 }
 ```
 
-If you call any wait helper from the EDT you'll get a clear `IllegalStateException`
-rather than a deadlock. The fix in that case is `withContext(Dispatchers.Default)`
-around the offending call — see
+Calling any wait helper from the EDT throws `IllegalStateException`, preventing a deadlock.
+Move that call into `withContext(Dispatchers.Default)`
+around the offending call; see
 [Troubleshooting](troubleshooting.md#i-called-a-wait-helper-from-the-edt).
 
 ## JUnit expression-body return types
 
-When you write Spectre tests as `fun mySpec(): Unit = runSpectreTest { ... }`, the explicit
-`: Unit` matters. JUnit 5.14 and newer reject `@Test` methods whose JVM return type is
-not `void`, and Kotlin expression-body functions infer their return type from the last
-expression in the body. Some assertion helpers return the asserted value, not `Unit`, so
-omitting `: Unit` can make a test compile but disappear at discovery time.
+Write expression-body tests as `fun mySpec(): Unit = runSpectreTest { ... }`.
+JUnit 5.14 and newer reject `@Test` methods whose JVM return type is not `void`.
+Kotlin infers that return type from the body's last expression.
+An assertion that returns a value can make a compiled test disappear at discovery.
 
 ## `waitForNode`
 
-The "the UI is on screen" barrier:
+Wait for a matching node:
 
 ```kotlin
 val node = automator.waitForNode(
@@ -62,19 +60,16 @@ val node = automator.waitForNode(
 )
 ```
 
-Polls the semantics tree until a node matches every non-null criterion you pass, then
-returns it; throws on timeout. You must pass at least one of `tag` or `text`. If you
-pass both, the helper waits for a node whose test tag matches **and** whose text (or
-editable text) matches — `tag` and `text` together describe a single node, not a choice
-between two.
+`waitForNode` polls the semantics tree and returns a node that meets every provided
+criterion. It throws on timeout. Pass `tag`, `text`, or both.
+When both are set, one node must match the tag **and** its text or editable text.
 
-Use it once after launching the UI to know your test can start touching things, and
-optionally after each interaction that introduces new content (a dialog opening, a list
-item appearing).
+Call it after launching the UI and after interactions that add expected content,
+such as a dialog or list item.
 
 ## `waitUntilGone`
 
-The "it has left the screen" barrier — `waitForNode`'s counterpart for absence:
+Wait until a matching node disappears:
 
 ```kotlin
 automator.click(dismissButton)
@@ -85,16 +80,14 @@ automator.waitUntilGone(
 )
 ```
 
-Polls until **no** node in any tracked window matches every non-null criterion you pass,
-then returns. As with `waitForNode`, you must pass at least one of `tag` or `text`, and
+Polls until **no** node in any tracked window matches every non-null supplied criterion,
+then returns. As with `waitForNode`, at least one of `tag` or `text` is required, and
 passing both means "no single node carrying this tag **and** this text".
 
-Every poll calls `refreshWindows()` first, and that is the point of the helper. Compose
-Desktop popups — menus, combo boxes, speed search — can render in their own `Window`, so
-dismissing one takes the whole window, and every node in it, out of the tracked-window
-set. There is no node left to query; only its absence across all tracked windows is
-observable, and a window vanishing between two polls is seen rather than answered from a
-stale snapshot.
+`waitUntilGone` calls `refreshWindows()` before every poll.
+Compose Desktop menus, combo boxes, and speed search can use separate `Window` instances.
+Closing one removes its nodes from the tracked windows.
+The refresh lets the next poll observe that absence.
 
 On timeout it throws an `IllegalStateException` that names the selector, the timeout, and
 what was still on screen:
@@ -103,22 +96,21 @@ what was still on screen:
 waitUntilGone timed out after 5000ms: 1 node(s) matching tag="popup.body" still present in tracked windows
 ```
 
-Use it after dismissing a popup, menu, or dialog — before asserting on whatever the
+Use it after dismissing a popup, menu, or dialog, before asserting on whatever the
 dismissal revealed, or before the next click that would otherwise land on the closing
 surface.
 
 It is reachable over every transport `waitForNode` reaches: CLI
 [`wait-until-gone`](cli.md#inspection-and-waits), MCP `wait_until_gone`, and agent attach
 (`AttachedAutomator.waitUntilGone`). The timeout diagnostics above cross those boundaries
-intact — as do the other waits' — so a remote caller still learns which selector stayed on
+intact, as do the other waits', so a remote caller still learns which selector stayed on
 screen and how many nodes matched. See the [capability matrix](capability-matrix.md) for the
 per-transport cell states and [agent attach](agent.md) for how the wire deadline is sized to
 let those messages through.
 
 ## `waitUntil`
 
-The open-ended barrier, for conditions a tag/text selector cannot express — a node
-*count*, a *comparison*, a *combination*:
+Use `waitUntil` for a tree condition such as a node count or a combination of states:
 
 ```kotlin
 automator.waitUntil(
@@ -130,27 +122,23 @@ automator.waitUntil(
 }
 ```
 
-The lambda is a predicate on
-[`AutomatorTree`](automator.md#surfaces-and-the-semantics-tree) — the same snapshot
-`tree()` returns, so `windows()`, `allNodes()`, and `roots()` are what you phrase the
-condition against. Every poll re-reads that tree (and refreshes windows
-first, exactly like `waitUntilGone`), so a window or popup that appeared between two
-polls is seen rather than answered from a stale snapshot. Returns as soon as the
-condition holds.
+The predicate receives an [`AutomatorTree`](automator.md#surfaces-and-the-semantics-tree)
+snapshot, like `tree()` returns. Use `windows()`, `allNodes()`, and `roots()`
+to express the condition. Each poll refreshes windows and reads a new tree.
+The wait returns when the condition becomes true.
 
-`description` is required and must not be blank: it is the only thing the failure can
-say about your condition, so phrase it as the state you were waiting for, not as an
-action.
+`description` is required and must contain text. The timeout error uses it to
+describe the condition. State the expected UI state in that description.
 
-Keep the condition cheap and side-effect free — read the tree and decide, nothing more.
-`timeout` bounds the polling loop rather than a single poll: each poll runs to completion
-before the deadline is re-checked, so a condition that blocks will overrun it.
+Keep the condition quick and free of side effects.
+`timeout` bounds the polling loop. An individual poll can run past the deadline.
+A blocked condition can therefore exceed the timeout before the next deadline check.
 
 ```
 waitUntil timed out after 5000ms: condition "the lazy list has realised at least five rows" never held in tracked windows
 ```
 
-Reach for it when the barrier is about the shape of the UI rather than one node:
+Use it for conditions that involve several nodes or the wider tree:
 
 ```kotlin
 // A combination — "the popup is gone AND its trigger is back" is one barrier, not two.
@@ -166,30 +154,25 @@ automator.waitUntil(description = "the secondary window is being tracked") {
 }
 ```
 
-For a single node appearing or disappearing, `waitForNode` and `waitUntilGone` say what
-you mean with less ceremony — use those.
+For a single node appearing or disappearing, use `waitForNode` or `waitUntilGone`.
 
-Unlike those two, `waitUntil` is **in-process only**. Its condition is a Kotlin lambda, and
-a lambda does not cross a process boundary, so there is no CLI, MCP, or agent-attach
-equivalent — see the [capability matrix](capability-matrix.md) for what each transport
-reaches. Over a transport, phrase the barrier as a selector wait instead.
+`waitUntil` works **in-process only** because its Kotlin predicate cannot cross the
+transport boundary. CLI, MCP, and agent attach use selector waits instead.
+See the [capability matrix](capability-matrix.md) for each transport's operations.
 
-### It waits on the UI, not on your program
+### Wait for UI conditions {#it-waits-on-the-ui-not-on-your-program}
 
-`waitUntil` is scoped to what Spectre can see: the semantics tree it hands your
-predicate. Kotlin closures can capture anything in scope, so nothing stops you polling a
-service flag, a file, or an HTTP response from inside the lambda — but that is a
-boundary this helper declines to invite rather than one it can enforce, and crossing it
-buys you nothing except a timeout message that describes the wrong thing.
+`waitUntil` is designed for conditions on its semantics tree snapshot.
+Kotlin closures can still read a service flag, file, or HTTP response. Spectre
+cannot describe those external conditions accurately on timeout.
 
-Wait for non-UI state with the tool that owns it: `withTimeout` around your own
-suspending call, your test framework's polling helper, or an
-[`AutomatorIdlingResource`](#idling-resources) if that state should also gate
-`waitForIdle`. Then use `waitUntil` for the UI barrier that follows.
+Wait for external state with `withTimeout`, a test framework polling helper, or
+an [`AutomatorIdlingResource`](#idling-resources) if it should gate `waitForIdle`.
+Then use `waitUntil` for the following UI condition.
 
 ## `waitForIdle`
 
-The "everything has settled" barrier:
+Wait for semantics and registered resources to settle:
 
 ```kotlin
 automator.waitForIdle(
@@ -206,10 +189,10 @@ automator.waitForIdle(
 - The EDT has been drained.
 
 The fingerprint covers tracked windows, node identities, layout bounds, role, focus,
-disabled/selected flags, text, content descriptions, and editable text. If your
-animation only changes pixels (e.g., an indeterminate spinner that doesn't tick the
-semantics tree), the fingerprint will report idle even while the spinner spins — that's
-where `waitForVisualIdle` comes in.
+disabled/selected flags, text, content descriptions, and editable text. For an
+animation that only changes pixels (e.g., an indeterminate spinner that doesn't tick the
+semantics tree), the fingerprint reports idle while the animation continues. Use
+`waitForVisualIdle` for that case.
 
 ### Idling resources
 
@@ -239,12 +222,12 @@ try {
 `waitForIdle` will keep waiting until every registered resource reports `isIdleNow ==
 true` alongside its own checks. The optional `diagnosticMessage()` shows up in
 `IdleTimeoutException`, so use it to describe what was still in flight when the wait
-ran out of time. Register and unregister the same instance — `unregister` is
+ran out of time. Register and unregister the same instance; `unregister` is
 identity-based.
 
 ## `waitForVisualIdle`
 
-The "the pixels have stopped changing" barrier:
+Wait until tracked surface pixels stop changing:
 
 ```kotlin
 automator.waitForVisualIdle(
@@ -257,49 +240,36 @@ automator.waitForVisualIdle(
 Hashes each tracked Compose surface independently and waits for `stableFrames`
 consecutive identical hashes per surface.
 
-A few details worth knowing:
+Sampling follows these rules:
 
-- **Per-surface, not full screen.** Each tracked Compose surface is hashed on its own,
-  then the per-surface hashes are combined. Pixel churn outside the app (notifications,
-  cursor movement on another monitor) doesn't reset the streak.
-- **No surfaces tracked → never idle.** If no Compose surfaces are tracked, or all of
-  them have empty bounds, `waitForVisualIdle` returns a different value every poll and
-  times out rather than reporting fake stability.
-- **`pollInterval` is a floor, not the real cadence.** Each poll captures every tracked
-  Compose surface and hashes the pixels. When `spectre-recording` is on the runtime
-  classpath **and the platform helper can actually run**, surfaces are sampled with the
-  same **window-scoped** native still path as `screenshot(windowIndex)` (occlusion-immune
-  on platforms with true window capture). On Linux that helper needs `gst-launch-1.0`;
-  if recording classes load but GStreamer is missing, Spectre falls back to
-  `java.awt.Robot` region capture instead of treating every sample as unsampleable.
-  Without the recording backend, it also uses region capture of the surface rectangle.
-  Capture cost dominates the poll cadence — typically tens to a few
-  hundred milliseconds per surface (one-shot native helper startup is larger on the first
-  sample), more on Wayland, large displays, or software-rendered VMs. In practice the gap
-  between completed polls is whatever the capture takes, with `pollInterval` only kicking
-  in when the capture is faster than that floor. The default `16.milliseconds` is a 60Hz
-  *target*, not a guarantee of 60 polls per second.
-- **Bounded sampling budget.** The first completed frame hash may use the wait's remaining
-  timeout: native capture paths can have a one-off cold-start cost. Later frame hashes run on
-  a worker thread capped at 2s so a warm one-shot window still can complete without treating a
-  static UI as permanently unstable. If a steady-state capture or hash exceeds that cap — or no
-  Compose surface is available — that poll is treated as unsampleable: the stable-frame streak
-  resets and the wait times out rather than silently succeeding. When that happens,
-  `IdleTimeoutException` reports how many samples were unsampleable (capture budget or missing
-  surface) instead of only saying the frames did not stabilise.
-- **Pixel hashing isn't free.** Multiple large surfaces, full-screen windows on a 4K /
-  Retina monitor, or running under a software-rendered virtual GPU all push the
-  per-poll cost up. If `waitForVisualIdle` is timing out or burning more CPU than you
-  expect, lengthen `pollInterval` (e.g., to `100.milliseconds` or `250.milliseconds`)
-  and / or drop `stableFrames` to 2. There's no information loss — you're just
-  sampling less often.
+- **Spectre hashes each tracked surface.** It combines the resulting hashes.
+  Notifications and pointer movement outside the app do not reset the stable-frame count.
+- **No usable surfaces means timeout.** If Spectre tracks no surfaces or all bounds are
+  empty, each poll produces a different value. The wait cannot report false stability.
+- **`pollInterval` sets a minimum gap.** Each poll captures and hashes every tracked
+  Compose surface. With a working `spectre-recording` helper, Spectre uses the same
+  **window-scoped** native still path as `screenshot(windowIndex)`.
+  True window capture can exclude occluding windows. On Linux, the helper needs
+  `gst-launch-1.0`. If GStreamer is missing, Spectre uses `java.awt.Robot` region
+  capture. It also uses region capture when no recording backend is present.
+  A capture often takes tens or hundreds of milliseconds per surface.
+  First helper startup, Wayland, large displays, and software VMs can take longer.
+  The default `16.milliseconds` targets 60 Hz. Capture cost can reduce the actual poll rate.
+- **Sampling has a time limit.** The first frame hash can use the wait's remaining
+  timeout to cover native helper startup. Later hashes run on a worker with a 2s limit.
+  A capture or hash over that limit resets the stable-frame count.
+  Missing Compose surfaces have the same result. `IdleTimeoutException` reports how many
+  samples could not be used because of capture limits or missing surfaces.
+- **Large captures cost more.** Multiple surfaces, 4K or Retina windows, and software
+  GPUs increase CPU use per poll. For slow sampling, raise `pollInterval` to
+  `100.milliseconds` or `250.milliseconds`, or reduce `stableFrames` to 2.
 
 Reach for `waitForVisualIdle` after:
 
 - An animation that doesn't change semantics (a fade, an indeterminate spinner stopping).
-- A long-running compose operation where you only care that the UI has stopped twitching.
+- A long-running Compose operation whose completion is visible through stable pixels.
 - Anything where `waitForIdle` returns too early because the semantics tree is already
-  stable but the GPU is still flushing frames.
+  stable while the GPU is still flushing frames.
 
 ## Combining the helpers
 
@@ -312,11 +282,10 @@ automator.waitForVisualIdle()  // pixels actually settled too
 val result = automator.findOneByTestTag("Result")
 ```
 
-For tests that are slow or flaky, lengthen `quietPeriod` (semantics) and `stableFrames`
-(visual) before reaching for sleeps. The wait helpers are deliberately tunable so you
-don't have to fall back to `Thread.sleep`.
+For slow or flaky tests, lengthen `quietPeriod` (semantics) and `stableFrames`
+(visual) before adding sleeps. These settings provide an alternative to `Thread.sleep`.
 
-## Defaults at a glance
+## Default wait settings {#defaults-at-a-glance}
 
 | Parameter                 | Default               |
 | ------------------------- | --------------------- |
@@ -333,4 +302,4 @@ don't have to fall back to `Thread.sleep`.
 | `waitUntil.timeout`       | 5 s                   |
 | `waitUntil.pollInterval`  | 100 ms                |
 
-These are tuned for desktop; bump them up freely if your scenarios are heavier.
+Increase these values when the application needs more time.

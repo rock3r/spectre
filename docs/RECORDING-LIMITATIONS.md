@@ -2,26 +2,19 @@
 
 ## Two recording modes
 
-The `recording` module supports region capture and window-targeted capture.
-Each mode has different limits:
+The `recording` module supports region and window capture. Their limits depend on
+the pixel source:
 
-- **Region capture** — records a fixed `Rectangle` of the virtual desktop, frame by
-  frame. The source of pixels is the OS framebuffer (or the platform's nearest
-  equivalent — ScreenCaptureKit on macOS, Windows Graphics Capture on Windows,
-  GStreamer `ximagesrc` on Linux Xorg/Xvfb, or the Wayland compositor's PipeWire stream on Linux
-  Wayland). Whatever is showing
-  on screen inside that rectangle goes into the file, regardless of which window is
-  there. Region capture is the only path available when the Compose surface has no
-  adaptable top-level OS window, such as a `ComposePanel` inside an IntelliJ tool
-  window.
-- **Window-targeted capture** — captures a specific OS window's pixels directly, not
-  the screen rectangle the window happens to occupy. The source is the window's own
-  backing store (`ScreenCaptureKit` on macOS, Windows Graphics Capture on Windows) or a
-  compositor-provided window stream on Wayland. macOS and Windows capture follow window
-  movement and can capture occluded windows. Wayland uses a fixed crop set at `start()`;
-  keep the window's position and size unchanged. Linux Xorg/Xvfb reads visible framebuffer
-  pixels, so keep the window visible and unobscured. Use window targeting when you have
-  a top-level `ComposeWindow` and can meet the backend's requirements.
+- **Region capture** records a fixed desktop `Rectangle`. It includes every visible pixel
+  inside that rectangle, regardless of which window owns it. macOS uses ScreenCaptureKit;
+  Windows uses Windows Graphics Capture; Linux Xorg/Xvfb uses GStreamer `ximagesrc`;
+  Wayland uses a compositor PipeWire stream. Use a region when no suitable top-level
+  OS window is available, such as a `ComposePanel` in an IntelliJ tool window.
+- **Window-targeted capture** records a selected OS window. ScreenCaptureKit and Windows
+  Graphics Capture read its window surface, even when another window covers it.
+  They follow window movement. Wayland captures a window stream with a crop fixed at
+  `start()`, so keep its position and size unchanged. Linux Xorg/Xvfb reads visible
+  framebuffer pixels, so the window must remain visible and unobscured.
 
 Backend → mode mapping:
 
@@ -41,10 +34,8 @@ Backend → mode mapping:
 | `AutoRecorder`                | Routes to the right one based on `TitledWindow?`.   |
 | `AutoScreenshotter`           | Routes still screenshots by platform and window.    |
 
-The rest of this document is mostly about region capture's constraints, because that's
-where the failure modes are. The window-targeted backends exist to sidestep those
-failure modes, and the section below
-([Window-targeted capture](#window-targeted-capture)) explains how they do it.
+The following sections explain each platform's limits. See
+[Window-targeted capture](#window-targeted-capture) for movement and occlusion behaviour.
 
 
 ## Wayland restore_token (agent non-interactive runs)
@@ -54,56 +45,58 @@ CI and hermetic tests can redirect token storage with:
 - `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` — directory for per-source token files (mode `0700`).
   Monitor+input grants are `wayland-rd-restore-token-rd-monitor-{cursor}`. Window-only
   ScreenCast grants remain `wayland-screencast-restore-token-{key}` (e.g. `…-window-embedded`).
-- `SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` — **base path** (not a single flat file). Spectre
+- `SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` — **base path** for separate token files. Spectre
   writes `{basename}-{key}` next to that path (mode `0600`), so keys stay separate.
-  Prefer `DIR` when you only need to relocate the directory.
+  Prefer `DIR` when only the directory needs relocation.
 - `SPECTRE_WAYLAND_SESSION_DIR` — directory for the long-lived helper lock and unix socket
   (`wayland-session.lock` / `wayland-session.sock`). Defaults to `$XDG_RUNTIME_DIR/spectre`.
 - `SPECTRE_WAYLAND_DESKTOP_DIR` — override for the installed
   `dev.sebastiano.spectre.desktop` (defaults to `$XDG_DATA_HOME/applications`).
 
-Headless runners without a seated GNOME session will not expose
-`org.freedesktop.portal.RemoteDesktop` / `ScreenCast`; unit tests cover persist/reuse/clear
-without a live portal. Interactive first-consent still requires a real compositor seat.
+Headless runners without a seated GNOME session do not expose
+`org.freedesktop.portal.RemoteDesktop` or `ScreenCast`.
+Unit tests check token persistence, reuse, and removal without a live portal.
+First consent still needs a real compositor seat and a person to accept the dialog.
 
-On Linux Wayland, the portal consent dialog is the analogue of macOS TCC: interactive and not
-automatable. `spectre-wayland-helper --session` installs `dev.sebastiano.spectre.desktop`,
-calls `org.freedesktop.host.portal.Registry.Register` **before** any portal method, then
-opens **one** RemoteDesktop session (`SelectDevices` keyboard+pointer + `SelectSources`
-monitor, `persist_mode=2`). The replacement `restore_token` is stored under
-`$XDG_STATE_HOME/spectre/` (mode `0600`, directory `0700`; override with
-`SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` or `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`) — never under
-`~/.java/robot/`.
+On Linux Wayland, a person must accept the portal consent dialog.
+`spectre-wayland-helper --session` installs `dev.sebastiano.spectre.desktop` and calls
+`org.freedesktop.host.portal.Registry.Register` **before** `SelectDevices` and
+`SelectSources`. It opens **one** RemoteDesktop session for keyboard, pointer, and
+monitor access with `persist_mode=2`. Spectre stores replacement `restore_token` files under
+`$XDG_STATE_HOME/spectre/` with file mode `0600` and directory mode `0700`.
+Use `SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` or `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` to change the
+location. Spectre does not store these tokens under `~/.java/robot/`.
 
-In-process `RobotDriver()`, attach, CLI, and MCP input and monitor capture on Wayland talk
-to that helper. They do not open a per-JVM `java.awt.Robot` portal session. The helper
-holds the session for the user seat; parallel JVMs connect to the existing socket.
+On Wayland, in-process `RobotDriver()`, attach, CLI, and MCP use that helper for input
+and monitor capture. The helper holds one session for the user seat.
+Parallel JVMs connect to its socket, sharing one Robot portal session.
 
-- **First run** (no token, or compositor rejects a stale token): one Share + Remember /
-  Allow remote interaction dialog. A human must accept once. Release smoke does this up
-  front as `portal-token-warmup` and pins `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` +
-  `SPECTRE_WAYLAND_HELPER`. Release smoke keeps Robot-heavy cells under `xvfb-run` even on
-  a seated Wayland display. Window-source tokens are bound to the picked window and are not
-  pre-warmed against an unrelated window.
+- **First run:** If no token exists or the compositor rejects it, the portal shows a
+  Share + Remember / Allow remote interaction dialog. A person must accept it.
+  Release smoke accepts it during `portal-token-warmup` and sets
+  `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` and `SPECTRE_WAYLAND_HELPER`. It runs tests
+  with heavy Robot use under `xvfb-run`, even on a seated Wayland display.
+  Window-source tokens apply to the selected window. Warming one against another
+  window does not grant access.
 - **Cursor**: the held RemoteDesktop session is opened with the cursor embedded in the
   stream. `RecordingOptions.captureCursor = false` and screenshot `HIDDEN` requests do not
   reopen a second session; monitor frames may include the pointer.
 - **Keys**: helper keyboard mapping covers US letters, digits, modifiers, arrows, Enter,
   Tab, Escape, Delete, Space, and common punctuation. Other AWT `VK_*` codes fail closed.
 - **Recovery**: if `$XDG_RUNTIME_DIR/spectre/wayland-session.sock` is stale after a helper
-  crash, Spectre unlinks it and starts a new helper. You can also delete that socket by hand.
+  crash, Spectre unlinks it and starts a new helper. Manual socket deletion is also possible.
 - **Coordinates**: pointer motion is translated by the granted stream origin. Fractional
   HiDPI and a monitor other than the restored one can still miss; pick the same screen at
   first consent.
-- **Later CLI/agent sessions**: the helper restores the RemoteDesktop grant so no dialog
-  appears (validated on GNOME/mutter; other compositors are best-effort). Tokens are
-  single-use at the portal: each successful `Start` writes a replacement file. A cancelled
-  dialog never stores a token.
+- **Later CLI and agent sessions:** The helper restores the RemoteDesktop grant
+  without another dialog. This behaviour was validated on GNOME/mutter; other
+  compositors remain best-effort. Portal tokens are single-use. Each successful
+  `Start` writes a replacement file. A cancelled dialog stores no token.
 - **Invalidation**: if SelectDevices/SelectSources/Start rejects the token, Spectre clears
   the file, retries interactively once, and fails closed if that retry fails.
 
-X11, macOS, and Windows input/capture paths are unchanged. `RobotDriver(robot)` still wraps
-the `java.awt.Robot` you pass in.
+X11, macOS, and Windows keep their input and capture paths.
+`RobotDriver(robot)` still wraps the supplied `java.awt.Robot`.
 
 ## Platform
 
@@ -114,41 +107,38 @@ the `java.awt.Robot` you pass in.
   `RecordingOptions.screenIndex` is the SCK display index: primary display first, then by
   display frame `minX` and `minY`. The explicit `FfmpegRecorder` remains available only as a
   deprecated legacy backend.
-- **Windows** — native window recording, region/fullscreen recording, and still window
-  screenshots use the shared .NET helper from `spectre-recording-windows`. The helper
-  uses Windows Graphics Capture, is published for x64 and arm64, and does not require
-  ffmpeg. It is framework-dependent, so Windows users need .NET 8 Desktop Runtime and
-  Windows App Runtime 1.8 installed. `AutoRecorder.startRegion(...)` no longer falls back
-  to `FfmpegRecorder`/`gdigrab` when that helper artifact is absent, or when the caller
-  sets Windows region options that WGC cannot honour (`RecordingOptions.codec` or
-  `screenIndex`); those cases fail loudly instead. `FfmpegRecorder` remains available only
-  as a deprecated explicit legacy backend.
-- **Linux Xorg/Xvfb sessions** — helper-driven GStreamer `ximagesrc` capture. Reads `DISPLAY`.
-  `LinuxX11Recorder` records fixed regions or a named X11 window; `LinuxNativeScreenshotter`
-  writes one-frame PNGs through the same helper. Named-window capture resolves the XID from
-  `WM_NAME` and `_NET_WM_NAME` (exact title, including characters such as `·`) and then
-  runs `ximagesrc xid=`. A title that does not match a mapped window fails at `start(...)`
-  — GStreamer's `xname=` path would otherwise silently record the root/desktop. Routine
-  validation has only been on Ubuntu 22.04's Xorg session (one machine, one X server build)
-  and on CI under `xvfb-run` (Xorg protocol over a virtual framebuffer, no GPU). Other
-  Xorg WMs/distros fall under the "Linux is best-effort, contributions welcome" line in
-  the README. `AutoRecorder` and `AutoScreenshotter` no longer use ffmpeg for this route;
-  install `spectre-recording-linux` and the GStreamer packages instead. The helper's
-  recording pipeline currently supports only `RecordingOptions.codec = "libx264"` or
-  `"x264enc"`; unsupported codec strings fail at `start(...)` with a targeted error rather
-  than building a broken GStreamer pipeline. The explicit ffmpeg classes remain available
-  only as deprecated compatibility escape hatches.
+- **Windows** — `spectre-recording-windows` supplies a shared .NET helper for window,
+  region, and fullscreen recordings and still window screenshots. It uses Windows
+  Graphics Capture and supports x64 and arm64. It does not require ffmpeg. Install
+  .NET 8 Desktop Runtime and Windows App Runtime 1.8 for this framework-dependent
+  helper. `AutoRecorder.startRegion(...)` fails if the artifact is absent. It also
+  fails when `RecordingOptions.codec` or `screenIndex` requests an unsupported
+  Windows region option. The deprecated `FfmpegRecorder` remains available for
+  explicit legacy use.
+- **Linux Xorg/Xvfb sessions** — The helper reads `DISPLAY` and captures through
+  GStreamer `ximagesrc`. `LinuxX11Recorder` records fixed regions or a named X11
+  window. `LinuxNativeScreenshotter` writes one-frame PNGs through the helper.
+  Named-window capture resolves the XID from an exact `WM_NAME` or `_NET_WM_NAME`,
+  including characters such as `·`. It then runs `ximagesrc xid=`. An unmatched
+  mapped window title makes `start(...)` fail; GStreamer's `xname=` path could
+  otherwise record the desktop. Routine validation covers one Ubuntu 22.04 Xorg
+  machine and CI under `xvfb-run` without a GPU. Other Xorg window managers and
+  distributions have best-effort support, as the README states. Install
+  `spectre-recording-linux` and GStreamer for `AutoRecorder` and
+  `AutoScreenshotter`. The helper accepts `RecordingOptions.codec = "libx264"` or
+  `"x264enc"`. Other codec strings fail at `start(...)` with a targeted error.
+  The explicit ffmpeg classes remain deprecated compatibility options.
 
-  **Xvfb validation proves Linux X11 capture only** — not Wayland portal/PipeWire consent,
-  restore-token reuse, or compositor-specific portal behaviour. CI and release-smoke under
-  `xvfb-run` exercise the X11 helper path (`ximagesrc`). Keep a separate real Wayland
-  desktop run when claiming portal capture.
+  **Xvfb validation covers Linux X11 capture only.** CI and release smoke under
+  `xvfb-run` use the `ximagesrc` helper path. Validate portal consent, PipeWire capture,
+  token reuse, and compositor behaviour on a real Wayland desktop.
 
-  Session detection (#397): residual `wayland-*` sockets under `XDG_RUNTIME_DIR` (or
-  inherited `WAYLAND_DISPLAY` / `XDG_SESSION_TYPE=wayland` from a login session) must not
-  hijack an active pure-X11 `DISPLAY` such as Xvfb. Spectre prefers a pure-X11 display
-  probe (Xvfb process match or `xdpyinfo` without the `XWAYLAND` extension) and only treats
-  a residual compositor socket as Wayland when `DISPLAY` is unset (SSH into a Wayland host).
+  Session detection (#397) keeps a pure-X11 `DISPLAY`, such as Xvfb, in X11 mode.
+  Residual `wayland-*` sockets under `XDG_RUNTIME_DIR` or inherited
+  `WAYLAND_DISPLAY` and `XDG_SESSION_TYPE=wayland` do not override it.
+  Spectre checks for an Xvfb process or runs `xdpyinfo` without the `XWAYLAND`
+  extension. With no `DISPLAY`, a residual compositor socket indicates Wayland,
+  including SSH sessions into a Wayland host.
   Real Wayland+XWayland still routes to the portal. Override with
   `SPECTRE_CAPTURE_BACKEND=x11` or `wayland` when probes cannot decide.
 
@@ -157,133 +147,112 @@ the `java.awt.Robot` you pass in.
   except for the cursor. `AutoRecorder` detects Wayland before this backend and routes region
   capture through the portal; do not force the X11 backend in that environment
   (`SPECTRE_CAPTURE_BACKEND=x11` is an escape hatch for nested Xvfb only).
-- **Linux Wayland sessions** — `gst-launch-1.0` driven through the
-  `xdg-desktop-portal` ScreenCast interface, with the PipeWire FD passed to the encoder by a
-  small Rust helper binary from `spectre-recording-linux` (`spectre-wayland-helper`, sources at
-  `recording/native/linux/`). Two JVM-side recorders share the helper:
-  `WaylandPortalRecorder` (region-targeted, portal `SourceType.MONITOR` — user picks a
-  monitor, helper crops to the requested rectangle) and `WaylandPortalWindowRecorder`
-  (window-targeted, portal `SourceType.WINDOW` — user picks a specific window, the
-  granted PipeWire stream contains only that window's pixels, the helper crops to the
-  window's pixel size, #85). `LinuxNativeScreenshotter` uses the same helper for one-frame
-  portal/PipeWire PNG capture. All of these paths spawn the helper and talk to it over
-  stdin/stdout via newline-delimited JSON. **First call within a session pops the compositor's
-  "share your screen" dialog** (asking for a window or a monitor depending on which
-  recorder is running); subsequent calls reuse the grant via the portal's `restore_token`.
-  Why the helper: a pure-JVM attempt hit a dbus-java UnixFD-unmarshalling bug that wasn't
-  fixable trivially, and Rust's `std::process` makes FD inheritance into `gst-launch` a
-  one-liner where the JVM's `ProcessBuilder` doesn't expose the necessary
-  `fcntl(F_SETFD, ...)` knob. The helper-as-subprocess shape also matches the
-  `spectre-recording-macos` SCK helper (`recording/native/macos/`) on the JVM side.
+- **Linux Wayland sessions** use `xdg-desktop-portal` ScreenCast and `gst-launch-1.0`.
+  The Rust `spectre-wayland-helper` in `spectre-recording-linux` passes the PipeWire
+  file descriptor to the encoder. Its source is in `recording/native/linux/`.
+  `WaylandPortalRecorder` selects a monitor through `SourceType.MONITOR` and crops to
+  the requested rectangle. `WaylandPortalWindowRecorder` selects one window through
+  `SourceType.WINDOW` and crops the isolated stream to window size.
+  `LinuxNativeScreenshotter` uses the same helper for a one-frame PNG.
+  The JVM exchanges newline-delimited JSON with the helper over standard streams.
+  **The first call opens the compositor's screen-sharing dialog.** Later calls reuse
+  the portal grant through `restore_token`.
+  The helper exists because dbus-java could not decode the Unix file descriptor.
+  Rust can pass it to `gst-launch-1.0`; JVM `ProcessBuilder` does not expose the
+  required `fcntl(F_SETFD, ...)` control. macOS also uses a separate capture helper.
 
-  **Window-targeted Wayland needs `xprop` on `PATH` and GTK/Mutter-style frame extents.**
-  Mutter renders window-source-type
-  streams with the WM-imposed invisible-shadow extents around the visible window —
-  typically 25 px on each side for GTK CSD windows on GNOME — but AWT's
-  `Frame.getBounds()` reports only the inner window. `WaylandPortalWindowRecorder` queries
-  the X11 `_GTK_FRAME_EXTENTS(CARDINAL)` property on the JFrame's XWayland window via the
-  system `xprop` binary to compute the right stream-relative crop; without it the
-  close-button icon ends up clipped off the title bar. If `xprop` is not on `PATH` (it's
-  part of `x11-utils` on Debian/Ubuntu — installed by default on the desktop image,
-  separate package on minimal/server images), the WM doesn't publish
-  `_GTK_FRAME_EXTENTS` (older Mutter, non-GTK CSD, server-side decorations like KDE
-  Plasma's default), or the call to `WaylandPortalWindowRecorder.start` is given a
-  `TitledWindow` with a null/blank title, the recorder throws `IllegalStateException`
-  rather than producing a silently-misaligned recording. The fallback is explicit
-  region capture: call `AutoRecorder.startRegion(...)`, or instantiate
-  `WaylandPortalRecorder` directly. Installing `xprop` only fixes the missing-binary
-  case; it will not make Qt, JavaFX, Electron, SDL, KDE, or wlroots windows publish the
-  GTK-specific property.
+  **Window-targeted Wayland capture needs `xprop` on `PATH` and GTK/Mutter frame extents.**
+  Mutter includes invisible shadows in window streams, often 25 px per side for
+  GNOME GTK client-side decoration. `Frame.getBounds()` covers only the inner window.
+  `WaylandPortalWindowRecorder` queries `_GTK_FRAME_EXTENTS(CARDINAL)` through `xprop`
+  on the JFrame's XWayland window. It uses that value to place the stream-relative crop.
+  Without the extents, the crop can clip the title bar close button.
+  Debian and Ubuntu provide `xprop` in `x11-utils`. Minimal images may need that package.
+  The recorder throws `IllegalStateException` when `xprop` is missing, the title is blank,
+  or the window manager does not publish `_GTK_FRAME_EXTENTS`.
+  Older Mutter, non-GTK decoration, and KDE Plasma may lack the property.
+  Use `AutoRecorder.startRegion(...)` or `WaylandPortalRecorder` for explicit region capture.
+  Installing `xprop` cannot make Qt, JavaFX, Electron, SDL, KDE, or wlroots windows
+  publish the GTK property.
 
   **HiDPI / mixed AWT and portal coordinates.** On fractional-scale Wayland, AWT/XWayland
-  often reports a larger virtual desktop than the ScreenCast stream (for example 2560×1440
-  versus a 1536×864 portal stream). Region capture sends the AWT bounds of the display
-  that contains the requested rectangle and converts that rectangle into stream pixels
-  when the two sizes share an aspect ratio, then clamps any leftover overflow. A region
-  that misses the granted stream entirely still fails. Window-source crops are already
-  stream-relative and are only clamped.
+  often reports a larger virtual desktop than the ScreenCast stream. For example,
+  AWT may report 2560×1440 while the portal supplies 1536×864. Region capture
+  sends the AWT display bounds that contain the requested rectangle. When their
+  aspect ratios match, Spectre converts the rectangle into stream pixels and
+  clamps overflow. A region outside the granted stream still fails.
+  Window-source crops already use stream coordinates and need only clamping.
 
   Wayland still screenshots use the same portal grant model as video. They are supported
   only when the compositor's ScreenCast portal can provide the requested monitor or window
   stream and the user accepts the dialog. In unattended SSH/headless runs, a hidden or
-  unanswered portal dialog surfaces as a helper timeout rather than a silent blank PNG.
+  unanswered portal dialog surfaces as a helper timeout. It never returns a silent blank PNG.
 
-  Validated end-to-end on Ubuntu 22.04/GNOME 42/mutter, Ubuntu 24.04/GNOME 46/mutter, and
-  Ubuntu 26.04/GNOME 50/mutter (real-pixel mp4 with the smoke runner, 2026-05-02 and
-  2026-05-03 — the 24.04 run also confirmed `cursor_mode=Embedded` composites the system
-  cursor into the captured frames when `RecordingOptions.captureCursor=true` (#87), and
-  the 26.04 run confirmed window-source-type cropping produces a window-sized mp4 with
-  no leakage from other apps and all WM decorations visible (#85)). KDE/Plasma, sway,
-  wlroots-based compositors, non-Ubuntu distros, and other Ubuntu versions aren't part of
-  the routine validation matrix yet — the xdg-desktop-portal interface is standardised
-  across compositors but the `_GTK_FRAME_EXTENTS` query is GNOME/Mutter-specific, so
-  window-targeted recording on KDE / sway will likely throw the
-  "Could not determine WM frame extents" error and the caller should fall through to
-  `WaylandPortalRecorder` until we wire compositor-specific frame-extent lookups. See
-  the README for the contribution invite.
+  The smoke runner validated real-pixel MP4 capture on Ubuntu 22.04/GNOME 42,
+  Ubuntu 24.04/GNOME 46, and Ubuntu 26.04/GNOME 50 with Mutter.
+  Runs on 2026-05-02 and 2026-05-03 checked the 24.04 and 26.04 paths.
+  The 24.04 run confirmed that `cursor_mode=Embedded` includes the system pointer when
+  `RecordingOptions.captureCursor=true`. The 26.04 run confirmed window-sized output,
+  visible window decorations, and isolation from other apps.
+  Routine validation does not cover KDE Plasma, sway, wlroots, other distributions,
+  or other Ubuntu versions. The portal API is standard across compositors;
+  `_GTK_FRAME_EXTENTS` is specific to GNOME/Mutter.
+  On KDE or sway, window capture may fail with "Could not determine WM frame extents".
+  Use `WaylandPortalRecorder` for region capture until a compositor-specific lookup exists.
 
-  **Frame-rate fidelity tracks what the compositor delivers.** The pipeline runs the
-  PipeWire stream through a `videorate` element clamped to `RecordingOptions.frameRate`
-  (default 30). When the source delivers fewer frames than the target, `videorate` pads
-  the gaps by duplicating the last frame; when it delivers more, the excess gets dropped.
-  On real hardware with GPU-side compositor composition this is a no-op — the source
-  comfortably sustains 30 fps and the output is byte-clean. On a Hyper-V/VirtualBox VM
-  with a software-rendered virtual GPU, the source rate dips into the 5–25 fps range and
-  the output mp4 contains visible duplicate-frame runs even though the file metadata
-  reports a flat 30 fps. This is faithful capture, not a recording bug — the compositor
-  genuinely had no new frame to deliver during those gaps. If your scenario captures from
-  a VM and the visible stutter matters more than the frame-rate metadata, lower
-  `RecordingOptions.frameRate` to match what your VM actually produces (15 is usually a
-  safe floor for software-rendered VM GPUs).
+  **The compositor controls source frame rate.** `videorate` targets
+  `RecordingOptions.frameRate`, which defaults to 30.
+  It repeats the last frame when the source is slower and drops extra frames when
+  the source is faster. Physical GPU-backed desktops in validation sustained 30 fps.
+  On Hyper-V or VirtualBox software GPUs, the source delivered about 5–25 fps.
+  The MP4 can therefore report 30 fps while visibly repeating frames.
+  Those repetitions reflect missing source frames.
+  Lower `RecordingOptions.frameRate` to the VM's observed rate if stutter matters.
+  A target of 15 fps often works for software-rendered VM GPUs.
 
 ## Region capture
 
-- **Region capture is the last resort, not the default for embedded surfaces.** Region capture
-  records a fixed `Rectangle` of the virtual desktop — whatever pixels the screen happens to
-  be showing inside that region land in the file. The region is bound at `Recorder.start(...)`
-  time and does not follow a window. Prefer window-targeted capture
-  (`ScreenCaptureKitRecorder` / `WindowsGraphicsCaptureRecorder`) when you have a top-level
-  window, and window+crop when only an embedded surface lacks its own native handle.
-- **Embedded `ComposePanel` surfaces: prefer host window + crop over region capture.**
-  When the panel lives inside a top-level host `Frame`/`JFrame` (IntelliJ tool window, Swing
-  host, etc.), use `AutoRecorder.startWindow(window, output, cropInWindow = surfaceBoundsInWindow,
-  scaleX = …, scaleY = …)`. That captures the host window's pixels and crops to the panel
-  (macOS `sourceRect`, Windows pre-encode crop). Benefits: occlusion-immune (overlapping
-  apps are not recorded) and the host window still moves with the OS compositor.
-  **v1 crop is fixed at start** — if the panel is moved/resized mid-recording, frames may
-  misalign until you stop and restart. A stderr warning is printed when crop is used.
-  Linux X11/Wayland do not implement window+crop yet (evaluated for parity; not wired).
-  `startRegion(...)` remains the **explicit last resort** when no host window handle exists.
-  Practical consequences of region fallback:
-  - Anything that visually overlaps the panel — other windows, the menu bar, OS notifications, a
-    floating popup that escapes the panel's bounds — appears in the recording.
+- **Region capture records a fixed screen rectangle.** `Recorder.start(...)` sets the
+  `Rectangle`; it does not follow window movement. The recording includes whatever
+  appears there. For a top-level window, use `ScreenCaptureKitRecorder` or
+  `WindowsGraphicsCaptureRecorder`. For an embedded surface with a suitable host window,
+  use window capture with a crop.
+- **Embedded `ComposePanel` surfaces:** If a top-level `Frame` or `JFrame` hosts the
+  panel, call `AutoRecorder.startWindow(window, output, cropInWindow = surfaceBoundsInWindow,
+  scaleX = …, scaleY = …)`. Spectre captures the host window and crops to the
+  panel. macOS uses `sourceRect`; Windows crops before encoding. Other apps do
+  not obscure the captured host window, and capture follows its movement.
+  **The v1 crop stays fixed from start.** Moving or resizing the panel can
+  misalign frames. Stop and restart to update the crop. Spectre prints a
+  stderr warning when a crop is used. Linux X11/Wayland do not implement
+  window+crop yet. Use explicit `startRegion(...)` when no suitable host window
+  or supported crop backend exists. Region capture has these limits:
+  - Anything that visually overlaps the panel appears in the recording, including other windows,
+    the menu bar, OS notifications, and floating popups that escape the panel's bounds.
   - The captured region is the panel's screen-space bounds at start. If the host window moves or
-    resizes while recording, the panel's pixels drift out of the captured rectangle and you record
-    whatever is now under the original rectangle (often empty desktop).
+    resizes while recording, the panel's pixels drift out of the captured rectangle. The recording
+    then contains whatever is under the original rectangle (often empty desktop).
   - Off-screen panels record black frames.
 
 ### Window movement and popups under region capture
 
-These limitations are specific to the region path; the window-targeted backends below
-solve them.
+These movement and popup limits apply to region capture.
 
 - **Window movement isn't followed.** Move the host window after `startRegion(...)` and the
   recording keeps capturing the original screen rectangle. Stop and restart to follow
   the new position.
-- **Popups that escape the captured region are clipped.** Compose Desktop's `OnWindow`
-  popup layer renders in a separate top-level OS window; if that popup appears outside
-  the recorded rectangle the recording does not include it. `OnSameCanvas` and
-  `OnComponent` popups stay inside the panel / window bounds and are recorded as long
-  as the panel itself is.
+- **Popups outside the region are clipped.** Compose Desktop's `OnWindow` layer
+  uses a separate top-level OS window. The recording excludes its pixels outside
+  the selected rectangle. `OnSameCanvas` and `OnComponent` popups remain inside
+  panel or window bounds and appear while the panel does.
 
 ## Window-targeted capture
 
-`ScreenCaptureKitRecorder` (macOS) and `WindowsGraphicsCaptureRecorder` (Windows Graphics
-Capture) target a specific OS window rather than a screen rectangle, which removes the
-region-capture failure modes described above:
+`ScreenCaptureKitRecorder` on macOS and `WindowsGraphicsCaptureRecorder` on Windows
+capture a selected OS window. They follow these rules:
 
 - **Window movement is followed automatically.** Drag the window across the screen
-  while recording and the file keeps capturing its pixels — no need to stop and
+  while recording and the file keeps capturing its pixels. There is no need to stop and
   restart.
 - **Occlusion doesn't matter.** Other windows passing in front of the target window
   do not appear in the recording. The capture reads the target's own backing store,
@@ -292,48 +261,44 @@ region-capture failure modes described above:
   still has its pixels composed, so capture continues. (Compare the region path,
   which would record whatever's now under the original rectangle.)
 - **`OnWindow` popups are not captured by the target's recorder**, because the popup
-  is a separate OS window with its own title — it isn't the window being targeted.
+  is a separate OS window with its own title. The recorder targets the original window.
   `OnSameCanvas` and `OnComponent` popups are part of the target window's surface
   and are recorded normally.
 
-`WaylandPortalRecorder` is structurally a third path: the portal hands the capture a
-PipeWire stream from the compositor, scoped to a user-picked monitor, which then gets
-cropped to the requested region. The monitor-level source means it doesn't follow a
-specific window the way SCK and WGC do — moving the target window
-within the same monitor stays within the captured stream, but moving it off-monitor
-or to another display does not. Treat its movement-and-popup behaviour as closer to
-region capture than to window-targeted, with the bonus that the source is the
-compositor and not raw framebuffer reads.
+`WaylandPortalRecorder` receives a PipeWire stream for a monitor selected by the user.
+It crops that stream to the requested region. The source follows the monitor,
+independent of any individual window. A window can move within the monitor and remain in the
+stream. Moving it to another display removes it from the source.
+Popups and movement follow the monitor-region limits described above.
 
 ## HiDPI/Retina
 
-- The recorded resolution is the **screen-pixel** size of the region, not the dp size. A 400×300dp
+- The recorded resolution uses **screen pixels**. A 400×300dp
   region on a 2× display becomes an 800×600 pixel video.
 - Still capture follows the same rule, so a `spectre capture` PNG and a recording of the same
   window come out at the same resolution. See
   [Atomic capture — Pixel scale](guide/capture.md#pixel-scale).
 - `Rectangle` coordinates passed to `start(...)` are in screen pixels. Prefer
-  `AutomatorNode.boundsOnScreen` — it already divides by the display scale and adds the Compose
+  `AutomatorNode.boundsOnScreen`; it already divides by the display scale and adds the Compose
   surface's screen origin. `boundsInWindow` is already in Compose / device pixels (density-scaled)
-  and window-relative; if you convert it yourself, divide by the display scale **and** add the
-  surface/panel screen origin. Dividing alone lands near `(0, 0)` when the window is not at the
+  and window-relative; manual conversion requires division by the display scale **and** addition
+  of the surface/panel screen origin. Dividing alone lands near `(0, 0)` when the window is not at the
   screen origin. Do not multiply by density.
 
 ## Permissions and process lifecycle
 
 - The JVM process needs **macOS Screen Recording permission** (`MacOsRecordingPermissions`
   documents the path). Without it, the SCK helper exits during startup and `Recorder.start`
-  surfaces an error rather than handing back a handle.
+  surfaces an error before returning a handle.
 - The macOS console session must be **unlocked**. A locked screen can make Robot
   screenshots or ScreenCaptureKit recordings fail, or produce black/incorrect frames, even
   when Screen Recording TCC is granted. Unlock the display and retry before treating the
   failure as a missing permission.
-- The underlying encoder process/helper is spawned eagerly: by the time `start(...)`
-  returns, frames are landing in the output file. A failure to spawn (binary/helper not
-  available, codec unavailable, permission/device busy) surfaces as an exception from
-  `start(...)`, not as a silent "successful" handle.
-- The handle MUST be stopped (`RecordingHandle.stop(...)`) for the file to be flushed cleanly. A
-  JVM exit without stop leaves a partial/non-finalised file and an orphaned subprocess.
+- `start(...)` launches the encoder or helper before returning.
+  Frames then begin reaching the output file. Missing binaries, unsupported codecs,
+  permissions, or busy devices make `start(...)` throw.
+- Call `RecordingHandle.stop(...)` to flush and finalise the file.
+  Exiting the JVM without stop can leave a partial file and an orphaned process.
 
 ## JUnit failure-video policy (#206)
 
@@ -353,14 +318,14 @@ Recording overhead:
   after a green suite.
 - **Stop before delete** — Spectre always stops the recorder and finalizes the file before
   applying keep/delete. A JVM exit without teardown can still leave a partial file and an
-  orphaned helper (same as any other `RecordingHandle` — see process lifecycle above).
+  orphaned helper (same as any other `RecordingHandle`; see process lifecycle above).
 - **In-process JUnit only** — this policy does not cover agent/attach / CLI `spectre record`
   paths; those remain separate entry points.
 
-## Current non-limitations
+## Other recording behaviour
 
 - Cursor capture is configurable via `RecordingOptions.captureCursor` and works under the region
-  path. The cursor pixels are baked into the frames; there is no overlay you can toggle in
+  path. The cursor pixels are baked into the frames; there is no overlay to toggle in
   post-processing.
 - Audio capture is intentionally absent — Spectre currently records video only.
 
@@ -370,5 +335,6 @@ Recording overhead:
   top-level `ComposeWindow` surfaces on macOS. It removes the "anything overlapping the
   region appears in the video" class of problems and follows the window across the
   screen. Windows has the equivalent path via `WindowsGraphicsCaptureRecorder`.
-- The embedded-panel path is still region capture only — there's no host window for SCK
-  or WGC to target.
+- An embedded panel can use host-window capture with a fixed crop on macOS and
+  Windows when its `Frame` or `JFrame` has a usable handle. On Linux, or without
+  a suitable host window, use explicit region capture.

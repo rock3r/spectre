@@ -10,52 +10,48 @@ hide:
 
 # Spectre
 
-Spectre is a Kotlin library for **driving live Compose Desktop UIs from automated tests**.
-It reads the Compose semantics tree, drives mouse and keyboard input either through real
-OS-level events or through synthetic AWT events dispatched straight into the window
-hierarchy, and records what happens on screen — against IDE-hosted Compose surfaces
-(IntelliJ, Jewel) and standalone desktop apps alike.
+Spectre lets Kotlin tests control a running Compose Desktop application.
+It reads the Compose semantics tree and sends mouse and keyboard events.
+The default driver sends synthetic AWT events into the window hierarchy.
+Tests can select real operating system input when they need it.
+Spectre also records the screen in standalone apps and IntelliJ or Jewel hosts.
 
-Tests find a node, interact with it, and assert the result.
+A test finds a node, performs an action, and checks the result.
 
 !!! warning "Pre-1.0"
-    Spectre is pre-1.0. Stable APIs are covered by the project's compatibility policy;
-    experimental APIs, including HTTP, agent attach, and desktop input coordination, may change
-    between releases. See
-    [Stability policy](STABILITY.md) and [Security notes](SECURITY.md) before depending on
-    cross-JVM control or recording in environments that handle untrusted input.
+    Spectre is pre-1.0. The [stability policy](STABILITY.md) covers stable APIs.
+    Experimental HTTP, agent attach, and desktop input coordination APIs may change between releases.
+    Read the [security notes](SECURITY.md) before enabling cross-JVM control or recording
+    where the application handles untrusted input.
 
 ## Why Spectre
 
-- **Test running application windows.** Spectre reads semantics, layout, focus, popups,
-  and HiDPI coordinates from the live UI.
-- **In-process or cross-JVM.** Use `ComposeAutomator.inProcess()` for the simple case, or
-  use the `server` module to drive a UI hosted in a different JVM (e.g., an IDE under test).
-- **Synthetic input by default.** [`ComposeAutomator.inProcess()`](guide/interactions.md)
-  defaults to synthetic AWT events dispatched straight into the window hierarchy
-  (`RobotDriver.synthetic()`). Pass `RobotDriver()` to opt into OS-level `java.awt.Robot`
-  events when you need real cursor motion, global focus, or system shortcuts.
-- **Experimental cooperative input leases.** Participating real-input test JVMs can serialise
-  focus, pointer, keyboard, and clipboard work without disabling parallel query/synthetic tests.
+- **Inspect running windows.** Spectre reads live semantics, layout, focus, popups,
+  and HiDPI coordinates.
+- **Choose a process boundary.** `ComposeAutomator.inProcess()` runs with the application.
+  The `server` module controls a UI in another JVM, such as an IDE under test.
+- **Use synthetic input by default.** [`ComposeAutomator.inProcess()`](guide/interactions.md)
+  uses `RobotDriver.synthetic()` to send AWT events into the window hierarchy.
+  Pass `RobotDriver()` when a test needs real cursor motion, global focus, or system shortcuts.
+- **Coordinate shared input.** Participating real-input test JVMs can serialise focus,
+  pointer, keyboard, and clipboard operations. Query and synthetic tests can still run in parallel.
   See [desktop input coordination](guide/input-coordination.md).
-- **Recording and screenshots built in.** Region capture, plus window-targeted recording
-  and still screenshots where the platform exposes them (ScreenCaptureKit on macOS,
-  Windows Graphics Capture on Windows, helper-driven Xorg/Xvfb and portal/PipeWire
-  capture on Linux). The
-  [`AutoRecorder` and `AutoScreenshotter`](guide/recording.md) pick the right backend.
-- **JUnit-friendly.** Drop-in extension and rule for JUnit 5 and JUnit 4 manage a per-test
-  automator instance for you — including failure artifacts (screenshot + semantics tree)
-  and optional launch-and-attach.
-- **CLI and agent attach.** Drive or inspect a live app without writing a test first via the
-  `spectre` CLI / MCP, or attach from another JVM with the experimental agent transport
-  (preinstalled `spectre-core` preferred; inject when the target has no core).
+- **Capture video and still images.** Spectre supports region capture and platform-specific
+  window capture. macOS uses ScreenCaptureKit; Windows uses Windows Graphics Capture.
+  Linux uses helpers for Xorg/Xvfb and portal/PipeWire capture.
+  [`AutoRecorder` and `AutoScreenshotter`](guide/recording.md) select a backend for each call.
+- **Run JUnit tests.** The JUnit 5 extension and JUnit 4 rule create an automator for each test.
+  They can save a failure screenshot and semantics tree or launch and attach to an application.
+- **Inspect an app interactively.** The `spectre` CLI and MCP tools work without a JUnit test.
+  Agent attach also works from another JVM. It prefers preinstalled `spectre-core` and can inject
+  core when the target does not include it.
 
 ## Where to start
 
 <div class="grid cards" markdown>
 
 - :material-rocket-launch: **[Getting started](guide/getting-started.md)** — Install
-  Spectre and write your first test.
+  Spectre and write a first test.
 - :material-book-open-page-variant: **[The automator](guide/automator.md)** — Concepts:
   semantics surfaces, queries vs. interactions, why there is no auto-wait.
 - :material-target: **[Finding nodes](guide/selectors.md)** — `findByTestTag`, `findByText`,

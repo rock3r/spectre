@@ -31,36 +31,36 @@ recording-linux     ├──> recording (runtime helper artifacts)
 recording-windows  ─┘
 ```
 
-Guidelines:
+The modules follow these dependency rules:
 
-- `core` owns the reusable automation concepts.
+- `core` defines reusable automation concepts.
 - `core` implementation-depends only on `input-coordinator`; CLI, testing, and the attaching-side
   agent bring `input-coordinator-server`. The injected agent relocates only client/protocol classes
   and must never contain a server main or launcher.
-- `server` should be transport-only glue over `core`, not a second implementation.
-- `sample-desktop` is a harness, not the source of truth for automation logic.
-- `testing` should exercise public seams and reusable fixtures, not reach through private internals
-  without a strong reason.
-- Transport parity (in-process / HTTP / agent) is enforced by a **shared contract-test corpus** in
-  `:testing` (`AutomatorContractCorpus` + `CapabilityMatrix`), not by a single shared automator
-  interface — see [capability matrix](guide/capability-matrix.md) and epic #197.
-- `recording` should isolate OS- and native-library-specific behaviour from the core query/input
-  APIs. Runtime helper binaries live in platform helper artifacts, not the API jar.
+- `server` transports `core` operations. It must not implement automation a second time.
+- `sample-desktop` provides a test harness. Production automation belongs in the library modules.
+- `testing` should use public APIs and reusable fixtures. Access private internals only when a
+  test cannot verify the behavior through a public path.
+- The **shared contract-test corpus** in `:testing` checks transport parity across
+  in-process, HTTP, and agent clients. It uses `AutomatorContractCorpus` and
+  `CapabilityMatrix`. See the [capability matrix](guide/capability-matrix.md) and epic #197.
+- `recording` isolates OS and native library behaviour from core query and input APIs.
+  Platform helper artifacts carry runtime binaries. The API jar does not.
 
 ## Spike Constraints
 
-These constraints are already known from the current research and should shape implementation:
+The implementation must account for these Compose Desktop constraints:
 
-1. `ComposeWindow.semanticsOwners` and `ComposePanel.semanticsOwners` are public and should be the
-   primary read path.
-2. `SemanticsNode.id` is only unique within a single `SemanticsOwner`. Public identifiers must be
-   owner-scoped or compound.
-3. Popup discovery cannot assume separate windows. Extra semantics roots may appear within the same
-   window, especially when Compose layers stay on the same canvas.
-4. HiDPI/AWT conversion is subtle. Compose semantics coordinates must be converted carefully before
-   feeding Robot/AWT screen APIs.
-5. Embedded Swing-hosted Compose surfaces may not expose a usable native `windowHandle`, so
-   window-targeted recording cannot be assumed everywhere.
+1. Read semantics through the public `ComposeWindow.semanticsOwners` and
+   `ComposePanel.semanticsOwners` properties.
+2. Scope public node identifiers to their `SemanticsOwner`, or use compound identifiers.
+   `SemanticsNode.id` is unique only within one owner.
+3. Search for popup roots inside each window. Compose can keep popup layers on the same
+   canvas.
+4. Convert Compose semantics coordinates before passing them to Robot or AWT screen APIs.
+   HiDPI scaling affects that conversion.
+5. Check for a native `windowHandle` before selecting window recording. An embedded
+   Swing-hosted Compose surface may not expose one.
 
 ## Planned Responsibility Split
 
@@ -85,29 +85,27 @@ Expected long-term responsibilities:
 - embedded HTTP server
 - remote client
 
-Keep server concerns out of the core data model unless they are genuinely transport-independent.
+Keep transport-specific fields out of the core data model.
 
 ### Desktop input coordinator
 
-One owner-only local process serializes the logical `desktop-interaction` resource per normalized
-OS user/desktop key. Its deterministic state machine owns FIFO acquisition, bounded queues,
-heartbeats, epochs, fencing, restart quarantine, compare-and-revoke, and audited unsafe takeover.
-Core input guards resolve ownership as driver-bound JUnit lease, coroutine-scoped lease, then a
-fresh operation lease. Query, wait, screenshot, and recording paths stay outside the automatic
-critical section; the agent routes input through a dedicated bounded worker so lease waiters cannot
-exhaust its general query pool.
+A local process serialises `desktop-interaction` for each normalised OS user and desktop
+key. Only its owner can access it. The coordinator manages FIFO acquisition, bounded
+queues, heartbeats, epochs, fencing, restart quarantine, compare-and-revoke, and
+audited unsafe takeover. Core input guards use a driver-bound JUnit lease first, then
+a coroutine-scoped lease. They acquire an operation lease if neither exists. Queries,
+waits, screenshots, and recording do not acquire that automatic lease. The agent runs
+lease waiters on a bounded input worker to protect the general query pool.
 
 
 ### `cli`
 
-The `cli` module is the agent-facing entrypoint track for issue #173. It owns the thin
-`spectre` client surface, the long-lived per-user session daemon contract, and the future
-`mcp` facade. The first checked-in surface is the client↔daemon handshake protocol: both
-frontends must speak the same versioned CBOR messages before issuing session commands.
+The `cli` module provides the `spectre` client and the per-user session daemon contract.
+It also owns the MCP entry point. Both frontends exchange versioned CBOR handshake messages
+with the daemon before they send session commands.
 
-The CLI/daemon protocol intentionally lives outside `agent-runtime`: the daemon may use
-`jdk.attach` and the existing agent transport, while the runtime jar must stay thin enough
-to load into arbitrary target JVMs.
+The CLI and daemon protocol stays outside `agent-runtime`. The daemon can use `jdk.attach`
+and agent transport. The runtime jar must remain small enough for arbitrary target JVMs.
 
 ### `recording`
 
@@ -117,7 +115,7 @@ Expected long-term responsibilities:
 - platform recorder selection and helper extraction
 - recorder lifecycle and output plumbing
 
-Keep native capture boundaries narrow and test the pure pieces separately from OS integration.
+Keep native capture interfaces small. Test pure logic separately from OS integration.
 The published `spectre-recording` jar is API/common-only; it must not contain generated
 `native/...` helper resources.
 
@@ -135,10 +133,10 @@ Expected long-term responsibilities:
 
 Current backends:
 
-- `FfmpegRecorder` — deprecated legacy explicit region capture via a system `ffmpeg`
-  binary, with the input device picked per OS by `FfmpegBackend.detect()`: `avfoundation`
-  on macOS, `gdigrab` on Windows, and legacy explicit `x11grab` on Linux Xorg. (Linux
-  Wayland is rejected here; use the portal-backed Linux helper path instead.)
+- `FfmpegRecorder` provides deprecated, explicit region capture through a system
+  `ffmpeg` binary. `FfmpegBackend.detect()` chooses `avfoundation` on macOS,
+  `gdigrab` on Windows, and `x11grab` on Linux Xorg. It rejects Linux Wayland;
+  use the portal-backed Linux helper there.
 - `windows.WindowsGraphicsCaptureRecorder` — Windows-only MP4 capture via the shared
   .NET Windows Graphics Capture helper packaged by `:recording-windows` for x64 and
   arm64. Window mode follows movement automatically and ignores occluders; region mode
@@ -162,16 +160,17 @@ Current backends:
   `:recording-macos`.
 - `screencapturekit.ScreenCaptureKitScreenshotter` — macOS-only still window screenshots
   through the same Swift helper in `--mode screenshot`.
-- `portal.WaylandPortalRecorder` — Linux Wayland capture via `xdg-desktop-portal`.
-  Region/monitor capture and real OS input share one long-lived
-  `spectre-wayland-helper --session` process (RemoteDesktop + ScreenCast, host
-  `Registry.Register`, Spectre-owned `restore_token` under `$XDG_STATE_HOME/spectre`).
-  Window-source capture still uses a one-shot ScreenCast helper process. The helper
-  is packaged by `:recording-linux` and hands the PipeWire FD to `gst-launch-1.0`.
-- `AutoRecorder` — high-level router that picks per call from `startWindow(...)` /
-  `startRegion(...)` + OS detection: Wayland portal first, then macOS SCK for window and
-  region capture, Windows Graphics Capture for window and region capture, and Linux helper
-  capture for Linux Xorg/Xvfb window and region capture.
+- `portal.WaylandPortalRecorder` captures Linux Wayland through `xdg-desktop-portal`.
+  Region and monitor capture share a long-lived `spectre-wayland-helper --session`
+  process with real OS input. That process uses RemoteDesktop, ScreenCast, host
+  `Registry.Register`, and a Spectre-owned `restore_token` under
+  `$XDG_STATE_HOME/spectre`. Window-source capture uses a separate one-shot ScreenCast
+  helper. The `:recording-linux` artifact packages the helper. It passes the
+  PipeWire FD to `gst-launch-1.0`.
+- `AutoRecorder` selects a backend for each `startWindow(...)` or `startRegion(...)`
+  call. It uses the Wayland portal on Wayland, macOS SCK on macOS, Windows Graphics
+  Capture on Windows, and the Linux helper on Xorg/Xvfb. Each route selects a
+  window or region backend for the requested mode.
 - `AutoScreenshotter` — high-level still screenshot router: macOS SCK window source,
   Windows Graphics Capture, and Linux helper still capture on Xorg/Xvfb and Wayland.
 
@@ -190,36 +189,34 @@ Expected long-term responsibilities:
 - tiny exploratory app for manual spike validation
 - reproducible surfaces for popup, focus, scrolling, and coordinate tests
 
-Do not let the sample app become a dumping ground for production logic.
+Move reusable production logic out of the sample app and into its owning module.
 
 ### `sample-intellij-plugin`
 
-A minimal IntelliJ plugin used to validate that Spectre's in-process automator works against
-IDE-hosted Compose surfaces (Jewel-on-IntelliJ tool windows). The plugin is **never
-published** — it exists only for `runIde` validation against #13's checklist (popup
-discovery and `ComposePanel` semantics in the IDE-hosted case). Same constraint as
-`sample-desktop`: do not move production logic here.
+The sample IntelliJ plugin verifies in-process automation of Jewel tool windows.
+It is **never published**. The `runIde` checks cover popup discovery and `ComposePanel`
+semantics. Production logic belongs in the library modules.
 
 Run via `./gradlew :sample-intellij-plugin:runIde`, then `Tools → Run Spectre Against the
 Sample Tool Window`. The action drives the in-process `ComposeAutomator` against the Jewel
 tool window and dumps the discovered semantics tree to `idea.log`.
 
-The non-interactive counterpart is `./gradlew :sample-intellij-plugin:uiTest`
-(intellij-ide-starter, `#42`). It boots a real IntelliJ Ultimate IDE in a child process,
-installs the locally-built plugin zip, fires `RunSpectreAction` through the Driver API, and
-asserts every tagged Compose node from `SpectreSampleToolWindowContent` appears in
-`idea.log`. Same assertions as the manual smoke, no human in the loop. Opt-in (not wired into
-`:check`); CI runs it in `.github/workflows/ide-uitest.yml` when plugin/core/recording
-sources change.
+`./gradlew :sample-intellij-plugin:uiTest` runs the automated counterpart through
+intellij-ide-starter (`#42`). It starts IntelliJ Ultimate in a child process and
+installs the locally built plugin zip. The Driver API fires `RunSpectreAction`.
+The test checks that `idea.log` contains every tagged Compose node from
+`SpectreSampleToolWindowContent`. It uses the manual smoke assertions. This opt-in
+test is outside `:check`. CI runs it through `.github/workflows/ide-uitest.yml`
+when plugin, core, or recording sources change.
 
 ## Architectural Invariants
 
 These should remain true as the codebase grows:
 
 1. `core` stays usable in-process without requiring the server.
-2. Selector/query logic lives in `core`, not in the sample app or transport layer.
-3. Transport modules serialise public/core-facing models instead of inventing parallel ones unless
-   there is a strong compatibility reason.
+2. Selector/query logic belongs in `core`; the sample app and transport layer use that logic.
+3. Transport modules serialise public/core-facing models. A strong compatibility reason is required
+   to introduce a parallel model.
 4. Platform-specific integrations should be isolated behind small interfaces at module boundaries.
-5. Research-only shortcuts are acceptable in the sample app, but reusable behaviour must be moved
+5. Research-only shortcuts are acceptable in the sample app. Move reusable behaviour
    into the proper module before it is treated as part of the product surface.

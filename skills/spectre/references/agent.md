@@ -1,8 +1,7 @@
 # Agent Attach
 
-Use this reference when the user asks about `AgentAttach`, `AttachedAutomator`,
-`AttachOptions`, attaching to a running Compose JVM, or the `spectre-agent` /
-`spectre-agent-runtime` dependency shape.
+Use this reference for `AgentAttach`, `AttachedAutomator`, `AttachOptions`, and agent
+dependencies. It covers attach to a running Compose JVM.
 
 ## Source of truth
 
@@ -11,37 +10,36 @@ Use this reference when the user asks about `AgentAttach`, `AttachedAutomator`,
 - Repo docs, when working inside Spectre: `docs/guide/agent.md` and
   `docs/guide/installation.md`
 
-Prefer the user guide for detailed setup. Keep answers aligned with it.
+Check the user guide for full setup instructions.
 
-## Mental model
+## Attach setup
 
-Agent attach involves two JVMs and **two target shapes, one API**:
+Agent attach uses two JVMs. `AgentAttach.attach(pid)` supports two target setups:
 
 - **Target JVM**: the Compose app being inspected or driven.
   1. **Preferred — preinstalled `spectre-core`** (instrumented attach). Bootstrap
-     finds `ComposeAutomator` on the app classpath. Use this whenever you control
-     the target build.
+     finds `ComposeAutomator` on the app classpath. Use this for target builds
+     under test control.
   2. **Inject — no preinstalled core** (experimental inspect). The loadable
      `spectre-agent-runtime` jar carries a nested `META-INF/spectre/inject-runtime.jar`.
      Bootstrap loads Spectre core from that payload when the target only has
-     Compose/Skiko. Same `AgentAttach.attach(pid)` call — no separate inject flag.
-     Fine for attach → dump → detach (e.g. stock IntelliJ); prefer preinstalled
+     Compose/Skiko. The same `AgentAttach.attach(pid)` call needs no separate inject flag.
+     Use for occasional attach → dump → detach (e.g. stock IntelliJ); prefer preinstalled
      core for sustained or high-frequency use.
 - **Attacher JVM**: the test, inspector, or tool process that calls
   `AgentAttach.attach(pid)`. It compiles against `spectre-agent` and normally has
   `spectre-agent-runtime` on its runtime classpath.
 
-Do not tell users to add `spectre-agent` or `spectre-agent-runtime` to the target app
-unless they are also writing the attacher in that same process. The runtime jar is
-supplied by the attacher and loaded into the target through the JDK Attach API.
+The attacher supplies `spectre-agent-runtime` through the JDK Attach API.
+The target app does not need `spectre-agent` or `spectre-agent-runtime` as dependencies
+unless it also acts as the attacher.
 
-Do **not** tell users the target JVM requires a preinstalled `spectre-core`
-dependency. That was true of the original thin-agent design; current bootstrap
-falls back to inject when core is absent.
+Current bootstrap injects core when it is absent from the target JVM.
+Preinstalled `spectre-core` remains the preferred setup when the target build is controlled.
 
 ## Dependencies
 
-For the target app, **when you control the build** (preferred):
+For a controlled target app build (preferred):
 
 ```kotlin
 dependencies {
@@ -49,10 +47,9 @@ dependencies {
 }
 ```
 
-If the target cannot take that dependency (stock IDE, third-party binary), attach
-still works when Compose is present and the attacher's `spectre-agent-runtime` jar
-carries the nested inject payload. No extra target-side Spectre coordinate is
-required.
+For a stock IDE or third-party binary, attach can inject core if Compose is present
+and the runtime jar contains the nested payload. The target needs no extra Spectre
+dependency.
 
 For the attacher/test process:
 
@@ -66,8 +63,8 @@ dependencies {
 Use `testImplementation` / `testRuntimeOnly` instead when the attacher is a test
 source set.
 
-Do not recommend an `-all` classifier. `spectre-agent-runtime` is a separate
-artifactId because it is the loadable Java-agent runtime, not the normal API jar.
+Use the separate `spectre-agent-runtime` artifact ID for the loadable agent jar.
+Do not use an `-all` classifier.
 
 ## What happens during attach
 
@@ -88,18 +85,16 @@ artifactId because it is the loadable Java-agent runtime, not the normal API jar
    an in-process automator and starts a UDS IPC server.
 7. Connects the attach-side `IpcClient` and returns `AttachedAutomator`.
 
-After that, `AttachedAutomator` methods send small IPC requests to the target JVM.
+After attach, `AttachedAutomator` sends IPC requests to the target JVM.
 
-Inject is an **experimental inspect** path: class unload after detach is
-GC-dependent, so do not treat it as a leak-free production mode.
+Inject is an **experimental inspection** path. Class unloading after detach depends
+on garbage collection. It has no leak-free production guarantee.
 
 ## Runtime jar discovery and custom attach
 
-Classpath auto-discovery means `AgentAttach` scans the attacher's `java.class.path`
-for a physical `spectre-agent-runtime-*.jar`, then passes that jar path to
-`VirtualMachine.loadAgent(...)`. It does not mean the target app declared
-`spectre-agent-runtime`, and it does not mean user code should call runtime classes
-directly.
+`AgentAttach` scans the attacher's `java.class.path` for a physical
+`spectre-agent-runtime-*.jar`. It passes that path to `VirtualMachine.loadAgent(...)`.
+The target does not declare the runtime jar. Attacher code does not call its classes.
 
 If a custom launcher, shaded distribution, module-path launch, or script hides the
 physical runtime jar from `java.class.path`, use one of these explicit forms:
@@ -123,7 +118,7 @@ Or set this on the attacher JVM:
 ## Caveats to mention
 
 - Supported on Linux, macOS, and Windows (native `AF_UNIX`; Windows needs 10 version
-  1803 / Server 2019 or newer). No named-pipe transport.
+  1803 / Server 2019 or newer). The transport uses no named pipes.
 - The attacher and target must run as the same OS user.
 - The target should start with `-XX:+EnableDynamicAgentLoading`.
 - Communication is local UDS IPC, unauthenticated, and intended for trusted

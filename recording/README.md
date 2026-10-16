@@ -1,13 +1,11 @@
 # Recording
 
-Screen recording and native still-window screenshots for Spectre scenarios. Region capture
-(ScreenCaptureKit on macOS, Windows Graphics Capture on Windows, the Linux helper/GStreamer on
-Xorg/Xvfb, xdg-desktop-portal on Linux Wayland), window-targeted video capture, and still
-screenshot routing live side by side — pick by what you need.
+The `recording` module provides region video, window video, and native window screenshots.
+macOS uses ScreenCaptureKit, Windows uses Windows Graphics Capture, and Linux uses a helper
+with GStreamer on Xorg/Xvfb or xdg-desktop-portal on Wayland.
 
-The user-facing recorder capability matrix lives in
-[`docs/guide/recording.md`](../docs/guide/recording.md). This README is the in-tree
-implementer's view of the same module.
+The [recording guide](../docs/guide/recording.md) lists user-facing capabilities.
+This README describes implementation and packaging.
 
 ## Public surface
 
@@ -15,15 +13,15 @@ implementer's view of the same module.
 - `Recorder` — interface; produces a `RecordingHandle` for an in-progress capture.
 - `FfmpegRecorder` — deprecated legacy explicit ffmpeg-backed region capture. Shells out to a system `ffmpeg` and
   captures the requested region via `avfoundation` on macOS, legacy explicit `gdigrab` on
-  Windows, and legacy explicit `x11grab` on Linux Xorg. Throws on Linux Wayland — use
-  `WaylandPortalRecorder` instead. Resolves the
+  Windows, and legacy explicit `x11grab` on Linux Xorg. On Linux Wayland, use
+  `WaylandPortalRecorder`; `FfmpegRecorder` throws. The ffmpeg backend resolves the
   binary via `PATH` (`resolveFfmpegPath()`) by default; pass `ffmpegPath` to override (testing,
   non-`PATH` installs).
 - `LinuxX11Recorder` — Linux Xorg/Xvfb region and named-window capture through the bundled
   Linux helper and GStreamer `ximagesrc`. Window mode resolves a real XID from the title
-  (`WM_NAME` / `_NET_WM_NAME`) and fails if that window is missing, instead of recording
-  the root/desktop. This is the default Linux Xorg/Xvfb route used by `AutoRecorder`;
-  `ffmpeg` is no longer required for that path. The helper currently accepts only
+  (`WM_NAME` / `_NET_WM_NAME`) and fails if that window is missing. It never records
+  the root/desktop on a missing title. `AutoRecorder` uses this path on Xorg/Xvfb,
+  where it does not require `ffmpeg`. The helper currently accepts only
   `RecordingOptions.codec = "libx264"` or `"x264enc"` for recording.
 - `screencapturekit.ScreenCaptureKitRecorder` — macOS ScreenCaptureKit region and
   window-targeted capture through the bundled Swift helper. Region mode records a fixed
@@ -40,30 +38,27 @@ implementer's view of the same module.
   macOS implementation; `windows.WindowsGraphicsCaptureRecorder` covers Windows, and
   `LinuxX11Recorder`/`WaylandPortalWindowRecorder` cover Linux Xorg/Xvfb and Wayland.
 - `windows.WindowsGraphicsCaptureRecorder` — WGC + `MediaTranscoder` MP4 capture on Windows.
-  Window mode follows the window across moves and captures the target window surface
-  instead of a screen rectangle. Region/fullscreen mode records a fixed monitor rectangle.
+  Window mode follows the target window and captures its surface.
+  Region and fullscreen modes record a fixed monitor rectangle.
   Both modes use the `spectre-recording-windows` runtime helper.
 - `FfmpegWindowRecorder` — deprecated legacy explicit `gdigrab title=` capture on Windows. Follows the
   window across moves and resizes; requires a non-blank exact title and `ffmpeg` on `PATH`.
 - `portal.WaylandPortalWindowRecorder` — Linux Wayland window-targeted capture via
-  `xdg-desktop-portal`'s `SourceType.WINDOW`. Captures only the picked window's pixels (no
-  leakage from occluding apps), but Spectre's crop is fixed at `start()` time — if the user
-  moves or resizes the window during the recording, the crop no longer aligns with the
-  window's pixels and the output is misaligned. Requires `xprop` and a compositor publishing
+  `xdg-desktop-portal`'s `SourceType.WINDOW`. It captures only the selected window's pixels.
+  The crop stays fixed from `start()`. Moving or resizing the window can misalign output.
+  It requires `xprop` and a compositor publishing
   `_GTK_FRAME_EXTENTS` (validated on GNOME/Mutter for GTK/XWayland windows; non-GTK toolkits
   and other compositors may not publish it).
 
 ### Auto-routing
-- `AutoRecorder` — high-level wrapper that takes platform recorders and the
-  Linux portal recorders (when wired). Routing is Wayland-first (window-targeted portal,
-  region portal, or loud failure if no portal recorder is wired), then macOS SCK for
-  window capture, Windows Graphics Capture for Windows window/region capture, Linux helper
-  capture for Linux Xorg/Xvfb window/region capture, and macOS SCK for macOS region capture.
-  macOS and Windows region capture no longer fall back to ffmpeg when native helper artifacts
-  are absent, and unsupported options such as custom `RecordingOptions.codec` now fail loudly.
-  Operational native-helper failures after the helper is
-  found (permissions denied, window not found, helper crash) also propagate with actionable
-  messages instead of silently changing capture semantics.
+- `AutoRecorder` selects from platform recorders and, when configured, Linux portal
+  recorders. On Wayland it selects a window or region portal recorder. It fails
+  if the required portal recorder is absent. macOS uses SCK for window and
+  region capture. Windows uses Windows Graphics Capture for both. Linux Xorg/Xvfb
+  uses the Linux helper. On macOS and Windows, a missing native helper or an
+  unsupported option such as a custom `RecordingOptions.codec` causes an error.
+  Permission errors, missing windows, and helper crashes also surface after
+  discovery. `AutoRecorder` keeps the requested capture mode.
 - `AutoScreenshotter` — high-level still-image router. Uses ScreenCaptureKit window capture
   on macOS, Windows Graphics Capture on Windows, and the Linux helper on Xorg/Xvfb and
   Wayland. Wayland still screenshots require the compositor portal dialog to be accepted.
@@ -74,7 +69,7 @@ implementer's view of the same module.
   Wayland. For Wayland window-source video, run `./gradlew :recording:runWaylandPortalWindowSmoke`.
 - `./gradlew :recording:runLinuxX11RecordingSmoke` — Linux Xorg/Xvfb helper smoke (CI uses
   `xvfb-run`). Records a region and a named window whose title includes `·`, asserts the
-  window-mode MP4 is window-sized rather than the full framebuffer, and checks that a
+  window-mode MP4 matches the window dimensions, and checks that a
   missing title fails closed.
 
 ### Shared
@@ -98,7 +93,7 @@ implementer's view of the same module.
 | macOS region capture (ScreenCaptureKit) | ✅ `ScreenCaptureKitRecorder` |
 | macOS legacy region capture (`avfoundation`) | ✅ deprecated `FfmpegRecorder` |
 | macOS window-targeted capture (ScreenCaptureKit) | ✅ `ScreenCaptureKitRecorder` |
-| Embedded `ComposePanel` (`windowHandle == 0L`) | ✅ region capture (window-targeted not applicable) |
+| Embedded `ComposePanel` (`windowHandle == 0L`) | ✅ region capture; window-targeted capture is unavailable |
 | Windows region/fullscreen capture (Windows Graphics Capture) | ✅ `WindowsGraphicsCaptureRecorder` |
 | Windows legacy region capture (`gdigrab`) | ✅ deprecated `FfmpegRecorder` |
 | Windows window-targeted capture (Windows Graphics Capture) | ✅ `WindowsGraphicsCaptureRecorder` |
@@ -113,21 +108,19 @@ implementer's view of the same module.
 
 ## ScreenCaptureKit helper build
 
-`recording/native/macos/` is a SwiftPM project that produces the `spectre-screencapture`
-helper binary. The `assembleScreenCaptureKitHelper` Gradle task runs `swift build -c release`
-and stages the binary under `build/generated/screenCaptureHelper/native/macos/`; the
-`:recording-macos` platform artifact then packages that generated directory into its JAR
-resources. The Swift `swift build` step only runs on macOS hosts — non-macOS hosts produce a
-structurally-correct `spectre-recording-macos` jar that just doesn't contain the helper file
-(consumers see
-`HelperBinaryExtractor`'s "binary not found" message at runtime if they try to use SCK).
+`recording/native/macos/` is a SwiftPM project that builds `spectre-screencapture`.
+`assembleScreenCaptureKitHelper` runs `swift build -c release` and stages the binary under
+`build/generated/screenCaptureHelper/native/macos/`. `:recording-macos` packages those
+resources into its JAR. Swift builds run only on macOS.
+Other hosts can produce a JAR without the helper. `HelperBinaryExtractor` then reports
+"binary not found" if a consumer tries to use ScreenCaptureKit.
 
-**Distribution must use a macOS-built helper.** The release workflow builds on `macos-latest`,
-signs and notarizes the universal helper, then passes that prebuilt helper into the Linux
-publish job so `spectre-recording-macos` carries the signed binary.
+**Distribution requires a macOS-built helper.** The release workflow builds, signs,
+and notarises the universal helper on `macos-latest`. The Linux publish job packages
+that prebuilt helper in `spectre-recording-macos`.
 
-For local dev the default `:recording:assembleScreenCaptureKitHelper` builds host-arch only
-— faster iteration. The universal `arm64+x86_64` binary is opt-in via a project property:
+For local work, `:recording:assembleScreenCaptureKitHelper` builds only for the host
+architecture. Enable the universal `arm64+x86_64` binary with a project property:
 
 ```bash
 # Default: host-arch helper, fast.
@@ -177,9 +170,8 @@ xcrun notarytool store-credentials <notary-profile> \
   --team-id "TEAMID1234"
 ```
 
-Let `notarytool` prompt for the app-specific password. Do not pass the password on the
-command line: macOS process listings can expose command arguments while notarization is
-running.
+Enter the app-specific password at the `notarytool` prompt.
+Command arguments can appear in macOS process listings, so do not pass the password there.
 
 For local consistency with Compose Desktop apps, the same task also accepts these user Gradle
 properties from `~/.gradle/gradle.properties`:
@@ -189,9 +181,9 @@ compose.desktop.mac.signing.identity=Developer ID Application: Example Developer
 compose.desktop.mac.notarization.keychainProfile=<notary-profile>
 ```
 
-CI should use App Store Connect API key auth instead of an app-specific password. Set
-`APPLE_NOTARY_API_KEY_PATH`, `APPLE_NOTARY_API_KEY_ID`, and `APPLE_NOTARY_API_ISSUER`; the
-release workflow writes the key file from a base64 secret before invoking Gradle.
+CI uses an App Store Connect API key. Set `APPLE_NOTARY_API_KEY_PATH`,
+`APPLE_NOTARY_API_KEY_ID`, and `APPLE_NOTARY_API_ISSUER`.
+The release workflow writes the key file from a base64 secret before running Gradle.
 
 The Gradle pipeline:
 
@@ -204,13 +196,13 @@ The Gradle pipeline:
 5. Runs `codesign --verify --strict --verbose=4` against the signed helper before staging it
    into the jar resources.
 
-Apple's notary service creates tickets for standalone binaries inside the submitted archive,
-but Apple's stapler does not currently attach tickets directly to bare command-line
-executables. `spctl --assess --type execute` also reports a bare helper as valid code that is
-not an app. That is why Spectre notarizes and verifies the helper signature but does not run
-`xcrun stapler staple` or use `spctl` as the Gradle gate for `SpectreScreenCapture`.
-Gatekeeper can fetch the ticket online on first run; the jar-bundled helper is still
-Developer ID signed and notarized.
+Apple's notary service creates tickets for standalone binaries in the submitted archive.
+Stapler cannot attach those tickets directly to bare command-line executables.
+`spctl --assess --type execute` reports the helper as valid code that is not an app.
+Spectre therefore verifies the signature without using `xcrun stapler staple` or
+`spctl` as the Gradle gate for `SpectreScreenCapture`.
+Gatekeeper can fetch the ticket online on first run. The JAR contains the signed,
+notarised helper.
 
 ### GitHub release secrets
 
@@ -256,21 +248,19 @@ handle.stop() // restores the original title, finalises the .mp4
 ```
 
 `asTitledWindow()` is a `Frame.() -> TitledWindow` extension that works against
-`ComposeWindow`, `JFrame`, `JDialog.parent`, or any other `java.awt.Frame`. If you have a
-non-Frame window-like object, implement `TitledWindow` directly — it's a single mutable
+`ComposeWindow`, `JFrame`, `JDialog.parent`, or any other `java.awt.Frame`. For a
+non-Frame window-like object, implement `TitledWindow` directly. It has a single mutable
 `title: String?` property.
 
-The bundled `:recording:runScreenCaptureKitSmoke` Gradle task does this against a tiny Swing
-JFrame and dumps a Robot screenshot alongside for cross-checking.
+The `:recording:runScreenCaptureKitSmoke` task records a small Swing `JFrame` and writes
+a Robot screenshot for comparison.
 
 ### Implementation note: retain `SCStreamOutput` strongly
 
-`SCStream.addStreamOutput` reads as if it strongly retains the output for the stream's
-lifetime, but in practice (macOS 26 / SCK as of this writing) the only delivered frame in
-repeated runs was the very first sample buffer if the output was held by a local variable
-that went out of scope after `startCapture`. The helper now retains its `FrameOutput` (and
-`SCStreamDelegate`) on the recorder instance — this is the difference between "one frame for
-the whole recording" and "frames at the configured rate". Keep it that way.
+On macOS 26, repeated tests delivered only the first frame when `FrameOutput` was held
+in a local variable that went out of scope after `startCapture`.
+The helper now retains `FrameOutput` and `SCStreamDelegate` on the recorder instance.
+Keep these strong references so `SCStream` continues delivering frames.
 
 ## Permissions
 
@@ -281,28 +271,26 @@ macOS permissions depend on the capture or input path:
   must say **Spectre Capture Helper**. The helper does not inherit the host JVM's grant.
 - **Accessibility for the input host** — real AWT `Robot` mouse and keyboard control needs
   this permission for the app hosting the JVM. Synthetic input does not need it.
-- Legacy ffmpeg capture and AWT `Robot` screenshots use their own host's Screen Recording
-  permission rather than the bundled helper's permission.
+- Legacy ffmpeg capture and AWT `Robot` screenshots use the host's Screen Recording
+  permission. The bundled helper's grant does not apply to them.
 
-Run `spectre permissions check` to check the helper. With a human present, run
-`spectre permissions request` to open the guide. Open **System Settings → Privacy &
-Security → Screen Recording**, add the helper if missing, and enable it. Wait for
-**Done ✓** in the guide. Capture commands report permission errors without opening the guide.
+Run `spectre permissions check` to inspect the helper's grant.
+With a person present, run `spectre permissions request` to open the guide.
+In **System Settings → Privacy & Security → Screen Recording**, add and enable the helper.
+Wait for **Done ✓**. Capture commands report missing permission without opening the guide.
 
 macOS may ask for approval again after an update or when a prior grant lapses. Run the
 request command again if this happens. See [troubleshooting](../docs/guide/troubleshooting.md).
 
 ## Build matrix: which helpers each host can produce
 
-Spectre's recording module ships three native helpers — the macOS ScreenCaptureKit helper
-(Swift, requires `swiftc` + macOS frameworks), the Linux capture helper (Rust, requires
-`cargo` + `libdbus-1-dev`), and the Windows Graphics Capture helper (.NET 8 SDK). The
-macOS and Linux toolchains do not work cross-host, while the Windows helper is built on
-Windows for both x64 and arm64. Each platform helper jar's layout is host-agnostic — the
-non-producible directories are simply empty or absent depending on Gradle's jar-packing
-behavior — and the recorder gates on resource presence at runtime, throwing
-`HelperNotBundledException` with a clear message when the helper its current backend
-needs is missing.
+The recording module ships three native helpers. The macOS ScreenCaptureKit helper
+needs Swift, `swiftc`, and macOS frameworks. The Linux Rust helper needs `cargo`
+and `libdbus-1-dev`. The Windows Graphics Capture helper needs .NET 8 SDK and
+builds on Windows for x64 and arm64. The macOS and Linux toolchains require their
+respective hosts. Each helper jar uses a host-independent layout. Gradle leaves
+unavailable directories empty or absent. At runtime, the recorder checks for the
+required resource and throws `HelperNotBundledException` if it is missing.
 
 | Host                | Default platform-helper build                                        | `-PuniversalHelper`               | `-PallLinuxArches`                                      |
 | ------------------- | -------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------- |
@@ -315,12 +303,12 @@ needs is missing.
 ### Project-property reference
 
 - `-PuniversalHelper` — on macOS hosts, build the SCK helper as a universal arm64+x86_64
-  binary via `lipo -create`. Off by default to keep contributor builds fast; on for
-  distribution.
+  binary via `lipo -create`. The option is off by default to keep contributor builds fast;
+  enable it for distribution.
 - `-PnotarizeScreenCaptureKitHelper` — implies `-PuniversalHelper`. Codesigns the
   universal helper, archives it, and submits it to Apple notarization via
-  `xcrun notarytool`. Only used by the release workflow; needs Developer ID + notary
-  credentials in env vars.
+  `xcrun notarytool`. The release workflow uses this option and requires Developer ID + notary
+  credentials in environment variables.
 - `-PallLinuxArches` — on Linux hosts, cross-compile both `x86_64` and `aarch64` Linux
   helpers from a single host. Requires the Rust `rustup target add` for the foreign
   arch and the matching cross-linker (`gcc-aarch64-linux-gnu` / `gcc-x86_64-linux-gnu`)
@@ -330,7 +318,7 @@ needs is missing.
 ### Verifying bundled helpers
 
 `./gradlew :recording-macos:check` and `./gradlew :recording-linux:check` verify the
-platform helper jars, not the API-only `:recording` jar. `./gradlew :recording-windows:check`
+platform helper jars. The API-only `:recording` jar has a separate check. `./gradlew :recording-windows:check`
 does the same for the Windows helper artifact. Each helper module packages the
 generated resources staged by `:recording`'s native build tasks:
 
@@ -360,5 +348,4 @@ artifacts:
 - `spectre-recording-linux` — x86_64 and aarch64 Linux helpers.
 - `spectre-recording-windows` — x64 and arm64 Windows Graphics Capture helpers.
 
-Local builds still produce a host-shaped subset of helpers unless you opt into the
-distribution-oriented flags above.
+Local builds produce helpers for the host unless the distribution flags above are enabled.
