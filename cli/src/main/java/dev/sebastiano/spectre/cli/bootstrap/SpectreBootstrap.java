@@ -321,7 +321,8 @@ public final class SpectreBootstrap {
                     "--add-reads",
                     "--patch-module",
                     "--module-path",
-                    "--upgrade-module-path");
+                    "--upgrade-module-path",
+                    "-p");
 
     /** Whether {@code argument} selects a garbage collector ({@code -XX:+Use…GC}). */
     private static boolean isCollectorSelector(String argument) {
@@ -419,10 +420,12 @@ public final class SpectreBootstrap {
      * that are forwarded to a managed child: heap sizing, agents, module access,
      * assertion and {@code -XX} tuning flags. Withheld are the bootstrap's own flags
      * (above), {@code -D} properties (forwarded separately by {@link
-     * #callerSystemProperties}), collector selectors and AOT options (a foreign value
-     * makes the launch user-managed instead), and {@code --enable-native-access},
-     * which the frontend contract adds itself. An option shape outside the forwarded
-     * set stays behind rather than risking the child's cache or protocol stdout.
+     * #callerSystemProperties}), and collector selectors and AOT options (a foreign
+     * value makes the launch user-managed instead). The caller's own {@code
+     * --enable-native-access} targets are forwarded: the contract's {@code
+     * ALL-UNNAMED} is added alongside them, and the option accumulates. An option
+     * shape outside the forwarded set stays behind rather than risking the child's
+     * cache or protocol stdout.
      */
     public static List<String> callerJvmOptions(List<String> inputArguments) {
         return filterCallerOptions(inputArguments, false, true);
@@ -450,9 +453,12 @@ public final class SpectreBootstrap {
      * the input arguments. These shape the module graph JEP 483
      * archives, so the record run and the cache-assembly JVM must carry exactly the
      * ones the production child carries, or the JVM rejects the trained cache on
-     * every launch. {@code --enable-native-access} is not part of this list: every
-     * phase adds it separately (see {@link #addNativeAccessArgument}). Heap, agent,
-     * and tuning options do not shape the archived module graph and stay
+     * every launch. The caller's {@code --enable-native-access} targets belong to
+     * this list for the same reason (they shape the archived {@code
+     * jdk.module.enable.native.access} property); every phase additionally adds
+     * the contract's {@code ALL-UNNAMED} itself (see {@link
+     * #addNativeAccessArgument}), and repeated occurrences accumulate. Heap,
+     * agent, and tuning options do not shape the archived module graph and stay
      * production-only.
      */
     public static List<String> callerModuleOptions(List<String> inputArguments) {
@@ -462,7 +468,9 @@ public final class SpectreBootstrap {
             if (!argument.startsWith("--add-")
                     && !argument.startsWith("--patch-module")
                     && !argument.startsWith("--module-path")
-                    && !argument.startsWith("--upgrade-module-path")) {
+                    && !argument.startsWith("--upgrade-module-path")
+                    && !argument.equals("-p")
+                    && !argument.startsWith("--enable-native-access")) {
                 continue;
             }
             options.add(argument);
@@ -539,8 +547,7 @@ public final class SpectreBootstrap {
             if (argument.startsWith("-D")
                     || isUserAotArgument(argument)
                     || isCollectorSelector(argument)
-                    || isCollectorDeselector(argument)
-                    || argument.startsWith("--enable-native-access")) {
+                    || isCollectorDeselector(argument)) {
                 if (userManaged) {
                     options.add(argument);
                 }
@@ -582,6 +589,7 @@ public final class SpectreBootstrap {
                 || argument.startsWith("--patch-module")
                 || argument.startsWith("--module-path")
                 || argument.startsWith("--upgrade-module-path")
+                || argument.equals("-p")
                 || argument.equals("-ea")
                 || argument.equals("-da")
                 || argument.startsWith("-ea:")

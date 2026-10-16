@@ -230,7 +230,8 @@ class SpectreBootstrapTest {
                     // contract trained, silently running uncached forever.
                     "-XX:-UseCompressedOops",
                     "-XX:ObjectAlignmentInBytes=16",
-                    // Already added by the frontend contract itself.
+                    // The caller's native-access targets are forwarded (the
+                    // option accumulates); the contract adds ALL-UNNAMED on top.
                     "--enable-native-access=ALL-UNNAMED",
                     // Not a JVM option shape the bootstrap forwards.
                     "spectre",
@@ -245,6 +246,7 @@ class SpectreBootstrapTest {
                 "java.base/java.lang=ALL-UNNAMED",
                 "-XX:MaxGCPauseMillis=50",
                 "-verbose:gc",
+                "--enable-native-access=ALL-UNNAMED",
             ),
             options,
         )
@@ -316,6 +318,46 @@ class SpectreBootstrapTest {
                 ),
             ),
         )
+    }
+
+    @Test
+    fun `short module path alias and caller native access targets are preserved`() {
+        // `-p` is the short form of --module-path: same two-token, module-graph
+        // treatment, or the child cannot find the caller's modules.
+        val moduleInput = listOf("-p", "/plugins", "--add-modules=my.plugin")
+        assertEquals(moduleInput, SpectreBootstrap.callerModuleOptions(moduleInput))
+        assertEquals(
+            moduleInput,
+            SpectreBootstrap.callerJvmOptions(
+                moduleInput,
+                AotCache.Plan(
+                    AotCache.Mode.PRODUCTION,
+                    Path.of("/tmp", "aot", "spectre.aot"),
+                    null,
+                    emptyList(),
+                ),
+            ),
+        )
+
+        // A caller's --enable-native-access target names modules allowed to use
+        // restricted native operations; dropping it and adding only ALL-UNNAMED
+        // revokes that permission in the child. It shapes an archived module
+        // property, so it also belongs to the module-option set every cache
+        // phase (record, assembly, production, fingerprint) is built from.
+        val nativeAccessInput = listOf("--enable-native-access=my.plugin")
+        assertEquals(
+            nativeAccessInput,
+            SpectreBootstrap.callerJvmOptions(
+                nativeAccessInput,
+                AotCache.Plan(
+                    AotCache.Mode.PRODUCTION,
+                    Path.of("/tmp", "aot", "spectre.aot"),
+                    null,
+                    emptyList(),
+                ),
+            ),
+        )
+        assertEquals(nativeAccessInput, SpectreBootstrap.callerModuleOptions(nativeAccessInput))
     }
 
     @Test
