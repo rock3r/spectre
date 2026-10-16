@@ -94,7 +94,8 @@ public final class AotCache {
             String runtimeVersion,
             int featureVersion,
             boolean allowTraining,
-            String trainingSuffix) {
+            String trainingSuffix,
+            List<String> moduleOptions) {
         if (jarFile == null || !isJarFile(jarFile)) {
             return unavailable(null);
         }
@@ -107,7 +108,7 @@ public final class AotCache {
         final Path cacheFile;
         try {
             cacheFile = cacheDirectory(environment, userHome, osName)
-                    .resolve("spectre-" + fingerprint(jarFile, runtimeVersion, osName, osArch) + ".aot");
+                    .resolve("spectre-" + fingerprint(jarFile, runtimeVersion, osName, osArch, moduleOptions) + ".aot");
         } catch (IOException | SecurityException | java.nio.file.InvalidPathException e) {
             // A malformed SPECTRE_AOT_CACHE_DIR or LOCALAPPDATA must degrade to an
             // uncached launch, never terminate the bootstrap.
@@ -155,11 +156,12 @@ public final class AotCache {
             String osName,
             String osArch,
             String runtimeVersion,
-            int featureVersion) {
+            int featureVersion,
+            List<String> moduleOptions) {
         return singleJarFile(classPath)
                 .map(jar -> {
                     Plan plan = plan(jar, environment, userHome, osName, osArch, runtimeVersion,
-                            featureVersion, false, "daemon");
+                            featureVersion, false, "daemon", moduleOptions);
                     if (plan.mode() != Mode.PRODUCTION) {
                         return plan.jvmArguments();
                     }
@@ -183,7 +185,10 @@ public final class AotCache {
                 System.getProperty("os.name"),
                 System.getProperty("os.arch"),
                 runtimeIdentity(),
-                Runtime.version().feature());
+                Runtime.version().feature(),
+                SpectreBootstrap.callerModuleOptions(
+                        java.lang.management.ManagementFactory.getRuntimeMXBean()
+                                .getInputArguments()));
     }
 
     /**
@@ -347,19 +352,30 @@ public final class AotCache {
                 .anyMatch(arg -> arg.contains("AOTCache") || arg.contains("AOTMode"));
     }
 
-    private static String fingerprint(Path jarFile, String runtimeVersion, String osName, String osArch)
+    private static String fingerprint(
+            Path jarFile, String runtimeVersion, String osName, String osArch, List<String> moduleOptions)
             throws IOException {
         // The OS/arch and the runtime identity (version, vendor, VM build) are part of
         // the identity: an AOT archive is only valid for the exact JDK build and
         // OS/CPU combination that produced it, and a shared home directory (for
         // example NFS) must not let one host plan PRODUCTION against another host's
-        // incompatible cache and then reject it forever.
+        // incompatible cache and then reject it forever. The caller's module
+        // options are part of it too: the archived module graph must match the
+        // consuming JVM's exactly, so a different --add-opens set needs its own
+        // cache instead of a PRODUCTION plan against an incompatible one. The
+        // options are sorted and deduplicated first — their order does not
+        // change the module graph, so it must not change the identity either.
+        String moduleIdentity =
+                moduleOptions == null
+                        ? ""
+                        : String.join("\n", moduleOptions.stream().sorted().distinct().toList());
         String identity = jarFile.toAbsolutePath().normalize()
                 + "\n" + Files.size(jarFile)
                 + "\n" + Files.getLastModifiedTime(jarFile).toMillis()
                 + "\n" + runtimeVersion
                 + "\n" + osName
-                + "\n" + osArch;
+                + "\n" + osArch
+                + "\n" + moduleIdentity;
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
                     .digest(identity.getBytes(StandardCharsets.UTF_8));

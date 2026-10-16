@@ -26,6 +26,7 @@ class AotCacheTest {
         environment: Map<String, String> = emptyMap(),
         featureVersion: Int = 25,
         allowTraining: Boolean = true,
+        moduleOptions: List<String> = emptyList(),
     ): AotCache.Plan =
         AotCache.plan(
             jarFile,
@@ -37,6 +38,7 @@ class AotCacheTest {
             featureVersion,
             allowTraining,
             "testpid",
+            moduleOptions,
         )
 
     @Test
@@ -103,6 +105,7 @@ class AotCacheTest {
                 "x86_64",
                 "25.0.1",
                 25,
+                emptyList(),
             ),
         )
     }
@@ -138,9 +141,56 @@ class AotCacheTest {
                 25,
                 true,
                 "testpid",
+                emptyList(),
             )
 
         assertNotEquals(plan(jar).cacheFile(), arm.cacheFile())
+    }
+
+    @Test
+    fun `different caller module options fingerprint to different caches`() {
+        // The archived module graph must match the consuming JVM's module
+        // options exactly, so a launch with a different --add-opens set must
+        // train its own cache instead of planning PRODUCTION against the
+        // earlier one and silently running uncached forever.
+        val jar = jar()
+        val opensLang = listOf("--add-opens", "java.base/java.lang=ALL-UNNAMED")
+        val opensSql = listOf("--add-opens", "java.sql/java.sql=ALL-UNNAMED")
+
+        val first = plan(jar, moduleOptions = opensLang)
+        Files.createDirectories(first.cacheFile().parent)
+        Files.write(first.cacheFile(), byteArrayOf(9))
+
+        assertEquals(AotCache.Mode.PRODUCTION, plan(jar, moduleOptions = opensLang).mode())
+        // Option order does not change the module graph, so it must not
+        // change the cache identity either.
+        assertEquals(
+            plan(
+                    jar,
+                    moduleOptions =
+                        listOf(
+                            "--add-opens",
+                            "java.base/java.lang=ALL-UNNAMED",
+                            "--add-modules",
+                            "java.sql",
+                        ),
+                )
+                .cacheFile(),
+            plan(
+                    jar,
+                    moduleOptions =
+                        listOf(
+                            "--add-modules",
+                            "java.sql",
+                            "--add-opens",
+                            "java.base/java.lang=ALL-UNNAMED",
+                        ),
+                )
+                .cacheFile(),
+        )
+        val other = plan(jar, moduleOptions = opensSql)
+        assertNotEquals(first.cacheFile(), other.cacheFile())
+        assertEquals(AotCache.Mode.TRAINING, other.mode())
     }
 
     @Test
@@ -283,6 +333,7 @@ class AotCacheTest {
                 "x86_64",
                 "25.0.1",
                 25,
+                emptyList(),
             ),
         )
     }

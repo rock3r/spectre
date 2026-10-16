@@ -124,7 +124,10 @@ public final class SpectreBootstrap {
                 AotCache.runtimeIdentity(),
                 Runtime.version().feature(),
                 true,
-                Long.toString(ProcessHandle.current().pid()));
+                Long.toString(ProcessHandle.current().pid()),
+                callerModuleOptions(
+                        java.lang.management.ManagementFactory.getRuntimeMXBean()
+                                .getInputArguments()));
     }
 
     /** First JDK feature release that warns about restricted native methods at runtime. */
@@ -309,15 +312,26 @@ public final class SpectreBootstrap {
         return argument.contains("AOTCache") || argument.contains("AOTMode");
     }
 
+    /** Whether {@code argument} deselects a garbage collector ({@code -XX:-Use…GC}). */
+    private static boolean isCollectorDeselector(String argument) {
+        return argument.startsWith("-XX:-Use") && argument.endsWith("GC");
+    }
+
     /**
-     * Whether the caller selected a collector other than the frontend contract's G1.
-     * Such a launch is user-managed: the managed cache was trained under G1, and the
-     * caller's collector choice takes precedence (see {@link #userManagedChildCommand}).
-     * ({@code -XX:+UseCompressedOops} is not a selector: it does not end in {@code GC}.)
+     * Whether the caller made a collector choice other than the frontend contract's
+     * G1: selecting another collector, or disabling G1 itself. Such a launch is
+     * user-managed: the managed cache was trained under G1, and the caller's
+     * collector choice takes precedence (see {@link #userManagedChildCommand}).
+     * Forwarding {@code -XX:-UseG1GC} after the pinned {@code -XX:+UseG1GC} instead
+     * would leave the JVM with no collector selected and exit during
+     * initialization. ({@code -XX:+UseCompressedOops} is not a selector: it does
+     * not end in {@code GC}.)
      */
     static boolean hasForeignCollector(List<String> inputArguments) {
         return inputArguments.stream()
-                .anyMatch(arg -> isCollectorSelector(arg) && !arg.equals("-XX:+UseG1GC"));
+                .anyMatch(arg ->
+                        (isCollectorSelector(arg) && !arg.equals("-XX:+UseG1GC"))
+                                || arg.equals("-XX:-UseG1GC"));
     }
 
     /**
@@ -345,7 +359,7 @@ public final class SpectreBootstrap {
      * and tuning options do not shape the archived module graph and stay
      * production-only.
      */
-    static List<String> callerModuleOptions(List<String> inputArguments) {
+    public static List<String> callerModuleOptions(List<String> inputArguments) {
         List<String> options = new ArrayList<>();
         for (int i = 0; i < inputArguments.size(); i++) {
             String argument = inputArguments.get(i);
@@ -419,6 +433,7 @@ public final class SpectreBootstrap {
             if (argument.startsWith("-D")
                     || isUserAotArgument(argument)
                     || isCollectorSelector(argument)
+                    || isCollectorDeselector(argument)
                     || argument.startsWith("--enable-native-access")) {
                 if (userManaged) {
                     options.add(argument);

@@ -218,6 +218,7 @@ class SpectreBootstrapTest {
                     "-Xmx1g",
                     "-Ddev.sebastiano.spectre.agent.runtimeJar=/tmp/agent.jar",
                     "-XX:+UseZGC",
+                    "-XX:-UseG1GC",
                     "-XX:AOTCache=/tmp/user.aot",
                     "-javaagent:/tmp/agent.jar",
                     "--add-opens",
@@ -255,6 +256,11 @@ class SpectreBootstrapTest {
         assertFalse(SpectreBootstrap.hasForeignCollector(listOf("-XX:+UseCompressedOops")))
         assertTrue(SpectreBootstrap.hasForeignCollector(listOf("-XX:+UseZGC")))
         assertTrue(SpectreBootstrap.hasForeignCollector(listOf("-XX:+UseShenandoahGC")))
+        // Disabling the pinned collector is a collector choice too: forwarded
+        // after -XX:+UseG1GC it would leave the JVM with no collector selected
+        // and exit during initialization.
+        assertTrue(SpectreBootstrap.hasForeignCollector(listOf("-XX:-UseG1GC")))
+        assertFalse(SpectreBootstrap.hasForeignCollector(listOf("-XX:-UseZGC")))
     }
 
     @Test
