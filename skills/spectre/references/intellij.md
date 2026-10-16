@@ -1,13 +1,12 @@
 # IntelliJ / Jewel-hosted Compose
 
-Spectre can drive Compose UIs hosted **inside** an IntelliJ Platform IDE —
-typically Jewel tool windows or `ComposePanel` instances embedded in plugin
-UIs. The setup differs from a standalone Compose Desktop app in important
-ways.
+Spectre can drive Compose UIs inside IntelliJ, including Jewel tool windows
+and plugin `ComposePanel` instances. The IDE controls dependencies, window focus,
+and the event dispatch thread.
 
 ## Match the IDE's dependencies
 
-Use Spectre 0.7.1 rather than 0.7.0 with the stable IDEA 2026.2.3 baseline.
+Use Spectre 0.7.1 with the stable IDEA 2026.2.3 baseline. Version 0.7.0 is incompatible.
 Version 0.7.0 calls coroutine JVM methods missing from the IDE's 1.10.2 fork;
 excluding its transitive coroutines cannot fix that compiled bytecode.
 Version 0.7.1 compiles against the stable IDE's shared-dependency baseline.
@@ -18,15 +17,12 @@ for the pinned versions.
 
 ## Use the synthetic driver
 
-`ComposeAutomator.inProcess()` already defaults to synthetic AWT events.
-The real `RobotDriver()` would steal focus from the IDE and could
-mis-target windows when the developer alt-tabs away — keep that as an
-explicit opt-in. Pinning `RobotDriver.synthetic(rootWindow = ideFrame)` is
-still the IntelliJ recipe so AWT events start from the IDE frame. On macOS
-this also works when the helper/test JVM is launched with
-`apple.awt.UIElement=true`: AWT may never report a `Window.focusOwner`, but
-Spectre targets the key-listening Compose host under `ideFrame` so focused
-`TextField`s still receive `typeText`.
+`ComposeAutomator.inProcess()` uses synthetic AWT events by default.
+Real `RobotDriver()` can move IDE focus and reach another window if focus changes.
+For IntelliJ, use `RobotDriver.synthetic(rootWindow = ideFrame)` so events target
+the IDE frame. On macOS, this also works with `apple.awt.UIElement=true`.
+If AWT reports no `Window.focusOwner`, Spectre sends key events to the Compose
+host under `ideFrame`, allowing focused `TextField`s to receive `typeText`.
 
 ```kotlin
 import com.intellij.openapi.application.ApplicationManager
@@ -52,32 +48,26 @@ class RunSpectreAction : AnAction() {
 
 ## Don't run the automator on the EDT
 
-`executeOnPooledThread` (or any non-EDT dispatcher) is required. The
-automator's outer loop — polling, retries, waits — runs on the calling
-thread. All five wait helpers (`waitForNode`, `waitUntilGone`, `waitUntil`,
-`waitForIdle`, `waitForVisualIdle`) reject EDT callers with
-`IllegalStateException`, so
-calling them from the EDT fails fast rather than silently deadlocking on
-the `invokeAndWait` round-trip. Per-tick semantics reads internally marshal
-back to the EDT.
+Run the automator's polling and wait loop through `executeOnPooledThread` or another
+non-EDT dispatcher. `waitForNode`, `waitUntilGone`, `waitUntil`, `waitForIdle`,
+and `waitForVisualIdle` throw `IllegalStateException` on the EDT.
+Each semantics read returns to the EDT internally through `invokeAndWait`.
 
 ## Popups and `ComposePanel`
 
-If the task also involves Jewel popup rendering, `ComposePanel` embedding,
-`SwingBridgeTheme`, or popup discovery quirks, read the repo-local
-**`jewel-swing-interop` skill** — it covers the popup rendering modes
-(`OnSameCanvas` vs separate window), `JewelFlags.useCustomPopupRenderer`,
-and theme rules that affect what the automator sees.
+For Jewel popups, `ComposePanel` embedding, `SwingBridgeTheme`, or popup
+discovery, read the repository's **`jewel-swing-interop` skill**. It explains
+`OnSameCanvas`, separate windows, `JewelFlags.useCustomPopupRenderer`, and
+theme rules that affect the automator's tree.
 
-Three facts worth knowing up front:
+Check these popup and panel behaviours:
 
 - Compose Desktop defaults `compose.layers.type` to `OnSameCanvas`, so most
-  popups render inside their host AWT window rather than creating a new
-  one. The automator already handles this — but if you've explicitly opted
-  into separate windows, popups will show up as additional discovered
+  popups render inside their host AWT window. With separate windows enabled,
+  popups show up as additional discovered
   surfaces in `tree()`.
 - Dismissing a popup that renders in its own window removes that window —
-  and every node in it — from the tracked set. Wait for that with
+  and every node in it from the tracked set. Wait for that with
   `waitUntilGone(tag = …)`, which refreshes windows before each poll; a
   one-shot `findBy…` read against the last snapshot cannot observe it.
 - An embedded `ComposePanel` has no top-level title. Window-targeted
@@ -85,19 +75,15 @@ Three facts worth knowing up front:
 
 ## External attach without `spectre-core`
 
-When you need to inspect Jewel-hosted Compose from a **sister process** and
-the IDE (or plugin) does **not** ship `spectre-core`, use agent attach. The
-same `AgentAttach.attach(pid)` call injects nested
-`META-INF/spectre/inject-runtime.jar` when core is absent. Add
-`-XX:+EnableDynamicAgentLoading` to the IDE VM options and restart. Prefer
-in-process `ComposeAutomator` (sections above) when your code already runs
-inside the IDE. Details: `references/agent.md` and the user guide
+To inspect an IDE from another process, use agent attach.
+If the IDE lacks `spectre-core`, `AgentAttach.attach(pid)` injects
+`META-INF/spectre/inject-runtime.jar`. Add `-XX:+EnableDynamicAgentLoading` to
+the IDE VM options and restart it. Code already running inside the IDE can
+use `ComposeAutomator` directly. See `references/agent.md` and
 [IntelliJ-hosted Compose](https://spectre.sebastiano.dev/guide/intellij/).
 
-## What about HTTP / cross-JVM?
+## HTTP and cross-JVM access
 
-The `:server` module that lets another JVM drive the IDE's Compose UI is
-**experimental** and has security caveats (see `docs/SECURITY.md` in the
-repo). Don't recommend it for general use without flagging that — prefer
-running tests in-process via `executeOnPooledThread`, or agent attach
-(inject when the IDE build does not ship Spectre).
+The `:server` HTTP transport is **experimental** and has the trust limits
+documented in `docs/SECURITY.md`. For IDE tests, use in-process automation
+through `executeOnPooledThread` or agent attach when a separate process is needed.

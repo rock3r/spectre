@@ -1,9 +1,7 @@
 # JUnit integration
 
-Spectre ships JUnit 4 and JUnit 5 wrappers in the `:testing` module. They own
-the `ComposeAutomator` lifecycle — building it before each test, tearing
-down after. You don't construct `ComposeAutomator.inProcess()` yourself when
-using them.
+The `:testing` module provides JUnit 4 and JUnit 5 wrappers.
+Each wrapper creates a `ComposeAutomator` before a test and closes it afterward.
 
 For real-input suites running across multiple processes, read
 [input-coordination.md](input-coordination.md). `InputIsolationConfig` is experimental and
@@ -11,8 +9,7 @@ requires `@OptIn(ExperimentalSpectreInputCoordinationApi::class)`.
 
 ## JUnit 5 — `ComposeAutomatorExtension`
 
-Use `@RegisterExtension` on a `@JvmField` (required for JUnit 5 to see the
-field at runtime):
+Put `@RegisterExtension` on a `@JvmField` so JUnit 5 can find the field:
 
 ```kotlin
 import dev.sebastiano.spectre.testing.ComposeAutomatorExtension
@@ -44,8 +41,7 @@ fun example(automator: ComposeAutomator) = runSpectreTest {
 }
 ```
 
-Either form works; the field form is friendlier when you have multiple
-helpers.
+Both forms work. A field can be convenient when the class also registers other helpers.
 
 ## JUnit 4 — `ComposeAutomatorRule`
 
@@ -68,15 +64,13 @@ class DialogTest {
 }
 ```
 
-Note `@get:Rule` (not `@Rule`) for Kotlin — applies the annotation to the
-generated getter, which is what JUnit 4 looks for.
+Kotlin needs `@get:Rule` because JUnit 4 inspects the generated getter.
 
 ## Custom `RobotDriver` per test
 
-Both wrappers take a single positional argument: an
-`AutomatorFactory = () -> ComposeAutomator`. There is **no** `robotDriver =`
-named parameter on the extension or rule constructor. Use the trailing
-lambda to build the automator with whichever driver you want:
+Both wrappers accept an `AutomatorFactory = () -> ComposeAutomator`.
+Their constructors have no `robotDriver =` parameter.
+Use a trailing lambda to create an automator with the required driver:
 
 ```kotlin
 @JvmField
@@ -86,7 +80,7 @@ val automatorExt = ComposeAutomatorExtension {
 }
 ```
 
-Same shape when you want to pin the synthetic driver to a known window
+Use the same shape to pin the synthetic driver to a known window
 (the no-arg `inProcess()` default is already synthetic):
 
 ```kotlin
@@ -103,8 +97,8 @@ The JUnit 4 rule is identical: `ComposeAutomatorRule { ComposeAutomator.inProces
 
 ## Experimental whole-test input isolation
 
-Use `InputIsolationConfig.perTest()` when multiple JVMs require real OS input and setup, failure
-evidence, or teardown can touch focus:
+Use `InputIsolationConfig.perTest()` when parallel JVMs use real OS input and setup,
+failure capture, or teardown can change focus:
 
 ```kotlin
 @file:OptIn(ExperimentalSpectreInputCoordinationApi::class)
@@ -125,10 +119,10 @@ self-deadlock.
 
 ## Failure video (#206)
 
-Optional whole-test recording via `FailureVideoConfig` (default
+Whole-test recording is optional via `FailureVideoConfig` (default
 `FailureVideoPolicy.Off`). Policies: `Off` | `OnFailureKeep` (delete on pass,
 keep on fail) | `Always`. Output: `build/reports/spectre/<class>/<method>/failure-video.mp4`
-next to stills. Independent of still failure artifacts. In-process JUnit only —
+next to stills. Video artefacts are independent of still failure artefacts. This applies to in-process JUnit only;
 see the user guide (`docs/guide/junit.md#failure-video`) and
 `docs/RECORDING-LIMITATIONS.md` for overhead.
 
@@ -140,11 +134,10 @@ ComposeAutomatorExtension(
 
 ## Screenshot golds
 
-Opt-in visual assertions against committed PNG golds. **Nothing compares golds
-unless a test calls `assertMatchesGold`.** Not a substitute for failure artifacts
-or failure video. Prefer `automator.screenshot(windowIndex = …)` when
-`spectre-recording` and the OS helper are on the test runtime classpath; settle
-with `waitForVisualIdle()` first.
+Tests compare committed PNG golds only when they call `assertMatchesGold`.
+Failure artefacts and failure video remain separate diagnostics.
+Use `automator.screenshot(windowIndex = …)` when the test runtime includes
+`spectre-recording` and its OS helper. Call `waitForVisualIdle()` before capture.
 
 ```kotlin
 import dev.sebastiano.spectre.core.ComposeAutomator
@@ -181,7 +174,7 @@ fun homeMatchesGold(testInfo: TestInfo, automator: ComposeAutomator): Unit =
   (`macos` | `windows` | `linux-x11` | `linux-wayland`). Linux keys follow the
   same session detection as window capture.
 - Parameterized / repeated / `@ParameterizedClass` hosts often need an explicit
-  `invocationKey` so invocations do not share a gold — see the user guide.
+  `invocationKey` so invocations do not share a gold; see the user guide.
 - Update mode (rewrite **current** OS + scale gold only):
   `SPECTRE_UPDATE_SCREENSHOT_GOLDS=true` (read by the test JVM; needs no
   Gradle forwarding) or `-Pspectre.updateScreenshotGolds=true`. Spectre's own
@@ -189,21 +182,20 @@ fun homeMatchesGold(testInfo: TestInfo, automator: ComposeAutomator): Unit =
   `-Ddev.sebastiano.spectre.testing.updateScreenshotGolds=true`; **consumers
   using `-P` on their own `Test` task must forward that system property the same
   way** (or prefer the env var). When both are set the property wins. Force a
-  rerun if you rely on the env var alone (`--rerun-tasks`).
+  rerun when only the environment variable supplies update mode (`--rerun-tasks`).
 
-Full detail (scale-key rules, inherited-class identity, CI upload glob): user
+For scale-key rules, inherited-class identity, and the CI upload glob, see the user
 guide [JUnit — Screenshot golds](https://spectre.sebastiano.dev/guide/junit/).
 
 ## Launch-and-attach (separate UI JVM)
 
 When the UI under test is a **separate JVM** (prod-like `java -jar`,
 `installDist`, or `./gradlew :app:run` with warnings), use
-`LaunchAndAttachExtension` (JUnit 5) or `LaunchAndAttachRule` (JUnit 4)
-instead of only `ComposeAutomatorExtension` / `ComposeAutomatorRule`. They
+`LaunchAndAttachExtension` (JUnit 5) or `LaunchAndAttachRule` (JUnit 4). They
 call the shared agent launch core, attach, and tear the process tree down
 after each test. The launched app does **not** have to preinstall
-`spectre-core` — attach injects it when Compose is present — but
-preinstalled core is still the preferred target shape.
+`spectre-core`; attach injects it when Compose is present. Preinstalled core
+remains the preferred target setup.
 
 ```kotlin
 @JvmField
@@ -221,15 +213,15 @@ val launchExt =
     )
 ```
 
-Keep a `ComposeAutomatorExtension` / `Rule` innermost if you also want
-in-process failure artifacts. Full recipe: user guide
+Keep a `ComposeAutomatorExtension` / `Rule` innermost when using
+in-process failure artefacts. Full recipe: user guide
 [JUnit — Launch-and-attach](https://spectre.sebastiano.dev/guide/junit/).
 
 ## Lifecycle notes
 
-- The extension/rule does **not** open a Compose window for you. Launch your
+- The extension/rule does **not** open a Compose window. Launch the
   app or harness in `@BeforeEach`/`@Before`, or at the top of each test.
 - Each test gets a fresh `ComposeAutomator`. Don't cache one across tests.
 - The test body must still be wrapped in `runSpectreTest { ... }` because input
-  and wait calls are `suspend`. `runTest` will break timing — use `runSpectreTest` instead; see the main
+  and wait calls are `suspend`. `runTest` breaks timing; use `runSpectreTest`. See the main
   SKILL.md.

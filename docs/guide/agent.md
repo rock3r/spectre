@@ -1,42 +1,38 @@
 # Agent attach (experimental)
 
-Spectre's `:agent` module lets you attach to a **running Compose Desktop JVM** and drive
-its UI from a separate process — no HTTP listener, no network port, no need to mount routes
-at target startup.
+The `:agent` module controls a **running Compose Desktop JVM** from another process.
+The target does not need an HTTP listener, network port, or startup route registration.
 
-**Target shape (two paths, one API):**
+Attach uses one API with two target setups:
 
-1. **Preferred — preinstalled `spectre-core`** on the target (instrumented attach). Bootstrap
-   finds `ComposeAutomator` on the app classpath. Use this whenever you control the target
-   build.
-2. **Inject — no preinstalled core** (experimental inspect). The loadable
-   `spectre-agent-runtime` jar carries a nested `META-INF/spectre/inject-runtime.jar`;
-   bootstrap loads Spectre core from that payload when the target only has Compose/Skiko.
-   Same `AgentAttach.attach(pid)` call — no separate “inject flag”. Fine for attach → dump →
-   detach (e.g. stock IntelliJ); prefer preinstalled core for sustained or high-frequency use.
+1. **Preinstalled `spectre-core` is preferred.** Bootstrap finds `ComposeAutomator` on the
+   target classpath. Use this setup for a controlled target build.
+2. **Inject works without preinstalled core.** The `spectre-agent-runtime` jar contains
+   `META-INF/spectre/inject-runtime.jar`. Bootstrap loads core from that payload when the
+   target has Compose and Skiko. The call remains `AgentAttach.attach(pid)`.
+   Use inject for occasional inspection, such as a stock IntelliJ attach.
+   Preinstall core for sustained or frequent sessions.
    Details: [Injection without preinstalled core](#injection-without-preinstalled-core).
 
-This is the right transport when:
+Use agent attach when:
 
-- Your test JVM and the UI JVM are different processes by design, but you don't want to
-  modify the UI app's startup wiring.
-- You want to inspect a long-running Compose Desktop app interactively through the
+- The test JVM and UI JVM are separate processes, and the UI app's startup wiring must remain unchanged.
+- A long-running Compose Desktop app needs interactive inspection through the
   `spectre` CLI or an MCP client.
-- You're attaching to an IntelliJ-hosted Compose surface from a sister process (often via
+- An IntelliJ-hosted Compose surface needs attach from a sister process (often via
   inject when the IDE build does not ship Spectre). See [IntelliJ-hosted Compose](intellij.md)
   for VM options and the stock-IDE recipe.
 
-For comparison with the other transports, see [Cross-JVM access](cross-jvm.md) (HTTP) and
-[IntelliJ-hosted Compose](intellij.md) (in-process via `intellij-ide-starter`). Which
-operations are **Supported** vs **Unsupported by design** vs **Not yet CI-executed** is
-tracked in the [capability matrix](capability-matrix.md) — every Supported cell must have
-executable CI evidence.
+See [Cross-JVM access](cross-jvm.md) for HTTP and [IntelliJ-hosted Compose](intellij.md)
+for in-process automation through `intellij-ide-starter`.
+The [capability matrix](capability-matrix.md) records supported operations, unsupported
+operations, and cases without CI execution. Each supported case needs executable CI evidence.
 
 !!! warning "Experimental API"
 
     Everything under `dev.sebastiano.spectre.agent.*` is annotated
     `@ExperimentalSpectreAgentApi` and requires explicit opt-in. The API may change in any
-    release until the UX stabilizes. See [Stability policy](../STABILITY.md).
+    release until the UX stabilises. See [Stability policy](../STABILITY.md).
 
 !!! warning "Trust boundary"
 
@@ -44,7 +40,7 @@ executable CI evidence.
     environments**. Trust model:
 
     - Communication is over a **Unix Domain Socket** under a short private directory (`/tmp/` on
-      Linux/macOS, `%TEMP%` on Windows). Filesystem permissions are the only access control —
+      Linux/macOS, `%TEMP%` on Windows). Filesystem permissions are the only access control:
       directory mode 0700 / socket mode 0600 on POSIX, or an owner-only ACL on Windows/NTFS.
     - The attaching JVM must run as the same OS user as the target JVM.
     - There is **no authentication** and **no encryption** on the wire.
@@ -57,15 +53,15 @@ executable CI evidence.
 ## Requirements
 
 - **JDK 21+** on both the attaching and target JVMs.
-- The attaching JVM must be a **JDK** (not a JRE) with the `jdk.attach` module on the
+- The attaching JVM must be a **JDK** with the `jdk.attach` module on the
   module graph.
 - The target JVM needs a **Compose Desktop host** (so Spectre can find semantics owners).
   Prefer a **preinstalled** `spectre-core` dependency on the target for production-style
   attach. If core is absent, the agent runtime can **inject** a nested
-  `META-INF/spectre/inject-runtime.jar` payload (experimental inspect path — see
+  `META-INF/spectre/inject-runtime.jar` payload (experimental inspect path; see
   [Injection without preinstalled core](#injection-without-preinstalled-core)).
 - **Linux, macOS, and Windows.** The transport uses native Unix Domain Sockets (`AF_UNIX`) on all
-  three — no named pipes, no extra dependencies. Windows requires **Windows 10 version 1803 /
+  three. It uses no named pipes or extra dependencies. Windows requires **Windows 10 version 1803 /
   Windows Server 2019 or newer**, when native `AF_UNIX` landed; older Windows fails the attach
   preflight with a clear message.
 - The target JVM should be started with **`-XX:+EnableDynamicAgentLoading`**. Without it,
@@ -76,13 +72,13 @@ executable CI evidence.
 
 ## Artifact roles
 
-Agent attach involves two JVMs:
+Agent attach uses two JVMs:
 
-- **Target JVM** — the Compose app you want to inspect or drive.
+- **Target JVM** — the Compose app under inspection or automation.
 - **Attacher JVM** — the test, inspector, or tool process that calls `AgentAttach.attach(pid)`.
 
-**Preferred target shape** — preinstall Spectre core so bootstrap uses the instrumented path
-(no inject classloader):
+Preinstall Spectre core for a controlled target build. Bootstrap then uses the
+instrumented path without an inject classloader:
 
 ```kotlin
 // build.gradle.kts of the target application
@@ -93,17 +89,16 @@ dependencies {
 }
 ```
 
-If the target cannot take that dependency (stock IDE, third-party binary), attach still works
-when Compose is present and the runtime jar carries the nested inject payload — see below.
+For a stock IDE or third-party binary, attach can inject core when the target has Compose
+and the runtime jar contains the nested payload.
 
-The attacher JVM usually needs two artifacts:
+The attacher JVM normally needs these artefacts:
 
-- `spectre-agent` — the normal API jar that your test/inspector code compiles against.
+- `spectre-agent` — the normal API jar used to compile test/inspector code.
 - `spectre-agent-runtime` — the loadable Java-agent runtime jar that gets passed to
   `VirtualMachine.loadAgent(...)`.
 
-The easiest Gradle shape is a normal implementation dependency plus a runtime-only dependency on
-the loadable runtime artifact:
+Declare the API dependency for compilation and the agent jar for runtime loading:
 
 ```kotlin
 dependencies {
@@ -121,24 +116,23 @@ dependencies {
    **only when the attacher cwd is inside a Spectre source checkout** (detected via monorepo
    markers). Published consumers should use options 1–3; the fallback is a Spectre-dev convenience.
 
-In normal Gradle usage, `runtimeOnly(...)` makes Gradle launch the attacher with the runtime jar
-listed in `java.class.path`; Spectre scans that classpath, takes the physical jar path, and passes
-that path to `VirtualMachine.loadAgent(...)`. The attacher does not call classes from the runtime
-jar directly, and the target still does not need `spectre-agent-runtime` declared as a dependency.
+With `runtimeOnly(...)`, Gradle lists the runtime jar in the attacher's `java.class.path`.
+Spectre passes that physical path to `VirtualMachine.loadAgent(...)`.
+Attacher code does not call runtime classes directly. The target does not declare
+`spectre-agent-runtime` as a dependency.
 
-One further attacher-side switch exists, and it is not one to set casually:
+The attacher also has an input coordination override:
 `-Ddev.sebastiano.spectre.agent.inputCoordination=disabled` (or
 `AttachOptions.inputCoordination = AttachInputCoordination.Disabled`) drops the attach path from
 `InputLeasePolicy.Required` to `Off` in the target. It exists so a broken input coordinator is
-recoverable rather than terminal, and it costs you the guarantee that no other Spectre process is
+recoverable. Disabling it removes the guarantee that no other Spectre process is
 driving the same desktop. Read
 [When the coordinator cannot be reached](input-coordination.md#coordinator-unreachable) first.
 
-Classpath and directory discovery require exactly one runtime-jar candidate. If more than one
-`spectre-agent-runtime-*.jar` / `agent-runtime-*.jar` is present, attach fails with
-`AmbiguousAgentRuntimeJarException` naming every candidate rather than picking by classpath
-order. Use `AttachOptions.agentJarPath` or `-Ddev.sebastiano.spectre.agent.runtimeJar` to choose
-explicitly.
+Classpath and directory discovery require exactly one runtime jar.
+If multiple `spectre-agent-runtime-*.jar` or `agent-runtime-*.jar` files match,
+`AmbiguousAgentRuntimeJarException` lists them. Set `AttachOptions.agentJarPath` or
+`-Ddev.sebastiano.spectre.agent.runtimeJar` to choose one explicitly.
 
 ## How attach works
 
@@ -154,17 +148,16 @@ explicitly.
    an in-process automator, and starts an IPC server on the UDS path.
 7. The attacher connects an `IpcClient` to that socket and returns `AttachedAutomator`.
 
-After that, calls such as `windows()`, `findByTestTag(...)`, `click(...)`, and `screenshot()` are
-small CBOR requests over the socket. They execute inside the target JVM against the in-process
-automator, then return DTOs or bytes to the attacher.
+After attach, methods such as `windows()`, `findByTestTag(...)`, `click(...)`, and
+`screenshot()` send CBOR requests through the socket. The target runs them against its
+in-process automator and returns DTOs or bytes.
 
-The attacher also makes a best-effort attempt to start the experimental desktop input coordinator.
-Failure to start it does not block read-only attach operations. A target using the current core
-selects `InputLeasePolicy.Required` on `RobotDriver.synthetic()`, so coordinated verbs
-(clipboard paste, or real OS input if the target opted in) then fail closed if
-coordination remains unavailable. When a target has an older preinstalled core without
-`InputLeasePolicy` or `synthetic()`, bootstrap falls back to its legacy no-argument
-`RobotDriver`; that compatibility path is uncoordinated.
+The attacher makes a best-effort attempt to start the experimental input coordinator.
+Read-only attach still works if startup fails. Current core selects
+`InputLeasePolicy.Required` on `RobotDriver.synthetic()`.
+Clipboard paste, and real OS input when enabled, then fail if coordination remains unavailable.
+An older preinstalled core without `InputLeasePolicy` or `synthetic()` uses the legacy
+no-argument `RobotDriver` without coordination.
 
 ### Injection without preinstalled core
 
@@ -177,20 +170,19 @@ Bootstrap order inside the target:
    from that payload (inject attach). Compose / Skiko stay on the target; only Spectre core
    and relocated kotlinx bits come from the inject jar.
 
-Inject is an **experimental inspect** path: fine for rare attach → dump → detach sessions,
-not for high-frequency CI attach loops. Prefer preinstalled core when you control the target
-build. Class unload after detach is GC-dependent; do not treat inject as a leak-free
-production mode.
+Inject is an **experimental inspection** path for occasional attach, inspect, and detach
+sessions. Use preinstalled core for frequent CI attach loops.
+Class unloading after detach depends on garbage collection; inject has no leak-free
+production guarantee.
 
-The same `AgentAttach.attach(pid)` API is used for both paths — there is no separate
-“inject flag” on the public attach surface.
+Both paths use `AgentAttach.attach(pid)`. The public API has no inject flag.
 
 ## Custom runtime jar path
 
-Classpath auto-discovery is the default for normal Gradle runs, but `AttachOptions.agentJarPath`
-and `-Ddev.sebastiano.spectre.agent.runtimeJar=<path>` are explicit overrides and win before the
-classpath scan. Use them for custom launchers, shaded tools, module-path launches, and ad-hoc
-scripts that hide the physical runtime jar from `java.class.path`.
+Normal Gradle runs use classpath discovery. `AttachOptions.agentJarPath` and
+`-Ddev.sebastiano.spectre.agent.runtimeJar=<path>` take precedence over that scan.
+Use an explicit path when a launcher, shaded tool, module-path launch, or script hides
+the physical runtime jar from `java.class.path`.
 
 ```kotlin
 import dev.sebastiano.spectre.agent.AgentAttach
@@ -208,16 +200,15 @@ AgentAttach.attach(
 
 Equivalent: set `-Ddev.sebastiano.spectre.agent.runtimeJar=<path>` on the attacher's JVM.
 
-When the attacher process is running from inside a Spectre source checkout (or a subdirectory of
-one), `AgentAttach` also falls back to
-`<checkout>/agent-runtime/build/libs/agent-runtime-*.jar` so local manual recipes keep working after
-`./gradlew :agent-runtime:jar`. That path is **not** enabled for arbitrary application working
-directories — published consumers should put `spectre-agent-runtime` on the attacher classpath or
-pass an explicit path/system property.
+Inside a Spectre checkout, `AgentAttach` can find
+`<checkout>/agent-runtime/build/libs/agent-runtime-*.jar` after
+`./gradlew :agent-runtime:jar`. This fallback also works in checkout subdirectories.
+Outside the checkout, put `spectre-agent-runtime` on the attacher classpath or supply
+an explicit path or system property.
 
 Consumers that cannot use the published Maven coordinate still have two supported paths:
 
-1. **As a project dependency** (you're inside the Spectre repo or a Gradle composite
+1. **As a project dependency** (inside the Spectre repo or a Gradle composite
    build that includes it):
 
     ```kotlin
@@ -265,10 +256,10 @@ AgentAttach.attach(target.pid).use { automator ->
 } // detach + cleanup on close()
 ```
 
-`AttachedAutomator` is `AutoCloseable`. Closing it sends an `AgentRequest.Detach` over the
-wire; the agent stops accepting new requests, closes the target-side input coordinator session,
-releases its `ComposeAutomator`, unlinks the UDS path, and removes its shutdown hook. A target-side
-shutdown hook covers crash cleanup.
+`AttachedAutomator` implements `AutoCloseable`. `close()` sends `AgentRequest.Detach`.
+The agent stops accepting requests, closes its input coordinator session, releases
+`ComposeAutomator`, removes the UDS path, and unregisters its shutdown hook.
+A target-side shutdown hook handles crash cleanup.
 
 ### `AttachOptions`
 
@@ -280,17 +271,16 @@ AttachOptions(
 )
 ```
 
-The default `<base>` is `/tmp` on Linux and macOS. On Windows it is `%TEMP%`, falling back to
-`%LOCALAPPDATA%\Temp` when `%TEMP%` is deep enough to push the socket path past the platform's
-`sockaddr_un.sun_path` limit (102 usable bytes on macOS, 106 on Linux and Windows). A path you
-pass yourself must also fit that limit; `attach` rejects longer ones with
-`UdsPathTooLongException` before it loads the agent, so the failure names the path and the limit
-instead of surfacing as a bootstrap error inside the target.
+The default `<base>` is `/tmp` on Linux and macOS. Windows uses `%TEMP%` or,
+if that path is too deep, `%LOCALAPPDATA%\Temp`. The `sockaddr_un.sun_path`
+limit is 102 usable bytes on macOS and 106 on Linux and Windows. Custom paths
+must fit. `attach` throws `UdsPathTooLongException` before loading the agent
+when a path exceeds the limit. The error names the path and limit.
 
-If you override `udsPath` with a path under an existing directory, you own that parent
-directory's permissions. Spectre creates the default per-attach directory and socket owner-only —
-mode 0700/0600 on POSIX, an owner-only ACL (owner full control, inherited ACEs dropped) on
-Windows — but it does not tighten directories it did not create.
+When setting `udsPath` under an existing directory, secure that parent directory.
+Spectre creates its default per-attach directory and socket for the owner only.
+It uses mode 0700/0600 on POSIX. On Windows, it gives the owner full control and
+drops inherited ACL entries. Spectre leaves existing parent permissions unchanged.
 
 `AgentAttach.attach` runs a **same-user preflight** and throws
 `AttachPermissionDeniedException` if the target JVM is owned by a different OS user (the
@@ -298,8 +288,8 @@ JDK Attach API only works across attach-compatible same-user processes on POSIX)
 Linux/macOS the preflight prefers numeric UID equality when both sides can be resolved, and
 falls back to `ProcessHandle` usernames when UID lookup is unavailable (#166).
 
-The JEP 451 `-XX:+EnableDynamicAgentLoading` flag is **not** verified by Spectre yet — the
-JVM itself prints a stderr warning if it's missing, which is the source of truth. A follow-up
+The JEP 451 `-XX:+EnableDynamicAgentLoading` flag is **not** verified by Spectre yet.
+The JVM itself prints a stderr warning if it's missing, which is the source of truth. A follow-up
 can add a reliable preflight via `HotSpotDiagnosticMXBean`.
 
 ## Operation set
@@ -331,15 +321,16 @@ can add a reliable preflight via `HotSpotDiagnosticMXBean`.
 | `click(node)`         | `AgentRequest.Click`             | `Unit` (DTO overload uses [NodeSnapshotDto.key] — #362) |
 | `close()` (auto)      | `AgentRequest.Detach`            | tear-down         |
 
-`windowIdentities` returns native handle/id (when resolvable), window and Compose-surface
-bounds in **AWT user-space screen coordinates** (same space as `windows()` /
-`locationOnScreen` / Robot), surface bounds **relative to the window** (crop rect),
-per-window affine transform (`scaleX`/`scaleY`/`translateX`/`translateY`), and a
-`cropRequired` flag when the surface is a subset of the top-level window (title bar or
-embedded panel). For device pixels: point `(x, y) → (x * scaleX + translateX, y * scaleY +
-translateY)`; scale widths/heights by `scaleX`/`scaleY` only (no translation). Daemon-owned
-recording (#183) uses this so capture stays on the daemon host rather than over the
-transport.
+`windowIdentities` returns a native handle or ID when it can resolve one.
+It also returns window and Compose-surface bounds in **AWT user-space screen coordinates**.
+These match `windows()`, `locationOnScreen`, and Robot coordinates.
+Surface bounds relative to the window supply a crop rectangle.
+The result includes `scaleX`, `scaleY`, `translateX`, `translateY`, and `cropRequired`.
+`cropRequired` is true when the Compose surface occupies only part of the top-level window.
+For device pixels, transform a point as
+`(x, y) → (x * scaleX + translateX, y * scaleY + translateY)`.
+Scale widths and heights without translation. Daemon-owned recording uses this metadata
+to capture on the daemon host.
 
 `waitForNode`, `waitForVisualIdle` (#201), `waitForIdle` (#362), and `waitUntilGone` (#438)
 are available over the agent transport. `waitForIdle` runs a **fingerprint-only** wait on the
@@ -347,24 +338,20 @@ agent's in-target automator (timeout / quiet / poll; absolute deadline on the wi
 `waitForNode`). It does **not** observe idling resources registered on a different automator
 instance in the app. **Idling-resource registration** and `withTracing` remain in-process-only.
 
-Every wait's **timeout message travels back verbatim**. All four report category `timeout`, but
-the message is what makes a timeout actionable, and each wait produces its own: `waitForIdle`
-names the busy idling resources, `waitForVisualIdle` the frame-sample counts, `waitUntilGone` the
-selector and how many matching nodes were still present in tracked windows. An attach client
-learns *why* the wait expired, not merely that it did.
+Each wait returns its **timeout message verbatim** with category `timeout`.
+`waitForIdle` names busy idling resources. `waitForVisualIdle` reports frame sample counts.
+`waitUntilGone` names the selector and the remaining match count.
 
-That costs a little trailing room on the wire. The absolute deadline the client attaches to a wait
-is its budget **plus one second**, not the budget exactly: the agent enforces that deadline both
-with a scheduler and with a post-handler check, and on an exact deadline both fire at the same
-instant the in-target automator's own timeout does — a race the automator always loses, leaving
-callers with `Deadline elapsed during op` instead of the real message. The slack stays well inside
-the agent's own `timeout + 2s` suspend-bridge backstop, so a wedged automator is still claimed on
-the wire rather than waiting unbounded.
+The wire deadline is the wait budget **plus one second**.
+The agent checks it with a scheduler and after the handler returns.
+An identical deadline could replace the automator's timeout detail with
+`Deadline elapsed during op`. The added second lets the automator report its cause.
+The agent's `timeout + 2s` suspend-bridge limit still bounds a stalled operation.
 
-Richer input verbs (`doubleClick` / `longClick` / `swipe` / `scrollWheel` / `pressKey`)
-are available over agent, HTTP, and daemon/CLI/MCP (#203). `focusWindow(nodeKey)` raises
-and focuses the AWT window hosting a node over attach (#364) — use it before `pressKey` /
-`typeText` when the attach client is the foreground process and the target app is not.
+Agent, HTTP, and daemon/CLI/MCP support `doubleClick`, `longClick`, `swipe`,
+`scrollWheel`, and `pressKey` (#203). Over attach, `focusWindow(nodeKey)` raises
+and focuses the node's AWT window (#364). Call it before `pressKey` or `typeText`
+when the attach client holds foreground focus.
 
 ## Wire format
 
@@ -386,23 +373,21 @@ After the UDS connects, the first exchange is always:
 2. Runtime → `helloAck` with the same version, or `error` with category
    `protocolMismatch`
 
-While the agent API is experimental, compatibility is **exact-match**. A version
-mismatch fails attach with a clear `IOException` / `SpectreAgentException` rather than
-proceeding and hanging on later frames. From 1.0 the rule may become additive-compatible
-(min/max range); that change will bump `ProtocolVersion.CURRENT` and this section.
+The experimental agent protocol requires an **exact version match**.
+A mismatch fails attach with `IOException` or `SpectreAgentException`.
+A future additive compatibility range would change `ProtocolVersion.CURRENT` and this guide.
 
-Revisions so far: **v1** bare request/response frames after `hello`; **v2** (#200) operation
-envelopes with op ids, cancel, and deadline budgets; **v3** bulk payloads (`pngBytes`,
-`captureJsonUtf8`) as CBOR byte strings rather than integer arrays. v3 is the reason the
-handshake matters for more than op availability — it is a *representation* change that the
-type system cannot see, so peers must be refused at `hello` rather than at the frame that
-carries a screenshot.
+The protocol has three revisions. **v1** uses bare request and response frames after
+`hello`. **v2** (#200) adds operation envelopes with op ids, cancellation, and deadline
+budgets. **v3** encodes bulk `pngBytes` and `captureJsonUtf8` payloads as CBOR byte
+strings. Earlier peers expect integer arrays; the type system cannot detect this
+representation change. Peers therefore reject an incompatible version at `hello`,
+before a screenshot frame arrives.
 
 ### Unknown operations
 
-A newer attacher that sends an unknown request discriminator (sealed `@SerialName` the
-runtime does not know) receives `error` with category **`unsupportedOperation`**, not a
-decode hang or silent close. That is how mixed-version pairs degrade.
+If the runtime receives an unknown sealed `@SerialName` request, it returns an `error`
+with category **`unsupportedOperation`**. This gives mixed-version peers a defined failure.
 
 ### Error taxonomy
 
@@ -443,21 +428,18 @@ Each IPC frame is length-prefixed, with **two** separate bounds:
 | Write budget | **64 MiB** default (`DEFAULT_MAX_FRAME_BYTES`), configurable | the payload a process will send |
 | Read ceiling | **512 MiB** fixed (`MAX_FRAME_BYTES_CEILING`) | the length a process will accept from a header |
 
-They are deliberately different. The read ceiling exists because `readFrame` allocates the payload
-buffer from a length it has not yet validated, so it bounds what a corrupt or desynchronised header
-can make a reader allocate. Keeping it fixed and well above the write budget means two endpoints on
-different budgets can never strand a response: a reader always accepts what any legitimately
-configured writer sends.
+The read ceiling limits memory allocation from an invalid or desynchronised frame header.
+`readFrame` allocates a buffer based on that header length.
+The ceiling stays fixed above every allowed write budget, so a reader accepts any
+legitimately configured writer's frame.
 
-The write budget is sized for the bulkiest payload, screenshots, in their worst case. PNG can only
-approach raw bytes-per-pixel on incompressible content, so a 3840x2160 desktop tops out near 25 MB
-of 24-bit sRGB; 64 MiB clears that with room for a dual-4K desktop.
+The default write budget covers screenshots. An incompressible 3840×2160 24-bit sRGB
+image approaches 25 MB. The 64 MiB budget leaves room for a dual-4K desktop.
 
-That arithmetic only holds because bulk fields (`pngBytes`, `captureJsonUtf8`) are annotated
-`@ByteString` and therefore encode as CBOR byte strings. Without it kotlinx serializes each signed
-byte as its own integer, inflating the framed response to roughly **1.8x** the payload — which
-would silently invalidate every budget on this page, since they are all expressed against payload
-size. `WirePayloadEncodingTest` pins the encoding.
+`pngBytes` and `captureJsonUtf8` use `@ByteString`, so CBOR encodes them as byte strings.
+Without that annotation, kotlinx serialises each signed byte as an integer.
+That can grow a frame to about **1.8×** its payload and invalidate the stated budgets.
+`WirePayloadEncodingTest` checks the encoding.
 
 #### Raising the budget
 
@@ -468,14 +450,15 @@ export SPECTRE_MAX_FRAME_BYTES=256MiB   # bytes, or a binary suffix: 512, 128k, 
 spectre --max-frame-bytes 256MiB capture <session-id>
 ```
 
-The flag overrides the environment variable. Both accept up to the 512 MiB read ceiling.
+The flag takes precedence over the environment variable.
+Both accept values up to the 512 MiB read ceiling.
 
 Propagation matters, because three processes are involved:
 
 - The **CLI** applies the value to itself.
 - A **daemon this invocation starts** inherits it on its command line. A daemon that is *already
-  running* keeps the budget it booted with, and reports it in the handshake — so asking for a
-  different one **fails loudly** rather than half-applying:
+  running* keeps the budget it booted with and reports it in the handshake. Asking for a
+  different one **fails loudly**. It cannot partially apply the request:
 
   ```text
   Cannot honour --max-frame-bytes=256MiB (268435456 bytes): the running Spectre daemon started
@@ -485,34 +468,34 @@ Propagation matters, because three processes are involved:
   ```
 
   Only an explicit request is refused, and *explicit* means the option or the variable was
-  present — not that its value differs from the default. Asking for `64MiB` against a `128MiB`
-  daemon is a conflict like any other. Leaving the budget alone asks for nothing, so a daemon
+  present, regardless of whether its value differs from the default. Asking for `64MiB`
+  against a `128MiB` daemon is a conflict like any other. Leaving the budget alone asks for nothing, so a daemon
   running something larger is accepted silently: readers take frames up to the ceiling whatever
   their own budget. A daemon too old to report its budget cannot have been started with the
-  requested one, so it is refused the same way rather than assumed compatible.
+  requested one, so the request is refused because compatibility cannot be established.
 - The **injected agent** cannot read the daemon's environment, and it is the process that writes
   the bulky screenshot frames, so the daemon forwards its resolved budget in `agentArgs` (see
   below). It applies before the agent's IPC server accepts a request.
 
-Because readers are permissive up to the ceiling, no hop ever rejects a frame a peer legitimately
-sent; the refusal above is about the *request* not being honourable, not about the wire.
+Readers accept frames up to the ceiling. The mismatch error rejects a requested budget
+that the running daemon cannot apply.
 
 #### Over-budget behaviour
 
-Exceeding the write budget is **fail-closed**:
+Frames over the write budget **fail closed**:
 
 - Responses that encode larger than the budget are **not** truncated or spilled to disk by the
   agent transport. The runtime replies with `error` category **`payloadTooLarge`** and a message
   that includes the sizes.
 - The connection stays open; subsequent ops on the same session continue normally.
-- Parity CI can rely on deterministic taxonomy behaviour instead of size-threshold flakes.
+- Parity CI can rely on deterministic taxonomy behaviour without size-threshold flakes.
 
-The one exception is the **fullscreen still**, whose size nothing bounds: rather than failing, it
-drops to logical resolution first, and only reports `payloadTooLarge` if even that overruns. See
+The **fullscreen still** can first use logical resolution when its original size exceeds
+the budget. It reports `payloadTooLarge` if that image still exceeds the limit. See
 [Atomic capture — Pixel scale](capture.md#pixel-scale).
 
-Spill-to-file for large captures remains a higher-level concern (capture directories / daemon
-shared FS from #181); the wire layer does not invent a second path for oversized frames.
+Capture directories and a shared daemon filesystem can handle larger artefacts.
+The wire protocol has no separate spill-to-file path for oversized frames.
 
 #### `agentArgs` format
 
@@ -523,49 +506,45 @@ shared FS from #181); the wire layer does not invent a second path for oversized
 | Bare UDS path | `/tmp/sp-a-123-abcd/agent.sock` | hand-written `-javaagent:` lines; still **accepted** |
 | Structured | `uds=/tmp/sp-a-123-abcd/agent.sock,maxFrameBytes=268435456` | everything Spectre **emits** |
 
-The structured form is recognised by a `uds=` prefix *and* at least one further `,`-separated
-field. Values Spectre emits are percent-escaped, so a UDS path containing `,` or `=` survives the
-round trip instead of truncating. The one shape that stays ambiguous is a **hand-written** bare
-path that both starts with `uds=` and contains a comma — `uds=agent,1.sock` is read as structured.
-Any prefix-based discriminator has such a case; this one is documented rather than chased, since
-Spectre only ever emits the structured form and the bare form exists for `-javaagent:` lines you
-write yourself.
+Spectre recognises the structured form when arguments start with `uds=` and include
+another comma-separated field. It percent-escapes emitted values, preserving `,` and
+`=` in UDS paths. A manually written bare path such as `uds=agent,1.sock` is
+ambiguous and reads as structured. Spectre emits only structured arguments. Bare paths
+remain accepted for manually written `-javaagent:` lines.
 
-Unknown keys and unparseable values are ignored rather than failing the attach, so a runtime that
-understands this format but not a newer key still gets a working session. That tolerance does not
-extend to a runtime predating the format: it reads the whole string as a socket path, binds
-somewhere else, and the attach times out. Spectre resolves the runtime JAR from the attacher, so
-that pairing is only reachable by overriding it (`AttachOptions.agentJarPath` or the runtime-jar
-system property), the bootstrap timeout names the possibility, and `ProtocolVersion.CURRENT` is
-bumped whenever the payload representation changes so a mismatched pair fails the handshake rather
-than a later frame.
+The runtime ignores unknown keys and values it cannot parse.
+A runtime that predates structured arguments treats the entire string as a socket path,
+so attach times out. This pairing requires an explicit runtime jar override through
+`AttachOptions.agentJarPath` or the system property.
+The bootstrap timeout identifies that possibility. Changes to payload representation bump
+`ProtocolVersion.CURRENT` so mixed peers fail at the handshake.
 
-Spectre always emits the budget, **including the default one**. The target may have been launched
-with a `SPECTRE_MAX_FRAME_BYTES` of its own, and letting that win would leave the daemon and the
-JVM it injected disagreeing about the hop between them — a 16MiB target under a 64MiB daemon would
-fail captures the daemon could carry.
+Spectre always emits the frame budget, including its default. A target can also set
+`SPECTRE_MAX_FRAME_BYTES`. Explicitly sending the budget keeps the daemon and injected
+JVM aligned. For example, a 16 MiB target limit would reject captures that a
+64 MiB daemon could otherwise carry.
 
 HTTP maps `payloadTooLarge` → **413 Payload Too Large**.
 
 ### Long operations and cancel (#200)
 
-After Hello, every request is an **operation envelope** (`opId`, optional absolute
-`deadlineEpochMs`, body). Responses are correlated by `opId` so multiple ops can share one
-connection.
+After Hello, each request carries `opId`, an optional absolute `deadlineEpochMs`,
+and its body. Responses use `opId` to match requests on a shared connection.
 
-- Long work (future waits, heavy capture) runs on a **worker thread**, not the accept loop —
-  so cancel/detach stay responsive.
-- **Cancel** is an explicit wire op (`cancel` with the target `opId`), not socket-close.
+- Long work (future waits, heavy capture) runs on a **worker thread** so the accept loop
+  remains responsive to cancel/detach.
+- **Cancel** is an explicit wire op (`cancel` with the target `opId`). Closing the socket
+  has different lifecycle semantics.
 - Closing a CLI/MCP front-end during a long-poll cancels only that **front-end** connection's
   in-flight work. The **daemon session stays attached** until an explicit `detach` (or daemon
-  kill / crash). Reconnect or use the CLI against the same session id — disconnect is not
-  detach and does not leave an undocumented zombie without a recovery path (see lifecycle
-  below). The agent transport itself only detaches on an explicit `detach` or handshake
+  kill / crash). Reconnect or use the CLI against the same session id. A disconnect leaves
+  the daemon session attached and recoverable (see lifecycle below). The agent transport
+  itself only detaches on an explicit `detach` or handshake
   failure teardown.
 
 
-Clients should branch on `category` (see `AgentErrorCategory` / `SpectreAgentException`),
-not on free-text `message`. The HTTP transport maps the same names onto status codes
+Clients should use `category` from `AgentErrorCategory` or `SpectreAgentException`.
+The free-text `message` explains the error. HTTP maps categories to status codes
 (`invalidSelector` → 400, `nodeNotFound` → 404, `unsupportedOperation` → 501,
 `cancelled` → 499 Client Closed Request, `payloadTooLarge` → 413, etc.) via
 `SpectreErrorCategory` in `:server`.
@@ -587,11 +566,12 @@ Not additive-safe without a version bump:
 
 ## Current limitations
 
-- **Windows needs 10 version 1803 / Server 2019 or newer.** That's when native `AF_UNIX` landed;
-  older Windows fails the attach preflight with `AttachPlatformUnsupportedException`. Hosted
-  GitHub `windows-latest` is not a reliable interactive desktop for the Robot-backed attach
-  fixture; the full attach → exercise → detach UI e2e is opt-in on physical Windows desktops
-  (non-UI transport/ACL tests still run on every Windows CI job):
+- **Windows needs 10 version 1803 / Server 2019 or newer.** Earlier versions
+  lack native `AF_UNIX` and fail attach preflight with
+  `AttachPlatformUnsupportedException`. Hosted GitHub `windows-latest` does not
+  provide a reliable interactive desktop for the Robot-backed attach fixture.
+  Run the full attach → exercise → detach UI test on a physical Windows desktop.
+  It is opt-in. Non-UI transport and ACL tests still run on every Windows CI job:
 
   ```shell
   # bash / zsh / cmd
@@ -606,8 +586,8 @@ Not additive-safe without a version bump:
   `waitForIdle` are supported over agent IPC with shared deadline budgets and cancel.
   Idling-resource registration stays in-process only.
 - **IntelliJ-hosted Compose**: the classloader-disambiguation rule (D-14 in the plan) was
-  designed to handle `PluginClassLoader` chains but isn't automatically tested yet. If
-  you hit issues attaching to an IntelliJ-hosted target, file a Spectre issue with the
+  designed to handle `PluginClassLoader` chains. Automatic tests do not cover it yet. If
+  attaching to an IntelliJ-hosted target fails, file a Spectre issue with the
   `agent-attach` label.
 - **Runtime jar is separate from the API jar.** The normal `spectre-agent` dependency is not the
   jar loaded into the target JVM. Add `spectre-agent-runtime`, pass
@@ -627,16 +607,15 @@ jps -l | grep "dev.sebastiano.spectre.sample.MainKt"
 ./gradlew :agent:attachSpike -Ppid=<pid>
 ```
 
-The `attachSpike` task is intentionally separate from `:check` — it exists for human
-verification and is not config-cache compatible.
+`attachSpike` runs separately from `:check` for manual verification.
+It is not compatible with Gradle's configuration cache.
 
 ## CLI and MCP
 
-The `spectre` executable is a client for a per-user local daemon. It starts that daemon on
-demand, and `spectre mcp` shares the same daemon and its attached sessions with ordinary CLI
-commands. Keep the executable running only through the MCP client: MCP uses its standard input
-and output for protocol frames, so do not add a shell wrapper that prints banners to standard
-output.
+The `spectre` executable starts a per-user local daemon when needed.
+`spectre mcp` and ordinary CLI commands share its attached sessions.
+MCP uses standard input and output for protocol frames.
+Do not wrap it in a command that prints banners to standard output.
 
 Start with the same target prerequisites described above, then find and attach it from a shell:
 
@@ -649,13 +628,13 @@ The attach response contains an `id`. Pass it to commands such as `tree`, `find`
 `screenshot`. On the attach path, `screenshot` **requires** `--fullscreen` for screen-pixel
 capture; default / `--window` / `--surface` fail closed (occlusion/privacy risk). Without
 `--output`, a successful capture creates a temporary file and prints its path. Prefer a target
-with preinstalled `spectre-core`; experimental inject also works for Compose-only hosts — see
+with preinstalled `spectre-core`; experimental inject also works for Compose-only hosts. See
 [Requirements](#requirements). Full command and MCP reference: [CLI](cli.md).
 
 ### Claude Code recipe
 
 Install the `spectre` executable where Claude Code can invoke it, then add it to the project's
-`.mcp.json`. Use an absolute path so Claude Code does not depend on your interactive shell's
+`.mcp.json`. Use an absolute path so Claude Code does not depend on the interactive shell's
 `PATH`:
 
 ```json
@@ -677,7 +656,7 @@ Restart Claude Code after changing the configuration. It can then use these tool
    (`click`, `double_click`, `long_click`, `swipe`, `scroll_wheel`, `press_key`, `type_text`),
    and `wait_until_gone` after a dismissal before touching what it revealed.
 4. `screenshot` with `fullscreen=true` for an inline full-desktop PNG (window/surface targets
-   fail closed on attach), or `capture` / `record_*` for daemon-filesystem artifacts (paths only).
+   fail closed on attach), or `capture` / `record_*` for daemon-filesystem artefacts (paths only).
 5. When the target runs under Compose Hot Reload: call `wait_for_reload_settled` **before**
    triggering a code reload (it must observe the settle chain), then re-run `tree` / `find`
    before further input.
@@ -685,9 +664,9 @@ Restart Claude Code after changing the configuration. It can then use these tool
    returns leftover capture cleanup summary (count/bytes/paths + prune command when any exist).
    Unknown or already-detached sessions fail closed (`isError`). Sibling sessions stay attached;
    `detach` is never “kill the daemon” or “release all.” Detach does **not** delete capture files;
-   run the summary’s `pruneCommand` when you want cleanup. Prefer `detach` over
+   run the summary’s `pruneCommand` for cleanup. Prefer `detach` over
    `spectre daemon kill` (which drops **every** session). The shared daemon stays up after a
-   successful detach so you can `list_processes` / `attach` again.
+   successful detach, allowing another `list_processes` / `attach` call.
 
 ### Agent session lifecycle (multi-session + disconnect)
 
@@ -699,25 +678,24 @@ Restart Claude Code after changing the configuration. It can then use these tool
 - **Client disconnect ≠ detach.** Killing or restarting the MCP front-end (stdio death, agent
   process exit) cancels in-flight **front-end** work only. The daemon keeps the target session
   until an explicit `detach`, CLI `spectre detach <session-id>`, or `spectre daemon kill`. After
-  reconnect, list sessions / reuse the same `sessionId`, or detach deliberately — disconnect
+  reconnect, list sessions / reuse the same `sessionId`, or detach deliberately. Disconnect
   does not create undocumented zombies and does not silently detach.
 - **Recovery after front-end death:** `spectre` CLI against the same user daemon
   (`ps` / attach if needed / `tree` / `detach`), or a new MCP client talking to the same daemon.
 
 Full MCP tool names, input/output schemas, filesystem implications, and capture-mode
 distinctions: [CLI — MCP](cli.md#mcp). MCP detach success JSON is the daemon `Detached` shape
-(`sessionId`, not CLI `--json` `id`) — see
+(`sessionId`; CLI `--json` uses `id`); see
 [Detach success body (MCP vs CLI)](cli.md#detach-success-body-mcp-vs-cli).
 
-Node keys are short-lived: get a fresh key with `tree` or `find` after an interaction changes the
-UI. On reload-aware sessions, keys are also invalidated after a successful hot reload settle —
-see [Compose Hot Reload awareness](hot-reload.md).
+Node keys can become invalid after a UI change. Run `tree` or `find` again after
+an interaction. Reload-aware sessions also invalidate keys after a successful settle.
+See [Compose Hot Reload awareness](hot-reload.md).
 
-If both MCP servers are configured, choose the tool based on the task:
+When both MCP servers are available, use each for its supported operations:
 
 > Use Compose Hot Reload MCP to check recomposition during a live Hot Reload session.
 > Use Spectre for other inspection and automation tasks.
 
-Call the MCP **`detach`** tool (or `spectre detach <session-id>` from a shell) to release one
-session, or `spectre daemon kill` to stop the shared daemon and discard all sessions when you are
-finished.
+Call MCP **`detach`** or `spectre detach <session-id>` to release one session.
+`spectre daemon kill` stops the shared daemon and discards all sessions.

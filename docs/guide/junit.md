@@ -1,6 +1,6 @@
 # JUnit integration
 
-The `testing` module provides drop-in wrappers that own a per-test `ComposeAutomator`.
+The `testing` module creates and closes a `ComposeAutomator` for each JUnit test.
 
 ## Whole-test input isolation
 
@@ -10,8 +10,8 @@ The `testing` module provides drop-in wrappers that own a per-test `ComposeAutom
     may change in any release. See [Experimental desktop input coordination](input-coordination.md)
     for runtime dependencies, recovery, and platform status.
 
-In-process JUnit wrappers can hold one lease across factory setup, the test body, failure capture,
-failure-video finalization, and teardown:
+In-process JUnit wrappers can hold one input lease through factory setup, the test,
+failure capture, video finalisation, and teardown:
 
 ```kotlin
 @file:OptIn(ExperimentalSpectreInputCoordinationApi::class)
@@ -40,10 +40,10 @@ The same `inputIsolation` constructor is available on `ComposeAutomatorRule` for
   and teardown complete.
 - `Off` declares that coordination is external or intentionally disabled.
 
-During a synchronous custom factory, `PerTest` makes its acquired lease ambient on the invoking
-thread. A factory that uses `RobotDriver(InputLeasePolicy.Required)` for setup therefore reuses the
-whole-test lease instead of queueing behind itself. Do not launch factory work that outlives the
-factory call; after the factory returns, the lease is bound to the returned automator normally.
+During a synchronous custom factory, `PerTest` exposes its lease on the invoking thread.
+`RobotDriver(InputLeasePolicy.Required)` reuses that lease during setup.
+Factory work must finish before the factory returns. Spectre then binds the lease to
+the returned automator.
 
 JUnit 5 stores the lease per invocation, so parameter-injected automators remain parallel-safe.
 JUnit 4 wraps the complete `Statement.evaluate()` lifecycle. Owner diagnostics contain class and
@@ -53,8 +53,8 @@ holding a separate test-JVM lease would self-deadlock.
 
 ## JUnit 5: `ComposeAutomatorExtension`
 
-The safest pattern is `@RegisterExtension` on a `@JvmField` — one extension instance per
-test class, owned by the test class:
+Register one extension field on the test class with
+`@JvmField` and `@RegisterExtension`:
 
 ```kotlin
 import dev.sebastiano.spectre.testing.ComposeAutomatorExtension
@@ -75,7 +75,7 @@ class MyTest {
 }
 ```
 
-The extension also implements `ParameterResolver`, so you can use `@ExtendWith` and take
+The extension also implements `ParameterResolver`, allowing `@ExtendWith` to supply
 the automator as a parameter:
 
 ```kotlin
@@ -99,7 +99,7 @@ class MyTest {
     The parameter-injection form is **the** parallel-safe form: each test resolves its
     own automator from the per-invocation `ExtensionContext.Store`. The
     `automatorExt.automator` accessor returns the most recently created instance and is
-    fine for sequential runs but races under parallel execution.
+    fine for sequential runs. Parallel execution creates a race.
 
 !!! warning "Expression-body tests should declare `: Unit`"
     JUnit 5.14 and newer reject `@Test` methods whose JVM return type is not `void`.
@@ -127,23 +127,18 @@ class MyTest {
 }
 ```
 
-`@get:Rule` (note the `get:` prefix) targets the annotation at the property's generated
-getter, which is what JUnit 4 reflects on. Without the `get:` prefix Kotlin would put
-the annotation on the property itself and JUnit wouldn't see it.
+`@get:Rule` puts the annotation on Kotlin's generated getter.
+JUnit 4 inspects that getter. Without `get:`, JUnit may not find the rule.
 
 ## Launch-and-attach harness
 
-When the UI under test is a **separate JVM** (prod-like `java -jar`, installDist, or even
-`./gradlew :app:run` with warnings), use `LaunchAndAttachExtension` (JUnit 5) or
-`LaunchAndAttachRule` (JUnit 4) from `:testing`. They call the shared agent launch core
-before each test and tear the process tree down after — the same lifecycle window
-`ComposeAutomatorExtension` / `ComposeAutomatorRule` use. The launched app does **not**
-need a preinstalled `spectre-core` dependency: attach uses the same two-path bootstrap as
-[agent attach](agent.md) (inject when Compose is present and core is not). Prefer
-preinstalled core when you control the app build. Failure-artifact capture is
-wired into those automator wrappers (see [Failure artifacts](#failure-artifacts)); keep
-the automator rule/extension innermost if you also use launch-and-attach so capture still
-sees open windows.
+For a **separate UI JVM**, use `LaunchAndAttachExtension` with JUnit 5 or
+`LaunchAndAttachRule` with JUnit 4. They start the app before each test and stop
+its process tree afterward. The app can run from `java -jar`, installDist, or Gradle
+`run` with warnings. The app need not preinstall `spectre-core`; attach injects core
+when Compose is present. Prefer preinstalled core for controlled app builds.
+Keep an automator rule or extension innermost when combining wrappers, so
+[failure capture](#failure-artifacts) runs while windows remain open.
 
 ```kotlin
 import dev.sebastiano.spectre.agent.launch.LaunchSpec
@@ -198,11 +193,11 @@ fun alsoFine(automator: AttachedAutomator) {
 The `launchExt.automator` / `launchExt.launched` accessors are instance-specific and
 thread-local-backed, so they stay correct under parallel execution and when a class
 registers **two** launch extensions (app + helper). With two or more registrations,
-parameter injection is disabled to avoid competing resolvers — use the property
+parameter injection is disabled to avoid competing resolvers. Use the property
 accessors instead.
 
-Because the extension needs a `LaunchSpec`, register it with `@RegisterExtension` (not
-`@ExtendWith`).
+Because the extension needs a `LaunchSpec`, register it with `@RegisterExtension`.
+`@ExtendWith` cannot supply that spec.
 
 Prefer prod-like commands. For Gradle-ish launches, set `appJvmNameFilter` (main-class
 substring) so discovery can find the daemon-spawned app JVM without attaching an unrelated
@@ -214,12 +209,11 @@ The full API lives in `dev.sebastiano.spectre.agent.launch` (`LaunchAndAttach`,
 
 ## Launching a Compose window from a test
 
-`application { Window(...) { ... } }` blocks until the app exits, so do not call it
-inline from `@BeforeAll`. Start the Compose application loop on a daemon thread, disable
-`exitProcessOnExit`, capture `exitApplication` for cleanup, and capture the
-`ComposeWindow` from inside the `Window` content scope. Spectre's own
-`SampleAppFixture` follows this (`exitProcessOnExit = false`) so Windows
-`validationTest` workers stay alive after green JUnit XML:
+`application { Window(...) { ... } }` blocks until the app exits.
+Start it on a daemon thread. A direct call from `@BeforeAll` would block setup.
+Set `exitProcessOnExit = false`, retain `exitApplication` for cleanup, and capture
+`ComposeWindow` inside the `Window` content scope. `SampleAppFixture` uses this setup
+so Windows `validationTest` workers continue after successful JUnit output:
 
 ```kotlin
 import androidx.compose.runtime.Composable
@@ -270,10 +264,9 @@ Use the returned `ComposeWindow` when constructing
 
 ## Test JVM requirements
 
-Spectre tests that drive a real Compose window need a non-headless JVM. If your default
-`Test` task sets `java.awt.headless=true`, move Spectre tests to a separate task and
-force that task to run with `java.awt.headless=false`. On GPU-less Linux CI, also force
-Skiko software rendering:
+Tests that drive a real Compose window need a non-headless JVM.
+If the default `Test` task sets `java.awt.headless=true`, create a separate Spectre task
+with `java.awt.headless=false`. GPU-less Linux runners also need Skiko software rendering:
 
 ```kotlin
 val spectreTest by tasks.registering(Test::class) {
@@ -302,10 +295,9 @@ as a separate, foreground-capable task while establishing Screen Recording TCC g
 
 ## Screenshot golds
 
-Opt-in visual assertions against committed PNG golds. This is **not** automatic: nothing
-compares golds unless a test calls `assertMatchesGold`. It is also not a substitute for
-[failure artifacts](#failure-artifacts) (diagnostics on any failure) or
-[failure video](#failure-video).
+Tests can compare screenshots with committed PNG golds by calling `assertMatchesGold`.
+Spectre does not run this check automatically. [Failure artifacts](#failure-artifacts)
+and [failure video](#failure-video) provide separate diagnostics.
 
 Prefer a window-scoped `automator.screenshot(windowIndex = …)` when `spectre-recording`
 and the OS helper are on the test runtime classpath. Region and node stills can clip or
@@ -333,63 +325,59 @@ fun homeMatchesGold(testInfo: TestInfo, automator: ComposeAutomator): Unit = run
 }
 ```
 
-Pass JUnit 5 `TestInfo` when the body runs inside `runSpectreTest` (it executes on a
-worker dispatcher). That overload lives on the `ScreenshotGoldJunit5` facade so the
-name-only `ScreenshotGoldKt.assertMatchesGold(name, image)` method has no `TestInfo`
-descriptor — JUnit 4-only Java callers can resolve it without `junit-jupiter-api`.
-The name-only overload infers the test from the calling thread and is for JUnit
-methods that call it directly. It recognizes `@Test`, `@ParameterizedTest`,
-`@RepeatedTest`, and other annotations meta-annotated with JUnit's `@Testable` /
-`@TestTemplate` (including composed ones).
+Pass JUnit 5 `TestInfo` when calling `assertMatchesGold` inside `runSpectreTest`.
+That body runs on a worker dispatcher. The `ScreenshotGoldJunit5` facade provides
+the `TestInfo` overload. The name-only `ScreenshotGoldKt.assertMatchesGold(name, image)`
+has no `TestInfo` descriptor, so JUnit 4 Java callers can load it without
+`junit-jupiter-api`. The name-only overload infers identity from the calling thread.
+Call it directly from a JUnit method. It recognises `@Test`, `@ParameterizedTest`,
+`@RepeatedTest`, and annotations composed from `@Testable` or `@TestTemplate`.
 
-`@ParameterizedTest`, `@RepeatedTest`, JUnit 5 `@ParameterizedClass` /
-`@ClassTemplate`, and JUnit 4 `@RunWith(Parameterized)` invocations that share a
-screenshot name must not share a gold. The `TestInfo` facade keys method-level
-invocations from the JUnit display name only when the annotation `name` pattern
-includes a true invocation index (`{index}` on ParameterizedTest, `{currentRepetition}`
-on RepeatedTest) *and* the resolved display looks unique (`[1] dark`,
-`repetition 1 of 2`). ParameterizedTest's omitted default (`{default_display_name}`)
-counts because it includes `{index}`; RepeatedTest's default already includes
-`{currentRepetition}`. RepeatedTest `{index}` stays literal. Argument
-placeholders such as `{0}` or `{arguments}` are not unique when values repeat.
-Display names that include `Any.toString()` identity-hash text (`Foo@4a12bc`) keep
-only the stable `[index]` or `repetition N of M` token so the gold path does not
-change between JVM runs. Constant custom names such as
-`@ParameterizedTest(name = "theme")` or `@ParameterizedTest(name = "[1] theme")`,
-and argument-only patterns such as `@ParameterizedTest(name = "[{0}] theme")`,
-require an explicit `invocationKey`. The name-only overload cannot see the
-invocation — including JUnit 4 Parameterized and JUnit 5 `@ParameterizedClass` /
-`@ClassTemplate` hosts, which re-run ordinary `@Test` methods once per argument
-set — so it always requires `invocationKey` and fails closed without one.
-`TestInfo.displayName` on those ordinary methods is the method name, not the class
-invocation, so the TestInfo facade also requires `invocationKey` there. A
-`@ParameterizedTest` or `@RepeatedTest` inside a `@ParameterizedClass` still needs
-an explicit `invocationKey`: each outer argument set repeats the same method-level
-`[1]` / `repetition 1` index. Identity resolution keeps the `Class` from `TestInfo`
-or `StackWalker` (or reloads the name with the context / child loader) so a plugin
-class loader cannot hide a parameterized host from Spectre's defining loader.
+Repeated and parameterised invocations that share a screenshot name need distinct golds.
+This includes JUnit 5 `@ParameterizedTest`, `@RepeatedTest`, `@ParameterizedClass`,
+`@ClassTemplate`, and JUnit 4 `@RunWith(Parameterized)`.
+The `TestInfo` facade uses a display name only when its pattern contains a real
+invocation index and the resolved name is unique, such as `[1] dark` or
+`repetition 1 of 2`. Use `{index}` for `@ParameterizedTest` and
+`{currentRepetition}` for `@RepeatedTest`.
+The default `@ParameterizedTest` pattern includes `{index}`; the default repeated
+test pattern includes `{currentRepetition}`. `{index}` stays literal in a repeated test.
+Argument placeholders such as `{0}` or `{arguments}` can repeat values.
+Spectre removes unstable `Any.toString()` hash text such as `Foo@4a12bc` from a
+display name. It retains stable index or repetition tokens.
+Constant names and argument-only patterns require an explicit `invocationKey`.
+Examples include `@ParameterizedTest(name = "theme")`,
+`@ParameterizedTest(name = "[1] theme")`, and `@ParameterizedTest(name = "[{0}] theme")`.
+The name-only overload cannot identify invocations in parameterised class hosts,
+so it fails without `invocationKey`. `TestInfo.displayName` also names only an ordinary
+test method inside such a host. Its facade therefore needs `invocationKey` there.
+A `@ParameterizedTest` or `@RepeatedTest` inside `@ParameterizedClass` still needs
+that key because outer argument sets repeat method-level indices.
+Identity resolution retains the `Class` from `TestInfo` or `StackWalker`.
+It can reload a name through the context or child classloader so plugin classloaders
+do not hide parameterised hosts.
 
-The default `scaleKey` prefers the captured window's display scale when a showing AWT
-window's outer, client, content-pane, or *showing* embedded ComposePanel size matches
-the still (or every showing window shares one density). On Linux X11 the capture PNG
-is the client area, so the decorated outer window is not a scale candidate. Cropped
-stills use the same edge rounding as window capture, so a fractional-DPI client or
-panel crop is not missed by one pixel. Crop size uses the predicted capture PNG
-(`round(captureAwt × displayScale)`), then the same `imageWidth / captureAwtWidth`
-ratio as a real crop — not the nominal display scale — so an 801-DP capture at 1.25×
-(1001 px) still matches a 202-DP panel. On Linux X11, native capture starts at the
-client origin, so those regions are offset before rounding. Hidden panels are ignored,
-and that geometry is read on the EDT. Otherwise it uses the primary/default screen transform. Pass
-`scaleKey = ScreenshotGoldPaths.scaleKey(configuration)` when several densities are
-visible and you already have the window's `GraphicsConfiguration`.
-Explicit `invocationKey` values keep surrounding whitespace so `"foo"` and `" foo "`
-cannot share a gold; whitespace-only keys are treated as absent.
+The default `scaleKey` uses the captured window's display scale when its visible
+AWT geometry matches the still. It considers the outer window, client area,
+content pane, or a showing embedded `ComposePanel`.
+It also uses that scale when all showing windows share one density.
+On Linux X11, the PNG contains the client area, so decorated outer bounds are
+not candidates. Cropped stills use window-capture edge rounding for fractional DPI.
+Spectre predicts PNG size with `round(captureAwt × displayScale)`.
+It then uses `imageWidth / captureAwtWidth` for crop matching to account for
+nominal-scale rounding. This lets an 801-DP capture at 1.25× (1001 px) match a 202-DP panel.
+Linux X11 native capture begins at the client origin; Spectre offsets regions
+before rounding. It ignores hidden panels and reads geometry on the EDT.
+Otherwise, `scaleKey` uses the primary screen transform.
+Pass `scaleKey = ScreenshotGoldPaths.scaleKey(configuration)` when several densities
+are visible and the window's `GraphicsConfiguration` is known.
+An explicit `invocationKey` retains surrounding whitespace, keeping `"foo"` and
+`" foo "` distinct. A whitespace-only key counts as absent.
 
-Defaults are strict (max channel delta 0, differing-pixel count/fraction 0). Equal
-dimensions are required; there is no auto-scale. Loosen `maxChannelDelta` (0..255;
-values above 255 are rejected) and/or `maxDifferingPixels` /
-`maxDifferingPixelFraction` when font AA or chrome noise is expected. There is no
-SSIM or perceptual matcher.
+Default comparison requires equal dimensions and identical pixels.
+Spectre does not scale images or use SSIM or another perceptual matcher.
+Set `maxChannelDelta` between 0 and 255, `maxDifferingPixels`, or
+`maxDifferingPixelFraction` when expected font antialiasing or window chrome differs.
 
 ### Gold layout
 
@@ -406,26 +394,23 @@ src/test/resources/spectre-golds/
             gold.png
 ```
 
-The method segment is the inferred JUnit method (or `TestInfo`). Every identity includes
-an explicit parameter list: no-arg tests use `name()`, and overloads append `(fqcn,…)`.
-That keeps `@Test render()`, a zero-arg method literally named `render(int)`, and
-`@Test render(value: Int)` on distinct golds. Parameterized and repeated
-invocations add an extra `<invocation>` segment so they cannot overwrite each other.
-Tests inherited from an abstract class or interface, inherited methods, and any
-non-final declaring class (ordinary Java tests, `open` Kotlin bases) cannot infer
-the concrete running class from the stack — a frame names the declaring class, not
-the receiver. Pass `TestInfo` or `assertMatchesGold(getClass(), name, image)` so
-those golds key by the running class. Method names that
-contain `(` are matched by the full generated identity, not by cutting at the first
-parenthesis.
+The method path comes from the inferred JUnit method or `TestInfo`.
+Every identity includes a parameter list: `name()` for a no-argument method,
+or `(fqcn,…)` for an overload. For example, `@Test render()`, a method named
+`render(int)`, and `@Test render(value: Int)` use separate golds.
+Repeated and parameterised runs add an `<invocation>` segment.
+Stack frames name a method's declaring class. The running receiver can have a different class.
+For inherited tests or non-final declaring classes, pass `TestInfo` or
+`assertMatchesGold(getClass(), name, image)` to identify the running class.
+Spectre matches method names containing `(` through the full generated identity.
 
-The default root is `src/test/resources/spectre-golds/` (the main JUnit source set). Linux
-keys follow the same session detection as window capture: `SPECTRE_CAPTURE_BACKEND`,
-pure-X11/`Xvfb` `DISPLAY`, then `XDG_SESSION_TYPE` / `WAYLAND_DISPLAY`. A seated Wayland
-desktop that also exports `DISPLAY` (XWayland) still keys as `linux-wayland`, so those
-golds are not mixed with Xvfb `SOFTWARE_COMPAT` stills. Theme, Skiko render API, JDK, and
-font AA are **not** extra path keys — pin the runner (see [Running on CI](ci.md)) or
-loosen tolerance.
+The default root is `src/test/resources/spectre-golds/` in the main JUnit source set.
+Linux path keys follow window-capture session detection: `SPECTRE_CAPTURE_BACKEND`,
+pure-X11 or Xvfb `DISPLAY`, then `XDG_SESSION_TYPE` and `WAYLAND_DISPLAY`.
+A Wayland desktop with XWayland `DISPLAY` still uses `linux-wayland`.
+Its golds stay separate from Xvfb `SOFTWARE_COMPAT` captures.
+Theme, Skiko render API, JDK, and font antialiasing add **no** path key.
+Pin the runner or adjust tolerance; see [Running on CI](ci.md).
 
 On mismatch, the assertion writes `actual.png` and a copy of the expected `gold.png`
 under:
@@ -434,15 +419,15 @@ under:
 build/reports/spectre-screenshots/<class>/<method>/<name>[/<invocation>]/
 ```
 
-When dimensions match, it also writes `diff.png` (magenta highlight on black). Size
-mismatches omit the diff and delete any stale `diff.png` left from a prior equal-size run. Class, method, name, and invocation segments are sanitized (path
-separators, reserved Windows device names) and truncated to 255 UTF-8 bytes so long
-parameterized display names stay inside filesystem component limits. Rewritten
-segments get a short stable suffix so distinct names such as `foo/bar` and `foo_bar`,
-`NUL` and `NUL_`, `Main` and `main`, Greek `σ` and `ς`, or Hangul `가` and Jamo `가`,
-cannot share a gold or report path. A later passing run, update-mode write, missing-gold
-failure, or unreadable gold deletes leftover report PNGs from a prior mismatch so CI
-does not upload stale failures. CI upload:
+When dimensions match, Spectre writes `diff.png` with magenta differences on black.
+A size mismatch removes any stale `diff.png` from a prior run.
+Spectre sanitises class, method, name, and invocation path segments for separators and
+reserved Windows device names. It limits each segment to 255 UTF-8 bytes.
+Changed segments receive a short stable suffix. This keeps distinct names such as
+`foo/bar` and `foo_bar`, `NUL` and `NUL_`, `Main` and `main`, `σ` and `ς`,
+or `가` and `가` on separate paths.
+A passing run, update write, missing gold, or unreadable gold removes prior mismatch
+PNGs so CI does not upload stale failures. Upload current failures with:
 
 ```yaml
 - name: Upload Spectre screenshot gold failures
@@ -458,7 +443,8 @@ Keep that glob **separate** from `**/build/reports/spectre/**` (failure stills).
 
 ### Update mode
 
-Off by default. Rewrite the **current** OS + scale gold (not every matrix cell):
+Update mode is off by default. It rewrites the gold for the **current** OS and scale;
+other matrix cells remain unchanged:
 
 | Knob | Effect |
 | --- | --- |
@@ -471,8 +457,8 @@ variable. Consumers who use `-P` on their own `Test` task must forward it the sa
 (or set the environment variable, which needs no forwarding).
 
 The environment variable is read only after a test JVM starts. Spectre's own test
-tasks already force a rerun when update mode is on; consuming builds do not. If you
-rely on `SPECTRE_UPDATE_SCREENSHOT_GOLDS=true` alone, force execution with
+tasks already force a rerun when update mode is on; consuming builds do not. When using
+`SPECTRE_UPDATE_SCREENSHOT_GOLDS=true` alone, force execution with
 `./gradlew test --rerun-tasks` (or the equivalent `outputs.upToDateWhen { false }` /
 `outputs.cacheIf { false }` on that `Test` task). Otherwise Gradle can skip the worker
 and no golds are rewritten.
@@ -481,10 +467,10 @@ Update mode must run on the OS and scale that owns that gold file.
 
 ## Failure artifacts
 
-When a Spectre-driven test **fails**, `ComposeAutomatorExtension` and `ComposeAutomatorRule`
-capture an [atomic capture](capture.md) (PNG + `capture.json`) for every window the automator
-knows about. Capture runs **after** the failure and **before** the wrapper tears down the
-automator, so windows are still open.
+When a test **fails**, `ComposeAutomatorExtension` and `ComposeAutomatorRule` save an
+[atomic capture](capture.md) for each tracked window. Each capture contains a PNG and
+`capture.json`. The wrapper captures after the failure and before closing the automator,
+while the windows remain open.
 
 Default is **on**. Opt out when constructing the wrapper:
 
@@ -515,8 +501,8 @@ val automatorRule =
 
 ### Layout
 
-Artifacts land under Gradle’s reports tree (cleaned by `clean`), not under the CLI/agent
-`$TMPDIR` capture root:
+Artefacts land under Gradle’s reports tree (cleaned by `clean`). The CLI/agent
+`$TMPDIR` capture root is separate:
 
 ```text
 build/reports/spectre/<test-class>/<test-method>[/<invocation>][/attempt-N]/run-*/window-<i>/
@@ -524,52 +510,52 @@ build/reports/spectre/<test-class>/<test-method>[/<invocation>][/attempt-N]/run-
   screenshot.png
 ```
 
-- **`<test-class>` / `<test-method>`** — sanitized FQCN and method name.
+- **`<test-class>` / `<test-method>`** — sanitised FQCN and method name.
 - **`<invocation>`** — distinguishes parallel or repeated runs of the same method (JUnit 5
   unique id by default; JUnit 4 synthesizes one).
-- **`attempt-N`** — only when you set `FailureArtifactsConfig.attemptIndex` to a value greater
+- **`attempt-N`** — only when `FailureArtifactsConfig.attemptIndex` is greater
   than 1 (1-based). Use this with retry runners so attempt 2 does not overwrite attempt 1.
 - **`run-*` / `window-<i>`** — one isolation tree per capture attempt; window index matches the
-  automator’s known windows. Same on-disk shape as a manual atomic capture, so the shipped
+  automator’s known windows. The on-disk shape matches a manual atomic capture, so the shipped
   **`spectre-capture`** skill’s `jq` recipes work unchanged.
 
-Passing tests write nothing. Aborted tests (JUnit 5 assumptions / JUnit 4 `Assume`) also write
-nothing — they are skips, not failures.
+Passing tests write no failure artefacts. Tests aborted by JUnit 5 assumptions or
+JUnit 4 `Assume` also write none.
 
 On JUnit 5, each written window directory is published as a report entry under the key
 `spectre.failureArtifact` (path string). JUnit 4 has no report-entry API; inspect disk under
-`build/reports/spectre/` (or your custom `reportsRoot`).
+`build/reports/spectre/` (or a custom `reportsRoot`).
 
 ### Caveats
 
 - Capture happens **after** the exception. Animations may advance a few frames past the failing
   assertion; treat the PNG as “state at capture time,” not a perfect freeze of the assert line.
 - Capture is **best-effort**. A secondary capture error must never replace the original test
-  failure; if capture cannot run, you still see the real failure in the test report.
+  failure; if capture cannot run, the test report retains the original failure.
 - With multiple JUnit rules, keep `ComposeAutomatorRule` **innermost** (last `.around(...)` in
   a `RuleChain`) so outer rules do not close UI or process state before capture runs.
 
-Point CI at the reports tree with a single upload glob — see [Running on CI](ci.md#failure-artifacts).
+Point CI at the reports tree with a single upload glob; see [Running on CI](ci.md#failure-artifacts).
 
 ## Failure video
 
-You cannot record a failure retroactively, so video-of-a-failure means recording the **whole
-test** and deciding at the end whether to keep the file. Configure this with
-`FailureVideoConfig` next to stills config on `ComposeAutomatorExtension` /
-`ComposeAutomatorRule`.
+Failure video records the **whole test** and decides whether to keep the file afterward.
+Configure `FailureVideoConfig` beside still image settings on `ComposeAutomatorExtension`
+or `ComposeAutomatorRule`.
 
-Default is **`FailureVideoPolicy.Off`** — no recorder overhead on green CI. Opt in per suite:
+The default is **`FailureVideoPolicy.Off`**, which starts no recorder.
+Select a policy for each suite:
 
 | Policy | Behaviour |
 | --- | --- |
-| `Off` | Default. No recording starts. |
-| `OnFailureKeep` | Record the whole test; **delete** the finalized file on pass; **keep** on fail. |
-| `Always` | Keep the finalized video on pass and fail (not on assumption/abort skips). |
+| `Off` | The default policy starts no recording. |
+| `OnFailureKeep` | Record the whole test; **delete** the finalised file on pass; **keep** on fail. |
+| `Always` | Keep the finalised video on pass and fail; assumption/abort skips produce no kept video. |
 
 ### Runtime dependency (required for video)
 
 Failure video routes through `AutoRecorder` and therefore needs the **matching platform helper
-on the test runtime classpath** — the same requirement as any other recording call:
+on the test runtime classpath**. The same requirement applies to every recording call:
 
 | Host OS | Runtime dependency |
 | --- | --- |
@@ -590,7 +576,7 @@ dependencies {
 
 Without the OS helper, the recorder fails to start and video is **skipped best-effort** (the
 test outcome is never replaced by a recorder error). Stills (`FailureArtifactsConfig`) do not
-require these helpers for Robot-region fallbacks, but native window stills do — see
+require these helpers for Robot-region fallbacks. Native window stills require them; see
 [Recording](recording.md). Full per-OS packaging and permission notes:
 [Recording limitations](../RECORDING-LIMITATIONS.md).
 
@@ -635,39 +621,38 @@ build/reports/spectre/<test-class>/<test-method>[/<invocation>][/attempt-N]/
 ```
 
 Stills stay default-on and are independent of the video policy. Aborted tests (JUnit assumptions)
-never keep a failure video — same skip semantics as stills. On JUnit 5, a kept video is published
+never keep a failure video. This matches still skip semantics. On JUnit 5, a kept video is published
 as a report entry under `spectre.failureVideo`.
 
-CI artifact upload examples for **every** policy (`Off`, `OnFailureKeep`, `Always` with
+CI artefact upload examples for **every** policy (`Off`, `OnFailureKeep`, `Always` with
 `if: always()`): [Running on CI — Failure video uploads](ci.md#failure-video-uploads).
 
 ### Recording overhead
 
-Recording every test is real cost. Prefer `Off` on CI unless you need video for a flaky suite.
+Recording every test uses CPU, helper processes, and disk.
+Use `Off` on CI unless a suite needs video diagnostics.
 
 - **CPU / helper process** — a platform recorder runs for the full test duration (ScreenCaptureKit
   helper on macOS, Windows Graphics Capture helper on Windows, GStreamer / portal paths on Linux).
   See [Recording limitations](../RECORDING-LIMITATIONS.md) for per-OS backend behaviour and
   permissions.
 - **Disk under `OnFailureKeep`** — the file is written for **every** invocation (including green
-  tests) and only deleted after the recorder stops and finalizes. Parallel suites and long tests
+  tests) and only deleted after the recorder stops and finalises. Parallel suites and long tests
   can spike disk during the run even when nothing is left on pass.
-- **Permissions** — macOS Screen Recording TCC, Windows helper packaging, and Wayland portal
-  consent still apply; if the backend cannot start, video is skipped best-effort (the test
-  outcome is never replaced by a recorder error).
+- **Permissions** — macOS Screen Recording TCC, Windows helper packaging, and Wayland
+  portal consent still apply. If the backend cannot start, Spectre skips video
+  on a best-effort basis. A recorder error does not replace the test outcome.
 - **Scope** — this policy is for **in-process** JUnit wrappers only. Agent/attach recording stays
-  on the CLI/daemon path (`spectre record`), not this config.
+  on the CLI/daemon path (`spectre record`). This config applies to in-process JUnit wrappers.
 
 ## Custom `AutomatorFactory`
 
-Both wrappers default to `ComposeAutomator.inProcess()`. Pass your own factory when you
-need a different driver for headless CI or unit-style isolation. `RobotDriver.headless()`
-throws on input, clipboard, and screenshot calls (see
-[Driving input](interactions.md#real-vs-synthetic-input)), so the example below is
-appropriate for tests that only exercise semantics-tree queries or rule/extension
-lifecycle — anything that needs input should use the default synthetic driver
-(`ComposeAutomator.inProcess()` / `RobotDriver.synthetic(rootWindow)`) or pass
-`RobotDriver()` to opt into real OS input:
+Both wrappers use `ComposeAutomator.inProcess()` by default.
+Pass a factory to select another driver. `RobotDriver.headless()` throws for input,
+clipboard, and screenshots. Use it for semantics queries or wrapper lifecycle tests.
+For input, use the default synthetic driver or `RobotDriver.synthetic(rootWindow)`.
+Pass `RobotDriver()` when a test needs real OS input.
+See [Driving input](interactions.md#real-vs-synthetic-input).
 
 ```kotlin
 import dev.sebastiano.spectre.core.ComposeAutomator
@@ -696,6 +681,6 @@ declared `compileOnly` on the `testing` module. **Consumers pick whichever JUnit
 already use** and pull in the matching test dependency themselves. The module never
 forces both onto the test classpath.
 
-If you see a `NoClassDefFoundError` for a JUnit class when the rule or extension runs,
-add the corresponding `testImplementation` dependency to your project — see
+If a rule or extension throws `NoClassDefFoundError` for a JUnit class,
+add the corresponding `testImplementation` dependency to the project; see
 [Installation](installation.md#consume-the-current-checkout).

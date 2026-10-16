@@ -2,30 +2,30 @@
 
 ## Parallel real-input jobs
 
-Desktop input coordination is an experimental, opt-in preview. Consumer source must opt in with
-`ExperimentalSpectreInputCoordinationApi`; see
-[Experimental desktop input coordination](input-coordination.md). Validate real input on a
-graphical desktop for each supported platform before release.
+Desktop input coordination is experimental and opt-in. Callers need
+`ExperimentalSpectreInputCoordinationApi`. See
+[desktop input coordination](input-coordination.md). Validate real input on a graphical
+desktop for each supported platform before release.
 
-Separate Gradle forks and separate CI jobs cannot coordinate through JUnit's in-memory resource
-locks. Use `InputIsolationConfig.perTest()` for in-process real-input JUnit tests and install the
-`spectre-input-coordinator-server` runtime (the `spectre-testing`, CLI, and attaching-side agent
-artifacts wire it automatically). Synthetic/headless tests remain parallel unless they use the
-system clipboard.
+JUnit's in-memory locks do not coordinate separate Gradle forks or CI jobs.
+Use `InputIsolationConfig.perTest()` for in-process JUnit tests that need real input.
+Install `spectre-input-coordinator-server`; `spectre-testing`, CLI, and the attaching agent
+already include it. Synthetic and headless tests can run in parallel unless they share
+the system clipboard.
 
-The coordinator serializes per normalized OS user/desktop identity and uses a short owner-only
+The coordinator serialises per normalised OS user/desktop identity and uses a short owner-only
 local socket. X11 spellings such as `:0`, `:0.0`, and `unix/:0` converge; Wayland socket paths are
-canonicalized where possible. Over-serialization is intentional when a platform cannot safely
+canonicalised where possible. Over-serialisation is intentional when a platform cannot safely
 distinguish sessions. Do not treat Xvfb evidence as Wayland real-input evidence: Robot input is not
 claimed on Wayland.
 
-Spectre can run live Compose Desktop tests on CI as long as the test JVM is a real desktop JVM.
-GitHub Actions Linux runners are validated on Ubuntu 24.04 under `xvfb` for both scripted-RPC
-tests and real-backend Compose Desktop tests.
+Live Compose Desktop tests need a graphical test JVM.
+GitHub Actions validation runs on Ubuntu 24.04 under `xvfb`, covering scripted RPC tests
+and real-backend Compose Desktop tests.
 
 ## Test JVM flags
 
-Set these on the Gradle `Test` task that hosts Spectre, not only on the runner process:
+Set these properties on the Gradle `Test` task that starts the Spectre JVM:
 
 ```kotlin
 tasks.withType<Test>().configureEach {
@@ -36,28 +36,26 @@ tasks.withType<Test>().configureEach {
 }
 ```
 
-`-Djava.awt.headless=false` is required because Spectre needs the AWT toolkit. `xvfb` gives
-Linux a display server, but it cannot help if the JVM has already decided to run headless and
-ignore `DISPLAY`.
+Spectre needs AWT, so set `-Djava.awt.headless=false`.
+`xvfb` supplies a Linux display server. It cannot change a JVM that already runs headless
+and ignores `DISPLAY`.
 
 `xvfb-run` tests the Linux **X11** capture path (helper `ximagesrc`, JUnit
 failure screenshots, agent screenshots, visual idle under a virtual framebuffer). It does
 **not** prove Wayland portal consent, PipeWire one-frame capture, or restore-token behaviour.
 When the host also has residual Wayland sockets or inherited Wayland env vars, Spectre still
 routes to X11 for an Xvfb `DISPLAY` (#397). For portal coverage, run on a real Wayland
-session separately. If detection ever disagrees with your setup, set
+session separately. If detection disagrees with the actual session, set
 `SPECTRE_CAPTURE_BACKEND=x11` (or `wayland`) explicitly.
 
-`-Dskiko.renderApi=SOFTWARE_COMPAT` is required on GPU-less Linux runners. Without it, Skiko's
-default OpenGL path can throw `RenderException: Cannot create Linux GL context`. The semantics
-tree may still compose, so selectors such as `findByTestTag` can pass, but typed input can
-silently no-op because the Skia surface is not fully wired. Software rendering is the reliable
-path when the runner has no GPU.
+GPU-less Linux runners need `-Dskiko.renderApi=SOFTWARE_COMPAT`.
+Otherwise Skiko may throw `RenderException: Cannot create Linux GL context`.
+The semantics tree can still appear, while typed input does nothing because the Skia
+surface did not initialise fully.
 
 ## macOS helper JVMs
 
-On macOS, add `-Dapple.awt.UIElement=true` when you want the Spectre test JVM to stay out of the
-Dock:
+On macOS, `-Dapple.awt.UIElement=true` keeps the Spectre test JVM out of the Dock:
 
 ```kotlin
 tasks.withType<Test>().configureEach {
@@ -67,18 +65,16 @@ tasks.withType<Test>().configureEach {
 }
 ```
 
-This is safe with `RobotDriver.synthetic(rootWindow = ...)` and per-character `typeText(...)`.
-Synthetic typing posts key events into the window hierarchy and does not require the app to be
-the foreground Dock application. Clipboard-backed `pasteText(...)` still needs
-`apple.awt.UIElement=false`, because that path goes through macOS clipboard services.
+`RobotDriver.synthetic(rootWindow = ...)` and per-character `typeText(...)` work in this mode.
+Synthetic typing sends events into the window hierarchy without foreground Dock focus.
+Clipboard-backed `pasteText(...)` uses macOS clipboard services and still needs
+`apple.awt.UIElement=false`.
 
 ## macOS `sandbox-exec` runners
 
-If your local agent, test harness, or CI wrapper launches Gradle inside a macOS
-`sandbox-exec` profile, the sandbox must allow the desktop services used by AWT,
-Swing, Compose Desktop, and `java.awt.Robot`. This is separate from JVM headless
-mode: `-Djava.awt.headless=false` is still required, but it does not grant access
-to the WindowServer, Core Animation, input, or screen-capture services.
+If a macOS runner uses `sandbox-exec`, its profile must allow the services used by AWT,
+Swing, Compose Desktop, and `java.awt.Robot`. Set `-Djava.awt.headless=false` as well.
+That JVM flag does not grant access to WindowServer, Core Animation, input, or capture services.
 
 A working profile needs Mach lookup access to these services:
 
@@ -92,12 +88,12 @@ A working profile needs Mach lookup access to these services:
 | `com.apple.carboncore.csnameddata` | Carbon named data lookup used by the desktop stack.                                                                                                                       |
 | `com.apple.dock.server`            | Dock/window integration.                                                                                                                                                  |
 | `com.apple.dock.fullscreen`        | Full-screen/Dock integration used by AppKit.                                                                                                                              |
-| `com.apple.iohideventsystem`       | Real `Robot` input paths. Synthetic Spectre input does not need OS-level input delivery, but real `RobotDriver()` does.                                                   |
+| `com.apple.iohideventsystem`       | Real `RobotDriver()` input requires OS-level input delivery. Synthetic Spectre input avoids that service.                                                                |
 | `com.apple.tccd.system`            | TCC checks, including screen-capture and accessibility-style checks.                                                                                                      |
 | `com.apple.replayd`                | `Robot.createScreenCapture(...)`, ScreenCaptureKit, and ReplayKit capture plumbing. Without it, a capture can hang after the `Robot` is created.                          |
-| `com.apple.logd.events`            | Log/event integration observed on the Robot/capture path. Treat `com.apple.diagnosticd` as noisy rather than a baseline requirement unless your harness proves otherwise. |
+| `com.apple.logd.events`            | Log/event integration observed on the Robot/capture path. `com.apple.diagnosticd` is noisy; require it only when the harness provides evidence.                         |
 
-Think of the requirements in layers:
+The services support these operations:
 
 - **Window creation** needs HiServices, WindowServer/window-manager, Text Services,
   Carbon named data, and Dock integration.
@@ -106,32 +102,31 @@ Think of the requirements in layers:
 - **Real `Robot` input and screen capture** need the input/TCC/capture services,
   especially `com.apple.iohideventsystem`, `com.apple.tccd.system`, and
   `com.apple.replayd`.
-- **Synthetic Spectre input** avoids OS-level mouse/keyboard delivery, but the JVM
+- **Synthetic Spectre input** avoids OS-level mouse/keyboard delivery. The JVM
   still needs enough AWT/Compose Desktop access to create and paint the target
   window. Screenshots and `waitForVisualIdle()` still go through capture paths.
 
 macOS Screen Recording permission is also required for capture. Grant it to the
-app that launched the JVM — Terminal.app, iTerm2, IntelliJ IDEA, or your runner app —
+app that launched the JVM (Terminal.app, iTerm2, IntelliJ IDEA, or the runner app),
 then fully quit and restart that app. TCC can be granted correctly and capture can
 still hang if the sandbox profile does not allow `com.apple.replayd`.
 
-When validating sandbox profile changes, avoid stale Gradle daemons:
+Use a new Gradle process when checking sandbox profile changes:
 
 ```shell
 ./gradlew --no-daemon spectreTest --tests '*SpectreSmokeTest'
 ```
 
 A normal `./gradlew spectreTest ...` may reuse a daemon launched under an older
-sandbox profile. Use `./gradlew --stop` only deliberately: if your desktop app or
+sandbox profile. Use `./gradlew --stop` only deliberately: if the desktop app or
 runner itself was launched via Gradle, stopping all Gradle daemons can kill that
 parent process too.
 
-For painting/capture debugging, a useful probe is a small always-on-top Swing frame
-filled with a known colour, placed at a known location, followed by
-`Robot.createScreenCapture(Rectangle(x, y, 1, 1))`. If `Frame.isVisible()` and
-`Frame.isShowing()` are `true` but the sampled pixel is the desktop background,
-look at `com.apple.CARenderServer` and `com.apple.windowmanager.server`. If the
-capture hangs after creating the `Robot`, look at Screen Recording permission and
+To check painting, show a small always-on-top Swing frame with a known colour.
+Sample one pixel with `Robot.createScreenCapture(Rectangle(x, y, 1, 1))`.
+If `Frame.isVisible()` and `Frame.isShowing()` are true while the pixel shows the desktop, inspect
+`com.apple.CARenderServer` and `com.apple.windowmanager.server`.
+If capture hangs after Robot creation, check Screen Recording permission and
 `com.apple.replayd`.
 
 The macOS `log` tool cannot run inside `sandbox-exec`:
@@ -140,11 +135,11 @@ The macOS `log` tool cannot run inside `sandbox-exec`:
 log: Cannot run while sandboxed
 ```
 
-If your runner enforces `sandbox-exec`, provide a narrow diagnostic lane outside the
+If the runner enforces `sandbox-exec`, provide a narrow diagnostic lane outside the
 sandbox for read-only commands such as `log show ...`, `/usr/bin/log show ...`,
 `log stream ...`, and `/usr/bin/log stream ...`. Keep it read-only: reject shell
 metacharacters and mutating subcommands such as `log collect` and `log erase`. If
-your policy logger supports reason codes, label this escape clearly, e.g.,
+the policy logger supports reason codes, label this escape clearly, e.g.,
 `macos-log-diagnostic-lane`.
 
 Useful diagnostics:
@@ -161,7 +156,7 @@ Useful patterns to search for include `Sandbox: java(...) deny(1) mach-lookup`,
 
 ## Runtime matrix (JBR / Temurin)
 
-Per-PR CI stays on a single Temurin 21 JDK for speed. Compatibility across **JBR 21**,
+Pull request CI uses one Temurin 21 JDK. Compatibility across **JBR 21**,
 **JBR 25**, and **Temurin LTS** (toolchain major) on macOS, Linux, and Windows is covered by
 the scheduled [runtime-matrix](https://github.com/rock3r/spectre/blob/main/.github/workflows/runtime-matrix.yml)
 workflow (epic #215 / issue #216):
@@ -173,31 +168,30 @@ workflow (epic #215 / issue #216):
 | Suites | Contract corpus (all OSes); agent attach same-runtime on Linux/macOS + mixed vanilla↔JBR on Linux; Linux X11 recording smoke. Full attach UI e2e is hosted on Linux/macOS; Windows cells run non-UI transport/ACL agent tests (UI attach e2e is opt-in on physical desktops via `-Pspectre.agent.attachE2e.allowWindows=true`). |
 
 Pins live in [`.github/jbr-pins.env`](https://github.com/rock3r/spectre/blob/main/.github/jbr-pins.env)
-(JBRSDK / `jdk` package, not `jbr_jcef`). Bump procedure is in that file’s header comments.
+(JBRSDK / `jdk` package). The `jbr_jcef` package is excluded. Bump procedure is in that file’s header comments.
 `actions/setup-java` caches downloads per runner OS/arch via the composite action
 `.github/actions/setup-matrix-jdk`.
 
-The matrix is **release-gated**: `release.yml` calls the same workflow via `workflow_call`
-before helper builds and publish. A red cell blocks the release; scheduled failures open
-issues labelled `runtime-matrix` rather than vanishing into Actions noise.
+`release.yml` calls the runtime matrix through `workflow_call` before building helpers
+and publishing. A failed cell blocks the release.
+Scheduled failures open issues labelled `runtime-matrix`.
 
-Test/JavaExec workers are forced onto the matrix JDK via `SPECTRE_MATRIX_JAVA_HOME`
-(root `build.gradle.kts`); modules still **compile** with `jvmToolchain(21)`. Without that
-env, Gradle would execute JBR 25 cells on a toolchain-provisioned JDK 21 and the matrix
-would not prove runtime compatibility.
+`SPECTRE_MATRIX_JAVA_HOME` sets the JDK for `Test` and `JavaExec` workers in the root
+`build.gradle.kts`. Modules still compile with `jvmToolchain(21)`.
+Without this variable, a JBR 25 cell could run workers on toolchain JDK 21.
 
-Mixed-runtime agent attach sets `SPECTRE_FIXTURE_JAVA_HOME` (or
-`-Pspectre.agent.fixtureJavaHome=…`) so the fixture JVM can differ from the attacher; the
-`:agent:test` task forwards it as
-`-Ddev.sebastiano.spectre.agent.fixtureJavaHome=…` into the forked test JVM.
+Mixed-runtime attach sets `SPECTRE_FIXTURE_JAVA_HOME` or
+`-Pspectre.agent.fixtureJavaHome=…` for the fixture JVM.
+The `:agent:test` task passes it into the forked test JVM as
+`-Ddev.sebastiano.spectre.agent.fixtureJavaHome=…`.
 
 ## Recording tests
 
-Keep recording tests tagged separately from normal UI tests. Linux CI can validate Xorg / `xvfb`
-region recording and non-recording Spectre flows, but it cannot validate macOS
-ScreenCaptureKit capture. The base `spectre-recording` artifact also does not carry the macOS
-ScreenCaptureKit helper; macOS recording tests need the `spectre-recording-macos` runtime
-artifact or a locally built helper artifact on the test classpath.
+Tag recording tests separately from ordinary UI tests.
+Linux CI can check Xorg or Xvfb region recording and other Spectre flows.
+It cannot check macOS ScreenCaptureKit. The base `spectre-recording` artefact lacks the
+macOS helper. macOS tests need `spectre-recording-macos` or a locally built helper
+on the test runtime classpath.
 
 For example:
 
@@ -219,8 +213,8 @@ val macRecordingTest by tasks.registering(Test::class) {
 
 ## GitHub Actions example
 
-Install `xvfb` on Linux, then run the Gradle task through `xvfb-run`. Keep the JVM flags in
-Gradle so local runs and CI use the same test process configuration.
+Install `xvfb` on Linux and run the test task through `xvfb-run`.
+Keep JVM flags in Gradle so local and CI runs use the same test configuration.
 
 ```yaml
 jobs:
@@ -266,10 +260,9 @@ val spectreTest by tasks.registering(Test::class) {
 
 ## Failure artifacts
 
-When a Spectre JUnit test fails, the extension/rule writes atomic captures under
-`build/reports/spectre/` (see [JUnit integration](junit.md#failure-artifacts)). Upload that
-tree on CI failure so you can open `capture.json` + `screenshot.png` without re-running the
-suite:
+On a JUnit failure, the extension or rule writes atomic captures under
+`build/reports/spectre/`. See [JUnit integration](junit.md#failure-artifacts).
+Upload that directory on CI failure to inspect `capture.json` and `screenshot.png`:
 
 ```yaml
 - name: Upload Spectre failure artifacts
@@ -281,15 +274,14 @@ suite:
     if-no-files-found: ignore
 ```
 
-`if-no-files-found: ignore` keeps the step green when every test passed or opt-out produced
-no files. Prefer a multi-module glob (`**/build/reports/spectre/**`) over a single module path
-when several projects run Spectre tests in one job.
+`if-no-files-found: ignore` allows jobs with no capture files.
+For multi-module builds, use `**/build/reports/spectre/**` to include every module.
 
 ## Screenshot gold failures
 
 Opt-in [screenshot golds](junit.md#screenshot-golds) write mismatch PNGs under
-`build/reports/spectre-screenshots/`. Upload that tree **separately** from failure
-artifacts — the `**/build/reports/spectre/**` glob does not include it:
+`build/reports/spectre-screenshots/`. Upload them separately.
+The `**/build/reports/spectre/**` glob does not include this directory:
 
 ```yaml
 - name: Upload Spectre screenshot gold failures
@@ -305,18 +297,19 @@ Gold rewrite is off by default. `SPECTRE_UPDATE_SCREENSHOT_GOLDS=true` is read b
 test JVM with no Gradle forwarding. `-Pspectre.updateScreenshotGolds=true` only reaches
 forked workers if the `Test` task forwards it as
 `-Ddev.sebastiano.spectre.testing.updateScreenshotGolds=true` (Spectre's `:testing` tests
-already do). The Gradle/system property wins over the environment variable, including an
-explicit `false`. Consuming builds that set only the environment variable must also
-force the `Test` task to run (`--rerun-tasks`, or `outputs.upToDateWhen { false }` /
-`outputs.cacheIf { false }`); Spectre's repo-local update-mode helper is not applied to
-downstream `Test` tasks, so an `UP-TO-DATE` or `FROM-CACHE` skip never starts a JVM.
+already do). The Gradle/system property wins over the environment variable,
+including an explicit `false`. Consuming builds that set only the environment
+variable must also run the `Test` task. Use `--rerun-tasks`,
+`outputs.upToDateWhen { false }`, or `outputs.cacheIf { false }`. Spectre's
+repository update helper does not apply to downstream `Test` tasks. An
+`UP-TO-DATE` or `FROM-CACHE` skip starts no JVM.
 
 ## Failure video uploads
 
-[Failure video](junit.md#failure-video) writes `failure-video.mp4` under the same
-`build/reports/spectre/` tree when the policy **keeps** a file. You still need the matching
-`spectre-recording-<os>` runtime helper on the test classpath (see that page). Choose the
-upload condition from the policy you configured:
+[Failure video](junit.md#failure-video) writes `failure-video.mp4` under
+`build/reports/spectre/` when the policy keeps it.
+The test runtime still needs the matching `spectre-recording-<os>` helper.
+Select the upload condition for the configured policy:
 
 ### `FailureVideoPolicy.Off` (default)
 
@@ -335,7 +328,7 @@ No recorder starts and no video files are written. Upload **stills only on failu
 
 ### `FailureVideoPolicy.OnFailureKeep`
 
-Video is kept **only when the test failed** (deleted on pass). Upload on failure — stills and
+Video is kept **only when the test failed** (deleted on pass). Upload stills and
 any kept videos share the same reports tree:
 
 ```yaml
@@ -350,7 +343,7 @@ any kept videos share the same reports tree:
 
 ### `FailureVideoPolicy.Always`
 
-Videos are kept on **pass and fail** (not on assumption/abort skips). Use `if: always()` so
+Videos are kept on **pass and fail**; assumption/abort skips produce no kept video. Use `if: always()` so
 green jobs still publish videos; stills remain failure-only on disk, so the same glob is safe:
 
 ```yaml
@@ -363,8 +356,8 @@ green jobs still publish videos; stills remain failure-only on disk, so the same
     if-no-files-found: ignore
 ```
 
-Without `if: always()`, a fully green job never runs a `if: failure()` upload step, so
-`Always` videos would be left only on the runner filesystem and discarded when the job ends.
+With `FailureVideoPolicy.Always`, use `if: always()` for upload.
+An `if: failure()` step skips videos from passing jobs, which are lost when the runner exits.
 
 | Policy | When files remain on disk | Typical GHA `if:` |
 | --- | --- | --- |

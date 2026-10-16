@@ -1,14 +1,13 @@
 # IntelliJ-hosted Compose
 
-Spectre can read semantics, send input and capture screenshots for Jewel tool windows
-in IntelliJ. Run the automator inside the IDE process and follow the IDE's event dispatch
+Spectre reads semantics, sends input, and captures screenshots for Jewel tool windows
+inside IntelliJ. Run the automator in the IDE process and follow its event dispatch
 thread (EDT) rules.
 
 ## Dependency compatibility
 
-Spectre's shared libraries compile against the dependency baseline of the latest stable
-IntelliJ Platform release selected for that Spectre release. The baseline is pinned, not
-resolved dynamically. For Spectre 0.7.1 it is **IDEA 2026.2.3, build 262.10968.63**:
+Each Spectre release pins the shared libraries to a stable IntelliJ Platform dependency
+baseline. Spectre 0.7.1 uses **IDEA 2026.2.3, build 262.10968.63**:
 
 | Dependency | Compile baseline |
 | --- | --- |
@@ -19,27 +18,25 @@ resolved dynamically. For Spectre 0.7.1 it is **IDEA 2026.2.3, build 262.10968.6
 | Compose Multiplatform | 1.12.0 |
 | Skiko | 0.150.1, supplied through Compose |
 
-The versions come from the
+The
 [stable IDE source](https://github.com/JetBrains/intellij-community/tree/idea/2026.2.3)
-and its [dependency inventory](https://resources.jetbrains.com/storage/third-party-libraries/idea/idea-2026.2.3-third-party-libraries.json).
-This baseline does not promise compatibility with older IDE releases.
+and [dependency inventory](https://resources.jetbrains.com/storage/third-party-libraries/idea/idea-2026.2.3-third-party-libraries.json)
+define these versions. Older IDE releases have no compatibility guarantee.
 
-Let the IDE supply its Kotlin, coroutines, serialization, Compose, and Skiko classes.
-Declare the required platform modules, including `composeUI()` for Compose, and exclude
-duplicate dependencies from the plugin distribution. Do not replace the IDE's coroutine
-fork with an upstream JAR. Dependencies used only by the separately packaged Spectre CLI
-and build tools do not have to match the IDE.
+Use the IDE's Kotlin, coroutines, serialisation, Compose, and Skiko classes.
+Declare required platform modules, including `composeUI()`. Exclude duplicate
+libraries from the plugin distribution and keep the IDE's coroutine fork.
+The separate Spectre CLI and build tools may use other dependency versions.
 
-**Spectre 0.7.0 is incompatible with the IDE's coroutine runtime.** Its ordinary Kotlin
-`runBlocking` calls compile to `BuildersKt.runBlockingK`, introduced in coroutines 1.11.
-Excluding the newer coroutine dependency cannot rewrite those calls. Version 0.7.1
-restores the older compile baseline without replacing the test runner or its checks.
+**Spectre 0.7.0 is incompatible with the IDE's coroutine runtime.** It compiles
+ordinary Kotlin `runBlocking` calls to `BuildersKt.runBlockingK` from coroutines 1.11.
+Dependency exclusions cannot change compiled calls. Spectre 0.7.1 restores the older
+compile baseline and keeps the existing test runner and checks.
 
 ## In-process via a plugin action
 
-The recommended pattern is to build a `ComposeAutomator` from inside an IntelliJ
-plugin action. Because the action runs in the IDE's JVM, you reach the Jewel-hosted
-`ComposePanel`'s semantics owners directly — no HTTP transport, no separate process.
+Create a `ComposeAutomator` in an IntelliJ plugin action. It runs inside the IDE
+JVM and reads Jewel `ComposePanel` semantics owners directly.
 
 ```kotlin
 import com.intellij.openapi.actionSystem.AnAction
@@ -69,8 +66,9 @@ class RunSpectreAction : AnAction() {
 }
 ```
 
-`printTree()` is synchronous. Interaction and wait methods (`waitForNode`, `click`, `typeText`,
-etc.) are `suspend` — wrap them in `runBlocking { … }` inside the pooled thread (for JUnit tests prefer `runSpectreTest` instead):
+`printTree()` runs synchronously. Interaction and wait methods such as `waitForNode`,
+`click`, and `typeText` are `suspend`. Call them inside `runBlocking { … }` on the
+pooled thread. JUnit tests should use `runSpectreTest`:
 
 ```kotlin
 ApplicationManager.getApplication().executeOnPooledThread {
@@ -84,20 +82,18 @@ ApplicationManager.getApplication().executeOnPooledThread {
 }
 ```
 
-Alternatively, drive the automator from a `suspend fun` and reach it from a coroutine scope
-(e.g. the `ProjectActivity.execute(project)` override below).
+The automator can also run in a suspending function such as
+`ProjectActivity.execute(project)` below.
 
-Wire the action into `plugin.xml`, run the plugin with `./gradlew :your-plugin:runIde`,
-and trigger it from the **Tools** menu (or whatever group you registered it under).
+Register the action in `plugin.xml`. Run `./gradlew :your-plugin:runIde`, then
+trigger the action from its registered menu group, such as **Tools**.
 
 ### Hide the action from end users
 
-A Spectre-driving action exists to validate the UI; it has no business showing up in a
-production plugin distribution's Tools menu. Hide it on two axes:
+Keep test actions out of production plugin menus. Use both controls below:
 
-- **Mark it internal in `plugin.xml`.** The `internal="true"` attribute makes the
-  action visible only when the IDE is launched in internal mode
-  (`-Didea.is.internal=true`):
+- **Mark it internal in `plugin.xml`.** With `internal="true"`, the action appears
+  only when the IDE runs with `-Didea.is.internal=true`:
 
     ```xml
     <action
@@ -109,10 +105,9 @@ production plugin distribution's Tools menu. Hide it on two axes:
     </action>
     ```
 
-- **Gate `update(...)` on a Registry flag and/or a JVM system property.** Belt and
-  braces: even if someone flips internal mode on, the action stays disabled unless
-  the gate is open. Both controls are easy for CI / dev launches and inert in
-  production:
+- **Gate `update(...)` with a Registry flag or JVM property.** The action stays
+  disabled until this condition passes, including in internal mode. CI and local
+  launches can enable the condition explicitly:
 
     ```kotlin
     import com.intellij.openapi.actionSystem.AnActionEvent
@@ -125,43 +120,35 @@ production plugin distribution's Tools menu. Hide it on two axes:
     }
     ```
 
-    Set the registry key via **Help → Find Action → Registry…** in any IDE, or pass
-    `-Dmy.plugin.spectre.enabled=true` on the JVM command line for headless / CI
-    runs (which is also the natural shape if you're combining this with
-    [`-Dspectre.autorun=true`](#auto-trigger-on-startup) for non-interactive smokes).
+    Set the registry key through **Help → Find Action → Registry…** in the IDE.
+    For headless or CI runs, pass `-Dmy.plugin.spectre.enabled=true` to the JVM.
+    Combine it with [`-Dspectre.autorun=true`](#auto-trigger-on-startup)
+    for a non-interactive smoke test.
 
-The combination keeps the action discoverable to the right audience (developers,
-QA, CI) and invisible to the rest of the world.
+Developers and CI can enable the action. Production users do not see it by default.
 
 ### Pick the right `RobotDriver` for in-IDE work
 
 See [Driving input → Real vs. synthetic input](interactions.md#real-vs-synthetic-input)
-for the full trade-off rundown across `RobotDriver()`, `RobotDriver.synthetic(...)`,
-and `RobotDriver.headless()`. Two IDE-specific notes on top of that page:
+for the three `RobotDriver` modes. IDE-hosted tests also need these settings:
 
-- **`synthetic` is the default.** `ComposeAutomator.inProcess()` already uses
-  `RobotDriver.synthetic()`. When the JVM running the automator is also the JVM
-  hosting the UI, real OS input would dispatch events back to the IDE you're
-  inside, fight with whatever else has focus on the host machine, and move the
-  user's cursor visibly. Synthetic AWT events skip all of that. On macOS this
-  also works for helper/test JVMs launched with `apple.awt.UIElement=true`: AWT may
-  never report a `Window.focusOwner`, but Spectre routes key events to the
-  key-listening Compose Desktop host so focused text fields still receive
-  `typeText`. Pinning `rootWindow` to
-  `WindowManager.getInstance().getFrame(project)` is still the IntelliJ-specific
-  recipe — that's the `Window` shown in the action sample above.
-- **`RobotDriver()` is the explicit real-OS opt-in** when you specifically need to
-  exercise OS-level shortcut chains, focus transitions, or cross-window
-  interactions — those are the only things synthetic input doesn't cover.
+- **`synthetic` is the default.** `ComposeAutomator.inProcess()` uses
+  `RobotDriver.synthetic()`. It sends events within the IDE JVM and avoids
+  global focus and cursor changes. In macOS helper JVMs with
+  `apple.awt.UIElement=true`, AWT may provide no `Window.focusOwner`.
+  Spectre routes keys to the key-listening Compose Desktop host so focused
+  text fields still receive `typeText`. For IntelliJ, set `rootWindow` to
+  `WindowManager.getInstance().getFrame(project)`, as the action sample shows.
+- **`RobotDriver()` sends real OS input** for system shortcuts, focus transitions,
+  and interactions across windows. Select it explicitly when a test needs those events.
 
 ### Optional: drive interactions via semantics actions
 
-There's a third interaction style that doesn't go through any `RobotDriver` at all:
-walk the semantics tree and invoke the `SemanticsActions.OnClick` action directly on
-the EDT. This is what Compose's own test rule does internally. It's useful when:
+For a node with a click action, call `SemanticsActions.OnClick` on the EDT.
+Compose's test rule uses the same action. It helps in these cases:
 
-- You use `RobotDriver.headless()`, which throws on input, and need to invoke click actions.
-- You need click actions independent of window focus, occlusion, parallel tests and layout.
+- `RobotDriver.headless()` throws on input; semantics click actions remain available.
+- Click actions must work regardless of window focus, occlusion, parallel tests and layout.
   Semantics actions change state synchronously.
 
 ```kotlin
@@ -173,19 +160,16 @@ automator.performSemanticsClick(toggle)
 `OnClick` semantics action directly. It throws `IllegalStateException` if the node
 has no `OnClick` attached.
 
-The trade-off: only nodes that expose an `OnClick` action (most `Modifier.clickable`
-content does) can be driven this way, and you bypass any composable that reacts to
-real pointer events but doesn't expose a semantics action. With `synthetic`, the
-real-pointer-style path is also available.
+Only nodes with an `OnClick` action support this call. Most `Modifier.clickable`
+content has one. Composables that handle pointer events without a semantics
+action need pointer input. Use `synthetic` for that path.
 
 ### EDT marshalling
 
-Compose semantics owners hosted by `ComposePanel` are not thread-safe and must be read
-on the EDT. The pattern is:
+Read `ComposePanel` semantics owners on the EDT. Use this thread pattern:
 
-- Run the **outer loop** (polling, retries, `delay` between ticks) on a pooled
-  background thread inside a `runBlocking { … }` — interaction and wait methods are
-  `suspend`.
+- Run the **outer loop** for polls, retries, and `delay` on a pooled thread inside
+  `runBlocking { … }`. Interaction and wait methods are `suspend`.
 - Marshal each **per-tick semantics read** back to the EDT via
   `ApplicationManager.getApplication().invokeAndWait { ... }`.
 
@@ -203,14 +187,13 @@ inline fun <T> runOnEdt(crossinline block: () -> T): T {
 val node = runOnEdt { automator.findOneByTestTag("ide.counter.text") }
 ```
 
-If you sleep on the EDT instead, AWT's event queue stops draining, Compose can't
-recompose, and your polled state never updates — the polls always time out even
-though the tool window is healthy.
+Sleeping on the EDT blocks AWT events and Compose recomposition.
+The polled state then stays unchanged and waits can time out.
 
 ## Auto-trigger on startup
 
-For headless smokes, gate the action behind a system property and wire it as a startup
-activity:
+For an automated smoke run, register a startup activity and gate it with a
+system property:
 
 ```xml
 <extensions defaultExtensionNs="com.intellij">
@@ -230,28 +213,26 @@ class SpectreAutorun : ProjectActivity {
 }
 ```
 
-Pass `-Dspectre.autorun=true` (or wire it through your Gradle task) to fire the action
-on project open without needing a human at the keyboard. Spectre's own
-`sample-intellij-plugin` follows this shape and runs that way under
-`-PspectreAutorun=true`.
+Pass `-Dspectre.autorun=true` directly or through Gradle to run on project open.
+Spectre's `sample-intellij-plugin` uses `-PspectreAutorun=true` for this setup.
 
 ## External attach without spectre-core
 
-When you need to inspect Jewel-hosted Compose from a **sister process** and the IDE (or
-plugin) does **not** ship `spectre-core`, use [agent attach](agent.md) with the experimental
-**inject** bootstrap (nested inject-runtime inside `spectre-agent-runtime`).
+Use [agent attach](agent.md) to inspect Jewel from another process.
+If the IDE or plugin lacks `spectre-core`, the experimental **inject** bootstrap
+loads the nested inject runtime from `spectre-agent-runtime`.
 
-1. Add **`-XX:+EnableDynamicAgentLoading`** via **Help → Edit Custom VM Options…**, then
-   fully restart the IDE. Without it, JDK 21+ warns (JEP 451) and a future JDK may reject
-   attach. Config example on macOS:
+1. Add **`-XX:+EnableDynamicAgentLoading`** through **Help → Edit Custom VM Options…**
+   and restart the IDE. Without it, JDK 21+ emits a JEP 451 warning.
+   A future JDK may reject attach. A macOS options file is:
    `~/Library/Application Support/JetBrains/IntelliJIdea2026.2/idea.vmoptions`
-2. Ensure a Compose surface is showing with known test tags (or product Compose semantics).
-   Any Jewel/Compose host in the IDE works; you do **not** need Spectre's sample plugin.
-   If you maintain Spectre itself and want the proving `ide.counter.*` / `ide.popup.*` tags
-   without shipping `spectre-core`, build the tags-only zip **from a Spectre source
-   checkout**: `./gradlew :sample-intellij-plugin:buildNoCorePlugin` →
+2. Show a Compose surface with known test tags or product semantics. Any Jewel or
+   Compose host inside the IDE works. Spectre's sample plugin is optional.
+   To check `ide.counter.*` and `ide.popup.*` without shipping `spectre-core`,
+   build the tags-only zip from a Spectre checkout:
+   `./gradlew :sample-intellij-plugin:buildNoCorePlugin` →
    `sample-intellij-plugin/build/distributions/sample-intellij-plugin-no-core-0.0.0-DEV.zip`.
-   The default instrumented sample plugin ships core and exercises the non-inject path.
+   The default instrumented sample plugin includes core and uses that attach path.
 3. Find the IDE PID (`jps -l`), then from an attacher JVM with `spectre-agent` +
    `spectre-agent-runtime`:
 
@@ -267,23 +248,22 @@ AgentAttach.attach(idePid).use { automator ->
 }
 ```
 
-If a plugin on the classpath **ships** `spectre-core`, attach uses the instrumented path
-instead of inject — same API either way. Prefer in-process `ComposeAutomator` (sections
-above) when your code already runs inside the IDE.
+If a plugin includes `spectre-core`, attach uses the instrumented path.
+Both attach paths expose the same API. Code inside the IDE can call
+`ComposeAutomator` in-process.
 
-Spectre maintainers re-verify inject against the no-core sample from a source checkout with
-`./gradlew :sample-intellij-plugin:stockInjectUiTest` (opt-in; not on every PR; requires a
-graphical host). Spike notes (recipe + evidence chain, not on the public site nav):
+Spectre maintainers check inject with the no-core sample through
+`./gradlew :sample-intellij-plugin:stockInjectUiTest`. This opt-in task needs a
+graphical host and does not run on every pull request. The spike recipe is at:
 [`docs/spikes/209-injection/stock-intellij-recipe.md`](https://github.com/rock3r/spectre/blob/main/docs/spikes/209-injection/stock-intellij-recipe.md).
 
 ## Validating from a separate test JVM
 
-When you want a CI-friendly automated test that boots the IDE, installs your plugin,
-and asserts on what the automator discovers, the standard tool is JetBrains'
+For a test that starts the IDE, installs a plugin, and checks discovered nodes, use JetBrains'
 [`intellij-ide-starter`](https://github.com/JetBrains/intellij-community/tree/master/tools/intellij.tools.ide.starter).
-The test JVM uses the **Driver API** to invoke actions in the IDE child process; for
-assertions, the simplest bridge is the IDE's `idea.log` — the action writes log lines
-that the test JVM reads off disk from the sandbox system directory.
+The test JVM uses the **Driver API** to invoke actions in the IDE child process.
+The action can write assertions data to `idea.log`. The test JVM then reads
+that file from the sandbox system directory.
 
 Sketch:
 
@@ -300,61 +280,51 @@ testContext.runIdeWithDriver().useDriverAndCloseIde {
 }
 ```
 
-Spectre's `:sample-intellij-plugin:uiTest` is a full worked example — it boots a real
-IDE, installs the locally-built plugin zip, invokes `RunSpectreAction` through the
-Driver API, and asserts every tagged Compose node from `SpectreSampleToolWindowContent`
-appears in the log. CI runs it via
+Spectre's `:sample-intellij-plugin:uiTest` shows the full setup. It starts a real
+IDE, installs the locally built plugin zip, and invokes `RunSpectreAction` through
+the Driver API. It checks that the log contains every tagged Compose node from
+`SpectreSampleToolWindowContent`. CI runs it through
 [`ide-uitest.yml`](https://github.com/rock3r/spectre/blob/main/.github/workflows/ide-uitest.yml)
 when plugin / core / recording sources change.
 
 ## Surface caveats
 
-A few things to know about IDE-hosted Compose surfaces:
+Capture and event handling depend on the IDE host:
 
-- **Tool windows have no top-level OS title**, so window-targeted recording can't
-  pick them out by title the way it does standalone Compose windows. You still have
-  three options:
+- **Tool windows have no top-level OS title.** A recorder cannot target a tool
+  window by its own title. Choose one of these capture paths:
 
-    1. **Region-capture the tool window's screen bounds.** Compute the tool window
-       component's `boundsOnScreen` and pass it to `AutoRecorder.startRegion(...)`.
-       `AutoRecorder` routes that through platform region capture (Windows Graphics
-       Capture on Windows, the ScreenCaptureKit helper on macOS, the Linux helper on Xorg/Xvfb, or the Wayland portal on
-       Linux Wayland). Works everywhere; the trade-off is
-       that anything overlapping the captured rectangle — the IDE's chrome,
-       notifications, popups that escape the tool window's bounds — appears in the
-       recording.
-    2. **Window-target the whole IDE frame.** Pass
+    1. **Capture the tool window's screen region.** Pass the component's
+       `boundsOnScreen` to `AutoRecorder.startRegion(...)`. This uses Windows Graphics
+       Capture, macOS ScreenCaptureKit, the Linux Xorg/Xvfb helper, or the Wayland portal.
+       The recording includes visible pixels from other windows, IDE chrome,
+       notifications, and popups inside the rectangle.
+    2. **Capture the whole IDE frame.** Pass
        `WindowManager.getInstance().getFrame(project)?.asTitledWindow()` as
        `window` and the IDE frame's screen bounds as `region`. The IDE main frame
-       *does* have a top-level OS title (e.g. "IntelliJ IDEA – ProjectName"), so
-       this hits the macOS SCK helper, Windows Graphics Capture, or the
-       Linux Wayland portal — window-targeted across all three. Useful when the
-       interesting state is in the tool window plus its surrounding IDE chrome
-       (run output, status bar, etc.).
-    3. **Float the tool window first.** IntelliJ tool windows can be detached into
-       their own top-level OS windows ("Window" view mode). Once detached, the
-       floating window has its own title bar and behaves like a standalone Compose
-       window for capture purposes. Switching modes from a test action is
-       possible via the platform's tool-window APIs; from
-       [`intellij-ide-starter`](#validating-from-a-separate-test-jvm) tests, the
-       cleanest route is to invoke the IDE action that triggers the same change.
-       Verify the floated frame's title is what your tests expect before relying
-       on title-based capture.
+       has a top-level title such as "IntelliJ IDEA – ProjectName". This selects
+       macOS SCK, Windows Graphics Capture, or the Linux Wayland portal for window
+       capture. The video includes the tool window and IDE chrome, such as run
+       output and the status bar.
+    3. **Float the tool window.** IntelliJ's "Window" view mode gives a tool
+       window its own top-level frame and title. A plugin action can switch modes
+       through tool-window APIs. An
+       [`intellij-ide-starter`](#validating-from-a-separate-test-jvm) test can invoke
+       the corresponding IDE action. Check the floating frame's title before
+       selecting it for capture.
 
     See [Recording](recording.md) for the full routing logic.
-- **Popups inside the IDE** are still tracked. Compose creates separate roots for them,
-  and Spectre's window tracking enumerates each one — your selectors find nodes regardless
-  of whether they live in the main tool window or a dropdown.
-- **The IDE owns its own EDT**. Spectre's `waitForNode`, `waitForIdle`, and
-  `waitForVisualIdle` still refuse to run on it, so any code path triggered from a
-  UI handler needs to bounce off to a pooled background thread before calling them.
+- **Spectre tracks IDE popups.** Compose gives them separate roots, which Spectre
+  includes in its window tracking. Selectors can find nodes in a tool window or dropdown.
+- **Waits must run outside the IDE's EDT.** `waitForNode`, `waitForIdle`, and
+  `waitForVisualIdle` reject EDT callers. Move work started by a UI handler to a
+  pooled thread before waiting.
 
 ## Where to look
 
 - [`sample-intellij-plugin/`](https://github.com/rock3r/spectre/tree/main/sample-intellij-plugin)
-  — the in-tree IntelliJ plugin Spectre drives in CI, with the
-  pooled-thread / EDT-marshalling pattern fully worked out.
+  shows the IntelliJ plugin used in CI, including pooled-thread work and EDT reads.
 - [`ide-uitest.yml`](https://github.com/rock3r/spectre/blob/main/.github/workflows/ide-uitest.yml)
-  — the workflow that boots IntelliJ and runs the UI test on macOS, Windows, and Linux.
-- [Spike gist](https://gist.github.com/rock3r/8e520bb3fe8fe5886367d5e22cefbab8) — the
-  original design notes covering IDE-hosting more broadly.
+  starts IntelliJ UI tests on macOS, Windows, and Linux.
+- [Spike gist](https://gist.github.com/rock3r/8e520bb3fe8fe5886367d5e22cefbab8)
+  contains the original IDE-hosting design notes.
