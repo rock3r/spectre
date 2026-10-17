@@ -46,6 +46,54 @@ scoop install spectre
 On Linux, download the matching archive from the [GitHub release](https://github.com/rock3r/spectre/releases),
 extract it, and put its `spectre` executable on `PATH`.
 
+## Startup and the AOT cache
+
+The CLI requires **JDK 25+** (packaged distributions bundle a Temurin 25 runtime) and
+uses the JDK 25 Project Leyden AOT cache (JEP 483/514/515) to start faster.
+
+An AOT cache is only valid for the exact JDK build, OS/architecture, jar path, and jar
+contents it was trained against, so Spectre never ships one. Instead:
+
+1. **First run on a machine** trains a cache *before* running your command: a
+   throwaway `spectre --help` record run and a cache-assembly step, both with
+   their output discarded, store the resulting cache in a per-user cache
+   directory, and only then does your command start — against the fresh cache.
+   That first invocation takes a couple of seconds longer than usual. Training
+   never touches your command's input or output streams (a record run appends
+   JVM diagnostics to stdout, which would corrupt `spectre mcp`'s protocol
+   stream and `--json` output), so every command behaves identically whether
+   or not a cache exists yet; if training fails for any reason, the command
+   simply runs uncached.
+2. **Later runs** launch with `-XX:AOTCache`, skipping class loading/linking and
+   replaying method profiles. In local measurements this roughly halves cold CLI
+   startup (for example `spectre --help` from ~330 ms to ~135 ms before the small
+   bootstrap launcher's overhead).
+3. **Upgrades retrain automatically.** The cache file name fingerprints the jar's
+   path and contents, the caller's module options, OS/architecture, and runtime identity (version,
+   vendor, and VM build), so a replaced jar plans a
+   fresh training run instead of pointing the JVM at a cache it would reject.
+   Relocating the installation likewise retrains once. At most three caches are
+   retained per user; older ones are pruned when a new cache is promoted.
+
+Cache locations: `$SPECTRE_AOT_CACHE_DIR` when set, otherwise
+`$XDG_CACHE_HOME/spectre/aot` or `~/.cache/spectre/aot` on Linux,
+`~/Library/Caches/Spectre/aot` on macOS, and `%LOCALAPPDATA%\Spectre\aot` on
+Windows. Deleting the directory is safe; the next run retrains.
+
+The CLI's short-lived frontend JVMs run with an explicit G1 collector and a
+pinned heap representation: JDK 25's AOT cache does not support the ZGC
+collector a stock launcher would otherwise select, and the cache is only valid
+for the representation it was trained with. A cache-consuming daemon runs with
+that same pinned layout; it only *consumes* a ready cache and never trains, so
+its detached start can never race the foreground's training. Because the
+foreground trains and promotes the cache before running your first command
+after an install or upgrade, a daemon started afterwards can already consume
+it; a daemon that starts before any foreground launch has trained simply
+starts uncached, and later daemon starts are cached. Set
+`SPECTRE_AOT=off` to disable caching entirely. AOT options you supply yourself
+through `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, or `_JAVA_OPTIONS` also win:
+Spectre then launches without managing a cache.
+
 Run `spectre --help` after installation. Each command also supports `--help`.
 Use the installed binary's help text for its exact arguments and options.
 
@@ -497,8 +545,9 @@ The CLI table's capture-mode distinctions also apply to MCP tool names
 
 ## Requirements and limits
 
-- `ps` and `attach` require **JDK 21+** in both the CLI and target JVM. The CLI needs a full
-  JDK with `jdk.attach`. A JRE lacks the required attach module.
+- `ps` and `attach` require **JDK 25+** for the CLI and the daemon it spawns, and
+  **JDK 21+** in the target JVM. The CLI needs a full JDK with `jdk.attach`. A JRE lacks the
+  required attach module.
 - **Target shape (two paths, one attach command):**
   1. **Preferred — preinstalled `spectre-core`** on the target (instrumented attach). Use this
      for controlled app builds.

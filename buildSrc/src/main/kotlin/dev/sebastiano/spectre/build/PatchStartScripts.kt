@@ -48,7 +48,7 @@ abstract class PatchStartScripts : DefaultTask() {
 
     internal companion object {
         /**
-         * Injects the local JDK search and the Java 21 preflight into a Gradle-generated Unix
+         * Injects the local JDK search and the Java 25 preflight into a Gradle-generated Unix
          * launcher.
          */
         internal fun patchUnixScript(original: String): String =
@@ -73,7 +73,7 @@ abstract class PatchStartScripts : DefaultTask() {
             if [ -z "${'$'}{JAVA_HOME:-}" ] && ! command -v java >/dev/null 2>&1; then
                 spectre_java_fallback_home=
                 if [ -x /usr/libexec/java_home ]; then
-                    JAVA_HOME=${'$'}(/usr/libexec/java_home -v 21+ 2>/dev/null || true)
+                    JAVA_HOME=${'$'}(/usr/libexec/java_home -v 25+ 2>/dev/null || true)
                 fi
                 if [ -n "${'$'}{JAVA_HOME:-}" ] && "${'$'}JAVA_HOME/bin/java" --list-modules 2>/dev/null | grep -q '^jdk.attach@'; then
                     : # Preserve the OS-selected JDK.
@@ -89,10 +89,10 @@ abstract class PatchStartScripts : DefaultTask() {
                             case "${'$'}spectre_java_feature" in
                                 '' | *[!0-9]*) continue ;;
                             esac
-                            if [ "${'$'}spectre_java_feature" -ge 21 ] && "${'$'}spectre_java_home/bin/java" --list-modules 2>/dev/null | grep -q '^jdk.attach@'; then
+                            if [ "${'$'}spectre_java_feature" -ge 25 ] && "${'$'}spectre_java_home/bin/java" --list-modules 2>/dev/null | grep -q '^jdk.attach@'; then
                                 JAVA_HOME=${'$'}spectre_java_home
                                 break
-                            elif [ -z "${'$'}spectre_java_fallback_home" ] && [ "${'$'}spectre_java_feature" -ge 21 ]; then
+                            elif [ -z "${'$'}spectre_java_fallback_home" ] && [ "${'$'}spectre_java_feature" -ge 25 ]; then
                                 spectre_java_fallback_home=${'$'}spectre_java_home
                             fi
                         fi
@@ -109,7 +109,7 @@ abstract class PatchStartScripts : DefaultTask() {
 
         private val UNIX_JDK_PREFLIGHT =
             """
-            # Spectre requires Java 21 or later. Attach operations validate jdk.attach themselves.
+            # Spectre requires Java 25 or later. Attach operations validate jdk.attach themselves.
             # Read the version only from the JVM's own record, whose first token is `java` or
             # `openjdk`. Anything JAVA_TOOL_OPTIONS causes to be printed lands on stderr ahead of
             # that record and must not be parsed: the "Picked up JAVA_TOOL_OPTIONS: ..." banner
@@ -122,8 +122,8 @@ abstract class PatchStartScripts : DefaultTask() {
             case "${'$'}spectre_java_feature" in
                 '' | *[!0-9]*) die "ERROR: Could not determine the Java version from ${'$'}JAVACMD." ;;
             esac
-            if [ "${'$'}spectre_java_feature" -lt 21 ]; then
-                die "ERROR: Spectre requires JDK 21 or later; found Java ${'$'}spectre_java_version at ${'$'}JAVACMD."
+            if [ "${'$'}spectre_java_feature" -lt 25 ]; then
+                die "ERROR: Spectre requires JDK 25 or later; found Java ${'$'}spectre_java_version at ${'$'}JAVACMD."
             fi
             $UNIX_DEFAULT_JVM_OPTIONS_COMMENT
             """
@@ -186,7 +186,7 @@ abstract class PatchStartScripts : DefaultTask() {
             set "SPECTRE_JAVA_VERSION=%SPECTRE_JAVA_VERSION:"=%"
             for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set "SPECTRE_JAVA_FEATURE=%%v"
             if "%SPECTRE_JAVA_FEATURE%"=="" goto :eof
-            if %SPECTRE_JAVA_FEATURE% LSS 21 goto :eof
+            if %SPECTRE_JAVA_FEATURE% LSS 25 goto :eof
             "%~1\bin\java.exe" --list-modules 2>NUL | findstr /r /c:"^jdk.attach@" >NUL
             if %ERRORLEVEL% equ 0 set "JAVA_HOME=%~1"
             if not defined JAVA_HOME if not defined SPECTRE_JRE_HOME set "SPECTRE_JRE_HOME=%~1"
@@ -197,7 +197,7 @@ abstract class PatchStartScripts : DefaultTask() {
         private val WINDOWS_JDK_PREFLIGHT =
             """
             :execute
-            @rem Spectre requires Java 21 or later. Attach operations validate jdk.attach themselves.
+            @rem Spectre requires Java 25 or later. Attach operations validate jdk.attach themselves.
             @rem Capture -version to a temp file instead of for /f with a piped command: the latter
             @rem fails with "The filename, directory name, or volume label syntax is incorrect" on
             @rem some Windows hosts when JAVA_EXE is an absolute path under the Gradle temp dir.
@@ -210,7 +210,7 @@ abstract class PatchStartScripts : DefaultTask() {
             set "SPECTRE_JAVA_VERSION=%SPECTRE_JAVA_VERSION:"=%"
             for /f "tokens=1 delims=." %%v in ("%SPECTRE_JAVA_VERSION%") do set "SPECTRE_JAVA_FEATURE=%%v"
             if "%SPECTRE_JAVA_FEATURE%"=="" goto invalidJavaVersion
-            if %SPECTRE_JAVA_FEATURE% LSS 21 goto oldJavaVersion
+            if %SPECTRE_JAVA_FEATURE% LSS 25 goto oldJavaVersion
             goto setupCommandLine
 
             :invalidJavaVersion
@@ -218,7 +218,7 @@ abstract class PatchStartScripts : DefaultTask() {
             goto fail
 
             :oldJavaVersion
-            echo ERROR: Spectre requires JDK 21 or later; found Java %SPECTRE_JAVA_VERSION% at %JAVA_EXE%.
+            echo ERROR: Spectre requires JDK 25 or later; found Java %SPECTRE_JAVA_VERSION% at %JAVA_EXE%.
             goto fail
 
             :setupCommandLine

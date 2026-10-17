@@ -15,7 +15,7 @@ import org.junit.jupiter.api.condition.OS
 import org.junit.jupiter.api.io.TempDir
 
 /**
- * Unit coverage for the Java 21 preflight [PatchStartScripts] injects into the generated Unix
+ * Unit coverage for the Java 25 preflight [PatchStartScripts] injects into the generated Unix
  * `bin/spectre` launcher.
  *
  * Runs the real patched launcher under `/bin/sh` against a fake `java`, so the version parsing is
@@ -29,10 +29,10 @@ import org.junit.jupiter.api.io.TempDir
 class PatchStartScriptsTest {
 
     @Test
-    fun `the preflight accepts a Java 21 runtime that echoes JAVA_TOOL_OPTIONS first`(
+    fun `the preflight accepts a Java 25 runtime that echoes JAVA_TOOL_OPTIONS first`(
         @TempDir root: Path
     ) {
-        val jdk = fakeJdk(root, "banner", version = "21.0.10", banner = true)
+        val jdk = fakeJdk(root, "banner", version = "25.0.1", banner = true)
 
         val result = runLauncher(root, javaHome = jdk)
 
@@ -51,7 +51,22 @@ class PatchStartScriptsTest {
 
         assertEquals(1, result.exitCode, "launcher should have died:\n${result.output}")
         assertTrue(
-            result.output.contains("Spectre requires JDK 21 or later; found Java 17.0.2"),
+            result.output.contains("Spectre requires JDK 25 or later; found Java 17.0.2"),
+            "unexpected launcher output:\n${result.output}",
+        )
+    }
+
+    @Test
+    fun `the preflight rejects a Java 21 runtime`(@TempDir root: Path) {
+        // The CLI moved to JDK 25 for Leyden AOT caching; a 21 runtime that was
+        // previously accepted must now fail with the 25 requirement.
+        val jdk = fakeJdk(root, "jdk21", version = "21.0.10", banner = false)
+
+        val result = runLauncher(root, javaHome = jdk)
+
+        assertEquals(1, result.exitCode, "launcher should have died:\n${result.output}")
+        assertTrue(
+            result.output.contains("Spectre requires JDK 25 or later; found Java 21.0.10"),
             "unexpected launcher output:\n${result.output}",
         )
     }
@@ -69,7 +84,7 @@ class PatchStartScriptsTest {
             fakeJdk(
                 root,
                 "decoy",
-                version = "21.0.10",
+                version = "25.0.1",
                 banner = true,
                 bannerOptions = "-Dnote=version \"17.0.2\"",
             )
@@ -89,7 +104,7 @@ class PatchStartScriptsTest {
         // ahead of the JVM record, and a single-token one such as `Agent version "17.0.2"` has
         // the very shape of a record. Only `java`/`openjdk` name a real record.
         // Raised by Codex review on PR #485.
-        val jdk = fakeJdk(root, "agent", version = "21.0.2", banner = false)
+        val jdk = fakeJdk(root, "agent", version = "25.0.1", banner = false)
         Files.writeString(
             jdk.resolve("bin/java"),
             """
@@ -97,10 +112,10 @@ class PatchStartScriptsTest {
             case "${'$'}1" in
                 -version)
                     echo 'Agent version "17.0.2"' >&2
-                    echo 'openjdk version "21.0.2" 2024-01-16' >&2
+                    echo 'openjdk version "25.0.1" 2024-01-16' >&2
                     ;;
                 --list-modules)
-                    echo 'jdk.attach@21.0.2'
+                    echo 'jdk.attach@25.0.1'
                     ;;
             esac
             """
@@ -123,7 +138,7 @@ class PatchStartScriptsTest {
     ) {
         // The harness must bound its own runs: draining the pipe to EOF before waiting would
         // block forever here and hang CI rather than failing. Raised by Codex review on PR #485.
-        val jdk = fakeJdk(root, "wedged", version = "21.0.10", banner = false, hangs = true)
+        val jdk = fakeJdk(root, "wedged", version = "25.0.1", banner = false, hangs = true)
 
         val failure =
             assertThrows(IllegalStateException::class.java) {
@@ -144,9 +159,9 @@ class PatchStartScriptsTest {
     }
 
     @Test
-    fun `the preflight accepts a Java 21 runtime without the banner`(@TempDir root: Path) {
+    fun `the preflight accepts a Java 25 runtime without the banner`(@TempDir root: Path) {
         // Regression guard: the banner fix must not change how a plain `java -version` is read.
-        val jdk = fakeJdk(root, "plain", version = "21.0.10", banner = false)
+        val jdk = fakeJdk(root, "plain", version = "25.0.1", banner = false)
 
         val result = runLauncher(root, javaHome = jdk)
 
@@ -156,14 +171,14 @@ class PatchStartScriptsTest {
 
     @Test
     // macOS asks /usr/libexec/java_home first, which a test cannot stub, so the sdkman
-    // candidate below would never be probed on a mac with a host JDK 21 installed.
+    // candidate below would never be probed on a mac with a host JDK 25 installed.
     @EnabledOnOs(OS.LINUX)
     fun `the local JDK search accepts a candidate that echoes JAVA_TOOL_OPTIONS first`(
         @TempDir root: Path
     ) {
         val home = root.resolve("home")
         val sdkmanJdk = home.resolve(".sdkman/candidates/java/current")
-        writeFakeJava(sdkmanJdk, version = "21.0.10", banner = true)
+        writeFakeJava(sdkmanJdk, version = "25.0.1", banner = true)
         // A PATH that carries the tools the search needs but no `java`, so the search runs.
         val pathWithoutJava = root.resolve("path-without-java")
         Files.createDirectories(pathWithoutJava)

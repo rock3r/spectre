@@ -8,12 +8,20 @@ import java.util.concurrent.TimeoutException
 import java.util.concurrent.TimeUnit
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.TaskAction
 
 /** Verifies the shrink-only CLI JAR remains directly executable and retains dynamic resources. */
 abstract class VerifyCliShadowJar : DefaultTask() {
     @get:InputFile abstract val artifact: RegularFileProperty
+
+    /**
+     * Java executable used to run the jar. The CLI jar is JDK 25 bytecode, so callers wire
+     * the JDK 25 toolchain here instead of assuming the Gradle JVM can run it.
+     */
+    @get:Input abstract val javaExecutablePath: Property<String>
 
     @TaskAction
     fun verify() {
@@ -34,8 +42,21 @@ abstract class VerifyCliShadowJar : DefaultTask() {
         verifyMcpToolDiscovery(jar)
     }
 
+    // The jar's main class is the AOT bootstrap: without isolation a verification
+    // launch would train a cache for the build jar into the developer's real
+    // per-user cache directory, and promotion would prune that directory to
+    // three entries, evicting caches of installed Spectre versions. The task's
+    // Gradle temporary directory keeps the trained cache out of the system
+    // temp area and lets Gradle clean it up.
+    private val aotCacheDir: File = File(temporaryDir, "aot-cache").apply { mkdirs() }
+
+    private fun launch(jar: File, vararg arguments: String): ProcessBuilder =
+        ProcessBuilder(javaExecutable(), "-jar", jar.absolutePath, *arguments)
+            .redirectErrorStream(true)
+            .apply { environment()["SPECTRE_AOT_CACHE_DIR"] = aotCacheDir.absolutePath }
+
     private fun verifyHelp(jar: File) {
-        val process = ProcessBuilder(javaExecutable(), "-jar", jar.absolutePath, "--help").redirectErrorStream(true).start()
+        val process = launch(jar, "--help").start()
         try {
             val output = readUntil(process) { "mcp" in it }
             check(process.waitFor(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS) && process.exitValue() == 0) {
@@ -48,7 +69,7 @@ abstract class VerifyCliShadowJar : DefaultTask() {
     }
 
     private fun verifyMcpToolDiscovery(jar: File) {
-        val process = ProcessBuilder(javaExecutable(), "-jar", jar.absolutePath, "mcp").redirectErrorStream(true).start()
+        val process = launch(jar, "mcp").start()
         try {
             val writer = process.outputStream.bufferedWriter()
             writer.appendLine(INITIALIZE_REQUEST)
@@ -99,12 +120,16 @@ abstract class VerifyCliShadowJar : DefaultTask() {
         }
 
     private fun javaExecutable(): String =
-        File(System.getProperty("java.home"), "bin/java${if (isWindows()) ".exe" else ""}").path
+        javaExecutablePath.orNull
+            ?: File(System.getProperty("java.home"), "bin/java${if (isWindows()) ".exe" else ""}")
+                .path
 
     private fun isWindows(): Boolean = System.getProperty("os.name").startsWith("Windows")
 
     private companion object {
-        private const val CLI_MAIN_CLASS = "dev.sebastiano.spectre.cli.SpectreCliKt"
+        // Packaged entry point: the bootstrap execs SpectreCliKt with an AOT cache when
+        // one matches, and runs it in-process otherwise. See SpectreBootstrap.java.
+        private const val CLI_MAIN_CLASS = "dev.sebastiano.spectre.cli.bootstrap.SpectreBootstrap"
         private const val AGENT_RUNTIME_ENTRY = "spectre/agent-runtime.jar"
         private const val KTOR_SERVICE_ENTRY = "META-INF/services/io.ktor.server.config.ConfigLoader"
         private const val PROCESS_TIMEOUT_SECONDS: Long = 10

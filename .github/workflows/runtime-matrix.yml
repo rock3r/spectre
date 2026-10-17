@@ -8,7 +8,7 @@ name: Runtime matrix
 #   - agent attach (same-runtime; mixed vanilla↔JBR on Linux)
 #   - recording smoke on Linux under xvfb (`:recording:runLinuxX11RecordingSmoke`)
 #
-# Per-PR CI stays single-JDK (Temurin 21 in ci.yml). This workflow is intentionally
+# Per-PR CI stays single-JDK (Temurin 25 in ci.yml). This workflow is intentionally
 # expensive and runs on schedule, workflow_dispatch, and as a hard gate on release tags
 # (called from release.yml via workflow_call).
 

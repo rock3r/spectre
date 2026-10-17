@@ -12,12 +12,39 @@ class DaemonProcessLauncherTest {
                     socketPath = Path.of("/tmp/spectre/daemon.sock"),
                     javaExecutable = "/jdk/bin/java",
                     classPath = "spectre.jar",
+                    callerJvmOptions = { emptyList() },
                 )
                 .command()
 
         assertEquals(
             listOf(
                 "/jdk/bin/java",
+                "-cp",
+                "spectre.jar",
+                "dev.sebastiano.spectre.cli.daemon.DaemonMainKt",
+                "--socket",
+                Path.of("/tmp", "spectre", "daemon.sock").toString(),
+            ),
+            command,
+        )
+    }
+
+    @Test
+    fun `includes ready AOT cache arguments for the daemon JVM`() {
+        val command =
+            DaemonProcessLauncher(
+                    socketPath = Path.of("/tmp/spectre/daemon.sock"),
+                    javaExecutable = "/jdk/bin/java",
+                    classPath = "spectre.jar",
+                    aotJvmArguments = { listOf("-XX:AOTCache=/tmp/aot/spectre.aot") },
+                    callerJvmOptions = { emptyList() },
+                )
+                .command()
+
+        assertEquals(
+            listOf(
+                "/jdk/bin/java",
+                "-XX:AOTCache=/tmp/aot/spectre.aot",
                 "-cp",
                 "spectre.jar",
                 "dev.sebastiano.spectre.cli.daemon.DaemonMainKt",
@@ -47,6 +74,7 @@ class DaemonProcessLauncherTest {
                         "disabled"
                             .takeIf { name == "dev.sebastiano.spectre.agent.inputCoordination" }
                     },
+                    callerJvmOptions = { emptyList() },
                 )
                 .command()
 
@@ -67,6 +95,7 @@ class DaemonProcessLauncherTest {
                         "/jars/agent.jar"
                             .takeIf { name == "dev.sebastiano.spectre.agent.runtimeJar" }
                     },
+                    callerJvmOptions = { emptyList() },
                 )
                 .command()
 
@@ -77,6 +106,68 @@ class DaemonProcessLauncherTest {
     }
 
     @Test
+    fun `forwards caller JVM options to the daemon`() {
+        // JVM options the caller gave the CLI (via JAVA_TOOL_OPTIONS & friends, or
+        // JAVA_OPTS/SPECTRE_OPTS) are reconstructed onto the CLI's own command line
+        // by the bootstrap; the daemon is a fresh JVM, so they reach it only if this
+        // launcher passes them on — a caller's -Xmx1g must not stop at the
+        // short-lived CLI front end. Instrumentation agents are the exception:
+        // they belong to the CLI process alone (a JDWP agent would fail to bind
+        // its listen address a second time in the daemon).
+        val command =
+            DaemonProcessLauncher(
+                    socketPath = Path.of("/tmp/spectre/daemon.sock"),
+                    javaExecutable = "/jdk/bin/java",
+                    classPath = "spectre.jar",
+                    aotJvmArguments = { listOf("-XX:AOTCache=/tmp/aot/spectre.aot") },
+                    callerJvmOptions = {
+                        listOf(
+                            "-Xmx1g",
+                            "-javaagent:/tmp/agent.jar",
+                            "-agentlib:jdwp=transport=dt_socket,server=y,address=5005",
+                            "-XX:MaxGCPauseMillis=50",
+                        )
+                    },
+                )
+                .command()
+
+        assertEquals(
+            listOf(
+                "/jdk/bin/java",
+                "-XX:AOTCache=/tmp/aot/spectre.aot",
+                "-Xmx1g",
+                "-XX:MaxGCPauseMillis=50",
+                "-cp",
+                "spectre.jar",
+                "dev.sebastiano.spectre.cli.daemon.DaemonMainKt",
+                "--socket",
+                Path.of("/tmp", "spectre", "daemon.sock").toString(),
+            ),
+            command,
+        )
+    }
+
+    @Test
+    fun `daemon environment drops inherited JVM option variables`() {
+        // The daemon's options are reconstructed explicitly on its command line;
+        // leaving JAVA_TOOL_OPTIONS & friends in its environment would apply
+        // them a second time (agents twice, or an env collector colliding with
+        // the cache's pinned G1). Thin start-script launches keep those
+        // variables in the CLI's environment, so the scrub must happen here.
+        val environment =
+            mutableMapOf(
+                "JAVA_TOOL_OPTIONS" to "-XX:+UseZGC",
+                "JDK_JAVA_OPTIONS" to "-Xmx1g",
+                "_JAVA_OPTIONS" to "-Dfoo=bar",
+                "PATH" to "/usr/bin",
+            )
+
+        DaemonProcessLauncher.sanitizeDaemonEnvironment(environment)
+
+        assertEquals(mapOf("PATH" to "/usr/bin"), environment)
+    }
+
+    @Test
     fun `forwards nothing when nothing is set`() {
         val command =
             DaemonProcessLauncher(
@@ -84,6 +175,7 @@ class DaemonProcessLauncherTest {
                     javaExecutable = "/jdk/bin/java",
                     classPath = "spectre.jar",
                     readProperty = { null },
+                    callerJvmOptions = { emptyList() },
                 )
                 .command()
 

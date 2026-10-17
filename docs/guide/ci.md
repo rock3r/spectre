@@ -156,7 +156,8 @@ Useful patterns to search for include `Sandbox: java(...) deny(1) mach-lookup`,
 
 ## Runtime matrix (JBR / Temurin)
 
-Pull request CI uses one Temurin 21 JDK. Compatibility across **JBR 21**,
+Pull request CI uses one Temurin 25 JDK (the CLI requires JDK 25; libraries
+still target 21). Compatibility across **JBR 21**,
 **JBR 25**, and **Temurin LTS** (toolchain major) on macOS, Linux, and Windows is covered by
 the scheduled [runtime-matrix](https://github.com/rock3r/spectre/blob/main/.github/workflows/runtime-matrix.yml)
 workflow (epic #215 / issue #216):
@@ -177,8 +178,9 @@ and publishing. A failed cell blocks the release.
 Scheduled failures open issues labelled `runtime-matrix`.
 
 `SPECTRE_MATRIX_JAVA_HOME` sets the JDK for `Test` and `JavaExec` workers in the root
-`build.gradle.kts`. Modules still compile with `jvmToolchain(21)`.
-Without this variable, a JBR 25 cell could run workers on toolchain JDK 21.
+`build.gradle.kts`. Library modules still compile with `jvmToolchain(21)`; the CLI
+compiles with 25 and is not part of the matrix suites. Without this variable, a
+JBR 25 cell could run workers on toolchain JDK 21.
 
 Mixed-runtime attach sets `SPECTRE_FIXTURE_JAVA_HOME` or
 `-Pspectre.agent.fixtureJavaHome=…` for the fixture JVM.

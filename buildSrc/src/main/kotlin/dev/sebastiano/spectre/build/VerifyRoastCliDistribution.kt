@@ -30,6 +30,7 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
     fun verify() {
         val archive = artifact.get().asFile
         val launcher = launcherPath.get()
+        lateinit var applicationJarEntry: String
         ZipFile(archive).use { zip ->
             check(zip.getEntry(launcher) != null) { "${archive.name} does not contain $launcher" }
             val applicationRoot = launcher.substringBeforeLast('/')
@@ -42,11 +43,16 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
             check(zip.getEntry("$applicationRoot/app/spectre.json") != null) {
                 "${archive.name} does not contain Roast's application configuration"
             }
+            applicationJarEntry = VerifyRoastCliNativeLayout.resolveApplicationJarEntry(zip)
             validateNativeLayout(zip, applicationRoot)
             validateEntries(zip)
             extract(archive, zip)
         }
-        verifyLauncher(File(temporaryDir, launcher))
+        verifyLauncher(
+            File(temporaryDir, launcher),
+            File(temporaryDir, runtimeJavaPath.get()),
+            File(temporaryDir, applicationJarEntry),
+        )
         verifyRuntimeJava(File(temporaryDir, runtimeJavaPath.get()))
     }
 
@@ -122,11 +128,98 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
         }
     }
 
-    private fun verifyLauncher(launcher: File) {
+    private fun verifyLauncher(launcher: File, runtimeJava: File, applicationJar: File) {
+        // Point the bootstrap at an empty cache directory: the first launch must train
+        // and promote a Leyden AOT cache there (this is what proves the packaged
+        // bootstrap actually execs its child JVM — including restoring the bundled
+        // java launcher's execute bit after ZIP extraction — instead of silently
+        // degrading to its in-process fallback), and the second must consume it.
+        val aotCacheDir = File(temporaryDir, "verify-aot-cache")
+        Files.createDirectories(aotCacheDir.toPath())
+        // The task temp dir survives re-runs; start empty so the first launch below
+        // really is a first (training) launch.
+        aotCacheDir.listFiles().orEmpty().forEach { it.delete() }
+        val firstStderr = File(temporaryDir, "launcher-first-stderr.txt")
+        val firstOutput = runLauncher(launcher, aotCacheDir, firstStderr)
+        check("Usage: spectre" in firstOutput.withoutAnsiSequences()) {
+            "Bundled launcher did not run the Spectre CLI: $firstOutput"
+        }
+        // The first launch trains before it runs the real command, and training must
+        // not leak onto either of the real command's streams: stdout is a protocol
+        // surface (spectre mcp, --json), and Leyden diagnostics default to stdout
+        // (record runs also append an "AOTConfiguration recorded" line there). The
+        // bootstrap therefore trains with discarded stdio and silences Leyden
+        // logging on production launches.
+        check(firstOutput.withoutAnsiSequences().lineSequence().none { line -> AOT_NOISE_MARKERS.any { it in line } }) {
+            "Bundled launcher leaked AOT training noise to stdout: $firstOutput"
+        }
+        val firstStderrText = firstStderr.readText()
+        check("[aot]" !in firstStderrText && "AOTCache" !in firstStderrText) {
+            "Bundled launcher leaked AOT training noise to stderr: $firstStderrText"
+        }
+        val caches = aotCacheDir.listFiles { file -> file.name.endsWith(".aot") }.orEmpty()
+        check(caches.size == 1) {
+            "Bundled launcher did not train an AOT cache in $aotCacheDir: " +
+                aotCacheDir.listFiles().orEmpty().map { it.name }
+        }
+        verifyCacheIsConsumed(runtimeJava, applicationJar, caches.single(), launcher.parentFile)
+        val secondStderr = File(temporaryDir, "launcher-second-stderr.txt")
+        val secondOutput = runLauncher(launcher, aotCacheDir, secondStderr)
+        check("Usage: spectre" in secondOutput.withoutAnsiSequences()) {
+            "Bundled launcher did not run the Spectre CLI with a trained AOT cache: $secondOutput"
+        }
+        check(secondOutput.withoutAnsiSequences().lineSequence().none { line -> AOT_NOISE_MARKERS.any { it in line } }) {
+            "Bundled launcher leaked AOT noise to stdout with a trained AOT cache: $secondOutput"
+        }
+        // A warm launch must be quiet on stderr: no rejected cache, and no JNA
+        // restricted-method warning (the child JVM gets --enable-native-access).
+        val secondStderrText = secondStderr.readText()
+        check("[aot]" !in secondStderrText && "restricted method" !in secondStderrText) {
+            "Bundled launcher was not quiet with a trained AOT cache: $secondStderrText"
+        }
+    }
+
+    /**
+     * Proves the trained cache is actually consumable, not merely present: run the
+     * bundled runtime against it with `-XX:AOTMode=on`, which makes the JVM exit
+     * non-zero if the cache is unusable, in the production launch's option shape.
+     * This is the assertion that catches training/production option drift (JEP 483
+     * requires identical module options — e.g. `--enable-native-access` — across
+     * record, assembly, and production, or the JVM silently discards the cache).
+     */
+    private fun verifyCacheIsConsumed(java: File, applicationJar: File, cache: File, workingDir: File) {
+        java.setExecutable(true, false)
+        val stderrFile = File(temporaryDir, "cache-consumption-stderr.txt")
+        val process =
+            ProcessBuilder(
+                    java.absolutePath,
+                    "-XX:AOTCache=${cache.absolutePath}",
+                    "-XX:AOTMode=on",
+                    "--enable-native-access=ALL-UNNAMED",
+                    "-cp",
+                    applicationJar.absolutePath,
+                    "dev.sebastiano.spectre.cli.SpectreCliKt",
+                    "--help",
+                )
+                .directory(workingDir)
+                .redirectError(stderrFile)
+                .start()
+        check(process.waitFor(LAUNCH_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            "Timed out consuming the trained AOT cache ${cache.name}"
+        }
+        val output = process.inputStream.bufferedReader().readText()
+        check(process.exitValue() == 0 && "Usage: spectre" in output.withoutAnsiSequences()) {
+            "Bundled JVM rejected the cache trained by the launcher: ${stderrFile.readText()}"
+        }
+    }
+
+    private fun runLauncher(launcher: File, aotCacheDir: File, stderrFile: File): String {
         val process =
             ProcessBuilder(launcher.absolutePath, "--help")
                 .directory(launcher.parentFile)
-                .redirectErrorStream(true)
+                .redirectError(stderrFile)
+                .apply { environment()["SPECTRE_AOT_CACHE_DIR"] = aotCacheDir.absolutePath }
                 .start()
         check(process.waitFor(LAUNCH_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
             process.destroyForcibly()
@@ -134,9 +227,7 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
         }
         val output = process.inputStream.bufferedReader().readText()
         check(process.exitValue() == 0) { "Bundled launcher failed: $output" }
-        check("Usage: spectre" in output.withoutAnsiSequences()) {
-            "Bundled launcher did not run the Spectre CLI: $output"
-        }
+        return output
     }
 
     private fun verifyRuntimeJava(java: File) {
@@ -156,6 +247,9 @@ abstract class VerifyRoastCliDistribution : DefaultTask() {
         const val EXTRACTION_TIMEOUT_SECONDS = 30L
         const val LAUNCH_TIMEOUT_SECONDS = 20L
         val ANSI_ESCAPE_SEQUENCE = Regex("\\u001B\\[[0-?]*[ -/]*[@-~]")
+
+        /** Leyden/JVM lines that must never reach the CLI's stdout (a protocol surface). */
+        val AOT_NOISE_MARKERS = listOf("[aot]", "AOTCache", "AOTConfiguration")
     }
 
     private fun isWindows(): Boolean = System.getProperty("os.name").startsWith("Windows")

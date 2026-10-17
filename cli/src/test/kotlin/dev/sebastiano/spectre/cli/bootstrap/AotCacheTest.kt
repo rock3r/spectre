@@ -1,0 +1,556 @@
+package dev.sebastiano.spectre.cli.bootstrap
+
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.attribute.FileTime
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import org.junit.jupiter.api.io.TempDir
+
+class AotCacheTest {
+    @TempDir lateinit var root: Path
+
+    private fun jar(name: String = "spectre.jar", modifiedMillis: Long = 1_000_000L): Path {
+        val jar = root.resolve(name)
+        Files.write(jar, byteArrayOf(1, 2, 3, 4))
+        Files.setLastModifiedTime(jar, FileTime.fromMillis(modifiedMillis))
+        return jar
+    }
+
+    private fun plan(
+        jarFile: Path?,
+        environment: Map<String, String> = emptyMap(),
+        featureVersion: Int = 25,
+        allowTraining: Boolean = true,
+        moduleOptions: List<String> = emptyList(),
+    ): AotCache.Plan =
+        AotCache.plan(
+            jarFile,
+            environment,
+            root.resolve("home"),
+            "Linux",
+            "x86_64",
+            "25.0.1",
+            featureVersion,
+            allowTraining,
+            "testpid",
+            moduleOptions,
+        )
+
+    @Test
+    fun `trains to a unique temporary file when no cache exists`() {
+        val plan = plan(jar())
+
+        assertEquals(AotCache.Mode.TRAINING, plan.mode())
+        assertTrue(plan.cacheFile().toString().endsWith(".aot"))
+        // Training is a discarded-stdio record run whose recorded configuration the
+        // bootstrap then assembles into trainingFile (never the user's own command:
+        // a record run appends an "AOTConfiguration recorded" line to stdout, which
+        // would corrupt spectre mcp's protocol stream and --json output).
+        assertEquals(
+            listOf(
+                "-XX:AOTMode=record",
+                "-XX:AOTConfiguration=" + plan.trainingFile() + ".config",
+            ),
+            plan.jvmArguments(),
+        )
+        assertTrue(plan.trainingFile().toString().endsWith(".training-testpid"))
+    }
+
+    @Test
+    fun `daemon consumes no managed cache when the caller chose the collector`() {
+        val jar = jar()
+        val training = plan(jar)
+        Files.createDirectories(training.cacheFile().parent)
+        Files.write(training.cacheFile(), byteArrayOf(9))
+
+        // A caller-selected collector (or G1 disabled) makes the whole launch
+        // chain user-managed: the daemon must not be handed the G1-trained
+        // managed cache behind the caller's back.
+        for (collector in listOf("-XX:+UseZGC", "-XX:-UseG1GC")) {
+            assertEquals(
+                emptyList(),
+                AotCache.daemonJvmArguments(
+                    jar.toString(),
+                    emptyMap(),
+                    root.resolve("home"),
+                    "Linux",
+                    "x86_64",
+                    "25.0.1",
+                    25,
+                    emptyList(),
+                    listOf(collector),
+                ),
+            )
+        }
+        // Naming the contract's own collector explicitly changes nothing.
+        assertTrue(
+            AotCache.daemonJvmArguments(
+                    jar.toString(),
+                    emptyMap(),
+                    root.resolve("home"),
+                    "Linux",
+                    "x86_64",
+                    "25.0.1",
+                    25,
+                    emptyList(),
+                    listOf("-XX:+UseG1GC"),
+                )
+                .isNotEmpty()
+        )
+    }
+
+    @Test
+    fun `cds incompatible module options plan unavailable instead of training forever`() {
+        // --patch-module, --upgrade-module-path, and --limit-modules disable
+        // CDS, and Leyden cache creation is CDS-based: the record/assembly
+        // sequence could never promote a cache, so a TRAINING plan would
+        // repeat its discarded work on every launch. Such launches plan
+        // UNAVAILABLE and run uncached with the caller's options forwarded.
+        for (option in listOf("--patch-module", "--upgrade-module-path", "--limit-modules")) {
+            val plan = plan(jar(), moduleOptions = listOf(option, "value"))
+            assertEquals(AotCache.Mode.UNAVAILABLE, plan.mode())
+            assertEquals(emptyList(), plan.jvmArguments())
+        }
+        assertEquals(
+            AotCache.Mode.UNAVAILABLE,
+            plan(jar(), moduleOptions = listOf("--limit-modules=java.base")).mode(),
+        )
+    }
+
+    @Test
+    fun `planning tolerates a missing or invalid user home`() {
+        // A malformed -Duser.home (supplied via JAVA_OPTS, SPECTRE_OPTS, or an
+        // inherited JVM-option variable) must degrade to an uncached launch,
+        // never abort the CLI before planning even runs.
+        assertEquals(
+            AotCache.Mode.UNAVAILABLE,
+            AotCache.plan(
+                    jar(),
+                    emptyMap(),
+                    null,
+                    "Linux",
+                    "x86_64",
+                    "25.0.1",
+                    25,
+                    true,
+                    "testpid",
+                    emptyList(),
+                )
+                .mode(),
+        )
+
+        val originalHome = System.getProperty("user.home")
+        try {
+            System.setProperty("user.home", "bad\u0000home")
+            assertNull(AotCache.userHomePath())
+            System.clearProperty("user.home")
+            assertNull(AotCache.userHomePath())
+        } finally {
+            if (originalHome != null) {
+                System.setProperty("user.home", originalHome)
+            }
+        }
+    }
+
+    @Test
+    fun `uses the cache in production when it already exists`() {
+        val jar = jar()
+        val training = plan(jar)
+        Files.createDirectories(training.cacheFile().parent)
+        Files.write(training.cacheFile(), byteArrayOf(9))
+
+        val plan = plan(jar)
+
+        assertEquals(AotCache.Mode.PRODUCTION, plan.mode())
+        assertEquals(listOf("-XX:AOTCache=" + training.cacheFile()), plan.jvmArguments())
+    }
+
+    @Test
+    fun `daemon never trains but uses a ready cache`() {
+        val jar = jar()
+
+        val cold = plan(jar, allowTraining = false)
+        assertEquals(AotCache.Mode.UNAVAILABLE, cold.mode())
+        assertEquals(emptyList(), cold.jvmArguments())
+
+        val training = plan(jar)
+        Files.createDirectories(training.cacheFile().parent)
+        Files.write(training.cacheFile(), byteArrayOf(9))
+
+        val warm = plan(jar, allowTraining = false)
+        assertEquals(AotCache.Mode.PRODUCTION, warm.mode())
+        assertEquals(listOf("-XX:AOTCache=" + training.cacheFile()), warm.jvmArguments())
+
+        // The daemon consumes the same cache, so its arguments must carry the
+        // frontend layout the cache was recorded with (collector and heap
+        // representation) plus the module option, or the JVM rejects it — on a
+        // machine whose ergonomics would pick a different collector, that
+        // rejection would repeat on every daemon start.
+        assertEquals(
+            listOf(
+                "-XX:+UseG1GC",
+                "-XX:+UseCompressedOops",
+                "-XX:-UseCompactObjectHeaders",
+                "-XX:ObjectAlignmentInBytes=8",
+                "-XX:AOTCache=" + training.cacheFile(),
+                "--enable-native-access=ALL-UNNAMED",
+            ),
+            AotCache.daemonJvmArguments(
+                jar.toString(),
+                emptyMap(),
+                root.resolve("home"),
+                "Linux",
+                "x86_64",
+                "25.0.1",
+                25,
+                emptyList(),
+                emptyList(),
+            ),
+        )
+
+        // The managed production child itself carries -XX:AOTCache=<managed
+        // cache> in its input arguments; that must not be mistaken for a
+        // caller-managed cache when this CLI spawns its daemon, or the daemon
+        // would never consume the cache in the real packaged flow.
+        assertEquals(
+            listOf(
+                "-XX:+UseG1GC",
+                "-XX:+UseCompressedOops",
+                "-XX:-UseCompactObjectHeaders",
+                "-XX:ObjectAlignmentInBytes=8",
+                "-XX:AOTCache=" + training.cacheFile(),
+                "--enable-native-access=ALL-UNNAMED",
+            ),
+            AotCache.daemonJvmArguments(
+                jar.toString(),
+                emptyMap(),
+                root.resolve("home"),
+                "Linux",
+                "x86_64",
+                "25.0.1",
+                25,
+                emptyList(),
+                listOf("-XX:AOTCache=" + training.cacheFile()),
+            ),
+        )
+        // A caller's own AOT flag, by contrast, still suppresses daemon cache
+        // consumption entirely.
+        assertEquals(
+            emptyList(),
+            AotCache.daemonJvmArguments(
+                jar.toString(),
+                emptyMap(),
+                root.resolve("home"),
+                "Linux",
+                "x86_64",
+                "25.0.1",
+                25,
+                emptyList(),
+                listOf("-XX:AOTCache=/tmp/caller.aot"),
+            ),
+        )
+        assertEquals(
+            emptyList(),
+            AotCache.daemonJvmArguments(
+                jar.toString(),
+                emptyMap(),
+                root.resolve("home"),
+                "Linux",
+                "x86_64",
+                "25.0.1",
+                25,
+                emptyList(),
+                listOf("-XX:AOTMode=on"),
+            ),
+        )
+    }
+
+    @Test
+    fun `a changed jar fingerprints to a different cache file`() {
+        val jar = jar()
+        val before = plan(jar)
+
+        Files.write(jar, byteArrayOf(9, 8, 7, 6, 5))
+        val after = plan(jar)
+
+        assertNotEquals(before.cacheFile(), after.cacheFile())
+        assertEquals(AotCache.Mode.TRAINING, after.mode())
+
+        // A timestamp-only change (same bytes) keeps the cache: the archive is
+        // still valid for the jar it was trained against.
+        Files.setLastModifiedTime(jar, FileTime.fromMillis(2_000_000L))
+        assertEquals(after.cacheFile(), plan(jar).cacheFile())
+    }
+
+    @Test
+    fun `fingerprint is stable for an unchanged jar`() {
+        assertEquals(plan(jar()).cacheFile(), plan(jar()).cacheFile())
+    }
+
+    @Test
+    fun `same size and timestamp but different contents fingerprint differently`() {
+        // Deployment tooling that preserves timestamps (reproducible installs,
+        // restores) can replace the jar with different bytes of the same size
+        // and mtime; path+size+mtime would keep selecting the old cache, so
+        // the identity must come from the jar contents themselves.
+        val jar = jar()
+        val first = plan(jar)
+        Files.createDirectories(first.cacheFile().parent)
+        Files.write(first.cacheFile(), byteArrayOf(9))
+
+        Files.write(jar, byteArrayOf(5, 6, 7, 8))
+        Files.setLastModifiedTime(jar, FileTime.fromMillis(1_000_000L))
+
+        val second = plan(jar)
+        assertNotEquals(first.cacheFile(), second.cacheFile())
+        assertEquals(AotCache.Mode.TRAINING, second.mode())
+    }
+
+    @Test
+    fun `fingerprint separates architectures sharing a home directory`() {
+        // A shared (for example NFS) home must not let an x86_64 host plan
+        // PRODUCTION against an arm64 host's incompatible cache, or the JVM
+        // would reject that cache forever instead of retraining.
+        val jar = jar()
+        val arm =
+            AotCache.plan(
+                jar,
+                emptyMap(),
+                root.resolve("home"),
+                "Linux",
+                "aarch64",
+                "25.0.1",
+                25,
+                true,
+                "testpid",
+                emptyList(),
+            )
+
+        assertNotEquals(plan(jar).cacheFile(), arm.cacheFile())
+    }
+
+    @Test
+    fun `different caller module options fingerprint to different caches`() {
+        // The archived module graph must match the consuming JVM's module
+        // options exactly, so a launch with a different --add-opens set must
+        // train its own cache instead of planning PRODUCTION against the
+        // earlier one and silently running uncached forever.
+        val jar = jar()
+        val opensLang = listOf("--add-opens", "java.base/java.lang=ALL-UNNAMED")
+        val opensSql = listOf("--add-opens", "java.sql/java.sql=ALL-UNNAMED")
+
+        val first = plan(jar, moduleOptions = opensLang)
+        Files.createDirectories(first.cacheFile().parent)
+        Files.write(first.cacheFile(), byteArrayOf(9))
+
+        assertEquals(AotCache.Mode.PRODUCTION, plan(jar, moduleOptions = opensLang).mode())
+        // Option order does not change the module graph, so it must not
+        // change the cache identity either.
+        assertEquals(
+            plan(
+                    jar,
+                    moduleOptions =
+                        listOf(
+                            "--add-opens",
+                            "java.base/java.lang=ALL-UNNAMED",
+                            "--add-modules",
+                            "java.sql",
+                        ),
+                )
+                .cacheFile(),
+            plan(
+                    jar,
+                    moduleOptions =
+                        listOf(
+                            "--add-modules",
+                            "java.sql",
+                            "--add-opens",
+                            "java.base/java.lang=ALL-UNNAMED",
+                        ),
+                )
+                .cacheFile(),
+        )
+        val other = plan(jar, moduleOptions = opensSql)
+        assertNotEquals(first.cacheFile(), other.cacheFile())
+        assertEquals(AotCache.Mode.TRAINING, other.mode())
+
+        // Option/value pairs must stay associated: the same tokens paired
+        // differently describe a different module graph and need different
+        // caches, even though the flattened token multiset is identical.
+        val opensFirst =
+            plan(
+                jar,
+                moduleOptions =
+                    listOf(
+                        "--add-opens",
+                        "java.base/java.lang=ALL-UNNAMED",
+                        "--add-exports",
+                        "java.base/java.io=ALL-UNNAMED",
+                    ),
+            )
+        val exportsFirst =
+            plan(
+                jar,
+                moduleOptions =
+                    listOf(
+                        "--add-opens",
+                        "java.base/java.io=ALL-UNNAMED",
+                        "--add-exports",
+                        "java.base/java.lang=ALL-UNNAMED",
+                    ),
+            )
+        assertNotEquals(opensFirst.cacheFile(), exportsFirst.cacheFile())
+    }
+
+    @Test
+    fun `disabled by SPECTRE_AOT off`() {
+        val plan = plan(jar(), environment = mapOf("SPECTRE_AOT" to "off"))
+
+        assertEquals(AotCache.Mode.DISABLED, plan.mode())
+        assertEquals(emptyList(), plan.jvmArguments())
+    }
+
+    @Test
+    fun `unavailable before JDK 25`() {
+        val plan = plan(jar(), featureVersion = 21)
+
+        assertEquals(AotCache.Mode.UNAVAILABLE, plan.mode())
+        assertEquals(emptyList(), plan.jvmArguments())
+    }
+
+    @Test
+    fun `user supplied AOT options win over managed caching`() {
+        val plan =
+            plan(jar(), environment = mapOf("JAVA_TOOL_OPTIONS" to "-XX:AOTCache=/tmp/user.aot"))
+
+        assertEquals(AotCache.Mode.UNAVAILABLE, plan.mode())
+        assertEquals(emptyList(), plan.jvmArguments())
+    }
+
+    @Test
+    fun `user AOT options are detected on the JVM command line too`() {
+        // Start scripts pass JAVA_OPTS/SPECTRE_OPTS as JVM arguments, not through
+        // the option environment variables the planner checks.
+        assertTrue(AotCache.hasUserAotArguments(listOf("-Xmx512m", "-XX:AOTCache=/tmp/user.aot")))
+        assertTrue(AotCache.hasUserAotArguments(listOf("-XX:AOTMode=record")))
+        assertFalse(
+            AotCache.hasUserAotArguments(
+                listOf("-Xmx512m", "-Ddev.sebastiano.spectre.agent.runtimeJar=/tmp/a.jar")
+            )
+        )
+    }
+
+    @Test
+    fun `malformed cache directory override degrades to unavailable`() {
+        // An invalid SPECTRE_AOT_CACHE_DIR (here: embedded NUL) must not throw
+        // out of planning; the launch simply proceeds uncached.
+        val plan = plan(jar(), environment = mapOf("SPECTRE_AOT_CACHE_DIR" to "/tmp/\u0000bad"))
+
+        assertEquals(AotCache.Mode.UNAVAILABLE, plan.mode())
+        assertEquals(emptyList(), plan.jvmArguments())
+    }
+
+    @Test
+    fun `unavailable without a single existing jar`() {
+        assertEquals(AotCache.Mode.UNAVAILABLE, plan(null).mode())
+        assertEquals(
+            AotCache.Mode.UNAVAILABLE,
+            plan(root.resolve("missing.jar")).mode(),
+        )
+        val classesDir = root.resolve("classes")
+        Files.createDirectories(classesDir)
+        assertEquals(AotCache.Mode.UNAVAILABLE, plan(classesDir).mode())
+    }
+
+    @Test
+    fun `cache directory honours the override and per-OS defaults`() {
+        val home = root.resolve("home")
+        assertEquals(
+            Path.of("/tmp/custom-aot"),
+            AotCache.cacheDirectory(
+                mapOf("SPECTRE_AOT_CACHE_DIR" to "/tmp/custom-aot"),
+                home,
+                "Linux",
+            ),
+        )
+        assertEquals(
+            home.resolve(".cache/spectre/aot"),
+            AotCache.cacheDirectory(emptyMap(), home, "Linux"),
+        )
+        assertEquals(
+            home.resolve("xdg/spectre/aot"),
+            AotCache.cacheDirectory(
+                mapOf("XDG_CACHE_HOME" to home.resolve("xdg").toString()),
+                home,
+                "Linux",
+            ),
+        )
+        assertEquals(
+            home.resolve("Library/Caches/Spectre/aot"),
+            AotCache.cacheDirectory(emptyMap(), home, "Mac OS X"),
+        )
+        assertEquals(
+            Path.of("C:/Users/x/AppData/Local").resolve("Spectre/aot"),
+            AotCache.cacheDirectory(
+                mapOf("LOCALAPPDATA" to "C:/Users/x/AppData/Local"),
+                home,
+                "Windows 11",
+            ),
+        )
+    }
+
+    @Test
+    fun `single jar extraction rejects multi-entry classpaths`() {
+        val jar = jar()
+        assertEquals(jar, AotCache.singleJarFile(jar.toString()).orElse(null))
+        assertTrue(
+            AotCache.singleJarFile("$jar${File.pathSeparator}${root.resolve("other.jar")}").isEmpty
+        )
+        assertTrue(AotCache.singleJarFile("").isEmpty)
+    }
+
+    @Test
+    fun `pruning keeps only the newest caches`() {
+        val directory = root.resolve("aot")
+        Files.createDirectories(directory)
+        val names =
+            listOf("spectre-old.aot", "spectre-mid.aot", "spectre-new.aot", "spectre-keep.aot")
+        names.forEachIndexed { index, name ->
+            val file = directory.resolve(name)
+            Files.write(file, byteArrayOf(1))
+            Files.setLastModifiedTime(file, FileTime.fromMillis((index + 1) * 1_000_000L))
+        }
+        val keep = directory.resolve("spectre-keep.aot")
+
+        AotCache.pruneOldCaches(directory, keep, 2)
+
+        assertEquals(
+            setOf("spectre-new.aot", "spectre-keep.aot"),
+            directory.toFile().list()?.toSet(),
+        )
+    }
+
+    @Test
+    fun `daemon arguments stay empty for an exploded test classpath`() {
+        assertEquals(
+            emptyList(),
+            AotCache.daemonJvmArguments(
+                root.resolve("classes").toString() + File.pathSeparator + jar(),
+                emptyMap(),
+                root.resolve("home"),
+                "Linux",
+                "x86_64",
+                "25.0.1",
+                25,
+                emptyList(),
+                emptyList(),
+            ),
+        )
+    }
+}

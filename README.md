@@ -106,7 +106,8 @@ Two additional checks run outside `:check`:
 The supported runtime set includes JBR 21, JBR 25, and Temurin LTS at the toolchain major.
 JBR 21 is the local development default. The scheduled
 [runtime matrix](.github/workflows/runtime-matrix.yml) also runs before a release.
-Pull request CI uses Temurin 21. See the [runtime support tiers](docs/STABILITY.md#jvm-runtime-support-tiers)
+Pull request CI uses Temurin 25 (the CLI requires JDK 25; libraries still target 21).
+See the [runtime support tiers](docs/STABILITY.md#jvm-runtime-support-tiers)
 and [version pins](.github/jbr-pins.env).
 
 ## CI

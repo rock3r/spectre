@@ -16,6 +16,7 @@ import org.gradle.api.tasks.application.CreateStartScripts
 import org.gradle.api.tasks.bundling.Zip
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.jvm.toolchain.JavaToolchainService
+import org.gradle.jvm.toolchain.JvmVendorSpec
 import org.gradle.process.CommandLineArgumentProvider
 
 plugins {
@@ -30,14 +31,32 @@ plugins {
 
 application {
     applicationName = "spectre"
-    mainClass = "dev.sebastiano.spectre.cli.SpectreCliKt"
+    // Packaged launches enter through the dependency-free bootstrap, which execs the real
+    // CLI (SpectreCliKt) in a child JVM with a trained JDK 25 Leyden AOT cache when one
+    // matches this jar, and trains that cache on first run. See
+    // cli/src/main/java/dev/sebastiano/spectre/cli/bootstrap/SpectreBootstrap.java.
+    mainClass = "dev.sebastiano.spectre.cli.bootstrap.SpectreBootstrap"
 }
 
 val javaToolchains = extensions.getByType<JavaToolchainService>()
+
+// The bundled runtime is Temurin by design (see temurinJdkUrl: the per-target JDKs the
+// images are built from, and the Leyden cache, are only ever trained and verified
+// against Eclipse Adoptium builds). Pin the vendor on every JDK 25 toolchain request:
+// an unpinned request silently resolves to whatever 25 happens to be installed (a
+// locally installed JBR was caught producing the shipped runtime image on dev
+// machines), and an AOT cache trained on one vendor's build is not valid on another's.
 val cliJlinkToolchain =
     javaToolchains
-        .launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) }
+        .launcherFor {
+            languageVersion.set(JavaLanguageVersion.of(25))
+            vendor.set(JvmVendorSpec.ADOPTIUM)
+        }
         .map { launcher -> launcher.metadata.installationPath }
+val cliJava25Launcher = javaToolchains.launcherFor {
+    languageVersion.set(JavaLanguageVersion.of(25))
+    vendor.set(JvmVendorSpec.ADOPTIUM)
+}
 
 // Construo runs the host jlink against each downloaded target JDK's jmods and then packages
 // Roast with that real target JVM. That preserves Spectre's attach/instrumentation support,
@@ -55,7 +74,17 @@ construo {
 
     // Spectre's Roast bundle is a command-line tool, not a macOS UI application. Running its
     // JVM on the first thread blocks command invocation before the CLI can process its args.
-    roast { runOnFirstThread.set(false) }
+    roast {
+        runOnFirstThread.set(false)
+        // The frontend runs G1 (SpectreBootstrap pins it on the child JVM): JDK 25's
+        // Leyden AOT cache does not support ZGC, so the launcher must not add
+        // -XX:+UseZGC to the bootstrap JVM either.
+        useZgc.set(false)
+        // These flags land on the bootstrap JVM only (Roast creates it via JNI; the real
+        // CLI runs in a child JVM the bootstrap execs without them): keep that throwaway
+        // JVM as cheap to start and fork as possible.
+        vmArgs.addAll("-XX:TieredStopAtLevel=1", "-Xmx64m")
+    }
 
     targets {
         create<Target.Linux>("linuxX64") {
@@ -153,6 +182,8 @@ tasks.shadowJar {
                     "RuntimeVisibleAnnotations,AnnotationDefault,Signature",
                 // `java -jar` Main-Class and the daemon spawn launched by string class name
                 // (DaemonProcessLauncher / DaemonJvmProcessDiscovery).
+                "-keep class dev.sebastiano.spectre.cli.bootstrap.SpectreBootstrap { " +
+                    "public static void main(java.lang.String[]); }",
                 "-keep class dev.sebastiano.spectre.cli.SpectreCliKt { " +
                     "public static void main(java.lang.String[]); }",
                 "-keep class dev.sebastiano.spectre.cli.daemon.DaemonMainKt { " +
@@ -210,12 +241,20 @@ val verifyCliShadowJar =
     tasks.register<VerifyCliShadowJar>("verifyCliShadowJar") {
         dependsOn(tasks.shadowJar)
         artifact.set(tasks.shadowJar.flatMap { it.archiveFile })
+        // Run the 25-bytecode jar on the JDK 25 toolchain, not the Gradle JVM: a
+        // contributor whose Gradle runs on 21 must still be able to verify the CLI.
+        javaExecutablePath.set(
+            cliJava25Launcher.map { launcher -> launcher.executablePath.asFile.path }
+        )
     }
 
 val cliRuntimeImage = layout.buildDirectory.dir("runtime/cli")
 val jlinkBinary =
     javaToolchains
-        .launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) }
+        .launcherFor {
+            languageVersion.set(JavaLanguageVersion.of(25))
+            vendor.set(JvmVendorSpec.ADOPTIUM)
+        }
         .map { launcher ->
             launcher.metadata.installationPath.file(
                 if (isWindows()) "bin/jlink.exe" else "bin/jlink"
@@ -320,14 +359,17 @@ private fun temurinJdkUrl(
     operatingSystem: String,
     extension: String,
 ): String {
-    val version = "21.0.11_10"
-    return ("https://github.com/adoptium/temurin21-binaries/releases/download/" +
-        "jdk-21.0.11%2B10/OpenJDK21U-jdk_${architecture}_${operatingSystem}_hotspot_${version}.${extension}")
+    // Temurin 25 LTS pin for the bundled CLI runtime (JDK 25 enables the Leyden AOT
+    // cache). Keep in sync with targetJdkHome below and verify each asset exists for
+    // every Construo target before bumping.
+    val version = "25.0.4.1_1"
+    return ("https://github.com/adoptium/temurin25-binaries/releases/download/" +
+        "jdk-25.0.4.1%2B1/OpenJDK25U-jdk_${architecture}_${operatingSystem}_hotspot_${version}.${extension}")
 }
 
 private fun targetJdkHome(target: String, macBundle: Boolean = false) =
     layout.buildDirectory.dir(
-        "construo/jdk/$target/jdk-21.0.11+10" + if (macBundle) "/Contents/Home" else ""
+        "construo/jdk/$target/jdk-25.0.4.1+1" + if (macBundle) "/Contents/Home" else ""
     )
 
 private fun preserveRuntimeJavaLauncher(target: String, macBundle: Boolean = false) {
@@ -436,7 +478,10 @@ private fun hostRoastTarget(): RoastTarget =
     }
 
 kotlin {
-    jvmToolchain(21)
+    // The CLI and its daemon require JDK 25 (Leyden AOT cache). Every other module in
+    // the build keeps jvmToolchain(21): the published libraries and the injected
+    // agent-runtime must still load into JDK 21 consumer/target JVMs.
+    jvmToolchain(25)
     explicitApi()
 }
 

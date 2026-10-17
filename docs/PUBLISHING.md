@@ -30,7 +30,7 @@ Jobs on tag push (order simplified; see the workflow for the full graph):
    `{JBR 21, JBR 25, Temurin LTS} × {macOS, Linux, Windows}` compatibility matrix.
    A red matrix **blocks** the release; this is the executable evidence for the
    supported JVM set in [Stability policy](STABILITY.md). Per-PR CI stays on
-   single-JDK Temurin 21.
+   single-JDK Temurin 25.
 1. **`release-gate`** (Linux runner, depends on `runtime-matrix`) — validates the tag
    shape, runs `./gradlew check`, installs the docs dependencies, and runs
    `mkdocs build --strict`. Helper builds and publish wait for this gate.
