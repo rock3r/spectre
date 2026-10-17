@@ -69,6 +69,20 @@ public final class AotCache {
     /** First JDK this CLI supports; its Leyden cache workflow (JEP 483/514/515) is what training uses. */
     public static final int MINIMUM_FEATURE_VERSION = 25;
 
+    /** Module options that disable CDS, and with it Leyden cache creation. */
+    private static final List<String> CDS_INCOMPATIBLE_MODULE_OPTIONS =
+            List.of("--patch-module", "--upgrade-module-path", "--limit-modules");
+
+    /** Whether {@code moduleOptions} carries an option that disables CDS. */
+    private static boolean hasCdsIncompatibleModuleOption(List<String> moduleOptions) {
+        if (moduleOptions == null) {
+            return false;
+        }
+        return moduleOptions.stream()
+                .anyMatch(option -> CDS_INCOMPATIBLE_MODULE_OPTIONS.stream()
+                        .anyMatch(name -> option.equals(name) || option.startsWith(name + "=")));
+    }
+
     private static final String DISABLE_ENV = "SPECTRE_AOT";
     private static final String CACHE_DIR_ENV = "SPECTRE_AOT_CACHE_DIR";
     private static final String[] USER_OPTION_ENV = {"JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"};
@@ -103,6 +117,14 @@ public final class AotCache {
             return new Plan(Mode.DISABLED, null, null, List.of());
         }
         if (featureVersion < MINIMUM_FEATURE_VERSION || hasUserAotOptions(environment)) {
+            return unavailable(null);
+        }
+        if (hasCdsIncompatibleModuleOption(moduleOptions)) {
+            // --patch-module, --upgrade-module-path, and --limit-modules disable
+            // CDS, and Leyden cache creation is CDS-based: the record/assembly
+            // sequence could never promote a cache, so a TRAINING plan would
+            // repeat its discarded work on every launch. Run uncached instead;
+            // the child still receives the caller's options (see SpectreBootstrap).
             return unavailable(null);
         }
         final Path cacheFile;

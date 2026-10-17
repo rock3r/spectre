@@ -106,6 +106,24 @@ class AotCacheTest {
     }
 
     @Test
+    fun `cds incompatible module options plan unavailable instead of training forever`() {
+        // --patch-module, --upgrade-module-path, and --limit-modules disable
+        // CDS, and Leyden cache creation is CDS-based: the record/assembly
+        // sequence could never promote a cache, so a TRAINING plan would
+        // repeat its discarded work on every launch. Such launches plan
+        // UNAVAILABLE and run uncached with the caller's options forwarded.
+        for (option in listOf("--patch-module", "--upgrade-module-path", "--limit-modules")) {
+            val plan = plan(jar(), moduleOptions = listOf(option, "value"))
+            assertEquals(AotCache.Mode.UNAVAILABLE, plan.mode())
+            assertEquals(emptyList(), plan.jvmArguments())
+        }
+        assertEquals(
+            AotCache.Mode.UNAVAILABLE,
+            plan(jar(), moduleOptions = listOf("--limit-modules=java.base")).mode(),
+        )
+    }
+
+    @Test
     fun `planning tolerates a missing or invalid user home`() {
         // A malformed -Duser.home (supplied via JAVA_OPTS, SPECTRE_OPTS, or an
         // inherited JVM-option variable) must degrade to an uncached launch,
