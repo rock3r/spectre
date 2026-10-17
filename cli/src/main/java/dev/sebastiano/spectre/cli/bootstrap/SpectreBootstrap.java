@@ -375,11 +375,17 @@ public final class SpectreBootstrap {
         return inputArguments.stream().anyMatch(SpectreBootstrap::isInstrumentationAgentArgument);
     }
 
-    /** Whether {@code argument} attaches an instrumentation agent to this JVM. */
+    /**
+     * Whether {@code argument} attaches an instrumentation agent to this JVM.
+     * The legacy {@code -Xrunjdwp} form loads the same JDWP agent as {@code
+     * -agentlib:jdwp}, so it counts too: it owns the debug session in this JVM
+     * before {@code main} runs.
+     */
     public static boolean isInstrumentationAgentArgument(String argument) {
         return argument.startsWith("-javaagent:")
                 || argument.startsWith("-agentlib:")
-                || argument.startsWith("-agentpath:");
+                || argument.startsWith("-agentpath:")
+                || argument.startsWith("-Xrunjdwp");
     }
 
     /**

@@ -477,6 +477,13 @@ class SpectreBootstrapTest {
             )
         )
         assertTrue(SpectreBootstrap.mustRunInProcess(listOf("-agentpath:/tmp/libprofiler.so=x")))
+        // The legacy -Xrunjdwp form loads the same JDWP agent: it owns the
+        // debug session in this JVM exactly like -agentlib:jdwp.
+        assertTrue(
+            SpectreBootstrap.mustRunInProcess(
+                listOf("-Xrunjdwp:transport=dt_socket,server=y,address=5005")
+            )
+        )
         assertFalse(SpectreBootstrap.mustRunInProcess(listOf("-Xmx1g", "-XX:+UseG1GC")))
     }
 
