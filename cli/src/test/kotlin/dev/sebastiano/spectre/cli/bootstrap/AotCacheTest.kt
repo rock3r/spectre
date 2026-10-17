@@ -409,6 +409,43 @@ class AotCacheTest {
     }
 
     @Test
+    fun `repeated last-wins module options fingerprint by their effective value`() {
+        // HotSpot resolves a repeated last-wins option to its final occurrence:
+        // --module-path=/a --module-path=/b runs with /b alone. Sorting both
+        // occurrences into the identity would let two launches with different
+        // effective module paths share one fingerprint, so the second plans
+        // PRODUCTION against a cache the JVM then rejects on every launch
+        // instead of training a compatible one.
+        val jar = jar()
+        val ab = plan(jar, moduleOptions = listOf("--module-path=/a", "--module-path=/b"))
+        val ba = plan(jar, moduleOptions = listOf("--module-path=/b", "--module-path=/a"))
+        assertNotEquals(ab.cacheFile(), ba.cacheFile())
+
+        // A superseded occurrence does not shape the module graph at all, so
+        // it must not shape the identity either.
+        assertEquals(
+            plan(jar, moduleOptions = listOf("--module-path=/b")).cacheFile(),
+            ab.cacheFile(),
+        )
+
+        // The two-token form and the -p alias set the same property with the
+        // same last-wins semantics.
+        val twoTokenAb =
+            plan(jar, moduleOptions = listOf("--module-path", "/a", "--module-path", "/b"))
+        val twoTokenBa =
+            plan(jar, moduleOptions = listOf("--module-path", "/b", "--module-path", "/a"))
+        assertNotEquals(twoTokenAb.cacheFile(), twoTokenBa.cacheFile())
+        assertEquals(
+            plan(jar, moduleOptions = listOf("--module-path", "/b")).cacheFile(),
+            twoTokenAb.cacheFile(),
+        )
+        assertEquals(
+            plan(jar, moduleOptions = listOf("-p", "/b")).cacheFile(),
+            plan(jar, moduleOptions = listOf("-p", "/a", "-p", "/b")).cacheFile(),
+        )
+    }
+
+    @Test
     fun `disabled by SPECTRE_AOT off`() {
         val plan = plan(jar(), environment = mapOf("SPECTRE_AOT" to "off"))
 

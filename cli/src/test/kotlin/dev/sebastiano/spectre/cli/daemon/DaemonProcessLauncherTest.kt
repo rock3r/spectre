@@ -12,6 +12,10 @@ class DaemonProcessLauncherTest {
                     socketPath = Path.of("/tmp/spectre/daemon.sock"),
                     javaExecutable = "/jdk/bin/java",
                     classPath = "spectre.jar",
+                    // No forwarded -D properties: the real defaults resolve
+                    // user.home and java.io.tmpdir on any host, which would
+                    // make the expected command host-dependent.
+                    readProperty = { null },
                     callerJvmOptions = { emptyList() },
                 )
                 .command()
@@ -37,6 +41,7 @@ class DaemonProcessLauncherTest {
                     javaExecutable = "/jdk/bin/java",
                     classPath = "spectre.jar",
                     aotJvmArguments = { listOf("-XX:AOTCache=/tmp/aot/spectre.aot") },
+                    readProperty = { null },
                     callerJvmOptions = { emptyList() },
                 )
                 .command()
@@ -106,6 +111,42 @@ class DaemonProcessLauncherTest {
     }
 
     @Test
+    fun `forwards standard properties that shape the daemon's JVM state`() {
+        // Regression for #551: the daemon is a fresh JVM launched from an
+        // explicit argument list, so a standard property a caller sets on the
+        // CLI launch never reaches it unless it is restated here. The daemon
+        // reads JVM state these shape — the temp and home directories its
+        // captures and runtime files land under, and headless mode for
+        // Robot-driven input — so a caller's override silently stopping at
+        // the CLI means captures in the wrong place or failures in a sandbox
+        // whose default home is unwritable.
+        val command =
+            DaemonProcessLauncher(
+                    socketPath = Path.of("/tmp/spectre/daemon.sock"),
+                    javaExecutable = "/jdk/bin/java",
+                    classPath = "spectre.jar",
+                    readProperty = { name ->
+                        mapOf(
+                            "java.io.tmpdir" to "/custom-tmp",
+                            "user.home" to "/writable-home",
+                            "java.awt.headless" to "false",
+                        )[name]
+                    },
+                    callerJvmOptions = { emptyList() },
+                )
+                .command()
+
+        assertEquals(
+            listOf(
+                "-Djava.io.tmpdir=/custom-tmp",
+                "-Duser.home=/writable-home",
+                "-Djava.awt.headless=false",
+            ),
+            command.filter { it.startsWith("-D") },
+        )
+    }
+
+    @Test
     fun `forwards caller JVM options to the daemon`() {
         // JVM options the caller gave the CLI (via JAVA_TOOL_OPTIONS & friends, or
         // JAVA_OPTS/SPECTRE_OPTS) are reconstructed onto the CLI's own command line
@@ -120,6 +161,7 @@ class DaemonProcessLauncherTest {
                     javaExecutable = "/jdk/bin/java",
                     classPath = "spectre.jar",
                     aotJvmArguments = { listOf("-XX:AOTCache=/tmp/aot/spectre.aot") },
+                    readProperty = { null },
                     callerJvmOptions = {
                         listOf(
                             "-Xmx1g",

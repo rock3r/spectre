@@ -442,10 +442,10 @@ class SpectreBootstrapTest {
         // A JVMTI agent (coverage, profiling) can install a class-file-load
         // hook; JDK 25 lists such hooks as a reason an AOT cache cannot load,
         // and training records without the caller's agent. Agent-bearing
-        // launches therefore skip managed caching entirely: ordinary agents
-        // re-exec user-managed (no cache, no bootstrap caps), while an agent
-        // already holding a fixed listen address in this JVM (a JDWP server)
-        // cannot be bound a second time by a child and stays in-process.
+        // launches therefore skip managed caching entirely — and, because any
+        // agent may already hold a fixed resource in this JVM (see
+        // `any agent keeps the launch in the bootstrap JVM`), they run the
+        // real CLI in-process instead of re-executing a child.
         assertTrue(SpectreBootstrap.hasInstrumentationAgent(listOf("-javaagent:/tmp/jacoco.jar")))
         assertTrue(
             SpectreBootstrap.hasInstrumentationAgent(listOf("-agentlib:jdwp=transport=dt_socket"))
@@ -454,44 +454,37 @@ class SpectreBootstrapTest {
         assertFalse(SpectreBootstrap.hasInstrumentationAgent(listOf("-Xmx1g", "-XX:+UseG1GC")))
         assertTrue(SpectreBootstrap.isInstrumentationAgentArgument("-javaagent:/tmp/jacoco.jar"))
         assertFalse(SpectreBootstrap.isInstrumentationAgentArgument("-Xmx1g"))
+    }
 
+    @Test
+    fun `any agent keeps the launch in the bootstrap JVM`() {
+        // Regression for #554: which agents bind a fixed resource in premain
+        // cannot be recognised reliably — a JDWP agent holds its listen
+        // address, jmx_prometheus_javaagent opens its exporter port, a
+        // profiler may lock a file. A re-exec'd child carrying the identical
+        // agent would fail to bind that resource during agent startup while
+        // this JVM lives, so SpectreBootstrap.main runs every agent-bearing
+        // launch in-process through mustRunInProcess, trading the fast fork
+        // path for correctness on an explicit user customisation.
         assertTrue(
-            SpectreBootstrap.hasFixedAddressAgent(
-                listOf("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005")
-            )
-        )
-        // Client mode (server=n, or omitted — n is the default) has already
-        // attached this JVM to the debugger before main runs; a re-exec'd
-        // child would attach a second time. JDWP in either mode therefore
-        // stays in the original JVM.
-        assertTrue(
-            SpectreBootstrap.hasFixedAddressAgent(
-                listOf("-agentlib:jdwp=transport=dt_socket,server=n,address=5005")
-            )
-        )
-        assertTrue(
-            SpectreBootstrap.hasFixedAddressAgent(
-                listOf("-agentlib:jdwp=transport=dt_socket,address=5005")
-            )
-        )
-        assertFalse(
-            SpectreBootstrap.hasFixedAddressAgent(listOf("-javaagent:/tmp/jacoco.jar=output=file"))
-        )
-        // JDWP can also be loaded by path; the agent library's name is what
-        // identifies it, and it holds the same already-connected session.
-        assertTrue(
-            SpectreBootstrap.hasFixedAddressAgent(
-                listOf("-agentpath:/jdk/lib/libjdwp.so=transport=dt_socket,server=y,address=5005")
+            SpectreBootstrap.mustRunInProcess(
+                listOf("-javaagent:/tmp/jmx_prometheus_javaagent.jar=9404:exporter.yaml")
             )
         )
         assertTrue(
-            SpectreBootstrap.hasFixedAddressAgent(
-                listOf("-agentpath:C:\\jdk\\bin\\jdwp.dll=transport=dt_socket,address=5005")
+            SpectreBootstrap.mustRunInProcess(
+                listOf("-agentlib:jdwp=transport=dt_socket,server=y,address=5005")
             )
         )
-        assertFalse(
-            SpectreBootstrap.hasFixedAddressAgent(listOf("-agentpath:/tmp/libprofiler.so=x"))
+        assertTrue(SpectreBootstrap.mustRunInProcess(listOf("-agentpath:/tmp/libprofiler.so=x")))
+        // The legacy -Xrunjdwp form loads the same JDWP agent: it owns the
+        // debug session in this JVM exactly like -agentlib:jdwp.
+        assertTrue(
+            SpectreBootstrap.mustRunInProcess(
+                listOf("-Xrunjdwp:transport=dt_socket,server=y,address=5005")
+            )
         )
+        assertFalse(SpectreBootstrap.mustRunInProcess(listOf("-Xmx1g", "-XX:+UseG1GC")))
     }
 
     @Test
@@ -694,6 +687,41 @@ class SpectreBootstrapTest {
                 jarFile.toString(),
             ),
             SpectreBootstrap.assemblyCommand(javaExecutable, plan, jarFile, 25, moduleOptions),
+        )
+    }
+
+    @Test
+    fun `caller illegal native access policy reaches every cache phase`() {
+        // A caller's --illegal-native-access=deny is a policy the real CLI
+        // must run under: dropped by the bootstrap, code that should throw
+        // IllegalCallerException runs with the default warn instead. Like
+        // --enable-native-access it shapes an archived module property
+        // (jdk.module.illegal.native.access), so it belongs both to the
+        // forwarded options of cache-free and cache-consuming children and
+        // to the module-option set the record run, the assembly JVM, and the
+        // fingerprint are built from — a phase missing it makes the JVM
+        // reject the trained cache on every launch.
+        val input = listOf("--illegal-native-access=deny")
+
+        assertEquals(input, SpectreBootstrap.callerModuleOptions(input))
+        assertEquals(
+            input,
+            SpectreBootstrap.callerJvmOptions(
+                input,
+                AotCache.Plan(AotCache.Mode.DISABLED, null, null, emptyList()),
+            ),
+        )
+        assertEquals(
+            input,
+            SpectreBootstrap.callerJvmOptions(
+                input,
+                AotCache.Plan(
+                    AotCache.Mode.PRODUCTION,
+                    Path.of("/tmp", "aot", "spectre.aot"),
+                    null,
+                    emptyList(),
+                ),
+            ),
         )
     }
 

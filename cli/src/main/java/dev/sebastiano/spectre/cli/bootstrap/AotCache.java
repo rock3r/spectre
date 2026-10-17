@@ -493,11 +493,17 @@ public final class AotCache {
 
     /**
      * Normalized identity of a module-option list: option/value pairs are kept
-     * associated (a token not starting with {@code --} belongs to the option
-     * before it), then the pairs are sorted and deduplicated. Sorting the
-     * flattened tokens instead would conflate different module graphs — {@code
-     * --add-opens A --add-exports B} and {@code --add-opens B --add-exports A}
-     * share a token multiset but are not the same graph.
+     * associated (a token not starting an option belongs to the option before
+     * it), repeated last-wins options collapse to their effective final
+     * occurrence, and the surviving pairs are sorted and deduplicated. Sorting
+     * the flattened tokens instead would conflate different module graphs —
+     * {@code --add-opens A --add-exports B} and {@code --add-opens B
+     * --add-exports A} share a token multiset but are not the same graph.
+     * Without the last-wins collapse, {@code --module-path=/a --module-path=/b}
+     * and its reversal would share one fingerprint although HotSpot runs them
+     * with different effective module paths (the final occurrence wins), so the
+     * second launch would plan PRODUCTION against a cache the JVM rejects on
+     * every launch instead of training a compatible one.
      */
     private static String moduleIdentity(List<String> moduleOptions) {
         if (moduleOptions == null || moduleOptions.isEmpty()) {
@@ -505,13 +511,53 @@ public final class AotCache {
         }
         List<String> pairs = new java.util.ArrayList<>();
         for (String token : moduleOptions) {
-            if (token.startsWith("--") || pairs.isEmpty()) {
+            if (token.startsWith("--") || token.equals("-p") || pairs.isEmpty()) {
                 pairs.add(token);
             } else {
                 pairs.set(pairs.size() - 1, pairs.get(pairs.size() - 1) + " " + token);
             }
         }
-        return String.join("\n", pairs.stream().sorted().distinct().toList());
+        List<String> effective = new java.util.ArrayList<>();
+        for (String pair : pairs) {
+            String lastWinsName = lastWinsOptionName(pair);
+            if (lastWinsName != null) {
+                effective.removeIf(existing -> lastWinsName.equals(lastWinsOptionName(existing)));
+            }
+            effective.add(pair);
+        }
+        return String.join("\n", effective.stream().sorted().distinct().toList());
+    }
+
+    /** Module options HotSpot resolves to their final occurrence when repeated. */
+    private static final List<String> LAST_WINS_MODULE_OPTIONS =
+            List.of(
+                    "--module-path",
+                    "-p",
+                    "--upgrade-module-path",
+                    "--limit-modules",
+                    "--illegal-native-access");
+
+    /**
+     * The canonical name of the last-wins option {@code pair} starts, or {@code
+     * null} when it starts an accumulating option. The {@code -p} alias
+     * canonicalizes to {@code --module-path}: both forms set the same property,
+     * so a superseded occurrence must collapse across forms too.
+     */
+    private static String lastWinsOptionName(String pair) {
+        int end = pair.length();
+        int equals = pair.indexOf('=');
+        if (equals >= 0 && equals < end) {
+            end = equals;
+        }
+        int space = pair.indexOf(' ');
+        if (space >= 0 && space < end) {
+            end = space;
+        }
+        String name = pair.substring(0, end);
+        if (!LAST_WINS_MODULE_OPTIONS.contains(name)) {
+            return null;
+        }
+        return name.equals("-p") ? "--module-path" : name;
     }
 
     /** SHA-256 of the jar's bytes, streamed so large jars are not held in memory. */
