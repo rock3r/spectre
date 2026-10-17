@@ -145,7 +145,20 @@ public class DaemonProcessLauncher(
 
         /** System properties the daemon reads, and therefore has to be handed. */
         private val FORWARDED_PROPERTIES: List<String> =
-            listOf("dev.sebastiano.spectre.agent.runtimeJar", AttachInputCoordination.PROPERTY)
+            listOf(
+                "dev.sebastiano.spectre.agent.runtimeJar",
+                AttachInputCoordination.PROPERTY,
+                // Standard properties a caller sets on the CLI launch that shape
+                // daemon JVM state: the temp and home directories captures and
+                // runtime files land under, and headless mode for Robot-driven
+                // input. Without these a `-Djava.io.tmpdir=…` (or `user.home`,
+                // `java.awt.headless`) on the CLI is silently ignored by the
+                // daemon — captures in the default location, or outright
+                // failures in a sandbox whose default home is unwritable.
+                "java.io.tmpdir",
+                "user.home",
+                "java.awt.headless",
+            )
 
         private fun defaultJavaExecutable(): String {
             val executable =

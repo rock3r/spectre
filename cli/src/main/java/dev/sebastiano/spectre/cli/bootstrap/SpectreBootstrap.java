@@ -37,9 +37,10 @@ import java.util.Optional;
  *       themselves, or
  *   <li>runs the real CLI in-process when caching is unavailable (JDK &lt; 25, exploded
  *       or multi-entry classpath — the latter is the thin start-script distribution,
- *       whose child could not be built from the CLI jar alone) or when the caller's
- *       instrumentation agent already holds a fixed listen address in this JVM, so
- *       behaviour is unchanged.
+ *       whose child could not be built from the CLI jar alone) or when the caller
+ *       attached any instrumentation agent, which may already hold a fixed resource
+ *       (a JDWP listen address, an exporter port) in this JVM, so behaviour is
+ *       unchanged.
  * </ul>
  *
  * <p>Training never touches the real command's stdio: a record run appends an {@code
@@ -68,20 +69,22 @@ public final class SpectreBootstrap {
     public static void main(String[] args) {
         List<String> inputArguments =
                 java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments();
-        if (hasFixedAddressAgent(inputArguments)) {
-            // This agent already holds a fixed resource in this process (a JDWP
-            // listen address) that a re-exec'd child carrying the identical
-            // agent could not bind. Debugging this process is also the point of
-            // such an agent, so run the real CLI here, agent and all, as before
-            // the bootstrap — accepting this JVM's lean packaged-launcher
-            // limits for a launch shape that is inherently interactive.
+        if (mustRunInProcess(inputArguments)) {
+            // Any agent may already hold a fixed resource in this process —
+            // a JDWP listen address, an exporter port opened in premain
+            // (jmx_prometheus_javaagent), a locked file — that a re-exec'd
+            // child carrying the identical agent could not bind, failing
+            // during agent startup while this JVM stays alive. Which agents
+            // own such resources cannot be recognised reliably, so every
+            // agent-bearing launch runs the real CLI here, agent and all, as
+            // before the bootstrap — accepting this JVM's lean
+            // packaged-launcher limits for a launch shape that is already an
+            // explicit user customisation.
             runInProcess(args);
             return;
         }
         Optional<Path> jarFile = currentJarFile();
-        if ((AotCache.hasUserAotArguments(inputArguments)
-                        || hasForeignCollector(inputArguments)
-                        || hasInstrumentationAgent(inputArguments))
+        if ((AotCache.hasUserAotArguments(inputArguments) || hasForeignCollector(inputArguments))
                 && jarFile.isPresent()) {
             // The caller manages AOT or the collector themselves (java
             // -XX:AOTCache=..., or a start script's JAVA_OPTS/SPECTRE_OPTS): their
@@ -364,9 +367,9 @@ public final class SpectreBootstrap {
      * reason an AOT cache cannot load; training records without the caller's agent,
      * so an agent-bearing launch would plan PRODUCTION against a cache its JVM
      * then silently rejects on every invocation. Agent-bearing launches therefore
-     * skip managed caching (see {@link #main}): ordinary agents re-exec
-     * user-managed, and a fixed-address agent (see {@link #hasFixedAddressAgent})
-     * stays in this JVM.
+     * skip managed caching and run the real CLI in this JVM (see {@link #main}):
+     * any agent may already hold a fixed resource here — a JDWP listen address,
+     * an exporter port, a locked file — that a re-exec'd child could not bind.
      */
     static boolean hasInstrumentationAgent(List<String> inputArguments) {
         return inputArguments.stream().anyMatch(SpectreBootstrap::isInstrumentationAgentArgument);
@@ -380,39 +383,19 @@ public final class SpectreBootstrap {
     }
 
     /**
-     * Whether the caller attached a JDWP agent ({@code -agentlib:jdwp=…} or the
-     * legacy {@code -Xrunjdwp} form, either mode). That agent has already
-     * connected in this JVM before {@code main} runs — listening on its address
-     * in server mode, attached to the debugger in client mode (the default) —
-     * so no second JVM may carry it; other agents hold no such fixed connection
-     * and re-exec user-managed like any other caller option.
+     * Whether this launch must run the real CLI in this JVM rather than
+     * re-executing a child. Any caller-attached agent may already hold a fixed
+     * resource in this process by the time {@code main} runs: a JDWP agent has
+     * connected its debug session (listening in server mode, attached in client
+     * mode), a {@code -javaagent} such as jmx_prometheus_javaagent has opened
+     * its exporter port in {@code premain}, a profiler may hold a locked file.
+     * A re-exec'd child carrying the identical agent would fail to bind that
+     * resource during agent startup while this JVM lives, and there is no
+     * reliable way to recognise which agents own one — so every agent-bearing
+     * launch stays here (see {@link #main}).
      */
-    static boolean hasFixedAddressAgent(List<String> inputArguments) {
-        return inputArguments.stream().anyMatch(SpectreBootstrap::isJdwpAgentArgument);
-    }
-
-    /**
-     * Whether {@code argument} loads the JDWP agent, by name ({@code
-     * -agentlib:jdwp}, legacy {@code -Xrunjdwp}) or by library path ({@code
-     * -agentpath:…/libjdwp.so}, {@code jdwp.dll}), whose file name is what
-     * identifies it.
-     */
-    private static boolean isJdwpAgentArgument(String argument) {
-        if (argument.startsWith("-agentlib:jdwp") || argument.startsWith("-Xrunjdwp")) {
-            return true;
-        }
-        if (!argument.startsWith("-agentpath:")) {
-            return false;
-        }
-        String library = argument.substring("-agentpath:".length());
-        int optionsStart = library.indexOf('=');
-        if (optionsStart >= 0) {
-            library = library.substring(0, optionsStart);
-        }
-        int fileNameStart = Math.max(library.lastIndexOf('/'), library.lastIndexOf('\\')) + 1;
-        return library.substring(fileNameStart)
-                .toLowerCase(java.util.Locale.ROOT)
-                .contains("jdwp");
+    static boolean mustRunInProcess(List<String> inputArguments) {
+        return hasInstrumentationAgent(inputArguments);
     }
 
     /**
@@ -459,9 +442,13 @@ public final class SpectreBootstrap {
      * jdk.module.enable.native.access} property); every phase additionally adds
      * the contract's {@code ALL-UNNAMED} itself (see {@link
      * #addNativeAccessArgument}), and repeated occurrences accumulate — which is
-     * also why the {@code ALL-UNNAMED} token itself is excluded below. Heap,
-     * agent, and tuning options do not shape the archived module graph and stay
-     * production-only.
+     * also why the {@code ALL-UNNAMED} token itself is excluded below. The
+     * caller's {@code --illegal-native-access} policy belongs here too: it shapes
+     * the archived {@code jdk.module.illegal.native.access} property, so a cache
+     * trained under {@code deny} must only serve launches that carry it (and the
+     * fingerprint's last-wins canonicalization resolves repeated occurrences —
+     * see {@link AotCache}). Heap, agent, and tuning options do not shape the
+     * archived module graph and stay production-only.
      */
     public static List<String> callerModuleOptions(List<String> inputArguments) {
         List<String> options = new ArrayList<>();
@@ -482,7 +469,8 @@ public final class SpectreBootstrap {
                     && !argument.startsWith("--upgrade-module-path")
                     && !argument.startsWith("--limit-modules")
                     && !argument.equals("-p")
-                    && !argument.startsWith("--enable-native-access")) {
+                    && !argument.startsWith("--enable-native-access")
+                    && !argument.startsWith("--illegal-native-access")) {
                 continue;
             }
             options.add(argument);
@@ -598,6 +586,7 @@ public final class SpectreBootstrap {
                 || argument.startsWith("-agentpath:")
                 || argument.startsWith("--add-")
                 || argument.startsWith("--enable-")
+                || argument.startsWith("--illegal-native-access")
                 || argument.startsWith("--patch-module")
                 || argument.startsWith("--module-path")
                 || argument.startsWith("--upgrade-module-path")
