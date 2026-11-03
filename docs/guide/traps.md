@@ -51,22 +51,22 @@ command. Node keys belong to one session and one tree snapshot. After navigation
 recomposition, Compose Hot Reload, or a new attach, run `tree` or `find` again and use the
 new keys.
 
-### The daemon dies when the caller's process group is killed
+### A daemon restart drops every session
 
-<!-- aliases: session not found after attach, daemon killed, agent runner, process group, pgid, did not bind UDS path, re-attach -->
+<!-- aliases: session not found after attach, daemon killed, agent runner, process group, pgid, setsid, did not bind UDS path, re-attach -->
 
-The first CLI command starts a per-user daemon that holds the sessions. Current releases
-start it in the caller's process group. Some agent tool runners and CI steps kill the whole
-process group when a command exits, and that kills the daemon too. The next command then
-starts a fresh daemon and fails with `session not found`.
+The first CLI command starts a per-user daemon that holds the sessions. On Linux and
+macOS the daemon starts in a session of its own, through `setsid` or `perl`, so tool
+runners and CI steps that kill a finished command's process group leave it running. A
+host without `/usr/bin/setsid`, `/bin/setsid`, or `/usr/bin/perl` starts it in the
+caller's process group instead.
 
-Attaching the same JVM again can then fail with
-`Agent runtime did not bind UDS path … within 5000 ms`: the agent inside the target
-ignores a second bootstrap after the old daemon disappeared without detaching. Restart
-the target JVM to recover.
-
-To avoid it, run the commands from one long-lived shell. On Linux, start the daemon in a
-session of its own before the first attach, for example with `setsid -w spectre ps`.
+When the daemon stops anyway (`spectre daemon kill`, a crash, or a killed process tree),
+its sessions go with it. The next command starts a fresh daemon and fails with
+`session not found`. Run `spectre attach <pid>` again: the agent in the target releases
+the session the old daemon left behind and binds the new one. A target first attached
+by an older Spectre release keeps the old agent, which ignores the second attach and
+fails with `Agent runtime did not bind UDS path … within 5000 ms`. Restart that target.
 
 ### `spectre type` types into the focused node
 
@@ -273,8 +273,8 @@ Unlock the session and retry. See [Troubleshooting](troubleshooting.md).
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `xvfb-run` never exits after the tests pass | A new Gradle daemon holds the `xvfb-run` pipes open | Add `--no-daemon` to `./gradlew` |
-| `session not found` right after a successful attach | The caller's process group was killed with the daemon in it | Run from one long-lived shell; on Linux use `setsid -w spectre ps` first |
-| Re-attach fails with `did not bind UDS path` | The target's agent ignores a second bootstrap after an unclean daemon exit | Restart the target JVM |
+| `session not found` after a successful attach | The daemon stopped and took its sessions with it | Run `spectre attach <pid>` again |
+| Re-attach fails with `did not bind UDS path` | An agent from an older Spectre release ignores a second attach | Restart the target JVM |
 | `Refusing typeText because no focused Spectre node was found` | `type` needs a focused node | `spectre click` the field first |
 | `Refusing typeText`/`pressKey` because the JVM lacks OS keyboard focus | Keyboard input over attach needs the foreground window | Bring the target window to the front |
 | `screenshot` fails without `--fullscreen` | Window screenshots fail closed on attach | Use `spectre capture` for one window |

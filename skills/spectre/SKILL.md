@@ -66,8 +66,8 @@ Key gotchas (`spectre guide traps` has the full list):
   `spectre-recording` in the target, `capture` crops the screen, so keep the target in front.
 - **Off-screen children of `Column(Modifier.verticalScroll(…))`** have `0×0` window bounds
   (`1×1` screen bounds in `tree --json`). Scroll before clicking.
-- **The daemon can die with the caller's process group.** `session not found` right
-  after attach means a fresh daemon; see `spectre guide --search "process group"`.
+- **A daemon restart drops every session.** `session not found` after a successful
+  attach means a fresh daemon: run `spectre attach <pid>` again.
 - **`xvfb-run ./gradlew …` hangs** when it starts a Gradle daemon. Pass `--no-daemon`.
 - **JUnit window lifecycle.** Wait for `isShowing` and a non-zero size before the first
   query. `exitApplication()` is asynchronous: wait for `!window.isDisplayable` in teardown.
