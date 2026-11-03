@@ -148,12 +148,25 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
 
     private fun mouseModifiers(): Int = pressedButtons or heldKeyModifiers
 
-    private fun clickCountFor(eventType: Int): Int =
-        when (eventType) {
-            MouseEvent.MOUSE_PRESSED,
-            MouseEvent.MOUSE_RELEASED,
-            MouseEvent.MOUSE_CLICKED -> lastClickCount
-            else -> 0
+    /**
+     * The component a mouse event of [type] goes to, updating the press grab and release target.
+     *
+     * While a button is down (drag in progress) the press target retains the grab — every DRAGGED
+     * and the final RELEASED route there even if the cursor has moved over a different component.
+     * MOUSE_CLICKED goes to the component that received the release.
+     */
+    private fun mouseTarget(type: Int): Component? =
+        when (type) {
+            MouseEvent.MOUSE_DRAGGED -> grabTarget ?: hitTestComponent()
+            MouseEvent.MOUSE_RELEASED -> {
+                val target = grabTarget ?: hitTestComponent()
+                grabTarget = null
+                releaseTarget = target
+                target
+            }
+            MouseEvent.MOUSE_CLICKED -> releaseTarget
+            MouseEvent.MOUSE_PRESSED -> hitTestComponent().also { grabTarget = it }
+            else -> hitTestComponent()
         }
 
     override fun mouseWheel(wheelClicks: Int) {
@@ -215,31 +228,8 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
     }
 
     private fun dispatchMouse(type: Int, button: Int, modifiers: Int) {
-        val targetComponent =
-            when (type) {
-                // While a button is down (drag in progress) the press target retains the grab —
-                // every DRAGGED and the final RELEASED route there even if the cursor has moved
-                // over a different component.
-                MouseEvent.MOUSE_DRAGGED -> grabTarget ?: hitTestComponent() ?: return
-                MouseEvent.MOUSE_RELEASED -> {
-                    val target = grabTarget ?: hitTestComponent()
-                    grabTarget = null
-                    releaseTarget = target
-                    target ?: return
-                }
-                MouseEvent.MOUSE_CLICKED -> releaseTarget ?: return
-                MouseEvent.MOUSE_PRESSED -> {
-                    val target = hitTestComponent() ?: return
-                    grabTarget = target
-                    target
-                }
-                else -> hitTestComponent() ?: return
-            }
-        // A handler earlier in the gesture can hide or dispose the grabbed or released component
-        // (a button whose action closes its dialog), or open a modal dialog that blocks its
-        // window (a popup trigger, a dialog shown on press). AWT delivers no more mouse events to
-        // it in either case.
-        if (!targetComponent.isShowing || targetComponent.isBlockedByModalDialog()) return
+        val targetComponent = mouseTarget(type) ?: return
+        if (!targetComponent.canReceiveMouseInput()) return
         val origin = targetComponent.locationOnScreen
         val localX = lastX - origin.x
         val localY = lastY - origin.y
@@ -251,7 +241,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
                 modifiers,
                 localX,
                 localY,
-                clickCountFor(type),
+                clickCountFor(type, lastClickCount),
                 false, // popupTrigger
                 button,
             )
@@ -397,6 +387,14 @@ private fun runOnEdt(block: () -> Unit) {
         failure.get()?.let { throw InvocationTargetException(it) }
     }
 }
+
+private fun clickCountFor(eventType: Int, clickCount: Int): Int =
+    when (eventType) {
+        MouseEvent.MOUSE_PRESSED,
+        MouseEvent.MOUSE_RELEASED,
+        MouseEvent.MOUSE_CLICKED -> clickCount
+        else -> 0
+    }
 
 private fun modifierMaskFor(keyCode: Int): Int =
     when (keyCode) {

@@ -31,6 +31,14 @@ internal fun syntheticInputWindows(): List<Window> {
     return collected.filter { it !in modalTree && !modal.blocks(it) } + modalTree
 }
 
+/**
+ * Whether this component can still take synthetic mouse input. A handler earlier in the gesture can
+ * hide or dispose the grabbed or released component (a button whose action closes its dialog), or
+ * open a modal dialog that blocks its window (a popup trigger, a dialog shown on press). AWT
+ * delivers no more mouse events to it in either case.
+ */
+internal fun Component.canReceiveMouseInput(): Boolean = isShowing && !isBlockedByModalDialog()
+
 /** The most recently created modal dialog that is showing, or `null` if none is. */
 internal fun activeModalDialog(): Dialog? =
     Window.getWindows().filterIsInstance<Dialog>().lastOrNull { it.isModal && it.isShowing }
