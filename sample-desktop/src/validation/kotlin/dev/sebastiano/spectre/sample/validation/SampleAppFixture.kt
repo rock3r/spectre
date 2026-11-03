@@ -2,6 +2,7 @@
 
 package dev.sebastiano.spectre.sample.validation
 
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import dev.sebastiano.spectre.core.ComposeAutomator
@@ -30,6 +31,9 @@ import kotlin.time.Duration.Companion.seconds
  * - tests don't need OS-level focus on the spawned window
  * - parallel validation runs don't contend for OS input
  *
+ * [content] defaults to the sample `App()`. Tests that need a layout the sample does not have can
+ * pass their own composable instead and still get the same window, automator, and lifecycle.
+ *
  * Skips itself in headless environments — `start()` throws [`IllegalStateException`] from
  * [`requireDisplay`] before spawning anything, so test classes can `Assumptions.assumeFalse(...)`
  * cleanly on CI.
@@ -37,6 +41,7 @@ import kotlin.time.Duration.Companion.seconds
 class SampleAppFixture(
     private val title: String = "Spectre validation",
     private val startupTimeout: Duration = DEFAULT_STARTUP_TIMEOUT,
+    private val content: @Composable () -> Unit = { dev.sebastiano.spectre.sample.App() },
 ) {
 
     private val applicationStarted = CountDownLatch(1)
@@ -74,7 +79,7 @@ class SampleAppFixture(
                                 exitFn = ::exitApplication
                                 applicationStarted.countDown()
                                 Window(onCloseRequest = ::exitApplication, title = title) {
-                                    dev.sebastiano.spectre.sample.App()
+                                    content()
                                 }
                             }
                         } catch (t: Throwable) {

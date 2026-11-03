@@ -115,6 +115,7 @@ class SpectreMcpStdioIntegrationTest {
                         "double_click",
                         "find",
                         "find_text",
+                        "focus_window",
                         "list_processes",
                         "long_click",
                         "press_key",

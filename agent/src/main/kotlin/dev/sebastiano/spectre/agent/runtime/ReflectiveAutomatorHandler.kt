@@ -77,6 +77,7 @@ internal class ReflectiveAutomatorHandler(
         }
     private val nodeBooleanMethods = ConcurrentHashMap<Pair<Class<*>, String>, Method>()
     private val nodeEditableTextMethods = ConcurrentHashMap<Class<*>, Method>()
+    private val nodeState = NodeStateReflectiveMapper()
 
     /**
      * `ComposeAutomator.windows` is a Volatile cache populated by `refreshWindows()` (or by any of
@@ -111,6 +112,15 @@ internal class ReflectiveAutomatorHandler(
                 it.parameterTypes[1].name == CONTINUATION_FQN
         }
 
+    /**
+     * `ComposeAutomator.inputCapabilities` getter. Null on cores that predate it; those always
+     * drive real OS input, so callers treat a missing getter as real input.
+     */
+    private val inputCapabilitiesMethod: java.lang.reflect.Method? =
+        automatorClass.methods.firstOrNull {
+            it.name == "getInputCapabilities" && it.parameterCount == 0
+        }
+
     private val suspendInvoker = BlockingSuspendInvoker()
     private val waitOps = WaitOpsReflectiveMapper(automator, suspendInvoker, ::mapAutomatorNode)
     private val inputOps =
@@ -121,6 +131,8 @@ internal class ReflectiveAutomatorHandler(
             allNodes = { allNodesMethod.invoke(automator) as List<*> },
             extractKey = ::extractKey,
             isTargetJvmFocused = isTargetJvmFocused,
+            deliversRealOsInput = ::deliversRealOsInput,
+            hasTrackedWindow = { (getWindowsMethod.invoke(automator) as List<*>).isNotEmpty() },
         )
 
     override fun handle(request: AgentRequest): AgentResponse =
@@ -353,7 +365,9 @@ internal class ReflectiveAutomatorHandler(
                         .wireName,
             )
         }
-        if (!isTargetJvmFocused()) {
+        // Synthetic input types into the focused node inside the target JVM, so it needs no OS
+        // keyboard focus (#556). Only real OS key events could land in another app.
+        if (deliversRealOsInput() && !isTargetJvmFocused()) {
             return AgentResponse.Error(
                 message =
                     "Refusing typeText because the target JVM does not currently own OS keyboard " +
@@ -365,6 +379,19 @@ internal class ReflectiveAutomatorHandler(
         }
         suspendInvoker.invoke(method, automator, text)
         return AgentResponse.Ok
+    }
+
+    /**
+     * Whether the automator sends real OS input (`InputCapabilities.realOsInput`). Defaults to true
+     * when the capability cannot be read, so the OS keyboard focus gate stays on.
+     */
+    private fun deliversRealOsInput(): Boolean {
+        val capabilities = inputCapabilitiesMethod?.invoke(automator) ?: return true
+        val getter =
+            capabilities.javaClass.methods.firstOrNull {
+                it.name == "getRealOsInput" && it.parameterCount == 0
+            } ?: return true
+        return getter.invoke(capabilities) as? Boolean ?: true
     }
 
     private fun handlePrintTree(): AgentResponse {
@@ -825,6 +852,7 @@ internal class ReflectiveAutomatorHandler(
                 ?: klass.methods
                     .firstOrNull { it.name == "getContentDescription" && it.parameterCount == 0 }
                     ?.invoke(node) as? String
+        val bothBounds = nodeState.bothBounds(node)
         return NodeSnapshotDto(
             key = extractKey(node),
             testTag =
@@ -849,11 +877,21 @@ internal class ReflectiveAutomatorHandler(
             isVisible = requireNodeBoolean(node, methodName = "isVisible"),
             bounds =
                 boundsToRect(
+                    // One EDT read for both bounds when the node offers it; otherwise
                     // `AutomatorNode.boundsOnScreen: Rectangle` → getBoundsOnScreen().
-                    klass.methods
-                        .firstOrNull { it.name == "getBoundsOnScreen" && it.parameterCount == 0 }
-                        ?.invoke(node)
+                    bothBounds?.onScreen
+                        ?: klass.methods
+                            .firstOrNull {
+                                it.name == "getBoundsOnScreen" && it.parameterCount == 0
+                            }
+                            ?.invoke(node)
                 ),
+            isClickable = nodeBooleanProperty(node, methodName = "isClickable", default = false),
+            toggleableState = nodeState.toggleableState(node),
+            progress = nodeState.progress(node),
+            parentKey = nodeState.parentKey(node, ::extractKey),
+            childKeys = nodeState.childKeys(node, ::extractKey),
+            boundsInWindow = bothBounds?.inWindow,
         )
     }
 
@@ -1027,6 +1065,12 @@ internal class ReflectiveAutomatorHandler(
     }
 }
 
+/**
+ * Stable, lowercase phrase from core's empty-bounds pointer guard (`checkPointerTargetBounds`).
+ * Matched as text because `:agent` has no compile dependency on `:core`.
+ */
+private const val EMPTY_BOUNDS_GUARD_SNIPPET: String = "in-window bounds are empty"
+
 /** TCC / Accessibility / permission refusals from Robot — taxonomy inputRejected (#199). */
 private fun reflectiveIsInputRejection(ex: ReflectiveOperationException): Boolean {
     val root = ex.cause ?: ex
@@ -1043,6 +1087,9 @@ private fun reflectiveIsInputRejection(ex: ReflectiveOperationException): Boolea
  */
 private fun isInputRejectionMessage(message: String?): Boolean {
     val msg = message.orEmpty().lowercase()
+    // #564: core's empty-bounds guard fails before any input is sent, and its message embeds the
+    // node's text and tag. A node labelled "Permissions" must not turn it into a refusal.
+    if (EMPTY_BOUNDS_GUARD_SNIPPET in msg) return false
     return "accessibility" in msg ||
         "tcc" in msg ||
         "permission" in msg ||

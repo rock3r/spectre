@@ -103,8 +103,10 @@ Check these causes in order:
 
 1. **The UI hasn't rendered yet.** Spectre doesn't auto-wait. Use
    [`waitForNode(...)`](synchronization.md#waitfornode) before the first read.
-2. **The node is composed and offscreen.** It still appears in the semantics tree;
-   `boundsOnScreen` may be empty. Scroll to it first.
+2. **The node is composed and offscreen.** It still appears in the semantics tree, but
+   its `boundsInWindow` is empty and pointer calls on it throw `IllegalStateException`.
+   Scroll to it first. See
+   [Nodes outside the viewport fail fast](interactions.md#nodes-outside-the-viewport-fail-fast).
 3. **A read follows an interaction without waiting.** Add
    `waitForIdle()`/`waitForVisualIdle()` after the click or type.
 4. **The selector doesn't match.** Run `println(automator.printTree())` and check the

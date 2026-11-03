@@ -805,8 +805,7 @@ val assembleWaylandHelper by
 //   1. `rustup target add <triple>` for the non-host arch.
 //   2. apt: `gcc-<arch>-linux-gnu` (cross linker) + `libdbus-1-dev:<dpkg-arch>`. dpkg
 //      multi-arch must be enabled (`dpkg --add-architecture <arch> && apt update`) before
-//      installing foreign-arch packages — the CI step in `.github/workflows/ci.yml` does
-//      this.
+//      installing foreign-arch packages.
 //   3. cargo invocation: `cargo build --release --target=<triple>` with env
 //      `CARGO_TARGET_<TRIPLE_UPPER>_LINKER=<arch>-linux-gnu-gcc` and
 //      `PKG_CONFIG_PATH_<arch>=/usr/lib/<arch>-linux-gnu/pkgconfig` +
@@ -814,9 +813,10 @@ val assembleWaylandHelper by
 //      files instead of the host's.
 //
 // Use `:recording:assembleWaylandHelperAllArches` to invoke the cross-arch staging
-// explicitly. Distribution invocation: `./gradlew :recording:jar -PallLinuxArches`. CI
-// release jobs (when #84 lands the publish pipeline) wire this in as the
-// `processResources` dependency to bundle both arches.
+// explicitly. Distribution invocation: `./gradlew :recording:jar -PallLinuxArches`. CI and
+// the release workflow no longer use this path (#583): `.github/workflows/linux-helpers.yml`
+// builds each arch natively with `assembleWaylandHelper` on its own runner, and the jar
+// stages both through `-PprebuiltLinuxHelpersDir`.
 val linuxHelperArchitectures = listOf("x86_64", "aarch64")
 
 // Architecture metadata kept together so the per-arch task wiring below stays one

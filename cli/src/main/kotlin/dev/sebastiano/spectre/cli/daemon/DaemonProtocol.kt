@@ -12,7 +12,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 13)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 14)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -67,17 +67,13 @@ public object DaemonProtocol {
             is DaemonRequest.WaitForNode,
             is DaemonRequest.WaitForVisualIdle -> versionFor(WAIT_OPS_INTRODUCED_MINOR)
             is DaemonRequest.WaitUntilGone -> versionFor(WAIT_UNTIL_GONE_INTRODUCED_MINOR)
+            is DaemonRequest.FocusWindow -> versionFor(FOCUS_WINDOW_INTRODUCED_MINOR)
             is DaemonRequest.WaitForReloadSettled -> versionFor(RELOAD_SETTLE_INTRODUCED_MINOR)
             is DaemonRequest.FindByText,
             is DaemonRequest.FindByContentDescription,
             is DaemonRequest.FindByRole -> versionFor(SELECTOR_PARITY_INTRODUCED_MINOR)
             is DaemonRequest.ListJvmProcesses -> versionFor(LIST_JVM_PROCESSES_INTRODUCED_MINOR)
-            is DaemonRequest.StartRecording ->
-                if (request.fullscreen) {
-                    versionFor(RECORDING_FULLSCREEN_INTRODUCED_MINOR)
-                } else {
-                    versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
-                }
+            is DaemonRequest.StartRecording -> startRecordingVersion(request)
             is DaemonRequest.StopRecording,
             is DaemonRequest.RecordingStatus -> versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
             // Each still op needs the minor that introduced it *and* the minor its pixels
@@ -91,6 +87,16 @@ public object DaemonProtocol {
                         SCREEN_PIXEL_STILLS_INTRODUCED_MINOR,
                     )
                 )
+        }
+
+    /** Full-desktop recording needs a newer daemon than window recording. */
+    private fun startRecordingVersion(
+        request: DaemonRequest.StartRecording
+    ): DaemonProtocolVersion =
+        if (request.fullscreen) {
+            versionFor(RECORDING_FULLSCREEN_INTRODUCED_MINOR)
+        } else {
+            versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
         }
 
     private fun versionFor(minor: Int): DaemonProtocolVersion =
@@ -134,6 +140,14 @@ public object DaemonProtocol {
      * protocol is too old, run `spectre daemon kill`" error.
      */
     private const val WAIT_UNTIL_GONE_INTRODUCED_MINOR: Int = 13
+
+    /**
+     * `focusWindow`, which raises and focuses a window by index (#556).
+     *
+     * A capability floor for the same reason as [WAIT_UNTIL_GONE_INTRODUCED_MINOR]: a daemon built
+     * before it rejects the new discriminator.
+     */
+    private const val FOCUS_WINDOW_INTRODUCED_MINOR: Int = 14
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -224,6 +238,17 @@ public sealed interface DaemonRequest {
         public val keyCode: Int,
         public val modifiers: Int = 0,
     ) : DaemonRequest
+
+    /**
+     * Raise and focus the window at [windowIndex] (the index `windows` reports) (#556).
+     *
+     * Replies with [DaemonResponse.Completed]. Synthetic input does not need it before `typeText`
+     * or `pressKey`; real OS input does when another app is in front.
+     */
+    @Serializable
+    @SerialName("focusWindow")
+    public data class FocusWindow(public val sessionId: String, public val windowIndex: Int = 0) :
+        DaemonRequest
 
     @Serializable
     @SerialName("typeText")

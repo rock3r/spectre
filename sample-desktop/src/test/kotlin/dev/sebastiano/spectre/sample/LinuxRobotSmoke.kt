@@ -139,6 +139,7 @@ private suspend fun runSmokeSuspend(): Int {
     }
 
     waitForFrame(frameRef)
+    reapplyFrameLocation(frameRef.get()) { setLocationRelativeTo(null) }
     waitForLayout(state)
     delay(POST_LAYOUT_WARMUP_MS.milliseconds)
 

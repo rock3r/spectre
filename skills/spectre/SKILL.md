@@ -156,7 +156,9 @@ Choose a selector by the semantics the application provides:
    `null`.
 
 `AutomatorNode` exposes `testTag`, `text`/`texts`, `contentDescription(s)`,
-`role`, `isFocused`, `isDisabled`, `isSelected`, `editableText`, plus
+`role`, `isFocused`, `isDisabled`, `isSelected`, `isClickable`, `editableText`,
+`toggleableState` (checkbox/switch `On`/`Off`/`Indeterminate`),
+`progressBarRangeInfo` (slider/progress value, range, steps), plus
 coordinates: `boundsInWindow` (Compose pixels, already density-scaled),
 `boundsOnScreen` (screen pixels, post-HiDPI), `centerOnScreen`. Tree
 navigation via `children`/`parent`. Compare `boundsInWindow` against
@@ -190,8 +192,10 @@ All `suspend` on `ComposeAutomator`:
   keys, or scroll. For parallel JVM tests that also type text, use
   `RobotDriver.synthetic(rootWindow)`.
 - `focusWindow(node)` — raises and focuses the window hosting `node`. Over attach,
-  use `AttachedAutomator.focusWindow(nodeKey)` (#364) before `pressKey` / `typeText`
-  when the target app may not own OS keyboard focus.
+  use `AttachedAutomator.focusWindow(nodeKey)` (#364), or `spectre focus-window` /
+  the `focus_window` MCP tool, before `pressKey` / `typeText` when real OS input is in
+  use and the target app may not own OS keyboard focus. Synthetic input (the attach
+  default) does not need OS focus.
 
 ## Synchronization
 

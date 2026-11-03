@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.cli.daemon
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class DaemonProcessLauncherTest {
     @Test
@@ -222,5 +223,53 @@ class DaemonProcessLauncherTest {
                 .command()
 
         assertEquals(emptyList(), command.filter { it.startsWith("-D") })
+    }
+
+    @Test
+    fun `launches the daemon command behind the new-session prefix`() {
+        val launcher =
+            DaemonProcessLauncher(
+                socketPath = Path.of("/tmp/spectre/daemon.sock"),
+                javaExecutable = "/jdk/bin/java",
+                classPath = "spectre.jar",
+                readProperty = { null },
+                aotJvmArguments = { emptyList() },
+                callerJvmOptions = { emptyList() },
+                newSessionPrefix = { listOf("/usr/bin/setsid") },
+            )
+
+        assertEquals(
+            listOf("/usr/bin/setsid") + launcher.command(),
+            launcher.processBuilder().command(),
+        )
+    }
+
+    @Test
+    fun `starts the daemon through setsid on Linux`() {
+        assertEquals(
+            listOf("/usr/bin/setsid"),
+            DaemonProcessLauncher.newSessionPrefixFor("Linux") { it == "/usr/bin/setsid" },
+        )
+        assertEquals(
+            listOf("/bin/setsid"),
+            DaemonProcessLauncher.newSessionPrefixFor("Linux") { it == "/bin/setsid" },
+        )
+    }
+
+    @Test
+    fun `starts the daemon through perl's setsid where no setsid command exists`() {
+        // macOS ships no setsid(1), but does ship perl, whose POSIX::setsid then exec keeps the
+        // daemon's pid, so the launcher's Process handle still tracks the daemon itself.
+        val prefix = DaemonProcessLauncher.newSessionPrefixFor("Mac OS X") { it == "/usr/bin/perl" }
+
+        assertEquals("/usr/bin/perl", prefix.first())
+        assertEquals("--", prefix.last())
+        assertTrue(prefix.any { "POSIX::setsid()" in it && "exec" in it })
+    }
+
+    @Test
+    fun `launches the daemon directly on Windows or when no new-session tool exists`() {
+        assertEquals(emptyList(), DaemonProcessLauncher.newSessionPrefixFor("Windows 11") { true })
+        assertEquals(emptyList(), DaemonProcessLauncher.newSessionPrefixFor("Linux") { false })
     }
 }

@@ -313,6 +313,14 @@ constructor(
         return false
     }
 
+    /**
+     * Blocks until every input worker this server started has terminated, including workers still
+     * finishing an input call for a client that disconnected without Detach. An explicit Detach
+     * waits the same way before the agent releases input coordination. Returns true when the wait
+     * was interrupted.
+     */
+    fun awaitInputWorkersTerminated(): Boolean = inputWorkers.awaitAllTerminated()
+
     private fun detachAfterInputTermination() {
         running.set(false)
         val interrupted = inputWorkers.awaitAllTerminated()

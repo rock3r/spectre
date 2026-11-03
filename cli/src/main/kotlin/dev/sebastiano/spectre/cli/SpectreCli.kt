@@ -240,6 +240,7 @@ private class RootCommand(
             SwipeCommand(request, output),
             ScrollWheelCommand(request, output),
             PressKeyCommand(request, output),
+            FocusWindowCommand(request, output),
             TypeCommand(request, output),
             ScreenshotCommand(request, output),
             CaptureCommand(request, output),
@@ -807,6 +808,35 @@ private class PressKeyCommand(
 }
 
 @OptIn(ExperimentalSpectreAgentApi::class)
+private class FocusWindowCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "focus-window") {
+    private val sessionId: String by argument()
+    private val windowIndex: Int by
+        option("--window", help = "Window index from `spectre windows` (default 0).")
+            .int()
+            .default(0)
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun help(context: Context): String =
+        "Raise and focus a window of an attached session. Only real OS input needs this " +
+            "before press-key or type."
+
+    override fun run() {
+        val completedSessionId =
+            when (val response = request(DaemonRequest.FocusWindow(sessionId, windowIndex))) {
+                is DaemonResponse.Completed -> response.sessionId
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to focus-window")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
+        else output.append("Focused window $windowIndex.")
+        output.appendLine()
+    }
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
 private class FindCommand(
     private val request: (DaemonRequest) -> DaemonResponse,
     private val output: Appendable,
@@ -1301,6 +1331,10 @@ private data class WindowsJson(val version: Int = JSON_VERSION, val windows: Lis
 @Serializable
 private data class TreeJson(val version: Int = JSON_VERSION, val nodes: List<NodeJson>)
 
+/**
+ * `--json` shape of one node. Fields after [bounds] were added in #576; they are appended so the
+ * existing key order stays stable.
+ */
 @Serializable
 private data class NodeJson(
     val key: String,
@@ -1312,6 +1346,22 @@ private data class NodeJson(
     val isFocused: Boolean,
     val isVisible: Boolean,
     val bounds: RectJson,
+    val isDisabled: Boolean,
+    val isSelected: Boolean,
+    val isClickable: Boolean,
+    val toggleableState: String?,
+    val progress: ProgressJson?,
+    val parentKey: String?,
+    val childKeys: List<String>,
+    val boundsInWindow: RectJson?,
+)
+
+@Serializable
+private data class ProgressJson(
+    val current: Float,
+    val min: Float,
+    val max: Float,
+    val steps: Int,
 )
 
 @Serializable
@@ -1378,6 +1428,14 @@ private fun NodeJson(node: NodeSnapshotDto): NodeJson =
         isFocused = node.isFocused,
         isVisible = node.isVisible,
         bounds = RectJson(node.bounds.x, node.bounds.y, node.bounds.width, node.bounds.height),
+        isDisabled = node.isDisabled,
+        isSelected = node.isSelected,
+        isClickable = node.isClickable,
+        toggleableState = node.toggleableState,
+        progress = node.progress?.let { ProgressJson(it.current, it.min, it.max, it.steps) },
+        parentKey = node.parentKey,
+        childKeys = node.childKeys,
+        boundsInWindow = node.boundsInWindow?.let { RectJson(it.x, it.y, it.width, it.height) },
     )
 
 internal fun daemonRequest(

@@ -128,6 +128,22 @@ pub fn open_remote_desktop_session(
     }
 }
 
+/// Stderr cue for the interactive path. GNOME can fail to associate the portal dialog
+/// with a parent window (`Failed to associate portal window with parent window`), so the
+/// Share dialog may open behind other windows and time out while the operator waits.
+fn interactive_consent_banner(timeout: Duration) -> String {
+    let secs = timeout.as_secs();
+    format!(
+        "\n==================== spectre-wayland-helper: ACTION REQUIRED ====================\n\
+         No stored RemoteDesktop restore_token: the desktop portal is opening a Share /\n\
+         Allow remote interaction dialog on the seat. Select the whole screen, tick\n\
+         Remember, and click Share. Each portal step waits {secs}s.\n\
+         If no dialog is visible, open the Activities overview (Super key): GNOME may not\n\
+         attach the dialog to a parent window, so it can sit behind other windows.\n\
+         ================================================================================\n"
+    )
+}
+
 fn is_rd_token_rejection(err: &anyhow::Error) -> bool {
     let msg = format!("{err:#}");
     (msg.contains("SelectSources rejected")
@@ -147,6 +163,9 @@ fn open_remote_desktop_session_inner(
 ) -> Result<RemoteDesktopSession> {
     let conn = Connection::new_session().context("opening session bus")?;
     register_host_app(&conn, timeout)?;
+    if restore_token.is_none() {
+        eprint!("{}", interactive_consent_banner(timeout));
+    }
     let sender = sender_token(&conn).context("computing sender token")?;
     let counter = AtomicUsize::new(0);
     let next_token = |kind: &str| {
@@ -325,5 +344,14 @@ mod tests {
             "SelectDevices rejected (response code 2): restore_token"
         )));
         assert!(!is_rd_token_rejection(&anyhow!("CreateSession rejected")));
+    }
+
+    #[test]
+    fn interactive_consent_banner_tells_the_operator_where_to_look() {
+        let banner = interactive_consent_banner(std::time::Duration::from_secs(60));
+        assert!(banner.contains("ACTION REQUIRED"));
+        assert!(banner.contains("60s"));
+        assert!(banner.contains("Activities"));
+        assert!(banner.contains("Remember"));
     }
 }

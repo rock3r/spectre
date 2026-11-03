@@ -110,13 +110,26 @@ internal constructor(
         // (its content sits in a private `JLayeredPaneWithTransparencyHack`, not a ComposePanel).
         // Surface those layers through the reflective `OverlayLayerInspector` so each one becomes
         // its own tracked window with a semantics accessor that points at the layer's mediator.
-        val overlayLayers = OverlayLayerInspector.findOverlayLayerWindows(window)
+        val overlayWindows =
+            trackOverlayLayers(pending, OverlayLayerInspector.findOverlayLayerWindows(window))
+        trackOwnedPopups(pending, window, skip = overlayWindows)
+    }
+
+    /**
+     * Registers each overlay layer that has semantics, and returns every layer's window so the
+     * owned-popup walk can skip them. The layer's `JDialog` is owned by the host window, but its
+     * content is not a `ComposePanel`, so walking it again would add nothing but noise.
+     */
+    private fun trackOverlayLayers(
+        pending: MutableList<TrackedWindow>,
+        overlayLayers: List<OverlayLayerEntry>,
+    ): Set<Window> {
         for (layer in overlayLayers) {
             if (layer.semanticsOwnersAccessor().isNotEmpty()) {
                 addOverlayTrackedWindow(pending, layer)
             }
         }
-        trackOwnedPopups(pending, window, skip = overlayLayers.mapTo(HashSet()) { it.window })
+        return overlayLayers.mapTo(HashSet()) { it.window }
     }
 
     @OptIn(ExperimentalComposeUiApi::class)
@@ -131,22 +144,24 @@ internal constructor(
         // compared to top-level onboarding hosts (handled above via isDisplayable).
         val candidateOwned = owner.ownedWindows.filter { it.isShowing && it !in skip }
         for (owned in candidateOwned) {
-            when (owned) {
-                is ComposeWindow -> {
-                    if (owned.semanticsOwners.isNotEmpty()) {
-                        val panel = findComposePanels(owned).firstOrNull()
-                        addTrackedWindow(pending, owned, panel, "popup", isPopup = true)
+            val ownedOverlayWindows =
+                when (owned) {
+                    is ComposeWindow -> {
+                        if (owned.semanticsOwners.isNotEmpty()) {
+                            val panel = findComposePanels(owned).firstOrNull()
+                            addTrackedWindow(pending, owned, panel, "popup", isPopup = true)
+                        }
+                        emptySet<Window>()
                     }
+                    else -> trackActivePanels(pending, owned, "popup", isPopup = true)
                 }
-                else -> trackActivePanels(pending, owned, "popup", isPopup = true)
-            }
-            trackOwnedPopups(pending, owned, skip)
+            trackOwnedPopups(pending, owned, skip + ownedOverlayWindows)
         }
     }
 
     private fun trackEmbeddedPanels(pending: MutableList<TrackedWindow>, window: Window) {
-        trackActivePanels(pending, window, "embedded", isPopup = false)
-        trackOwnedPopups(pending, window)
+        val overlayWindows = trackActivePanels(pending, window, "embedded", isPopup = false)
+        trackOwnedPopups(pending, window, skip = overlayWindows)
     }
 
     @OptIn(ExperimentalComposeUiApi::class)
@@ -155,13 +170,20 @@ internal constructor(
         window: Window,
         prefix: String,
         isPopup: Boolean,
-    ) {
+    ): Set<Window> {
+        val overlayWindows = HashSet<Window>()
         val panels = findComposePanels(window)
         for (panel in panels) {
             if (panel.semanticsOwners.isNotEmpty()) {
                 addTrackedWindow(pending, window, panel, prefix, isPopup)
             }
+            // An embedded ComposePanel hosts OnWindow popups the same way a ComposeWindow does
+            // (#563), so surface its overlay layers too. Returns their windows so the caller can
+            // skip them in the owned-popup walk.
+            overlayWindows +=
+                trackOverlayLayers(pending, OverlayLayerInspector.findOverlayLayerWindows(panel))
         }
+        return overlayWindows
     }
 
     private fun addTrackedWindow(
