@@ -65,8 +65,9 @@ Key gotchas (`spectre guide traps` has the full list):
   target lacks OS keyboard focus: run `spectre focus-window <session-id> --window <index>`.
 - **`screenshot` needs `--fullscreen` on attach.** Use `capture` for one window. Without
   `spectre-recording` in the target, `capture` crops the screen, so keep the target in front.
-- **Off-screen children of `Column(Modifier.verticalScroll(…))`** have `0×0` window bounds
-  (`1×1` screen bounds in `tree --json`). Scroll before clicking.
+- **Off-screen children of `Column(Modifier.verticalScroll(…))`** have empty window bounds
+  (`1×1` screen bounds in `tree --json`), and pointer actions on them fail with
+  `in-window bounds are empty`. Scroll the container, then look the node up again.
 - **A daemon restart drops every session.** `session not found` after a successful
   attach means a fresh daemon: run `spectre attach <pid>` again.
 - **`xvfb-run ./gradlew …` hangs** when it starts a Gradle daemon. Pass `--no-daemon`.
