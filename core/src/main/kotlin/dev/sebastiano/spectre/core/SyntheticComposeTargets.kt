@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.runtime.tooling.ComposeToolingApi::class)
+
 package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.ExperimentalComposeUiApi
