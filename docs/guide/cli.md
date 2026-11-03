@@ -75,8 +75,10 @@ extract it, and put its `spectre` executable on `PATH`.
 
 ## Startup and the AOT cache
 
-The CLI requires **JDK 25+** (packaged distributions bundle a Temurin 25 runtime) and
-uses the JDK 25 Project Leyden AOT cache (JEP 483/514/515) to start faster.
+The CLI runs on **JDK 21+**. Packaged distributions bundle a Temurin 25 runtime. On
+JDK 25+ the CLI uses the Project Leyden AOT cache (JEP 483/514/515) to start faster.
+On JDK 21–24 the CLI and its daemon run uncached: nothing is trained or consumed,
+and the frontend JVM keeps the JVM's default collector.
 
 An AOT cache is only valid for the exact JDK build, OS/architecture, jar path, and jar
 contents it was trained against, so Spectre never ships one. Instead:
@@ -125,6 +127,30 @@ Run `spectre --help` after installation. Each command also supports `--help`.
 Use the installed binary's help text for its exact arguments and options.
 `spectre --version`, `spectre -v`, and `spectre version` print the installed version;
 add `--json` for `{"version":1,"spectreVersion":"…"}`.
+
+## Daemon socket location
+
+The CLI talks to a per-user daemon over a Unix domain socket. The socket lives in an
+owner-only `sp-d-<id>` directory below a base directory: `/tmp` on Linux and macOS, and
+`java.io.tmpdir` on Windows. Every ancestor of that directory must be owned by `root` or by
+you, and must be sticky or not writable by group or others. Otherwise the daemon refuses to
+start; see [troubleshooting](troubleshooting.md#daemon-socket-ancestor).
+
+Set `SPECTRE_DAEMON_SOCKET_DIR` to use another base directory:
+
+```bash
+export SPECTRE_DAEMON_SOCKET_DIR="$XDG_RUNTIME_DIR"
+```
+
+- The value must be an absolute path. An empty value keeps the default.
+- The directory gets the same ownership and permission checks as the default base.
+- The full socket path must fit in 100 bytes. A longer path fails with an error that names
+  the path and its length; Spectre never falls back to another directory.
+- The CLI resolves the path and passes it to the daemon it starts, so they always agree. A
+  CLI run with a different value talks to a different daemon: it starts its own at the new
+  path, and a daemon already running at the old path keeps running until it shuts down.
+  Set the variable everywhere you run `spectre`, including the environment of MCP clients
+  that launch `spectre mcp`.
 
 ## What it can do
 
@@ -661,7 +687,7 @@ The CLI table's capture-mode distinctions also apply to MCP tool names
 
 ## Requirements and limits
 
-- `ps` and `attach` require **JDK 25+** for the CLI and the daemon it spawns, and
+- `ps` and `attach` require **JDK 21+** for the CLI and the daemon it spawns, and
   **JDK 21+** in the target JVM. The CLI needs a full JDK with `jdk.attach`. A JRE lacks the
   required attach module.
 - **Target shape (two paths, one attach command):**

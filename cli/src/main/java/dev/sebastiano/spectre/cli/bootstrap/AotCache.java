@@ -66,7 +66,10 @@ public final class AotCache {
         }
     }
 
-    /** First JDK this CLI supports; its Leyden cache workflow (JEP 483/514/515) is what training uses. */
+    /**
+     * First JDK with the Leyden cache workflow (JEP 483/514/515) that training uses. The CLI
+     * itself runs on JDK 21+; older JVMs simply plan {@link Mode#UNAVAILABLE} and run uncached.
+     */
     public static final int MINIMUM_FEATURE_VERSION = 25;
 
     /** Module options that disable CDS, and with it Leyden cache creation. */

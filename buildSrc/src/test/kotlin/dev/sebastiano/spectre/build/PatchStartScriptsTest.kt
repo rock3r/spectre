@@ -15,7 +15,7 @@ import org.junit.jupiter.api.condition.OS
 import org.junit.jupiter.api.io.TempDir
 
 /**
- * Unit coverage for the Java 25 preflight [PatchStartScripts] injects into the generated Unix
+ * Unit coverage for the Java 21 preflight [PatchStartScripts] injects into the generated Unix
  * `bin/spectre` launcher.
  *
  * Runs the real patched launcher under `/bin/sh` against a fake `java`, so the version parsing is
@@ -51,22 +51,32 @@ class PatchStartScriptsTest {
 
         assertEquals(1, result.exitCode, "launcher should have died:\n${result.output}")
         assertTrue(
-            result.output.contains("Spectre requires JDK 25 or later; found Java 17.0.2"),
+            result.output.contains("Spectre requires JDK 21 or later; found Java 17.0.2"),
             "unexpected launcher output:\n${result.output}",
         )
     }
 
     @Test
-    fun `the preflight rejects a Java 21 runtime`(@TempDir root: Path) {
-        // The CLI moved to JDK 25 for Leyden AOT caching; a 21 runtime that was
-        // previously accepted must now fail with the 25 requirement.
+    fun `the preflight accepts a Java 21 runtime`(@TempDir root: Path) {
+        // JDK 25 only adds the Leyden AOT cache; the CLI itself runs on 21+, so a JDK 21
+        // runtime (JBR 21, distro JDK 21 images) must launch.
         val jdk = fakeJdk(root, "jdk21", version = "21.0.10", banner = false)
+
+        val result = runLauncher(root, javaHome = jdk)
+
+        assertEquals(0, result.exitCode, "launcher failed:\n${result.output}")
+        assertFalse(result.output.contains("ERROR"), "launcher failed:\n${result.output}")
+    }
+
+    @Test
+    fun `the preflight rejects a Java 20 runtime`(@TempDir root: Path) {
+        val jdk = fakeJdk(root, "jdk20", version = "20.0.2", banner = false)
 
         val result = runLauncher(root, javaHome = jdk)
 
         assertEquals(1, result.exitCode, "launcher should have died:\n${result.output}")
         assertTrue(
-            result.output.contains("Spectre requires JDK 25 or later; found Java 21.0.10"),
+            result.output.contains("Spectre requires JDK 21 or later; found Java 20.0.2"),
             "unexpected launcher output:\n${result.output}",
         )
     }
@@ -196,6 +206,32 @@ class PatchStartScriptsTest {
         assertTrue(
             result.output.contains("JAVACMD=${sdkmanJdk.resolve("bin/java")}"),
             "the sdkman candidate was not selected:\n${result.output}",
+        )
+    }
+
+    @Test
+    // See above: macOS asks /usr/libexec/java_home first, which a test cannot stub.
+    @EnabledOnOs(OS.LINUX)
+    fun `the local JDK search accepts a JDK 21 candidate`(@TempDir root: Path) {
+        val home = root.resolve("home")
+        val sdkmanJdk = home.resolve(".sdkman/candidates/java/current")
+        writeFakeJava(sdkmanJdk, version = "21.0.10", banner = false)
+        val pathWithoutJava = root.resolve("path-without-java")
+        Files.createDirectories(pathWithoutJava)
+        for (tool in listOf("sed", "grep")) {
+            Files.createSymbolicLink(pathWithoutJava.resolve(tool), hostTool(tool))
+        }
+
+        val result =
+            runLauncher(root, javaHome = null) { environment ->
+                environment["HOME"] = home.toString()
+                environment["PATH"] = pathWithoutJava.toString()
+            }
+
+        assertEquals(0, result.exitCode, "launcher failed:\n${result.output}")
+        assertTrue(
+            result.output.contains("JAVACMD=${sdkmanJdk.resolve("bin/java")}"),
+            "the JDK 21 sdkman candidate was not selected:\n${result.output}",
         )
     }
 

@@ -25,15 +25,25 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class SpectreCliTest {
     @Test
-    fun `JDK preflight rejects Java versions older than 25`() {
+    fun `JDK preflight rejects Java versions older than 21`() {
         assertEquals(
-            "Spectre requires JDK 25 or later; found Java 17.",
+            "Spectre requires JDK 21 or later; found Java 17.",
             jdkPreflightError(featureVersion = 17, hasAttachModule = true),
         )
         assertEquals(
-            "Spectre requires JDK 25 or later; found Java 21.",
-            jdkPreflightError(featureVersion = 21, hasAttachModule = true),
+            "Spectre requires JDK 21 or later; found Java 20.",
+            minimumJdkPreflightError(featureVersion = 20),
         )
+    }
+
+    @Test
+    fun `JDK preflight accepts Java 21 through 24 without the Leyden cache`() {
+        // JDK 25 only adds the Leyden AOT cache (a startup optimization); the CLI and
+        // its daemon run on 21+, matching the attach runtime's minimum.
+        for (feature in 21..25) {
+            assertEquals(null, jdkPreflightError(featureVersion = feature, hasAttachModule = true))
+            assertEquals(null, minimumJdkPreflightError(featureVersion = feature))
+        }
     }
 
     @Test
