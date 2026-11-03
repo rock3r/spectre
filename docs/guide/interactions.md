@@ -301,8 +301,8 @@ public surface:
   the live window hierarchy. No real cursor motion, no global focus, doesn't fight
   with other processes. The no-window factory hit-tests every visible top-level window;
   passing `rootWindow` pins the starting tree. Mouse and wheel events hit-test against
-  that tree plus other visible top-level windows; where they overlap, the pinned tree
-  wins. While a modal dialog is showing, the windows it blocks get no synthetic clicks
+  that tree plus other visible top-level windows; where they overlap, the newer window
+  wins, as it is normally the one on top. While a modal dialog is showing, the windows it blocks get no synthetic clicks
   or keys, as with real input. A click or key press that opens a modal dialog returns
   once the dialog's event loop starts, so the next call can drive the dialog. Key events
   go to the current AWT focus owner when one exists, and a press on Compose content moves

@@ -45,15 +45,14 @@ class SyntheticModalAndWindowOrderTest {
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
-    fun `pinned root window wins hit testing over a later top-level window at the same spot`() {
+    fun `pinned root window wins hit testing over an older top-level window at the same spot`() {
         assumeLiveAwtAvailable()
         val rootTarget = RecordingPanel()
         val otherTarget = RecordingPanel()
         try {
-            val root = showFrame(rootTarget)
-            // Created after the root, so it comes later in Window.getWindows(): it models a
-            // background frame that happens to overlap the pinned root on screen.
+            // Created before the root: a background frame that the newer root covers on screen.
             showFrame(otherTarget)
+            val root = showFrame(rootTarget)
             val (cx, cy) = centerOnScreen(rootTarget)
 
             runBlocking { RobotDriver.synthetic(root).click(cx, cy) }
@@ -65,7 +64,7 @@ class SyntheticModalAndWindowOrderTest {
             )
             assertTrue(
                 otherTarget.pressed.isEmpty(),
-                "another top-level window must not intercept clicks meant for the pinned root",
+                "an older window behind the pinned root must not intercept its clicks",
             )
         } finally {
             disposeAll()

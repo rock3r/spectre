@@ -9,14 +9,14 @@ import javax.swing.SwingUtilities
  * The windows that may receive synthetic input, lowest priority first.
  *
  * [SyntheticRobotAdapter] walks this list in reverse for hit testing and the Compose key-target
- * lookup, so the last entry wins. Each window's owned tree follows it, so popups win over their
- * owner. The pinned [rootWindow] and its owned tree go last, so an unrelated top-level window that
- * overlaps the root on screen cannot take its input. While a modal [Dialog] is showing, the windows
- * it blocks are dropped and the dialog's own tree goes last, as AWT does for real input.
+ * lookup, so the last entry wins. AWT does not expose the real stacking order, so top-level windows
+ * keep their creation order: a window shown later usually sits above older ones, so a secondary
+ * window the app opens wins over the window that opened it, and an older background window loses to
+ * a newer one in front of it. Each window's owned tree follows it, so popups win over their owner.
+ * While a modal [Dialog] is showing, the windows it blocks are dropped and the dialog's own tree
+ * goes last, as AWT does for real input.
  */
-internal fun syntheticInputWindows(rootWindow: Window?): List<Window> {
-    val pinnedTree = LinkedHashSet<Window>()
-    rootWindow?.let { collectWindowTree(it, pinnedTree) }
+internal fun syntheticInputWindows(): List<Window> {
     val collected = LinkedHashSet<Window>()
     // Walk every top-level window (and its owned tree). The visibility check is applied per-window
     // by the callers rather than here: Swing's `SharedOwnerFrame` (parent of `JDialog(null, …)`)
@@ -26,8 +26,6 @@ internal fun syntheticInputWindows(rootWindow: Window?): List<Window> {
     for (window in Window.getWindows()) {
         if (window.owner == null) collectWindowTree(window, collected)
     }
-    collected.removeAll(pinnedTree)
-    collected.addAll(pinnedTree)
     val modal = activeModalDialog() ?: return collected.toList()
     val modalTree = LinkedHashSet<Window>().also { collectWindowTree(modal, it) }
     return collected.filter { it !in modalTree && !modal.blocks(it) } + modalTree

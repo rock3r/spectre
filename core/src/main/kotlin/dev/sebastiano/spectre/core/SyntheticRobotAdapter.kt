@@ -31,10 +31,10 @@ import javax.swing.SwingUtilities
  * The driver discovers click targets by walking [rootWindow] (when pinned) plus every other
  * top-level window and its owned tree ([Window.getWindows] / [Window.getOwnedWindows]) on every
  * dispatch, so popups and secondary windows added after construction work without re-creating the
- * driver. The pinned root and its popups win over other windows that overlap them, and while a
- * modal dialog is showing, the windows it blocks get no synthetic input, as with real input. A null
- * [rootWindow] is the no-window factory used by `RobotDriver.synthetic()`: hit testing still walks
- * the live AWT hierarchy, and key events fall back to the first showing window.
+ * driver. Where windows overlap, the newer one wins, and while a modal dialog is showing, the
+ * windows it blocks get no synthetic input, as with real input. A null [rootWindow] is the
+ * no-window factory used by `RobotDriver.synthetic()`: hit testing still walks the live AWT
+ * hierarchy, and key events fall back to the first showing window.
  *
  * Clipboard access is left as the system clipboard — paste-based [RobotDriver.pasteText] still
  * works with synthetic Cmd/Ctrl+V keystrokes.
@@ -352,7 +352,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
                     .getOrDefault(false)
         }
 
-    private fun allWindows(): List<Window> = syntheticInputWindows(rootWindow)
+    private fun allWindows(): List<Window> = syntheticInputWindows()
 }
 
 /**
