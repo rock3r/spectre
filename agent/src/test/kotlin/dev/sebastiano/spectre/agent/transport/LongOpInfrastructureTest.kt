@@ -129,6 +129,69 @@ class LongOpInfrastructureTest {
     }
 
     @Test
+    fun `replacing a closed server waits for input orphaned by ordinary EOF`() {
+        // #557: an agentmain re-entry replaces the agent left behind by a killed client. Like an
+        // explicit Detach, it must not release input coordination under an input call that is
+        // still running.
+        val inputStarted = CountDownLatch(1)
+        val allowInputToFinish = CountDownLatch(1)
+        val server =
+            IpcServer(
+                udsPath,
+                AgentRequestHandler { request ->
+                    when (request) {
+                        is AgentRequest.Click -> {
+                            inputStarted.countDown()
+                            var finished = false
+                            while (!finished) {
+                                try {
+                                    allowInputToFinish.await()
+                                    finished = true
+                                } catch (_: InterruptedException) {
+                                    // Model an input call that cannot stop at interruption.
+                                }
+                            }
+                            AgentResponse.Ok
+                        }
+                        else -> AgentResponse.Ok
+                    }
+                },
+            )
+        val replacementExecutor = Executors.newSingleThreadExecutor()
+        try {
+            awaitSocket(udsPath)
+            val killedClient = IpcClient(udsPath)
+            Thread {
+                runCatching { killedClient.send(AgentRequest.Click(nodeKey = "target-node")) }
+            }
+                .apply {
+                    isDaemon = true
+                    start()
+                }
+            assertTrue(inputStarted.await(3, TimeUnit.SECONDS), "input op never started")
+            killedClient.close()
+
+            val drained =
+                replacementExecutor.submit<Boolean> {
+                    server.close()
+                    server.awaitInputWorkersTerminated()
+                }
+
+            val early = runCatching { drained.get(200, TimeUnit.MILLISECONDS) }.exceptionOrNull()
+            assertIs<TimeoutException>(
+                early,
+                "replacement must wait for the orphaned input operation: $early",
+            )
+            allowInputToFinish.countDown()
+            assertFalse(drained.get(3, TimeUnit.SECONDS), "drain should not be interrupted")
+        } finally {
+            allowInputToFinish.countDown()
+            server.close()
+            replacementExecutor.shutdownNow()
+        }
+    }
+
+    @Test
     fun `pre-handshake rejection waits for input orphaned by ordinary EOF`() {
         val inputStarted = CountDownLatch(1)
         val allowInputToFinish = CountDownLatch(1)
