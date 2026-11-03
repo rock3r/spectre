@@ -267,16 +267,29 @@ Without `--json`, `tree`, `find`, and `find-text` print one line per node, so th
 works with `grep`:
 
 ```text
-window-0:root-0:node-7 Button tag="save-button" text="Save" [focused] @ (412,630 96x40)
-window-0:root-0:node-9 TextField tag="title" editable="Draft" desc="Title" [disabled] @ (24,96 560x56)
+window-0:root-0:node-7 Button tag="save-button" text="Save" parent=window-0:root-0:node-2 [focused] [clickable] @ (412,630 96x40)
+window-0:root-0:node-9 TextField tag="title" editable="Draft" desc="Title" parent=window-0:root-0:node-2 [disabled] @ (24,96 560x56)
+window-0:root-0:node-11 Checkbox tag="wrap" toggle=On parent=window-0:root-0:node-2 [clickable] @ (24,160 48x48)
+window-0:root-0:node-12 Node progress=0.5/0..1 parent=window-0:root-0:node-2 @ (80,182 240x4)
 ```
 
 Each line holds the node key and role (`Node` when the node has none), then any of
 `tag="…"`, `text="…"` (one per text), `editable="…"`, and `desc="…"` (one per content
-description), the state flags `[focused]`, `[disabled]`, `[selected]`, and `[hidden]`, and
-the bounds as `@ (x,y widthxheight)` in screen coordinates. Empty values are left out.
+description). Next come `toggle=` with `On`, `Off`, or `Indeterminate` for a checkbox or
+switch, and `progress=value/min..max` for a slider or progress bar, followed by `steps=` when
+the range is stepped. Then `parent=` names the parent node key. The state flags
+`[focused]`, `[disabled]`, `[selected]`, `[clickable]`, and `[hidden]` follow, and the line ends
+with the bounds as `@ (x,y widthxheight)` in screen coordinates. Empty values are left out.
 Quotes, backslashes, and line breaks inside values are escaped, so every node stays on one
-line. Use `--json` for the full, stable field set.
+line.
+
+Use `--json` for the full, stable field set. Each node object has `key`, `testTag`, `texts`,
+`editableText`, `role`, `contentDescription`, `isFocused`, `isVisible`, `bounds`,
+`isDisabled`, `isSelected`, `isClickable`, `toggleableState`, `progress` (`current`, `min`,
+`max`, `steps`), `parentKey`, `childKeys`, and `boundsInWindow`. `boundsInWindow` is the node's
+layout bounds within its Compose surface, in Compose (physical) pixels. Use `bounds` for screen
+positions. The MCP `tree`, `find`, `find_text`, and `wait_for_node` tools return the same node
+fields, plus `contentDescriptions`.
 
 `wait-until-gone` is the absence counterpart: it returns once nothing matches, so use it after
 dismissing a popup, menu, or dialog. It refreshes the tracked
