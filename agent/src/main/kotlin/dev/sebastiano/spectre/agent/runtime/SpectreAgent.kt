@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.IpcServer
 import java.lang.instrument.Instrumentation
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
 
@@ -30,9 +31,12 @@ import java.util.concurrent.atomic.AtomicReference
  * required so attachers don't silently time out when the agent can't find Spectre, can't bind the
  * UDS, etc.
  *
- * **Idempotency** (plan R-4): a second invocation while the IPC server is already running is a
- * no-op (logs to stderr and returns). The JVM caches loaded agent classes between `loadAgent` calls
- * so this matters in practice.
+ * **Idempotency** (plan R-4): a second invocation for the socket path the IPC server is already
+ * listening on is a no-op (logs to stderr and returns). The JVM caches loaded agent classes between
+ * `loadAgent` calls so this matters in practice. A second invocation naming a *different* socket
+ * path (or the same path after its socket file vanished) comes from a new attacher whose
+ * predecessor died without sending Detach: the stale state is released as Detach would release it,
+ * and the agent bootstraps again on the new path (#557).
  *
  * **Detach contract** (plan D-7): [onClientDetach] performs the full Path A cleanup — closes the
  * [IpcServer] (releases ServerSocketChannel + unlinks UDS), closes target-side input coordination,
@@ -75,11 +79,27 @@ public object SpectreAgent {
                 "loadedClasses=${instrumentation.allLoadedClasses.size})"
         )
 
-        if (agentState.get() != null) {
+        // Parsed before the re-entry check, which depends on the requested socket path. Parsing
+        // is pure, so nothing needs releasing if it throws.
+        val parsedArgs = AgentBootstrapArgs.parse(agentArgs)
+        val requestedUdsPath = parsedArgs.udsPath?.let(Path::of)
+
+        val boundState = agentState.get()
+        if (boundState != null) {
+            if (!replacesBoundAgent(boundState.udsPath, requestedUdsPath)) {
+                System.err.println(
+                    "[spectre-agent] already bootstrapped on this JVM; ignoring re-entry"
+                )
+                return
+            }
+            // An attacher that died without sending Detach (#557) leaves this state bound to a
+            // socket nobody will connect to again, while the new attacher waits on its own path.
+            // Release the stale state the way Detach would, then bootstrap afresh.
             System.err.println(
-                "[spectre-agent] already bootstrapped on this JVM; ignoring re-entry"
+                "[spectre-agent] re-entry asks for $requestedUdsPath; releasing the agent bound " +
+                    "to ${boundState.udsPath}"
             )
-            return
+            releaseState(boundState)
         }
 
         // findSpectre throws SpectreNotOnClasspathException /
@@ -101,10 +121,6 @@ public object SpectreAgent {
             // failures are logged and identity falls back to null handles.
             AwtPeerModuleOpener.openFor(loader, instrumentation)
 
-            // Parsed before the automator is built, not after: the driver's coordination policy is
-            // fixed at construction, and the attacher's decision about it arrives in agentArgs.
-            val parsedArgs = AgentBootstrapArgs.parse(agentArgs)
-
             val agentAutomator = createAutomatorReflectively(loader, parsedArgs.inputCoordination)
             val automator = agentAutomator.instance
             targetInputResource = agentAutomator.targetInputResource
@@ -120,7 +136,7 @@ public object SpectreAgent {
                         )
                     }
             }
-            val udsPath = parsedArgs.udsPath?.let(Path::of)
+            val udsPath = requestedUdsPath
             if (udsPath == null) {
                 // No UDS path means manual diagnostic mode: report window count to stderr so a
                 // user can verify Spectre is correctly on a target's classpath.
@@ -135,8 +151,15 @@ public object SpectreAgent {
             // IpcServer's constructor throws IOException on bind failure (path too long,
             // permission issue, …). Let it propagate.
             val handler = ReflectiveAutomatorHandler(automator)
+            // Detach releases only the state this server belongs to: once a re-entry has replaced
+            // it, a late Detach from the old server's client must not tear down its successor.
+            val publishedState = AtomicReference<AgentState?>(null)
             val server =
-                IpcServer(udsPath = udsPath, handler = handler, onDetach = ::onClientDetach)
+                IpcServer(
+                    udsPath = udsPath,
+                    handler = handler,
+                    onDetach = { publishedState.get()?.let(::onClientDetach) },
+                )
 
             // Register the shutdown hook BEFORE publishing AgentState so a crash between here and
             // CAS leaves no orphans. We carry the hook Thread in AgentState so onClientDetach can
@@ -161,6 +184,7 @@ public object SpectreAgent {
                     bootstrap = bootstrap,
                     targetInputResource = targetInputResource,
                 )
+            publishedState.set(newState)
             if (!agentState.compareAndSet(null, newState)) {
                 // Idempotency race: someone bootstrapped between our earlier `get()` check and now.
                 // Roll back: close our just-created server and remove our hook so the existing
@@ -195,14 +219,40 @@ public object SpectreAgent {
      * here ensures the ServerSocketChannel native fd is released and the UDS path unlinked. Without
      * it, the channel would leak until JVM exit.
      */
-    private fun onClientDetach() {
-        val state = agentState.getAndSet(null) ?: return
+    private fun onClientDetach(state: AgentState) {
+        if (!releaseState(state)) return
+        System.err.println("[spectre-agent] detached cleanly; resources released")
+    }
+
+    /**
+     * Clears the global slot if it still holds [state], then releases everything [state] owns.
+     * Returns false, releasing nothing, when another caller already took [state] out of the slot.
+     */
+    private fun releaseState(state: AgentState): Boolean {
+        if (!agentState.compareAndSet(state, null)) return false
         runCatching { state.server.close() }
         runCatching { state.targetInputResource?.close() }
         runCatching { Runtime.getRuntime().removeShutdownHook(state.shutdownHook) }
         state.bootstrap.releaseInjectResources()
-        System.err.println("[spectre-agent] detached cleanly; resources released")
+        return true
     }
+
+    /**
+     * Whether an `agentmain` re-entry asking for [requestedUdsPath] replaces the agent already
+     * bound to [boundUdsPath].
+     *
+     * A different path means a new attacher: the one that asked for [boundUdsPath] is gone (most
+     * often killed without sending Detach), and the new one only ever connects to its own path. The
+     * same path replaces the agent only once its socket file has disappeared. A re-entry without a
+     * path is the manual diagnostic mode, which never needs a server, so it keeps the bound agent.
+     */
+    internal fun replacesBoundAgent(
+        boundUdsPath: Path,
+        requestedUdsPath: Path?,
+        socketExists: (Path) -> Boolean = { Files.exists(it) },
+    ): Boolean =
+        requestedUdsPath != null &&
+            (requestedUdsPath != boundUdsPath || !socketExists(boundUdsPath))
 
     private fun createAutomatorReflectively(
         classLoader: ClassLoader,

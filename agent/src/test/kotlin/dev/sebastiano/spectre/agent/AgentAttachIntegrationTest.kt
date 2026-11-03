@@ -113,6 +113,66 @@ class AgentAttachIntegrationTest {
     }
 
     @Test
+    fun `re-attach on a new socket path recovers after the previous client vanished`() {
+        // #557: an attacher (the CLI daemon) killed without sending Detach leaves the agent
+        // bootstrapped on its old socket. The next attach names a new socket path and must get a
+        // working session on it instead of timing out against an agent that ignores re-entry.
+        assumeWindowsAttachE2eAllowed()
+        assumeFalse(
+            GraphicsEnvironment.isHeadless(),
+            "Requires non-headless JVM for the Compose Desktop fixture",
+        )
+        val agentJar = locateAgentJarOrSkip()
+
+        spawnComposeFixture().use { fixture ->
+            val abandonedUdsPath = AttachOptions.defaultUdsPath(fixture.pid)
+            orphanUdsFiles.add(abandonedUdsPath)
+            val abandoned =
+                attachRetryingHandshakeRace(
+                    fixture.pid,
+                    AttachOptions(
+                        agentJarPath = agentJar,
+                        udsPath = abandonedUdsPath,
+                        attachTimeoutMs = ATTACH_TIMEOUT_MS,
+                    ),
+                )
+            assertTrue(abandoned.windows().isNotEmpty(), "first attach should see the fixture")
+            abandoned.dropConnectionWithoutDetach()
+
+            val udsPath = AttachOptions.defaultUdsPath(fixture.pid)
+            orphanUdsFiles.add(udsPath)
+            attachRetryingHandshakeRace(
+                    fixture.pid,
+                    AttachOptions(
+                        agentJarPath = agentJar,
+                        udsPath = udsPath,
+                        attachTimeoutMs = ATTACH_TIMEOUT_MS,
+                    ),
+                )
+                .use { automator ->
+                    assertTrue(
+                        automator.windows().isNotEmpty(),
+                        "re-attach on $udsPath should serve the fixture's windows",
+                    )
+                    assertFalse(
+                        Files.exists(abandonedUdsPath),
+                        "re-attach should have closed the abandoned server at $abandonedUdsPath",
+                    )
+                }
+        }
+    }
+
+    /**
+     * Closes this automator's socket without sending Detach, the way a killed attacher does. The
+     * agent sees EOF and keeps its state, exactly as after a daemon crash.
+     */
+    private fun AttachedAutomator.dropConnectionWithoutDetach() {
+        val clientField = AttachedAutomator::class.java.getDeclaredField("client")
+        clientField.isAccessible = true
+        (clientField.get(this) as AutoCloseable).close()
+    }
+
+    @Test
     fun `attach explains when the target JVM disables dynamic agent loading`() {
         assumeWindowsAttachE2eAllowed()
         assumeFalse(
