@@ -83,8 +83,10 @@ with its own native helper, and then reads the semantics tree from the applicati
 
 This has three consequences:
 
-- **The window needs a unique, non-blank title.** If another window of the same process has a
-  title that contains this one, or the title is blank, the capture fails and names the problem.
+- **The window needs a unique, non-blank title.** The capture fails and names the problem when
+  the title is blank, or when another window of the same process has a matching title. On macOS a
+  title matches when it contains this window's title. On Windows it must be equal. Any AWT window
+  counts, including plain Swing dialogs.
 - **macOS Screen Recording permission belongs to the daemon's helper.** The same grant that
   `spectre record` uses covers `spectre capture`. The attached `java` process does not need its
   own grant. Check it with `spectre permissions check`.

@@ -85,6 +85,7 @@ class AtomicCaptureStillTest {
                 liveWindowBounds = Rectangle(windowBounds),
                 frameInsets = Insets(28, 0, 0, 0),
                 captureRegion = surface,
+                titleCollisions = emptyList(),
                 osName = "Mac OS X",
                 isWayland = false,
             )
@@ -104,10 +105,53 @@ class AtomicCaptureStillTest {
                     liveWindowBounds = Rectangle(10, 0, 400, 300),
                     frameInsets = Insets(0, 0, 0, 0),
                     captureRegion = Rectangle(10, 0, 400, 300),
+                    titleCollisions = emptyList(),
                     osName = "Mac OS X",
                     isWayland = false,
                 )
             }
         assertTrue(error.message.orEmpty().contains("moved or resized"), error.message)
+    }
+
+    @Test
+    fun `an external window still is rejected when another window could have been captured`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                externalWindowStill(
+                    image = BufferedImage(400, 300, BufferedImage.TYPE_INT_ARGB),
+                    stillWindowBounds = Rectangle(0, 0, 400, 300),
+                    liveWindowBounds = Rectangle(0, 0, 400, 300),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    captureRegion = Rectangle(0, 0, 400, 300),
+                    titleCollisions = listOf("App Settings"),
+                    osName = "Mac OS X",
+                    isWayland = false,
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("App Settings"), error.message)
+    }
+
+    @Test
+    fun `macOS title collisions use the helper's title-contains match`() {
+        assertEquals(
+            listOf("App Settings"),
+            remoteCaptureTitleCollisions(
+                targetTitle = "App",
+                otherTitles = listOf("App Settings", "Other", null),
+                osName = "Mac OS X",
+            ),
+        )
+    }
+
+    @Test
+    fun `Windows title collisions use the helper's exact title match`() {
+        assertEquals(
+            listOf("App"),
+            remoteCaptureTitleCollisions(
+                targetTitle = "App",
+                otherTitles = listOf("App Settings", "App"),
+                osName = "Windows 11",
+            ),
+        )
     }
 }

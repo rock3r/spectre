@@ -56,7 +56,7 @@ internal class DaemonSessionCapture(
 
     fun capture(windowIndex: Int): AtomicCaptureResult {
         val identity = requireIdentity(windowIndex)
-        val title = requireUniqueTitle(identity)
+        val title = requireTitle(identity)
         val still =
             try {
                 captureWindowByTitle(title, targetPid)
@@ -78,27 +78,15 @@ internal class DaemonSessionCapture(
                 "cannot capture windowIndex=$windowIndex: no tracked window has that index"
             )
 
-    private fun requireUniqueTitle(identity: WindowIdentityDto): String {
-        val title =
-            identity.title?.takeIf { it.isNotBlank() }
-                ?: throw IOException(
-                    "cannot capture window ${identity.index}: it has a blank title. Spectre " +
-                        "finds the window of an attached application by its title, so give " +
-                        "the window a unique, non-blank title."
-                )
-        // Native helpers match by "title contains" among every window of the target process,
-        // popups included, so any other window whose title contains this one is a collision.
-        val collisions = windowIdentities(null).filter { it.title.orEmpty().contains(title) }
-        if (collisions.size > 1) {
-            throw IOException(
-                "cannot capture window ${identity.index}: its title \"$title\" is ambiguous " +
-                    "among windows [${collisions.joinToString { it.index.toString() }}] of the " +
-                    "target. Give the window a unique title so the native capture helper selects " +
-                    "the intended window."
+    // The target checks title uniqueness after the still: only it can see every native window of
+    // its process, including plain Swing windows that Spectre does not track.
+    private fun requireTitle(identity: WindowIdentityDto): String =
+        identity.title?.takeIf { it.isNotBlank() }
+            ?: throw IOException(
+                "cannot capture window ${identity.index}: it has a blank title. Spectre finds " +
+                    "the window of an attached application by its title, so give the window a " +
+                    "unique, non-blank title."
             )
-        }
-        return title
-    }
 
     private fun stillFailed(windowIndex: Int, cause: Exception): IOException =
         IOException(

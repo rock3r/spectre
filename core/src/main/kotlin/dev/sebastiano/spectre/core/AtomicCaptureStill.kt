@@ -3,8 +3,11 @@
 package dev.sebastiano.spectre.core
 
 import dev.sebastiano.spectre.core.capture.CaptureNodeSnapshot
+import java.awt.Dialog
+import java.awt.Frame
 import java.awt.Insets
 import java.awt.Rectangle
+import java.awt.Window
 import java.awt.image.BufferedImage
 
 /**
@@ -56,6 +59,9 @@ internal fun requireAtomicCaptureNativeStill(
  * The caller (the Spectre daemon on the attach path) takes [image] before the semantics snapshot,
  * at [stillWindowBounds]. If the window has moved or resized since then, the pixels and the tree
  * would describe different layouts, so this fails and the caller retries.
+ *
+ * The caller finds the window by title, so the still may show another window of this process when
+ * [titleCollisions] is not empty. That also fails: the pixels would not match the tree.
  */
 @Suppress("LongParameterList") // Every geometry input is a seam the tests substitute.
 internal fun externalWindowStill(
@@ -64,9 +70,15 @@ internal fun externalWindowStill(
     liveWindowBounds: Rectangle,
     frameInsets: Insets,
     captureRegion: Rectangle,
+    titleCollisions: List<String>,
     osName: String = System.getProperty("os.name").orEmpty(),
     isWayland: Boolean = isWaylandSession(),
 ): WindowCapture {
+    check(titleCollisions.isEmpty()) {
+        "The native window still may show another window: the capture helper finds the target " +
+            "by title, and other windows of this process have matching titles " +
+            "(${titleCollisions.joinToString { "\"$it\"" }}). Give the window a unique title."
+    }
     check(stillWindowBounds == liveWindowBounds) {
         "The window moved or resized between the native window still ($stillWindowBounds) and " +
             "the semantics snapshot ($liveWindowBounds). Retry the capture once the window is " +
@@ -78,6 +90,42 @@ internal fun externalWindowStill(
         captureRegion,
     )
 }
+
+/**
+ * Titles of other windows in this process that a native capture helper, searching by [targetTitle],
+ * could select instead of the target.
+ *
+ * The macOS ScreenCaptureKit helper selects the first window whose title contains [targetTitle].
+ * The Windows helper selects a window whose title equals [targetTitle]. [otherTitles] must cover
+ * every native window of this process except the target, including plain Swing windows, so the
+ * check sees the same candidates as the helper.
+ */
+internal fun remoteCaptureTitleCollisions(
+    targetTitle: String,
+    otherTitles: List<String?>,
+    osName: String = System.getProperty("os.name").orEmpty(),
+): List<String> {
+    val exactMatch = osName.startsWith("Windows", ignoreCase = true)
+    return otherTitles.filterNotNull().filter { title ->
+        if (exactMatch) title == targetTitle else title.contains(targetTitle)
+    }
+}
+
+/**
+ * [remoteCaptureTitleCollisions] for [target] among this JVM's displayable windows. Call on EDT.
+ */
+internal fun remoteCaptureTitleCollisions(target: Window): List<String> {
+    val targetTitle = target.nativeTitle()?.takeIf { it.isNotBlank() } ?: return emptyList()
+    val others = Window.getWindows().filter { it !== target && it.isDisplayable }
+    return remoteCaptureTitleCollisions(targetTitle, others.map { it.nativeTitle() })
+}
+
+private fun Window.nativeTitle(): String? =
+    when (this) {
+        is Frame -> title
+        is Dialog -> title
+        else -> null
+    }
 
 /**
  * Capture region, density, node properties, and screen geometry for an atomic capture, frozen in

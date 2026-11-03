@@ -51,20 +51,6 @@ class DaemonSessionCaptureTest {
     }
 
     @Test
-    fun `an ambiguous window title fails instead of capturing the wrong window`() {
-        val fake =
-            FakeCaptureSeams(
-                identities =
-                    listOf(identity(index = 0, title = "App"), identity(index = 1, title = "App"))
-            )
-
-        val error = assertFailsWith<IOException> { fake.capture().capture(windowIndex = 0) }
-
-        assertTrue(error.message.orEmpty().contains("ambiguous"), error.message)
-        assertTrue(fake.stillRequests.isEmpty())
-    }
-
-    @Test
     fun `an out of range window index fails`() {
         val fake = FakeCaptureSeams(identities = listOf(identity(index = 0, title = "App")))
 

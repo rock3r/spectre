@@ -520,8 +520,9 @@ private constructor(
      * native capture helper, then sends it here so the semantics snapshot and the PNG still come
      * from one call. [windowStill] must show the whole native window, as the platform window
      * capture helpers produce it, at [stillWindowBounds] in AWT screen coordinates. The tree is
-     * read right after the still was taken. If the window moved or resized in between, this throws
-     * [IllegalStateException] so the caller can retry.
+     * read right after the still was taken. If the window moved or resized in between, or another
+     * window of this process has a title the capture helper could have matched instead, this throws
+     * [IllegalStateException].
      */
     @InternalSpectreApi
     public fun captureWithWindowStill(
@@ -529,13 +530,14 @@ private constructor(
         windowStill: BufferedImage,
         stillWindowBounds: Rectangle,
     ): AtomicCapture =
-        captureAtomically(windowIndex) { _, pre ->
+        captureAtomically(windowIndex) { trackedWindow, pre ->
             externalWindowStill(
                 image = windowStill,
                 stillWindowBounds = stillWindowBounds,
                 liveWindowBounds = pre.windowBounds,
                 frameInsets = pre.frameInsets,
                 captureRegion = pre.captureRegion,
+                titleCollisions = readOnEdt { remoteCaptureTitleCollisions(trackedWindow.window) },
             )
         }
 
