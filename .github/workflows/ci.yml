@@ -12,7 +12,7 @@ permissions:
 jobs:
   linux-helper-tests:
     name: Linux helper unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository
@@ -30,7 +30,9 @@ jobs:
         run: cargo test --manifest-path recording/native/linux/Cargo.toml
 
   check:
-    runs-on: ubuntu-latest
+    # Pinned to 24.04: `ubuntu-latest` moved to 26.04 ("resolute"), where the arm64 multi-arch
+    # install below asks apt to downgrade host packages and fails. Move to 26.04 deliberately.
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository
