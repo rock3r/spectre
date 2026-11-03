@@ -98,6 +98,8 @@ Spectre then launches without managing a cache.
 
 Run `spectre --help` after installation. Each command also supports `--help`.
 Use the installed binary's help text for its exact arguments and options.
+`spectre --version`, `spectre -v`, and `spectre version` print the installed version;
+add `--json` for `{"version":1,"spectreVersion":"…"}`.
 
 ## What it can do
 
@@ -119,7 +121,7 @@ For a typical session:
 spectre ps --json
 
 # 2. Attach and keep the session id.
-SESSION=$(spectre attach <pid> --json | jq -r .id)
+SESSION=$(spectre attach <pid> --json | jq -r .sessionId)
 
 # 3. Drive and inspect while the session lives in the shared daemon.
 spectre windows "$SESSION"
@@ -139,7 +141,7 @@ spectre detach "$SESSION"
 
 | Action | Effect |
 | --- | --- |
-| `spectre attach <pid>` | Creates a daemon session; prints session id (JSON: `id`, `pid`). |
+| `spectre attach <pid>` | Creates a daemon session; prints session id (JSON: `id`, `sessionId`, `pid`). |
 | Further CLI / MCP tools | Reuse that id against the **same per-user daemon**. |
 | `spectre detach <session-id>` | Ends that session; reports leftover captures and a prune command when any exist. |
 | `spectre daemon kill` | Stops the daemon and **discards all sessions**. |
@@ -209,7 +211,8 @@ spectre click <session-id> <node-key>
 spectre double-click <session-id> <node-key>
 spectre long-click <session-id> <node-key> --hold-ms 500
 spectre type <session-id> "A short note"
-spectre press-key <session-id> 10          # KeyEvent.VK_ENTER
+spectre press-key <session-id> Enter
+spectre press-key <session-id> Ctrl+S
 spectre scroll-wheel <session-id> <node-key> 3
 spectre swipe <session-id> --from <from-key> --to <to-key>
 spectre swipe <session-id> --start-x 100 --start-y 400 --end-x 100 --end-y 100
@@ -234,12 +237,17 @@ Run `spectre <command> --help` for the installed option list.
 | Command | Purpose | Important args / defaults |
 | --- | --- | --- |
 | `ps` | List attachable JVM processes | `--json` |
-| `attach <pid>` | Attach daemon to target JVM; print session | `--json` → `id`, `pid` |
+| `attach <pid>` | Attach daemon to target JVM; print session | `--json` → `id`, `sessionId`, `pid` |
 | `detach <session-id>` | End session; leftover capture report | `--json` includes `capturePaths`, `pruneCommand` |
 | `launch -- <cmd…>` | Start process, readiness, attach, teardown | `-C`, `--app-name`, `--once` (see above) |
-| `daemon status` | List live daemon sessions | `--json` |
+| `daemon status` | List live daemon sessions | `--json` → `sessions[]` with `id`, `sessionId`, `pid` |
 | `daemon kill` | Stop daemon; discard all sessions | `--json` |
 | `mcp` | Stdio MCP server over the shared daemon | No extra args; must not wrap stdout |
+| `version` | Print the CLI version | `--json`; also `--version` / `-v` |
+
+`attach --json` and `daemon status --json` report the session ID as both `id` and
+`sessionId`. The two keys always hold the same value; `sessionId` matches
+`record status --json` and the MCP tools.
 
 ### Inspection and waits
 
@@ -256,6 +264,21 @@ Run `spectre <command> --help` for the installed option list.
 
 `find`, `find-text`, and `tree` read the UI once.
 Use `wait-for-node` when the expected node may appear later.
+
+Without `--json`, `tree`, `find`, and `find-text` print one line per node, so the output
+works with `grep`:
+
+```text
+window-0:root-0:node-7 Button tag="save-button" text="Save" [focused] @ (412,630 96x40)
+window-0:root-0:node-9 TextField tag="title" editable="Draft" desc="Title" [disabled] @ (24,96 560x56)
+```
+
+Each line holds the node key and role (`Node` when the node has none), then any of
+`tag="…"`, `text="…"` (one per text), `editable="…"`, and `desc="…"` (one per content
+description), the state flags `[focused]`, `[disabled]`, `[selected]`, and `[hidden]`, and
+the bounds as `@ (x,y widthxheight)` in screen coordinates. Empty values are left out.
+Quotes, backslashes, and line breaks inside values are escaped, so every node stays on one
+line. Use `--json` for the full, stable field set.
 
 `wait-until-gone` is the absence counterpart: it returns once nothing matches, so use it after
 dismissing a popup, menu, or dialog. It refreshes the tracked
@@ -280,7 +303,7 @@ owns the foreground.
 | `long-click <session-id> <node-key>` | Long press | `--hold-ms` default **500** |
 | `swipe <session-id>` | Drag node→node **or** screen coords | See [Swipe modes](#swipe-modes) |
 | `scroll-wheel <session-id> <node-key> <wheel-clicks>` | Wheel at node centre | Positive = down; negative = up |
-| `press-key <session-id> <key-code>` | Raw AWT key | `--modifiers` default **0**; see [Key codes](#press-key-awt-codes) |
+| `press-key <session-id> <key>` | Press one key or chord | Key name, chord, or AWT code; `--modifiers` default none; see [Keys](#press-key-awt-codes) |
 | `type <session-id> <text>` | Type through OS input path | Target must accept keyboard focus |
 
 #### Swipe modes
@@ -302,21 +325,42 @@ Defaults: `--steps 12`, `--duration-ms 200`. Mixing node keys with coordinates f
 
 #### Press-key AWT codes
 
-`press-key` takes a **`java.awt.event.KeyEvent` virtual-key integer** and an optional
-**`java.awt.event.InputEvent` modifier mask**. Modifier key codes are invalid here.
+`press-key` takes a key name, a chord, or a **`java.awt.event.KeyEvent` virtual-key
+integer**. Key names are case-insensitive:
 
-| Example | `key-code` | `--modifiers` |
-| --- | --- | --- |
-| Enter | `10` (`VK_ENTER`) | `0` |
-| Tab | `9` (`VK_TAB`) | `0` |
-| Escape | `27` (`VK_ESCAPE`) | `0` |
-| Letter S | `83` (`VK_S`) | `0` |
-| Ctrl+S | `83` | `128` (`CTRL_DOWN_MASK`) |
-| Cmd+S (macOS) | `83` | `256` (`META_DOWN_MASK`) |
-| Shift+Tab | `9` | `64` (`SHIFT_DOWN_MASK`) |
+| Kind | Accepted names |
+| --- | --- |
+| Letters and digits | `A`–`Z`; `Digit0`–`Digit9` |
+| Punctuation | `/` `.` `,` `-` `=` `[` `]` `\` `;` `'` `` ` `` |
+| Editing | `Enter` / `Return`, `Tab`, `Escape` / `Esc`, `Backspace`, `Delete` / `Del`, `Insert` / `Ins`, `Space` |
+| Navigation | `Up` / `ArrowUp`, `Down` / `ArrowDown`, `Left` / `ArrowLeft`, `Right` / `ArrowRight`, `Home`, `End`, `PageUp` / `PgUp`, `PageDown` / `PgDn` |
+| Function keys | `F1`–`F12` |
 
-Other common masks: `ALT_DOWN_MASK` = `512`. Combine masks with bitwise OR, such as for
-Ctrl+Shift. [Driving input](interactions.md#keyboard-typing-and-key-events) lists the
+A bare number is always a raw key code, as in earlier releases, so `9` is Tab rather than
+the 9 key. Use `Digit9` for the digit key on its own. Inside a chord, a single digit is the
+digit key (`Ctrl+1`).
+
+A chord joins modifiers and one key with `+`: `Ctrl+S`, `Cmd+K`, `Ctrl+Shift+P`.
+`--modifiers` takes modifier names separated by commas or `+`, or an integer
+**`java.awt.event.InputEvent` modifier mask**. Modifiers from a chord and from
+`--modifiers` combine. A modifier on its own, such as `Shift`, is not a key.
+
+| Modifier name | `InputEvent` mask |
+| --- | --- |
+| `shift` | `64` (`SHIFT_DOWN_MASK`) |
+| `ctrl`, `control` | `128` (`CTRL_DOWN_MASK`) |
+| `meta`, `cmd`, `command` | `256` (`META_DOWN_MASK`) |
+| `alt`, `option`, `opt` | `512` (`ALT_DOWN_MASK`) |
+
+These calls are equivalent:
+
+```shell
+spectre press-key <session-id> Ctrl+S
+spectre press-key <session-id> S --modifiers ctrl
+spectre press-key <session-id> 83 --modifiers 128
+```
+
+[Driving input](interactions.md#keyboard-typing-and-key-events) lists the
 same values for the library API. The target needs OS focus for keyboard input. An attach
 client can keep focus, so the app may need focus first. The agent API provides
 `focusWindow`. The CLI has no focus command; activate the window manually or click it.
@@ -393,6 +437,28 @@ spectre permissions request
 Capture and recording check permission and fail when it is missing.
 They do not open the grant UI automatically.
 See [Recording — macOS TCC](recording.md).
+
+### Unknown commands and options
+
+When a command or option does not exist, `spectre` exits with code **2** and prints a
+`hint:` line on stderr that names the command or syntax that does the job:
+
+```text
+Error: no such subcommand sessions
+hint: use 'spectre daemon status' to list active sessions, or 'spectre ps' to discover attachable JVMs
+hint: run 'spectre --help' to list every command
+```
+
+Common guesses have fixed hints, such as `inspect` → `tree`, `keys` → `press-key`,
+`daemon stop` → `daemon kill`, and `find --text` → `find-text`. Other names are matched
+against the installed commands.
+
+With `--json`, a usage error is a JSON object on stderr. `hint` is `null` when Spectre has no
+suggestion:
+
+```json
+{"version":1,"error":"no such subcommand inspect","hint":"use 'spectre tree <session>'"}
+```
 
 ## MCP
 
