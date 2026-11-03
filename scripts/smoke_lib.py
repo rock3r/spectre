@@ -2164,11 +2164,49 @@ def parse_xauthority_displays(data: bytes) -> list[str]:
     return displays
 
 
-def _seat_x_display(cookie: Path | None, x11_socket_dir: Path) -> str | None:
+def _xwayland_display_for_cookie(cookie: Path, uid: int, proc_root: Path) -> str | None:
+    """The display of this user's Xwayland process that was started with `-auth <cookie>`.
+
+    mutter writes its Xwayland cookie with an empty display number (valid for any display),
+    so the cookie alone cannot name the seat's display. The Xwayland command line can.
+    """
+    root = Path(proc_root)
+    try:
+        entries = [entry for entry in root.iterdir() if entry.name.isdigit()]
+    except OSError:
+        return None
+    for entry in entries:
+        try:
+            if entry.stat().st_uid != uid:
+                continue
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        args = [arg.decode("utf-8", errors="replace") for arg in raw.split(b"\0") if arg]
+        if not args or Path(args[0]).name != "Xwayland":
+            continue
+        auth_files = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "-auth"]
+        if not any(Path(path) == Path(cookie) for path in auth_files):
+            continue
+        for arg in args[1:]:
+            if re.fullmatch(r":\d+", arg):
+                return arg
+    return None
+
+
+def _seat_x_display(
+    cookie: Path | None,
+    x11_socket_dir: Path,
+    *,
+    uid: int | None = None,
+    proc_root: Path = Path("/proc"),
+) -> str | None:
     """The X display that belongs to this seat, or None when it cannot be told apart.
 
     Prefer the display number mutter wrote into the user's Xwayland cookie: the lowest
     global socket may be a greeter or another user's server, which rejects this cookie.
+    When the cookie names no display (mutter writes an empty one), ask the user's own
+    Xwayland process that uses the cookie. A lone socket is the last resort.
     """
     socket_dir = Path(x11_socket_dir)
     sockets = {
@@ -2187,6 +2225,10 @@ def _seat_x_display(cookie: Path | None, x11_socket_dir: Path) -> str | None:
         for number in named:
             if number.isdigit() and int(number) in sockets:
                 return f":{int(number)}"
+        if uid is not None:
+            from_process = _xwayland_display_for_cookie(cookie, uid, proc_root)
+            if from_process:
+                return from_process
     if len(sockets) == 1:
         return f":{next(iter(sockets))}"
     return None
@@ -2198,6 +2240,7 @@ def discover_linux_seat_env(
     uid: int | None = None,
     run_user_root: Path = Path("/run/user"),
     x11_socket_dir: Path = Path("/tmp/.X11-unix"),
+    proc_root: Path = Path("/proc"),
 ) -> dict[str, str]:
     """Seat variables an SSH shell lacks but the logged-in GNOME Wayland seat provides.
 
@@ -2206,7 +2249,8 @@ def discover_linux_seat_env(
     Wayland seat to reach and nothing is returned, which keeps X11 and headless hosts
     unchanged. XAUTHORITY comes from mutter's `.mutter-Xwaylandauth.*`; without it Xwayland
     answers `Authorization required` and AWT cannot open `DISPLAY`. DISPLAY is the display
-    that cookie names, or the only X socket; with several sockets and no match it stays unset.
+    that cookie names, else the display of the user's Xwayland process started with that
+    cookie, else the only X socket; with several sockets and no match it stays unset.
     """
     env = os.environ if environ is None else environ
 
@@ -2242,7 +2286,7 @@ def discover_linux_seat_env(
     cookie = _newest(list(runtime_dir.glob(".mutter-Xwaylandauth.*")))
     display = present("DISPLAY")
     if not display:
-        discovered = _seat_x_display(cookie, x11_socket_dir)
+        discovered = _seat_x_display(cookie, x11_socket_dir, uid=uid, proc_root=proc_root)
         if discovered:
             display = discovered
             found["DISPLAY"] = display
