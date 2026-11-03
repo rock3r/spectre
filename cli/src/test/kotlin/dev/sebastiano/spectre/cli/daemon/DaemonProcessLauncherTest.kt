@@ -248,11 +248,11 @@ class DaemonProcessLauncherTest {
     fun `starts the daemon through setsid on Linux`() {
         assertEquals(
             listOf("/usr/bin/setsid"),
-            DaemonProcessLauncher.newSessionPrefixFor("Linux") { it == Path.of("/usr/bin/setsid") },
+            DaemonProcessLauncher.newSessionPrefixFor("Linux") { it == "/usr/bin/setsid" },
         )
         assertEquals(
             listOf("/bin/setsid"),
-            DaemonProcessLauncher.newSessionPrefixFor("Linux") { it == Path.of("/bin/setsid") },
+            DaemonProcessLauncher.newSessionPrefixFor("Linux") { it == "/bin/setsid" },
         )
     }
 
@@ -260,8 +260,7 @@ class DaemonProcessLauncherTest {
     fun `starts the daemon through perl's setsid where no setsid command exists`() {
         // macOS ships no setsid(1), but does ship perl, whose POSIX::setsid then exec keeps the
         // daemon's pid, so the launcher's Process handle still tracks the daemon itself.
-        val prefix =
-            DaemonProcessLauncher.newSessionPrefixFor("Mac OS X") { it == Path.of("/usr/bin/perl") }
+        val prefix = DaemonProcessLauncher.newSessionPrefixFor("Mac OS X") { it == "/usr/bin/perl" }
 
         assertEquals("/usr/bin/perl", prefix.first())
         assertEquals("--", prefix.last())

@@ -162,22 +162,21 @@ public class DaemonProcessLauncher(
          */
         internal fun newSessionPrefixFor(
             osName: String,
-            isExecutable: (Path) -> Boolean = Files::isExecutable,
+            isExecutable: (String) -> Boolean = { Files.isExecutable(Path.of(it)) },
         ): List<String> {
             if (osName.startsWith("Windows", ignoreCase = true)) return emptyList()
             val setsid = SETSID_CANDIDATES.firstOrNull(isExecutable)
             return when {
-                setsid != null -> listOf(setsid.toString())
-                isExecutable(PERL) ->
-                    listOf(PERL.toString(), "-MPOSIX", "-e", PERL_SETSID_EXEC, "--")
+                setsid != null -> listOf(setsid)
+                isExecutable(PERL) -> listOf(PERL, "-MPOSIX", "-e", PERL_SETSID_EXEC, "--")
                 else -> emptyList()
             }
         }
 
-        private val SETSID_CANDIDATES: List<Path> =
-            listOf(Path.of("/usr/bin/setsid"), Path.of("/bin/setsid"))
+        /** POSIX locations, kept as strings: they are only ever used on POSIX hosts. */
+        private val SETSID_CANDIDATES: List<String> = listOf("/usr/bin/setsid", "/bin/setsid")
 
-        private val PERL: Path = Path.of("/usr/bin/perl")
+        private const val PERL: String = "/usr/bin/perl"
 
         /** Leaves the caller's session, then replaces perl with the daemon command in `@ARGV`. */
         private const val PERL_SETSID_EXEC: String =
