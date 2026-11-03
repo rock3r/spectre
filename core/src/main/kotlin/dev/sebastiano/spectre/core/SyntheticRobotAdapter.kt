@@ -1,7 +1,6 @@
 package dev.sebastiano.spectre.core
 
 import java.awt.Component
-import java.awt.Container
 import java.awt.KeyboardFocusManager
 import java.awt.Point
 import java.awt.Window
@@ -9,6 +8,9 @@ import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent
+import java.lang.reflect.InvocationTargetException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicReference
 import javax.swing.SwingUtilities
 
 /**
@@ -29,8 +31,10 @@ import javax.swing.SwingUtilities
  * The driver discovers click targets by walking [rootWindow] (when pinned) plus every other
  * top-level window and its owned tree ([Window.getWindows] / [Window.getOwnedWindows]) on every
  * dispatch, so popups and secondary windows added after construction work without re-creating the
- * driver. A null [rootWindow] is the no-window factory used by `RobotDriver.synthetic()`: hit
- * testing still walks the live AWT hierarchy, and key events fall back to the first showing window.
+ * driver. Where windows overlap, the newer one wins, and while a modal dialog is showing, the
+ * windows it blocks get no synthetic input, as with real input. A null [rootWindow] is the
+ * no-window factory used by `RobotDriver.synthetic()`: hit testing still walks the live AWT
+ * hierarchy, and key events fall back to the first showing window.
  *
  * Clipboard access is left as the system clipboard — paste-based [RobotDriver.pasteText] still
  * works with synthetic Cmd/Ctrl+V keystrokes.
@@ -71,6 +75,9 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
     // Without this, `RobotDriver.swipe(...)` would deliver each drag step to a different
     // component along the path, breaking listeners that expect the full drag stream.
     @Volatile private var grabTarget: Component? = null
+    // AWT sends MOUSE_CLICKED to the component that received the press and release. If the
+    // release opened a modal dialog, that component is now blocked and the click is dropped.
+    @Volatile private var releaseTarget: Component? = null
     @Volatile private var lastClickX: Int = Int.MIN_VALUE
     @Volatile private var lastClickY: Int = Int.MIN_VALUE
     @Volatile private var lastClickTimeMs: Long = 0
@@ -136,16 +143,30 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
                 modifiers = mouseModifiers(),
             )
         }
+        releaseTarget = null
     }
 
     private fun mouseModifiers(): Int = pressedButtons or heldKeyModifiers
 
-    private fun clickCountFor(eventType: Int): Int =
-        when (eventType) {
-            MouseEvent.MOUSE_PRESSED,
-            MouseEvent.MOUSE_RELEASED,
-            MouseEvent.MOUSE_CLICKED -> lastClickCount
-            else -> 0
+    /**
+     * The component a mouse event of [type] goes to, updating the press grab and release target.
+     *
+     * While a button is down (drag in progress) the press target retains the grab — every DRAGGED
+     * and the final RELEASED route there even if the cursor has moved over a different component.
+     * MOUSE_CLICKED goes to the component that received the release.
+     */
+    private fun mouseTarget(type: Int): Component? =
+        when (type) {
+            MouseEvent.MOUSE_DRAGGED -> grabTarget ?: hitTestComponent()
+            MouseEvent.MOUSE_RELEASED -> {
+                val target = grabTarget ?: hitTestComponent()
+                grabTarget = null
+                releaseTarget = target
+                target
+            }
+            MouseEvent.MOUSE_CLICKED -> releaseTarget
+            MouseEvent.MOUSE_PRESSED -> hitTestComponent().also { grabTarget = it }
+            else -> hitTestComponent()
         }
 
     override fun mouseWheel(wheelClicks: Int) {
@@ -207,21 +228,8 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
     }
 
     private fun dispatchMouse(type: Int, button: Int, modifiers: Int) {
-        val targetComponent =
-            when (type) {
-                // While a button is down (drag in progress) the press target retains the grab —
-                // every DRAGGED and the final RELEASED/CLICKED route there even if the cursor
-                // has moved over a different component.
-                MouseEvent.MOUSE_DRAGGED,
-                MouseEvent.MOUSE_RELEASED,
-                MouseEvent.MOUSE_CLICKED -> grabTarget ?: hitTestComponent() ?: return
-                MouseEvent.MOUSE_PRESSED -> {
-                    val target = hitTestComponent() ?: return
-                    grabTarget = target
-                    target
-                }
-                else -> hitTestComponent() ?: return
-            }
+        val targetComponent = mouseTarget(type) ?: return
+        if (!targetComponent.canReceiveMouseInput()) return
         val origin = targetComponent.locationOnScreen
         val localX = lastX - origin.x
         val localY = lastY - origin.y
@@ -233,13 +241,14 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
                 modifiers,
                 localX,
                 localY,
-                clickCountFor(type),
+                clickCountFor(type, lastClickCount),
                 false, // popupTrigger
                 button,
             )
-        runOnEdt { targetComponent.dispatchEvent(event) }
-        // Release the grab after the click sequence completes (or the drag ends without click).
-        if (type == MouseEvent.MOUSE_RELEASED) grabTarget = null
+        runOnEdt {
+            targetComponent.dispatchEvent(event)
+            if (type == MouseEvent.MOUSE_PRESSED) targetComponent.focusComposeCanvasOnPress()
+        }
     }
 
     private fun hitTestComponent(): Component? {
@@ -248,6 +257,36 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
     }
 
     private fun dispatchKey(type: Int, keyCode: Int, keyCharOverride: Char? = null) {
+        val modifiers = heldKeyModifiers
+        // Real OS-injected KEY_PRESSED/KEY_RELEASED events for printable keys carry the produced
+        // char too. JavaDoc says the value is "not guaranteed to be meaningful" outside of
+        // KEY_TYPED, but in practice it IS set, and Compose Desktop's paste path on this version
+        // reads `keyChar` on KEY_PRESSED to resolve Cmd/Ctrl+V — setting CHAR_UNDEFINED here makes
+        // synthetic paste flake. Codex flagged this as a P2 fidelity issue but the empirical
+        // trade-off favours the current behaviour. The override branch carries the Shift-aware
+        // char from `keyPress`'s KEY_TYPED dispatch.
+        val keyChar =
+            keyCharOverride
+                ?: if (keyCode in PRINTABLE_KEY_CODES)
+                    keyCharFor(keyCode, shift = (modifiers and InputEvent.SHIFT_DOWN_MASK) != 0)
+                else KeyEvent.CHAR_UNDEFINED
+        // Resolved on the EDT: the lookup reads Swing focus state and Compose semantics.
+        runOnEdt {
+            val target = resolveKeyTarget()
+            val event =
+                KeyEvent(target, type, System.currentTimeMillis(), modifiers, keyCode, keyChar)
+            // Bypass `KeyboardFocusManager` via `redispatchEvent`.
+            // `Component.dispatchEvent(KeyEvent)` would otherwise hand the event to KFM first,
+            // which redirects to the global focus owner — null under `apple.awt.UIElement=true`,
+            // causing the event to be silently dropped. The `redispatchEvent` entry point exists
+            // precisely for callers "using key events generated from non-keyboard sources": it
+            // sets `KeyEvent.focusManagerIsDispatching=true` so AWT skips the KFM redirect and
+            // delivers straight to the target's `processKeyEvent`.
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().redispatchEvent(target, event)
+        }
+    }
+
+    private fun resolveKeyTarget(): Component {
         // Pick the AWT component that should receive the synthetic KeyEvent. The chain below is
         // ordered from "AWT thinks it knows where focus is" down to "best-effort by structure".
         //
@@ -257,56 +296,30 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
         // composable. Without a fallback, real text input never reaches Compose at all.
         //
         // Compose Desktop registers its AWT `KeyListener` on
-        // `ComposeSceneMediator.contentComponent`
-        // — the inner Skiko canvas (an `org.jetbrains.skiko.SkiaLayer` or
-        // `androidx.compose.ui.scene.skia.SkiaSwingLayer`) inside `ComposeWindowPanel`, NOT on the
-        // panel itself. So dispatching to the panel produces visible focus side-effects but no
-        // text. We pick the deepest descendant of a Compose host that actually has a registered
-        // `KeyListener`, which lands on the Skiko canvas in real Compose hierarchies and works
-        // for any plain-Swing fixture (test or otherwise) that registers its own key listener.
+        // `ComposeSceneMediator.contentComponent` — the inner Skiko canvas (a subclass of
+        // `org.jetbrains.skiko.SkiaLayer` or `org.jetbrains.skiko.swing.SkiaSwingLayer`) inside
+        // the Compose host panel, NOT on the panel itself. So dispatching to the panel produces
+        // visible focus side-effects but no text. We pick the deepest descendant of a Compose
+        // host that actually has a registered `KeyListener`, which lands on the Skiko canvas in
+        // real Compose hierarchies and works for any plain-Swing fixture (test or otherwise) that
+        // registers its own key listener.
         val windows = allWindows()
         val pointerTarget = hitTestComponent()
-        val composeFallbackTarget = findComposeKeyEventTarget(windows)
-        val target =
-            windows.asSequence().mapNotNull { it.focusOwner }.firstOrNull()
-                ?: pointerTarget?.findKeyListenerSelfOrDescendant()
-                ?: pointerTarget?.composeHostAncestorOrSelf()?.findKeyListenerDescendant()
-                ?: pointerTarget
-                ?: composeFallbackTarget?.findKeyListenerSelfOrDescendant()
-                ?: composeFallbackTarget
-                ?: keyFallbackWindow(windows)
-        val event =
-            KeyEvent(
-                target,
-                type,
-                System.currentTimeMillis(),
-                heldKeyModifiers,
-                keyCode,
-                // Real OS-injected KEY_PRESSED/KEY_RELEASED events for printable keys carry
-                // the produced char too. JavaDoc says the value is "not guaranteed to be
-                // meaningful" outside of KEY_TYPED, but in practice it IS set, and Compose
-                // Desktop's paste path on this version reads `keyChar` on KEY_PRESSED to
-                // resolve Cmd/Ctrl+V — setting CHAR_UNDEFINED here makes synthetic paste flake.
-                // Codex flagged this as a P2 fidelity issue but the empirical trade-off favours
-                // the current behaviour. The override branch carries the Shift-aware char from
-                // `keyPress`'s KEY_TYPED dispatch.
-                keyCharOverride
-                    ?: if (keyCode in PRINTABLE_KEY_CODES)
-                        keyCharFor(
-                            keyCode,
-                            shift = (heldKeyModifiers and InputEvent.SHIFT_DOWN_MASK) != 0,
-                        )
-                    else KeyEvent.CHAR_UNDEFINED,
+        return windows.asSequence().mapNotNull { it.focusOwner }.firstOrNull()
+            ?: pointerTarget?.findKeyListenerSelfOrDescendant()
+            ?: pointerTarget?.composeHostAncestorOrSelf()?.findKeyListenerSelfOrDescendant()
+            ?: pointerTarget
+            ?: findComposeKeyEventTarget(windows)?.let {
+                it.findKeyListenerSelfOrDescendant() ?: it
+            }
+            ?: rootWindow?.takeIf { it in windows }
+            ?: activeModalDialog()
+            ?: windows.firstOrNull { it.isShowing }
+            ?: windows.firstOrNull()
+            ?: error(
+                "RobotDriver.synthetic() has no AWT window to deliver key events to. " +
+                    "Create the Compose/Swing window first, or pass RobotDriver.synthetic(rootWindow)."
             )
-        // Bypass `KeyboardFocusManager` via `redispatchEvent`. `Component.dispatchEvent(KeyEvent)`
-        // would otherwise hand the event to KFM first, which redirects to the global focus owner —
-        // null under `apple.awt.UIElement=true`, causing the event to be silently dropped. The
-        // `redispatchEvent` entry point exists precisely for callers "using key events generated
-        // from non-keyboard sources": it sets `KeyEvent.focusManagerIsDispatching=true` so AWT
-        // skips the KFM redirect and delivers straight to the target's `processKeyEvent`.
-        runOnEdt {
-            KeyboardFocusManager.getCurrentKeyboardFocusManager().redispatchEvent(target, event)
-        }
     }
 
     private fun findWindowAt(screenX: Int, screenY: Int): Window? =
@@ -331,34 +344,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
                     .getOrDefault(false)
         }
 
-    private fun allWindows(): List<Window> {
-        val collected = LinkedHashSet<Window>()
-        val pinned = rootWindow
-        if (pinned != null) {
-            collectWindowTree(pinned, collected)
-        }
-        // Walk every other top-level window (and its owned tree). The visibility check is
-        // applied per-window inside `collectWindowTree` rather than at the top level: Swing's
-        // `SharedOwnerFrame` (parent of `JDialog(null, …)`) is itself a top-level window that
-        // is NOT showing, but its owned dialogs may be — so filtering hidden top-levels out
-        // here would drop those dialogs and synthetic input would silently miss them, even
-        // though `WindowTracker` correctly surfaces them.
-        for (other in Window.getWindows()) {
-            if (other.owner == null && other !== pinned) {
-                collectWindowTree(other, collected)
-            }
-        }
-        return collected.toList()
-    }
-
-    private fun keyFallbackWindow(windows: List<Window>): Window =
-        rootWindow
-            ?: windows.firstOrNull { it.isShowing }
-            ?: windows.firstOrNull()
-            ?: error(
-                "RobotDriver.synthetic() has no AWT window to deliver key events to. " +
-                    "Create the Compose/Swing window first, or pass RobotDriver.synthetic(rootWindow)."
-            )
+    private fun allWindows(): List<Window> = syntheticInputWindows()
 }
 
 /**
@@ -373,14 +359,42 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
  * `Thread.join()` — is fixed at the `RobotDriver` layer: [SyntheticRobotAdapter.requiresOffEdt] is
  * `false`, so the worker hop is skipped and `runOnEdt` runs the block directly when the caller is
  * already the EDT.
+ *
+ * Off the EDT this waits like [SwingUtilities.invokeAndWait], with one exception: when [block]
+ * opens a modal dialog (a click or key handler calling `JDialog.setVisible(true)` or IntelliJ's
+ * `DialogWrapper.show()`), AWT runs a nested event loop inside `dispatchEvent` and [block] does not
+ * return until the dialog closes. Waiting for it would hang the caller, which then could never
+ * drive the dialog. A marker event posted right after [block] tells the two cases apart: the EDT
+ * only reaches the marker before [block] returns if it is pumping events in a nested loop, and then
+ * this returns while [block] stays parked in that loop. Exceptions [block] throws before returning
+ * are rethrown wrapped in [InvocationTargetException], as `invokeAndWait` does.
  */
 private fun runOnEdt(block: () -> Unit) {
     if (SwingUtilities.isEventDispatchThread()) {
         block()
-    } else {
-        SwingUtilities.invokeAndWait(block)
+        return
+    }
+    val finished = CountDownLatch(1)
+    val failure = AtomicReference<Throwable?>()
+    SwingUtilities.invokeLater {
+        failure.set(runCatching(block).exceptionOrNull())
+        finished.countDown()
+    }
+    val markerReached = CountDownLatch(1)
+    SwingUtilities.invokeLater { markerReached.countDown() }
+    markerReached.await()
+    if (finished.count == 0L) {
+        failure.get()?.let { throw InvocationTargetException(it) }
     }
 }
+
+private fun clickCountFor(eventType: Int, clickCount: Int): Int =
+    when (eventType) {
+        MouseEvent.MOUSE_PRESSED,
+        MouseEvent.MOUSE_RELEASED,
+        MouseEvent.MOUSE_CLICKED -> clickCount
+        else -> 0
+    }
 
 private fun modifierMaskFor(keyCode: Int): Int =
     when (keyCode) {
@@ -390,58 +404,6 @@ private fun modifierMaskFor(keyCode: Int): Int =
         KeyEvent.VK_META -> InputEvent.META_DOWN_MASK
         else -> 0
     }
-
-private fun collectWindowTree(window: Window, into: MutableCollection<Window>) {
-    into += window
-    for (child in window.ownedWindows) {
-        collectWindowTree(child, into)
-    }
-}
-
-private fun findComposeKeyEventTarget(windows: List<Window>): Component? =
-    windows.asReversed().firstNotNullOfOrNull { window -> findComposeHostIn(window) }
-
-private fun findComposeHostIn(component: Component): Component? {
-    if (component.isComposeHostComponent()) return component
-    if (component !is Container) return null
-    return component.components.firstNotNullOfOrNull(::findComposeHostIn)
-}
-
-private fun Component.composeHostAncestorOrSelf(): Component? {
-    var current: Component? = this
-    while (current != null) {
-        if (current.isComposeHostComponent()) return current
-        current = current.parent
-    }
-    return null
-}
-
-private fun Component.isComposeHostComponent(): Boolean =
-    javaClass.name == COMPOSE_PANEL_CLASS_NAME || javaClass.name == COMPOSE_WINDOW_PANEL_CLASS_NAME
-
-/**
- * Returns this component if it has any registered AWT [java.awt.event.KeyListener]s, otherwise the
- * first such descendant in a depth-first walk, or `null` if none is found.
- *
- * Used to find the Skiko canvas under a `ComposeWindowPanel` (`ComposeSceneMediator` registers its
- * key listener on `contentComponent`, not on the outer panel). Walking by structural class name is
- * fragile across Compose versions; checking for a registered key listener is the behavioural
- * property we actually care about and keeps plain-Swing fixtures working too.
- */
-private fun Component.findKeyListenerSelfOrDescendant(): Component? {
-    if (keyListeners.isNotEmpty()) return this
-    return findKeyListenerDescendant()
-}
-
-private fun Component.findKeyListenerDescendant(): Component? {
-    if (this !is Container) return null
-    for (child in components) {
-        if (child.keyListeners.isNotEmpty()) return child
-        val nested = child.findKeyListenerDescendant()
-        if (nested != null) return nested
-    }
-    return null
-}
 
 private fun findDeepestComponentAt(root: Component, screenX: Int, screenY: Int): Component? {
     val origin = runCatching { root.locationOnScreen }.getOrNull() ?: return null
@@ -459,9 +421,6 @@ private fun buttonNumber(buttonMask: Int): Int =
     }
 
 private const val NO_BUTTON: Int = MouseEvent.NOBUTTON
-private const val COMPOSE_PANEL_CLASS_NAME: String = "androidx.compose.ui.awt.ComposePanel"
-private const val COMPOSE_WINDOW_PANEL_CLASS_NAME: String =
-    "androidx.compose.ui.awt.ComposeWindowPanel"
 
 // Conservative double-click window — matches the typical OS default. Two press/release pairs
 // at the same coordinates within this window count as a double-click, so doubleClick() emits
