@@ -49,7 +49,10 @@ public object DaemonEndpoint {
                     "daemon-v${DaemonProtocol.CurrentVersion.major}-$minor.sock",
                 )
             }
-            .onEach(::requireSocketPathFits)
+            // Legacy names are a few bytes longer than the current one. They are optional
+            // migration probes, so one that can't fit is skipped rather than failing a current
+            // endpoint that does.
+            .filter { path -> path.toString().toByteArray().size <= MAX_SOCKET_PATH_BYTES }
 
     /**
      * Selects the base directory for daemon sockets: [socketDirectoryOverride] when set, otherwise

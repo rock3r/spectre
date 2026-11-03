@@ -144,6 +144,38 @@ class DaemonEndpointTest {
     }
 
     @Test
+    fun `legacy endpoints over the limit are skipped instead of failing the current one`() {
+        // Legacy names are up to three bytes longer (`daemon-v1-12.sock`), so an override that
+        // puts the current socket at exactly the limit must not fail on the migration probes.
+        val directory =
+            (1..MAX_SOCKET_PATH_BYTES)
+                .map { length -> overrideDirectory.resolve("a".repeat(length)).toString() }
+                .first { candidate ->
+                    Path.of(candidate, "sp-d-2bd806c9", "daemon-v1.sock").toString().length ==
+                        MAX_SOCKET_PATH_BYTES
+                }
+        val current =
+            DaemonEndpoint.defaultSocketPath(
+                osName = "Linux",
+                tempDirectory = "/tmp",
+                userName = "alice",
+                socketDirectoryOverride = directory,
+            )
+
+        val legacy =
+            DaemonEndpoint.legacySocketPaths(
+                osName = "Linux",
+                tempDirectory = "/tmp",
+                userName = "alice",
+                socketDirectoryOverride = directory,
+            )
+
+        // Even the shortest legacy name (`daemon-v1-1.sock`) is two bytes longer, so none fit.
+        assertEquals(MAX_SOCKET_PATH_BYTES, current.toString().length)
+        assertEquals(emptyList(), legacy)
+    }
+
+    @Test
     fun `discovers prior minor-version sockets during the stable endpoint migration`() {
         assertEquals(
             listOf(
@@ -166,5 +198,9 @@ class DaemonEndpointTest {
                 userName = "alice",
             ),
         )
+    }
+
+    private companion object {
+        const val MAX_SOCKET_PATH_BYTES = 100
     }
 }
