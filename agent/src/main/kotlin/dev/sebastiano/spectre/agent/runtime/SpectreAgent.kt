@@ -110,16 +110,9 @@ public object SpectreAgent {
         var resourcesOwnedByAgentState = false
         var targetInputResource: AutoCloseable? = null
         try {
-            // findSpectre throws SpectreNotOnClasspathException /
-            // AmbiguousSpectreClasspathException / ComposeNotOnClasspathException;
-            // createAutomatorReflectively throws ReflectiveOperationException. Both propagate to
-            // the JVM agent layer which surfaces them at the attaching `VirtualMachine.loadAgent`
-            // call site.
-            val attached = connectOrWaitForCompose(instrumentation, parsedArgs.inputCoordination)
-            targetInputResource = attached.targetInputResource
-
-            // The attacher's frame budget has to be adopted before the IPC server can answer: this
-            // JVM writes the bulky screenshot frames and cannot read the daemon's environment.
+            // Adopt the attacher's frame budget before building the automator handler, which sizes
+            // screenshots from it. This JVM writes the bulky screenshot frames and cannot read the
+            // daemon's environment.
             parsedArgs.maxFrameBytes?.let { budget ->
                 runCatching { FrameLimits.configure(budget) }
                     .onFailure {
@@ -128,6 +121,15 @@ public object SpectreAgent {
                         )
                     }
             }
+
+            // findSpectre throws SpectreNotOnClasspathException /
+            // AmbiguousSpectreClasspathException / ComposeNotOnClasspathException;
+            // createAutomatorReflectively throws ReflectiveOperationException. Both propagate to
+            // the JVM agent layer which surfaces them at the attaching `VirtualMachine.loadAgent`
+            // call site.
+            val attached = connectOrWaitForCompose(instrumentation, parsedArgs.inputCoordination)
+            targetInputResource = attached.targetInputResource
+
             val udsPath = requestedUdsPath
             if (udsPath == null) {
                 // No UDS path means manual diagnostic mode: report window count to stderr so a
