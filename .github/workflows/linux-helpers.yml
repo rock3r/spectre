@@ -1,0 +1,122 @@
+name: Linux helpers
+
+# Builds the Linux Wayland helper (`recording/native/linux/`) natively on an x86_64 and an
+# aarch64 GitHub runner, then publishes both binaries as one `linux-helpers` artifact laid out
+# as `{x86_64,aarch64}/spectre-wayland-helper`. That is the layout `-PprebuiltLinuxHelpersDir`
+# expects. Called by `ci.yml` (to prove both arches build and bundle on every PR) and by
+# `release.yml` (to feed the publish job), so both use the same build path.
+#
+# Why native runners instead of cross-compiling from x86_64 (#583): the cross build needed dpkg
+# multi-arch (`libdbus-1-dev:arm64` from ports.ubuntu.com). To keep apt from looking for arm64
+# indexes on the default mirror, the job pinned the default Ubuntu sources to
+# `Architectures: amd64`. The Ubuntu 26.04 runner image installs its packages from the
+# `amd64v3` architecture variant, so that pin hid the index the installed packages came from,
+# and apt then "downgraded" ~40 host packages (gcc, binutils, libc, libdbus...) to the baseline
+# amd64 builds of the same version, which `apt-get install -y` refuses. A native build never
+# touches the host's apt sources and has no lockstep between two mirrors.
+#
+# Both binaries need glibc 2.39 at most, whether built on 24.04 or 26.04 (checked in #583), so
+# building on the 26.04 images does not raise the minimum glibc for users.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Linux helper (${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            file-arch: x86-64
+          # There is no `-latest` label for arm64 Linux runners; keep this on the same Ubuntu
+          # release that `ubuntu-latest` resolves to.
+          - arch: aarch64
+            runner: ubuntu-26.04-arm
+            file-arch: ARM aarch64
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Install libdbus + pkg-config (for spectre-wayland-helper Rust build)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - name: Set up Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Wayland helper for the host arch
+        # Writes `recording/build/generated/waylandHelper/native/linux/<host arch>/`.
+        run: ./gradlew :recording:assembleWaylandHelper
+
+      - name: Check the helper is a ${{ matrix.arch }} binary
+        env:
+          ARCH: ${{ matrix.arch }}
+          FILE_ARCH: ${{ matrix.file-arch }}
+        run: |
+          set -euo pipefail
+          bin="recording/build/generated/waylandHelper/native/linux/$ARCH/spectre-wayland-helper"
+          test -f "$bin"
+          description="$(file -b "$bin")"
+          echo "$description"
+          case "$description" in
+            *"$FILE_ARCH"*) ;;
+            *) echo "::error::$bin is not a $ARCH binary: $description"; exit 1 ;;
+          esac
+          echo "Highest glibc symbol versions required:"
+          objdump -T "$bin" | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -3
+
+      - name: Upload ${{ matrix.arch }} helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-helper-${{ matrix.arch }}
+          # A single directory `path:` keeps `<arch>/spectre-wayland-helper` at the artifact
+          # root, so merging both artifacts below yields the `-PprebuiltLinuxHelpersDir` layout.
+          path: recording/build/generated/waylandHelper/native/linux/
+          if-no-files-found: error
+          retention-days: 7
+
+  merge:
+    name: Merge Linux helpers
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download per-arch helpers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: linux-helper-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/linux-helpers
+
+      - name: Check both arches are present
+        run: |
+          set -euo pipefail
+          for arch in x86_64 aarch64; do
+            test -f "$RUNNER_TEMP/linux-helpers/$arch/spectre-wayland-helper"
+          done
+          find "$RUNNER_TEMP/linux-helpers" -type f
+
+      - name: Upload merged helpers
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-helpers
+          path: ${{ runner.temp }}/linux-helpers/
+          if-no-files-found: error
+          retention-days: 7

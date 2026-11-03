@@ -1,5 +1,8 @@
 package dev.sebastiano.spectre.cli.mcp
 
+import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
+import dev.sebastiano.spectre.agent.transport.ProgressRangeDto
+import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.cli.SpectreBuildMetadata
 import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
@@ -92,6 +95,7 @@ class SpectreMcpServerTest {
                 "swipe",
                 "scroll_wheel",
                 "press_key",
+                "focus_window",
                 "type_text",
                 "screenshot",
                 "capture",
@@ -304,6 +308,54 @@ class SpectreMcpServerTest {
     }
 
     @Test
+    fun `tree tool returns node state, progress, tree links, and window bounds`() = runBlocking {
+        val node =
+            NodeSnapshotDto(
+                key = "main:0:2",
+                testTag = "volume",
+                texts = emptyList(),
+                role = "Checkbox",
+                contentDescription = null,
+                isDisabled = true,
+                isSelected = true,
+                isVisible = true,
+                bounds = RectDto(1, 2, 3, 4),
+                isClickable = true,
+                toggleableState = "On",
+                progress = ProgressRangeDto(current = 0.5f, min = 0f, max = 1f, steps = 4),
+                parentKey = "main:0:1",
+                childKeys = listOf("main:0:3"),
+                boundsInWindow = RectDto(2, 4, 6, 8),
+            )
+        val server = SpectreMcpServer.create { request ->
+            assertEquals(DaemonRequest.AllNodes("session-42"), request)
+            DaemonResponse.Nodes("session-42", listOf(node))
+        }
+
+        val result = invokeTool(server, "tree", buildJsonObject { put("session_id", "session-42") })
+
+        assertTrue(result.isError != true, "tree success must not set isError: $result")
+        val body = Json.parseToJsonElement((result.content.single() as TextContent).text).jsonObject
+        val json = body.getValue("nodes").jsonArray.single().jsonObject
+        assertEquals("true", json.getValue("isClickable").jsonPrimitive.content)
+        assertEquals("true", json.getValue("isDisabled").jsonPrimitive.content)
+        assertEquals("true", json.getValue("isSelected").jsonPrimitive.content)
+        assertEquals("On", json.getValue("toggleableState").jsonPrimitive.content)
+        val progress = json.getValue("progress").jsonObject
+        assertEquals("0.5", progress.getValue("current").jsonPrimitive.content)
+        assertEquals("4", progress.getValue("steps").jsonPrimitive.content)
+        assertEquals("main:0:1", json.getValue("parentKey").jsonPrimitive.content)
+        assertEquals(
+            listOf("main:0:3"),
+            json.getValue("childKeys").jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertEquals(
+            "6",
+            json.getValue("boundsInWindow").jsonObject.getValue("width").jsonPrimitive.content,
+        )
+    }
+
+    @Test
     fun `tree tool fails closed for blank session_id without reaching daemon`() = runBlocking {
         var daemonReached = false
         val server = SpectreMcpServer.create {
@@ -417,6 +469,44 @@ class SpectreMcpServerTest {
             seen,
         )
         assertTrue(result.isError != true, "wait_until_gone should succeed on Completed")
+    }
+
+    @Test
+    fun `focus_window forwards the window index to the daemon`() = runBlocking {
+        val seen = mutableListOf<DaemonRequest>()
+        val server =
+            SpectreMcpServer.create(
+                request = { request ->
+                    seen += request
+                    DaemonResponse.Completed("pid-42")
+                }
+            )
+
+        val explicit =
+            invokeTool(
+                server,
+                "focus_window",
+                buildJsonObject {
+                    put("session_id", "pid-42")
+                    put("window_index", 1)
+                },
+            )
+        val defaulted =
+            invokeTool(server, "focus_window", buildJsonObject { put("session_id", "pid-42") })
+
+        assertEquals(
+            listOf<DaemonRequest>(
+                DaemonRequest.FocusWindow("pid-42", windowIndex = 1),
+                DaemonRequest.FocusWindow("pid-42", windowIndex = 0),
+            ),
+            seen,
+        )
+        assertTrue(explicit.isError != true, "focus_window should succeed on Completed")
+        assertTrue(defaulted.isError != true, "focus_window should succeed on Completed")
+        assertEquals(
+            listOf("session_id"),
+            server.tools.getValue("focus_window").tool.inputSchema.required,
+        )
     }
 
     @Test

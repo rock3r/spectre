@@ -91,6 +91,36 @@ automator.longClick(send, holdFor = 600.milliseconds)
 All click helpers resolve the node's `centerOnScreen` and dispatch through `RobotDriver`,
 which compensates for HiDPI/display scaling.
 
+### Nodes outside the viewport fail fast
+
+A node inside an eagerly composed scroll container, such as
+`Column(Modifier.verticalScroll(...))`, stays in the semantics tree after you scroll it out
+of view. Its `boundsInWindow` is then empty, so it has no point on screen to aim at.
+Node-targeted pointer calls (`click`, `doubleClick`, `longClick`, `moveTo`,
+`scrollWheel(node)`, and both nodes of `swipe(from, to)`) throw `IllegalStateException`
+for such a node, without sending any input. The message names the call and the node and
+says to scroll first. Over the attach path, the same message comes back as an error
+response.
+
+Scroll the container, look the node up again, and check `boundsInWindow.isEmpty` before
+acting:
+
+```kotlin
+val list = automator.findOneByTestTag("MessageList") ?: error("list missing")
+var row = automator.findOneByTestTag("row.49") ?: error("row missing")
+var attempts = 0
+while (row.boundsInWindow.isEmpty && attempts++ < 20) {
+    automator.scrollWheel(list, wheelClicks = 3)
+    automator.waitForIdle()
+    row = automator.findOneByTestTag("row.49") ?: error("row missing")
+}
+automator.click(row)
+```
+
+Aim `scrollWheel` at the container: an item that is still outside the viewport fails the
+same way. Earlier versions clicked the top-left corner of the Compose surface instead of
+failing.
+
 ### Undelivered input fails loudly on Windows and X11
 
 On Windows, node-targeted `click`, `doubleClick`, `longClick`, `swipe(from, to)` and

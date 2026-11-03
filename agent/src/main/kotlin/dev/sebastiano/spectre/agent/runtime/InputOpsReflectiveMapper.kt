@@ -25,6 +25,8 @@ internal class InputOpsReflectiveMapper(
     private val allNodes: () -> List<*>,
     private val extractKey: (Any) -> String,
     private val isTargetJvmFocused: () -> Boolean,
+    private val deliversRealOsInput: () -> Boolean = { true },
+    private val hasTrackedWindow: () -> Boolean = { true },
 ) {
     private val automatorClass: Class<*> = automator.javaClass
     private val longPrimitive: Class<*> =
@@ -229,17 +231,8 @@ internal class InputOpsReflectiveMapper(
             )
         }
         val method = pressKeyMethod ?: return unsupported("pressKey(keyCode, modifiers)")
-        // Real OS key events require the target JVM to own keyboard focus (same guard as typeText).
-        // On macOS/JBR a Robot click can update Compose focus while AWT active/focused windows
-        // lag; nudge only the unambiguous KFM focused/active window before refusing — never
-        // cycle every showing window (would re-target dialogs/popups for a node-less pressKey).
-        if (!ensureTargetJvmKeyboardFocus()) {
-            return AgentResponse.Error(
-                message =
-                    "Refusing pressKey because the target JVM does not currently own OS keyboard " +
-                        "focus. Activate the target window before sending real keyboard events.",
-                category = AgentErrorCategory.InputRejected.wireName,
-            )
+        pressKeyRefusal()?.let {
+            return it
         }
         refreshWindows()
         suspendInvoker.invoke(method, automator, request.keyCode, request.modifiers)
@@ -259,10 +252,40 @@ internal class InputOpsReflectiveMapper(
         return AgentResponse.Ok
     }
 
-    private fun ensureTargetJvmKeyboardFocus(): Boolean {
-        if (isTargetJvmFocused()) return true
+    /**
+     * Why pressKey must not dispatch right now, or null when it may.
+     *
+     * Synthetic input (the attach default) dispatches key events inside the target JVM, so they can
+     * never reach another app and do not need OS keyboard focus (#556). A synthetic `click` does
+     * not activate the window either, and `apple.awt.UIElement` apps never get OS focus at all, so
+     * the gate would refuse every key press there. Synthetic dispatch only needs a tracked window
+     * in the target JVM to pick a key event target from.
+     *
+     * Real OS key events require the target JVM to own keyboard focus (same guard as typeText). On
+     * macOS/JBR a Robot click can update Compose focus while AWT active/focused windows lag; nudge
+     * only the unambiguous KFM focused/active window before refusing — never cycle every showing
+     * window (would re-target dialogs/popups for a node-less pressKey).
+     */
+    private fun pressKeyRefusal(): AgentResponse.Error? {
+        if (!deliversRealOsInput()) {
+            refreshWindows()
+            if (hasTrackedWindow()) return null
+            return AgentResponse.Error(
+                message =
+                    "Refusing pressKey because the target JVM has no tracked window to dispatch " +
+                        "synthetic key events to.",
+                category = AgentErrorCategory.InputRejected.wireName,
+            )
+        }
+        if (isTargetJvmFocused()) return null
         nudgeKeyboardFocusOwner()
-        return isTargetJvmFocused()
+        if (isTargetJvmFocused()) return null
+        return AgentResponse.Error(
+            message =
+                "Refusing pressKey because the target JVM does not currently own OS keyboard " +
+                    "focus. Activate the target window before sending real keyboard events.",
+            category = AgentErrorCategory.InputRejected.wireName,
+        )
     }
 
     private fun nudgeKeyboardFocusOwner() {

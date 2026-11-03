@@ -350,8 +350,13 @@ The agent's `timeout + 2s` suspend-bridge limit still bounds a stalled operation
 
 Agent, HTTP, and daemon/CLI/MCP support `doubleClick`, `longClick`, `swipe`,
 `scrollWheel`, and `pressKey` (#203). Over attach, `focusWindow(nodeKey)` raises
-and focuses the node's AWT window (#364). Call it before `pressKey` or `typeText`
-when the attach client holds foreground focus.
+and focuses the node's AWT window (#364). The CLI and MCP expose it as `focus-window` and
+`focus_window`, which take a window index instead of a node key.
+
+`typeText` and `pressKey` check OS keyboard focus only for real OS input. With real OS
+input, call `focusWindow` first when the attach client holds foreground focus. Synthetic
+input, the attach default, dispatches key events inside the target JVM and does not need
+OS focus. `typeText` still requires a focused node in either mode.
 
 ## Wire format
 
@@ -418,6 +423,24 @@ Beyond `findByTestTag`, the agent transport supports:
 `NodeSnapshotDto` includes `contentDescriptions`, `isDisabled`, `isSelected` (HTTP field-set
 parity). On-screen `bounds` stay integer AWT units on the agent; HTTP keeps double
 window+screen rects.
+
+`NodeSnapshotDto` also carries node state and tree links:
+
+| Field | Meaning |
+| --- | --- |
+| `isClickable` | `true` when the node has a click action. |
+| `toggleableState` | `"On"`, `"Off"`, or `"Indeterminate"` for a checkbox or switch; `null` otherwise. |
+| `progress` | `ProgressRangeDto` (`current`, `min`, `max`, `steps`) for a slider or progress bar; `null` otherwise. |
+| `parentKey` | `key` of the parent node; `null` at a root. |
+| `childKeys` | `key`s of the child nodes, in tree order. |
+| `boundsInWindow` | Integer layout bounds within the Compose surface, in Compose (physical) pixels. |
+
+`boundsInWindow` matches `AutomatorNode.boundsInWindow`, rounded to whole pixels. It is not
+divided by the display scale, so use `bounds` for Robot input and screenshot regions.
+
+These fields have defaults, so an attacher or runtime from an older Spectre release still
+exchanges nodes with a newer one. The older side ignores the fields. The newer side reads the
+defaults when the older side does not send them.
 
 ### Payload limits (#204)
 
@@ -653,7 +676,8 @@ Restart Claude Code after changing the configuration. It can then use these tool
 1. `list_processes` to find the target PID.
 2. `attach` with that PID and retain the returned `sessionId`.
 3. `tree`, `find`, or `find_text` / `wait_for_node` for keys, then input tools
-   (`click`, `double_click`, `long_click`, `swipe`, `scroll_wheel`, `press_key`, `type_text`),
+   (`click`, `double_click`, `long_click`, `swipe`, `scroll_wheel`, `press_key`, `type_text`,
+   `focus_window`),
    and `wait_until_gone` after a dismissal before touching what it revealed.
 4. `screenshot` with `fullscreen=true` for an inline full-desktop PNG (window/surface targets
    fail closed on attach), or `capture` / `record_*` for daemon-filesystem artefacts (paths only).

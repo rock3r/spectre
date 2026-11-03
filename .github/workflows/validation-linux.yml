@@ -24,6 +24,11 @@ name: Validation tests (Linux)
 # sockets (or inherit Wayland env into xvfb-run) rely on #397 session detection so pure
 # X11 `DISPLAY` still routes to `ximagesrc` rather than portal.
 #
+# Xvfb runs without a window manager. In that setup AWT can keep a frame's Java-side location
+# at (0,0) while the X window sits where the code put it (#583), so Robot clicks and captures
+# miss. The Robot smokes re-apply their frame locations once the frames show; see
+# `reapplyFrameLocation` in `sample-desktop`'s `RobotSmokeRig.kt`.
+#
 # Counterpart to `validation-windows.yml`. Historically both workflows carried a
 # fail-tolerant + XML-source-of-truth pattern to ride out a Gradle test-executor protocol race
 # (Windows shape `Could not write '/127.0.0.1:NNNN'` originally tracked at #72; Linux shape
@@ -87,9 +92,7 @@ permissions:
 
 jobs:
   validation-linux:
-    # Pinned to 24.04 until #583: on the 26.04 image the Xvfb real-Robot smoke fails every
-    # check (input has no effect and the screenshot is solid black).
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository

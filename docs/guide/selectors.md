@@ -106,6 +106,9 @@ It refreshes windows before every poll.
 | `node.isFocused`            | Focused state.                                                    |
 | `node.isDisabled`           | Disabled state.                                                   |
 | `node.isSelected`           | Selected state (toggleable/radio).                              |
+| `node.isClickable`          | `true` when the node has a click action.                          |
+| `node.toggleableState`      | `On`, `Off`, or `Indeterminate` for a checkbox or switch; else `null`. |
+| `node.progressBarRangeInfo` | Value, range, and steps of a slider or progress bar; else `null`. |
 | `node.editableText`         | Current text-field value.                                         |
 | `node.boundsInWindow`       | Layout bounds within the window's Compose surface.                |
 | `node.boundsOnScreen`       | Bounds in screen coordinates (HiDPI-corrected).                   |

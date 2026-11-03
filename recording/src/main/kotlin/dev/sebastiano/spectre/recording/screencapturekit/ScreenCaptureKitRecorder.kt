@@ -17,8 +17,10 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * Lifecycle:
  * 1. [start] extracts the helper binary, builds the helper argv, and spawns the subprocess. Window
- *    capture also stamps a unique `Spectre/<id>` suffix on the target window's title so the helper
- *    can find that exact window across the process boundary.
+ *    capture stamps a unique `Spectre/<id>` suffix on the target window's title so the helper can
+ *    find that exact window across the process boundary, unless the window reports that its title
+ *    is already unique (AWT [asTitledWindow] adapters). A unique title is matched as-is and never
+ *    changed.
  * 2. The recorder waits a short startup probe to catch the common fast-fail exit codes
  *    ([HELPER_EXIT_BAD_ARGS], [HELPER_EXIT_WINDOW_NOT_FOUND], [HELPER_EXIT_TCC_DENIED]) and
  *    surfaces them with mapped error messages. Window mode restores the title on every failure so
@@ -119,7 +121,7 @@ internal constructor(
     ): RecordingHandle {
         validateOptions(options)
         // Resolve everything that can fail without touching window state first. Anything we do
-        // before `discriminator.apply()` doesn't need a restore path; anything after must
+        // before `discriminator?.apply()` doesn't need a restore path; anything after must
         // restore on every error branch (the original window title is held by the
         // discriminator and would otherwise stay dirty across a failed start).
         val helperPath = helperExtractor.extract()
@@ -133,8 +135,17 @@ internal constructor(
             )
         }
 
-        val discriminator = TitleDiscriminator(window)
-        discriminator.apply()
+        // Only retitle the window when its title is not already unique (same rule as
+        // ScreenCaptureKitScreenshotter, #509). Retitling a unique window shows the suffix in the
+        // recording and races with Compose `Window(title = ...)` recomposition, which can reset
+        // the title before the helper finds it (exit 3, #558).
+        val discriminator =
+            if ((window as? TitleDiscriminationAware)?.requiresTitleDiscriminator == false) {
+                null
+            } else {
+                TitleDiscriminator(window)
+            }
+        val titleContains = discriminator?.apply() ?: checkNotNull(window.title)
         // Single restore-on-failure point — flipped to true on the success path so the handle
         // takes ownership of the discriminator. Avoids per-throw-site restore() calls and the
         // associated "did we cover every exception type from ProcessBuilder.start" gotcha.
@@ -144,7 +155,7 @@ internal constructor(
                 HelperArguments(
                         source = HelperSource.Window,
                         pid = windowOwnerPid,
-                        titleContains = discriminator.value,
+                        titleContains = titleContains,
                         crop = crop,
                         output = output,
                         fps = options.frameRate,
@@ -153,11 +164,11 @@ internal constructor(
                     )
                     .toArgv(helperPath)
 
-            val handle = startHelper(output, argv, discriminator::restore)
+            val handle = startHelper(output, argv) { discriminator?.restore() }
             success = true
             return handle
         } finally {
-            if (!success) discriminator.restore()
+            if (!success) discriminator?.restore()
         }
     }
 
