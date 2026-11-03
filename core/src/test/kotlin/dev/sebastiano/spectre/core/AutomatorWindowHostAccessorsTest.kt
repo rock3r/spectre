@@ -52,10 +52,11 @@ class AutomatorWindowHostAccessorsTest {
     fun `embedded panel surface reports the panel as its host component`() {
         assumeLiveAwtAvailable()
         // ComposePanel must be created on the EDT; off it, construction throws on Windows.
-        val (host, embedded) = readOnEdt {
-            val frame = JFrame("host-accessors-embedded")
-            frame to ComposePanel().also { frame.contentPane.add(it) }
-        }
+        val (host, embedded) =
+            readOnEdt {
+                val frame = JFrame("host-accessors-embedded")
+                frame to ComposePanel().also { frame.contentPane.add(it) }
+            }
         try {
             val window = automatorWindowFor(host, composePanel = embedded)
 
