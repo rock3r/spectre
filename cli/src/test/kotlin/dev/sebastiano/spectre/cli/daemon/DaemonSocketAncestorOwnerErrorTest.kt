@@ -7,12 +7,14 @@ import kotlin.test.assertTrue
 class DaemonSocketAncestorOwnerErrorTest {
     @Test
     fun `names the directory, its owner, and the accepted owners`() {
-        val message =
-            socketAncestorOwnerError(Path.of("/shared"), owner = "mallory", currentUser = "me")
+        // Built from the Path so the expected text uses the host's separator (`\shared` on
+        // Windows).
+        val directory = Path.of("/shared")
+        val message = socketAncestorOwnerError(directory, owner = "mallory", currentUser = "me")
 
         assertTrue(
             message.startsWith(
-                "Daemon socket ancestor /shared is owned by mallory; it must be owned by root " +
+                "Daemon socket ancestor $directory is owned by mallory; it must be owned by root " +
                     "or the current user (me)."
             ),
             message,
@@ -24,12 +26,12 @@ class DaemonSocketAncestorOwnerErrorTest {
     @Test
     fun `explains the user namespace case for an overflow owner`() {
         for (owner in listOf("nobody", "65534")) {
-            val message =
-                socketAncestorOwnerError(Path.of("/tmp"), owner = owner, currentUser = "me")
+            val directory = Path.of("/tmp")
+            val message = socketAncestorOwnerError(directory, owner = owner, currentUser = "me")
 
             assertTrue(
                 message.startsWith(
-                    "Daemon socket ancestor /tmp is owned by $owner; it must be owned by root " +
+                    "Daemon socket ancestor $directory is owned by $owner; it must be owned by root " +
                         "or the current user (me)."
                 ),
                 message,
