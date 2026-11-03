@@ -9,6 +9,10 @@ import java.awt.Insets
 import java.awt.Rectangle
 import java.awt.Window
 import java.awt.image.BufferedImage
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.ServerSocketChannel
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -17,6 +21,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.io.TempDir
 
 class ScreenCaptureBackendTest {
 
@@ -212,6 +218,7 @@ class ScreenCaptureBackendTest {
                 },
                 runtimeDirHasWaylandSocket = { true },
                 displayIsPureX11 = { false },
+                displayIsXwayland = { it == ":0" },
             )
         )
     }
@@ -255,12 +262,214 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
-    fun `cmdlineMatchesXvfbDisplay accepts real Xvfb argv shape`() {
-        // Non-display args must not abort the match (see recording twin + Bugbot #401).
-        assertTrue(
-            cmdlineMatchesXvfbDisplay(listOf("Xvfb", ":99", "-screen", "0", "1280x1024x24"), ":99")
+    fun `Wayland detection prefers DISPLAY when the inherited Wayland socket is missing`() {
+        // #575: X11 container or Xvfb under a shell that inherited the host's Wayland env, with
+        // no Xvfb process visible and no xdpyinfo. The compositor socket does not exist here.
+        val probed = mutableListOf<Path>()
+        assertFalse(
+            isWaylandSession(
+                getenv = { key ->
+                    when (key) {
+                        "DISPLAY" -> ":99"
+                        "XDG_SESSION_TYPE" -> "wayland"
+                        "WAYLAND_DISPLAY" -> "wayland-1"
+                        "XDG_RUNTIME_DIR" -> "/run/user/1000"
+                        else -> null
+                    }
+                },
+                runtimeDirHasWaylandSocket = { true },
+                displayIsPureX11 = { false },
+                displayIsXwayland = { false },
+                waylandSocketExists = { path ->
+                    probed.add(path)
+                    false
+                },
+            )
         )
-        assertFalse(cmdlineMatchesXvfbDisplay(listOf("Xorg", ":0"), ":0"))
+        assertEquals(listOf(Path.of("/run/user/1000", "wayland-1")), probed)
+    }
+
+    @Test
+    fun `Wayland detection keeps Wayland when the socket exists and the X server is unknown`() {
+        assertTrue(
+            isWaylandSession(
+                getenv = { key ->
+                    when (key) {
+                        "DISPLAY" -> ":0"
+                        "WAYLAND_DISPLAY" -> "wayland-0"
+                        "XDG_RUNTIME_DIR" -> "/run/user/1000"
+                        else -> null
+                    }
+                },
+                displayIsPureX11 = { false },
+                displayIsXwayland = { false },
+                waylandSocketExists = { it == Path.of("/run/user/1000", "wayland-0") },
+            )
+        )
+    }
+
+    @Test
+    fun `Wayland detection trusts an Xwayland DISPLAY without probing further`() {
+        assertTrue(
+            isWaylandSession(
+                getenv = { key ->
+                    when (key) {
+                        "DISPLAY" -> ":0"
+                        "XDG_SESSION_TYPE" -> "wayland"
+                        "WAYLAND_DISPLAY" -> "wayland-0"
+                        else -> null
+                    }
+                },
+                displayIsPureX11 = { error("must not probe X server after Xwayland match") },
+                displayIsXwayland = { it == ":0" },
+                waylandSocketExists = { error("must not probe socket after Xwayland match") },
+            )
+        )
+    }
+
+    @Test
+    fun `Wayland detection resolves an absolute WAYLAND_DISPLAY without XDG_RUNTIME_DIR`() {
+        // Host-absolute on every OS (a leading "/" is drive-relative on Windows).
+        val socket =
+            Path.of(System.getProperty("java.io.tmpdir"), "compositor", "wayland-9")
+                .toAbsolutePath()
+        val probed = mutableListOf<Path>()
+        assertTrue(
+            isWaylandSession(
+                getenv = { key ->
+                    when (key) {
+                        "DISPLAY" -> ":0"
+                        "WAYLAND_DISPLAY" -> socket.toString()
+                        else -> null
+                    }
+                },
+                displayIsPureX11 = { false },
+                displayIsXwayland = { false },
+                waylandSocketExists = { path ->
+                    probed.add(path)
+                    true
+                },
+            )
+        )
+        assertEquals(listOf(socket), probed)
+    }
+
+    @Test
+    fun `Wayland detection treats a relative WAYLAND_DISPLAY without XDG_RUNTIME_DIR as X11`() {
+        assertFalse(
+            isWaylandSession(
+                getenv = { key ->
+                    when (key) {
+                        "DISPLAY" -> ":99"
+                        "WAYLAND_DISPLAY" -> "wayland-0"
+                        else -> null
+                    }
+                },
+                displayIsPureX11 = { false },
+                displayIsXwayland = { false },
+                waylandSocketExists = { error("relative socket cannot be resolved") },
+            )
+        )
+    }
+
+    @Test
+    fun `Wayland detection checks the default wayland-0 socket for session type alone`() {
+        val probed = mutableListOf<Path>()
+        assertFalse(
+            isWaylandSession(
+                getenv = { key ->
+                    when (key) {
+                        "DISPLAY" -> ":99"
+                        "XDG_SESSION_TYPE" -> "wayland"
+                        "XDG_RUNTIME_DIR" -> "/run/user/1000"
+                        else -> null
+                    }
+                },
+                displayIsPureX11 = { false },
+                displayIsXwayland = { false },
+                waylandSocketExists = { path ->
+                    probed.add(path)
+                    false
+                },
+            )
+        )
+        assertEquals(listOf(Path.of("/run/user/1000", "wayland-0")), probed)
+    }
+
+    @Test
+    fun `Wayland detection skips X server probes when there is no Wayland signal`() {
+        assertFalse(
+            isWaylandSession(
+                getenv = { if (it == "DISPLAY") ":99" else null },
+                displayIsPureX11 = { error("no Wayland signal to disprove") },
+                displayIsXwayland = { error("no Wayland signal to confirm") },
+                waylandSocketExists = { error("no Wayland signal to confirm") },
+            )
+        )
+    }
+
+    @Test
+    fun `isWaylandSocket accepts only a Unix domain socket`(@TempDir temp: Path) {
+        assumeTrue(
+            System.getProperty("os.name").contains("linux", ignoreCase = true),
+            "Wayland sockets only exist on Linux",
+        )
+        val socketPath = temp.resolve("wl-0")
+        ServerSocketChannel.open(StandardProtocolFamily.UNIX).use { server ->
+            server.bind(UnixDomainSocketAddress.of(socketPath))
+            assertTrue(isWaylandSocket(socketPath))
+        }
+        val regularFile = Files.createFile(temp.resolve("wl-file"))
+        assertFalse(isWaylandSocket(regularFile))
+        assertFalse(isWaylandSocket(temp))
+        assertFalse(isWaylandSocket(temp.resolve("missing")))
+    }
+
+    @Test
+    fun `displayServerForCmdline names the X server serving the display`() {
+        // Non-display args must not abort the match (see recording twin + Bugbot #401).
+        assertEquals(
+            "Xvfb",
+            displayServerForCmdline(listOf("Xvfb", ":99", "-screen", "0", "1280x1024x24"), ":99"),
+        )
+        assertEquals(
+            "Xwayland",
+            displayServerForCmdline(
+                listOf("/usr/bin/Xwayland", ":0", "-rootless", "-auth", "/run/user/1000/.x"),
+                ":0",
+            ),
+        )
+        assertEquals("Xorg", displayServerForCmdline(listOf("/usr/lib/xorg/Xorg", ":0"), ":0"))
+        assertEquals("Xtigervnc", displayServerForCmdline(listOf("Xtigervnc", ":1.0"), ":1"))
+        assertEquals("Xvnc", displayServerForCmdline(listOf("/usr/bin/Xvnc", ":2"), ":2"))
+        assertEquals("Xephyr", displayServerForCmdline(listOf("Xephyr", "-ac", ":3"), ":3"))
+        assertNull(displayServerForCmdline(listOf("Xwayland", ":0"), ":99"))
+        assertNull(displayServerForCmdline(listOf("xterm", "-display", ":99"), ":99"))
+        assertNull(displayServerForCmdline(listOf(":99", "Xvfb"), ":99"))
+    }
+
+    @Test
+    fun `localDisplayToken accepts only displays served on this host`() {
+        // Remote DISPLAYs must not match local /proc X servers with the same number.
+        assertEquals(":0", localDisplayToken(":0"))
+        assertEquals(":99", localDisplayToken(":99.0"))
+        assertEquals(":1", localDisplayToken("unix:1.0"))
+        assertNull(localDisplayToken("remote-host:0"))
+        assertNull(localDisplayToken("localhost:10.0"))
+        assertNull(localDisplayToken("[::1]:0"))
+        assertNull(localDisplayToken("wayland-0"))
+        assertNull(linuxDisplayServerName("remote-host:0"))
+    }
+
+    @Test
+    fun `X server names split into Xwayland and pure X11`() {
+        assertTrue(isXwaylandServer("Xwayland"))
+        for (name in listOf("Xvfb", "Xvnc", "Xtigervnc", "Xephyr", "Xorg")) {
+            assertFalse(isXwaylandServer(name), name)
+            assertTrue(isPureX11Server(name), name)
+        }
+        assertFalse(isPureX11Server("Xwayland"))
+        assertFalse(isPureX11Server(null))
     }
 
     @Test

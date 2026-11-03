@@ -351,8 +351,8 @@ public final class dev/sebastiano/spectre/core/RobotDriverClickAndTypeKt {
 }
 
 public final class dev/sebastiano/spectre/core/ScreenCaptureBackendKt {
-	public static final fun isWaylandSession (Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;)Z
-	public static synthetic fun isWaylandSession$default (Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Z
+	public static final fun isWaylandSession (Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;)Z
+	public static synthetic fun isWaylandSession$default (Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Z
 }
 
 public final class dev/sebastiano/spectre/core/SurfaceIdAssigner {

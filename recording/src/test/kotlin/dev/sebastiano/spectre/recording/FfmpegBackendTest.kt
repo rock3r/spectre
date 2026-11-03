@@ -1,11 +1,18 @@
 package dev.sebastiano.spectre.recording
 
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.ServerSocketChannel
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.io.TempDir
 
 /**
  * Tests for [FfmpegBackend]'s OS / session probe logic.
@@ -143,6 +150,7 @@ class FfmpegBackendTest {
                 getenv = waylandXwayland,
                 runtimeDirHasWaylandSocket = { true },
                 displayIsPureX11 = { false },
+                displayIsXwayland = { display -> display == ":0" },
             )
         )
     }
@@ -211,27 +219,235 @@ class FfmpegBackendTest {
     }
 
     // -----------------------------------------------------------------------
-    // cmdlineMatchesXvfbDisplay — pure argv matcher used by pure-X11 probe.
+    // #575: DISPLAY set + inherited Wayland env. Xwayland confirms Wayland, a pure X11 server
+    // refutes it, and otherwise the WAYLAND_DISPLAY socket must exist on disk.
     // -----------------------------------------------------------------------
 
     @Test
-    fun `cmdlineMatchesXvfbDisplay accepts typical Xvfb argv with display after binary`() {
+    fun `detectWaylandSession prefers DISPLAY when the inherited Wayland socket is missing`() {
+        // X11 container or Xvfb under a shell that inherited the host's Wayland env, with no
+        // Xvfb process visible and no xdpyinfo. The compositor socket does not exist here.
+        val env =
+            fakeEnv(
+                "DISPLAY" to ":99",
+                "XDG_SESSION_TYPE" to "wayland",
+                "WAYLAND_DISPLAY" to "wayland-1",
+                "XDG_RUNTIME_DIR" to "/run/user/1000",
+            )
+        val probed = mutableListOf<Path>()
+        assertFalse(
+            FfmpegBackend.detectWaylandSession(
+                getenv = env,
+                runtimeDirHasWaylandSocket = { true },
+                displayIsPureX11 = { false },
+                displayIsXwayland = { false },
+                waylandSocketExists = { path ->
+                    probed.add(path)
+                    false
+                },
+            )
+        )
+        assertEquals(listOf(Path.of("/run/user/1000", "wayland-1")), probed)
+    }
+
+    @Test
+    fun `detectWaylandSession keeps Wayland when the socket exists and the X server is unknown`() {
+        val env =
+            fakeEnv(
+                "DISPLAY" to ":0",
+                "WAYLAND_DISPLAY" to "wayland-0",
+                "XDG_RUNTIME_DIR" to "/run/user/1000",
+            )
+        assertTrue(
+            FfmpegBackend.detectWaylandSession(
+                getenv = env,
+                displayIsPureX11 = { false },
+                displayIsXwayland = { false },
+                waylandSocketExists = { it == Path.of("/run/user/1000", "wayland-0") },
+            )
+        )
+    }
+
+    @Test
+    fun `detectWaylandSession trusts an Xwayland DISPLAY without probing further`() {
+        val env =
+            fakeEnv(
+                "DISPLAY" to ":0",
+                "XDG_SESSION_TYPE" to "wayland",
+                "WAYLAND_DISPLAY" to "wayland-0",
+            )
+        assertTrue(
+            FfmpegBackend.detectWaylandSession(
+                getenv = env,
+                displayIsPureX11 = { error("must not probe X server after Xwayland match") },
+                displayIsXwayland = { it == ":0" },
+                waylandSocketExists = { error("must not probe socket after Xwayland match") },
+            )
+        )
+    }
+
+    @Test
+    fun `detectWaylandSession resolves an absolute WAYLAND_DISPLAY without XDG_RUNTIME_DIR`() {
+        // Host-absolute on every OS (a leading "/" is drive-relative on Windows).
+        val socket =
+            Path.of(System.getProperty("java.io.tmpdir"), "compositor", "wayland-9")
+                .toAbsolutePath()
+        val env = fakeEnv("DISPLAY" to ":0", "WAYLAND_DISPLAY" to socket.toString())
+        val probed = mutableListOf<Path>()
+        assertTrue(
+            FfmpegBackend.detectWaylandSession(
+                getenv = env,
+                displayIsPureX11 = { false },
+                displayIsXwayland = { false },
+                waylandSocketExists = { path ->
+                    probed.add(path)
+                    true
+                },
+            )
+        )
+        assertEquals(listOf(socket), probed)
+    }
+
+    @Test
+    fun `detectWaylandSession treats a relative WAYLAND_DISPLAY without XDG_RUNTIME_DIR as X11`() {
+        val env = fakeEnv("DISPLAY" to ":99", "WAYLAND_DISPLAY" to "wayland-0")
+        assertFalse(
+            FfmpegBackend.detectWaylandSession(
+                getenv = env,
+                displayIsPureX11 = { false },
+                displayIsXwayland = { false },
+                waylandSocketExists = { error("relative socket cannot be resolved") },
+            )
+        )
+    }
+
+    @Test
+    fun `detectWaylandSession checks the default wayland-0 socket for session type alone`() {
+        val env =
+            fakeEnv(
+                "DISPLAY" to ":99",
+                "XDG_SESSION_TYPE" to "wayland",
+                "XDG_RUNTIME_DIR" to "/run/user/1000",
+            )
+        val probed = mutableListOf<Path>()
+        assertFalse(
+            FfmpegBackend.detectWaylandSession(
+                getenv = env,
+                displayIsPureX11 = { false },
+                displayIsXwayland = { false },
+                waylandSocketExists = { path ->
+                    probed.add(path)
+                    false
+                },
+            )
+        )
+        assertEquals(listOf(Path.of("/run/user/1000", "wayland-0")), probed)
+    }
+
+    @Test
+    fun `detectWaylandSession skips X server probes when there is no Wayland signal`() {
+        assertFalse(
+            FfmpegBackend.detectWaylandSession(
+                getenv = fakeEnv("DISPLAY" to ":99"),
+                displayIsPureX11 = { error("no Wayland signal to disprove") },
+                displayIsXwayland = { error("no Wayland signal to confirm") },
+                waylandSocketExists = { error("no Wayland signal to confirm") },
+            )
+        )
+    }
+
+    @Test
+    fun `isWaylandSocket accepts only a Unix domain socket`(@TempDir temp: Path) {
+        assumeTrue(
+            System.getProperty("os.name").contains("linux", ignoreCase = true),
+            "Wayland sockets only exist on Linux",
+        )
+        val socketPath = temp.resolve("wl-0")
+        ServerSocketChannel.open(StandardProtocolFamily.UNIX).use { server ->
+            server.bind(UnixDomainSocketAddress.of(socketPath))
+            assertTrue(FfmpegBackend.isWaylandSocket(socketPath))
+        }
+        val regularFile = Files.createFile(temp.resolve("wl-file"))
+        assertFalse(FfmpegBackend.isWaylandSocket(regularFile))
+        assertFalse(FfmpegBackend.isWaylandSocket(temp))
+        assertFalse(FfmpegBackend.isWaylandSocket(temp.resolve("missing")))
+    }
+
+    // -----------------------------------------------------------------------
+    // displayServerForCmdline — pure argv matcher used by the X server probes.
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `displayServerForCmdline accepts typical Xvfb argv with display after binary`() {
         // Real xvfb-run shape: Xvfb :99 -screen 0 1280x1024x24 …
         // Non-display tokens must not abort the scan (Bugbot: return@anyMatch on null).
         val args = listOf("Xvfb", ":99", "-screen", "0", "1280x1024x24")
-        assertTrue(FfmpegBackend.cmdlineMatchesXvfbDisplay(args, ":99"))
-        assertFalse(FfmpegBackend.cmdlineMatchesXvfbDisplay(args, ":0"))
+        assertEquals("Xvfb", FfmpegBackend.displayServerForCmdline(args, ":99"))
+        assertNull(FfmpegBackend.displayServerForCmdline(args, ":0"))
     }
 
     @Test
-    fun `cmdlineMatchesXvfbDisplay accepts absolute Xvfb path and dotted display`() {
+    fun `displayServerForCmdline accepts absolute Xvfb path and dotted display`() {
         val args = listOf("/usr/bin/Xvfb", ":99.0", "-ac")
-        assertTrue(FfmpegBackend.cmdlineMatchesXvfbDisplay(args, ":99"))
+        assertEquals("Xvfb", FfmpegBackend.displayServerForCmdline(args, ":99"))
     }
 
     @Test
-    fun `cmdlineMatchesXvfbDisplay rejects non-Xvfb processes`() {
-        assertFalse(FfmpegBackend.cmdlineMatchesXvfbDisplay(listOf("Xorg", ":0"), ":0"))
+    fun `displayServerForCmdline names Xwayland and other X servers`() {
+        assertEquals(
+            "Xwayland",
+            FfmpegBackend.displayServerForCmdline(
+                listOf("/usr/bin/Xwayland", ":0", "-rootless", "-auth", "/run/user/1000/.x"),
+                ":0",
+            ),
+        )
+        assertEquals(
+            "Xorg",
+            FfmpegBackend.displayServerForCmdline(listOf("/usr/lib/xorg/Xorg", ":0"), ":0"),
+        )
+        assertEquals(
+            "Xtigervnc",
+            FfmpegBackend.displayServerForCmdline(listOf("Xtigervnc", ":1.0"), ":1"),
+        )
+        assertEquals(
+            "Xvnc",
+            FfmpegBackend.displayServerForCmdline(listOf("/usr/bin/Xvnc", ":2"), ":2"),
+        )
+        assertEquals(
+            "Xephyr",
+            FfmpegBackend.displayServerForCmdline(listOf("Xephyr", "-ac", ":3"), ":3"),
+        )
+    }
+
+    @Test
+    fun `displayServerForCmdline rejects other processes and displays`() {
+        assertNull(FfmpegBackend.displayServerForCmdline(listOf("Xwayland", ":0"), ":99"))
+        assertNull(FfmpegBackend.displayServerForCmdline(listOf("xterm", "-display", ":99"), ":99"))
+        assertNull(FfmpegBackend.displayServerForCmdline(listOf(":99", "Xvfb"), ":99"))
+    }
+
+    @Test
+    fun `localDisplayToken accepts only displays served on this host`() {
+        // Remote DISPLAYs must not match local /proc X servers with the same number.
+        assertEquals(":0", FfmpegBackend.localDisplayToken(":0"))
+        assertEquals(":99", FfmpegBackend.localDisplayToken(":99.0"))
+        assertEquals(":1", FfmpegBackend.localDisplayToken("unix:1.0"))
+        assertNull(FfmpegBackend.localDisplayToken("remote-host:0"))
+        assertNull(FfmpegBackend.localDisplayToken("localhost:10.0"))
+        assertNull(FfmpegBackend.localDisplayToken("[::1]:0"))
+        assertNull(FfmpegBackend.localDisplayToken("wayland-0"))
+        assertNull(FfmpegBackend.linuxDisplayServerName("remote-host:0"))
+    }
+
+    @Test
+    fun `X server names split into Xwayland and pure X11`() {
+        assertTrue(FfmpegBackend.isXwaylandServer("Xwayland"))
+        for (name in listOf("Xvfb", "Xvnc", "Xtigervnc", "Xephyr", "Xorg")) {
+            assertFalse(FfmpegBackend.isXwaylandServer(name), name)
+            assertTrue(FfmpegBackend.isPureX11Server(name), name)
+        }
+        assertFalse(FfmpegBackend.isPureX11Server("Xwayland"))
+        assertFalse(FfmpegBackend.isPureX11Server(null))
     }
 
     @Test
