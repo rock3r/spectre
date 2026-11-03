@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.semantics.SemanticsOwner
 import java.awt.Window
@@ -41,7 +42,23 @@ internal object OverlayLayerInspector {
     @OptIn(ExperimentalComposeUiApi::class)
     fun findOverlayLayerWindows(composeWindow: ComposeWindow): List<OverlayLayerEntry> {
         val composePanel = readField(composeWindow, "composePanel") ?: return emptyList()
-        val composeContainer = readField(composePanel, "_composeContainer") ?: return emptyList()
+        return findOverlayLayersInHostPanel(composePanel)
+    }
+
+    /**
+     * Same as the [ComposeWindow] overload, for a [ComposePanel] embedded in a Swing host (a
+     * `JFrame`, a `JDialog`, or a wrapper such as Jewel's `JewelComposePanelWrapper`). An embedded
+     * `ComposePanel` owns its `_composeContainer` directly, so the chain starts one hop later.
+     */
+    fun findOverlayLayerWindows(composePanel: ComposePanel): List<OverlayLayerEntry> =
+        findOverlayLayersInHostPanel(composePanel)
+
+    /**
+     * Reads `_composeContainer.layers` from a Compose host panel: the `ComposeWindowPanel` behind a
+     * [ComposeWindow], or an embedded [ComposePanel]. Both declare the same private field.
+     */
+    private fun findOverlayLayersInHostPanel(hostPanel: Any): List<OverlayLayerEntry> {
+        val composeContainer = readField(hostPanel, "_composeContainer") ?: return emptyList()
         val layers = readField(composeContainer, "layers") as? List<*> ?: return emptyList()
         return layers.mapNotNull { layer -> layer?.let(::overlayLayerEntryOrNull) }
     }
