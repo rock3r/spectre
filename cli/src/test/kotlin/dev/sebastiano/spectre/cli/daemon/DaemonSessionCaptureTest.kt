@@ -32,6 +32,7 @@ class DaemonSessionCaptureTest {
         assertEquals(listOf("Fixture" to TARGET_PID), fake.stillRequests)
         val sent = assertNotNull(fake.sentStill)
         assertEquals(0, sent.windowIndex)
+        assertEquals("surface-0", sent.surfaceId)
         assertEquals(WINDOW_BOUNDS, sent.stillWindowBounds)
         val decoded = ImageIO.read(ByteArrayInputStream(sent.png))
         assertEquals(6, decoded.width)
@@ -90,6 +91,7 @@ class DaemonSessionCaptureTest {
 
     private class SentStill(
         val windowIndex: Int,
+        val surfaceId: String,
         val png: ByteArray,
         val stillWindowBounds: RectDto,
     )
@@ -127,8 +129,8 @@ class DaemonSessionCaptureTest {
                     stillRequests += title to pid
                     still(title, pid)
                 },
-                captureWithWindowStill = { index, png, bounds ->
-                    sentStill = SentStill(index, png, bounds)
+                captureWithWindowStill = { index, surfaceId, png, bounds ->
+                    sentStill = SentStill(index, surfaceId, png, bounds)
                     result
                 },
                 inProcessCapture = {

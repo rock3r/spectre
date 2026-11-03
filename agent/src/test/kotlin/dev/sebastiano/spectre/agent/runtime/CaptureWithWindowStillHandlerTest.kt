@@ -29,6 +29,7 @@ class CaptureWithWindowStillHandlerTest {
             handler.handle(
                 AgentRequest.CaptureWithWindowStill(
                     windowIndex = 1,
+                    surfaceId = "surface-1",
                     windowStillPng = png(width = 8, height = 6),
                     stillWindowBounds = RectDto(10, 20, 4, 3),
                 )
@@ -38,6 +39,7 @@ class CaptureWithWindowStillHandlerTest {
         assertEquals(1, capture.windowIndex)
         val call = assertNotNull(automator.lastCall)
         assertEquals(1, call.windowIndex)
+        assertEquals("surface-1", call.surfaceId)
         assertEquals(8, call.image.width)
         assertEquals(6, call.image.height)
         assertEquals(Rectangle(10, 20, 4, 3), call.stillWindowBounds)
@@ -53,6 +55,7 @@ class CaptureWithWindowStillHandlerTest {
             handler.handle(
                 AgentRequest.CaptureWithWindowStill(
                     windowIndex = 0,
+                    surfaceId = "surface-0",
                     windowStillPng = png(width = 2, height = 2),
                     stillWindowBounds = RectDto(0, 0, 2, 2),
                 )
@@ -72,6 +75,7 @@ class CaptureWithWindowStillHandlerTest {
             handler.handle(
                 AgentRequest.CaptureWithWindowStill(
                     windowIndex = 0,
+                    surfaceId = "surface-0",
                     windowStillPng = byteArrayOf(1, 2, 3),
                     stillWindowBounds = RectDto(0, 0, 2, 2),
                 )
@@ -90,6 +94,7 @@ class CaptureWithWindowStillHandlerTest {
 
 private data class StillCall(
     val windowIndex: Int,
+    val surfaceId: String,
     val image: BufferedImage,
     val stillWindowBounds: Rectangle,
 )
@@ -121,10 +126,11 @@ private class StillAwareAutomator : InProcessOnlyAutomator() {
     @Suppress("unused")
     fun captureWithWindowStill(
         windowIndex: Int,
+        surfaceId: String,
         windowStill: BufferedImage,
         stillWindowBounds: Rectangle,
     ): Any {
-        lastCall = StillCall(windowIndex, windowStill, stillWindowBounds)
+        lastCall = StillCall(windowIndex, surfaceId, windowStill, stillWindowBounds)
         return StillCapture()
     }
 }

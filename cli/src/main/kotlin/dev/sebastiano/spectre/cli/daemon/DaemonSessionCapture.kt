@@ -34,6 +34,7 @@ internal class DaemonSessionCapture(
     private val captureWithWindowStill:
         (
             windowIndex: Int,
+            surfaceId: String,
             windowStillPng: ByteArray,
             stillWindowBounds: RectDto,
         ) -> AtomicCaptureResult,
@@ -48,8 +49,8 @@ internal class DaemonSessionCapture(
     ) : this(
         targetPid = delegate.pid,
         windowIdentities = { index -> delegate.windowIdentities(index) },
-        captureWithWindowStill = { index, png, bounds ->
-            delegate.captureWithWindowStill(index, png, bounds)
+        captureWithWindowStill = { index, surfaceId, png, bounds ->
+            delegate.captureWithWindowStill(index, surfaceId, png, bounds)
         },
         inProcessCapture = { index -> delegate.capture(index) },
     )
@@ -69,7 +70,12 @@ internal class DaemonSessionCapture(
             } catch (exception: IllegalArgumentException) {
                 throw stillFailed(windowIndex, exception)
             }
-        return captureWithWindowStill(windowIndex, encodePng(still), identity.windowBoundsOnScreen)
+        return captureWithWindowStill(
+            windowIndex,
+            identity.surfaceId,
+            encodePng(still),
+            identity.windowBoundsOnScreen,
+        )
     }
 
     private fun requireIdentity(windowIndex: Int): WindowIdentityDto =

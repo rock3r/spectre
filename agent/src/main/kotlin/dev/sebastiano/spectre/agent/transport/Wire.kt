@@ -175,23 +175,28 @@ internal sealed interface AgentRequest {
      * (#559). The daemon captures the native window through its own signed helper, so the target
      * JVM needs neither `spectre-recording` nor Screen Recording permission, and no desktop crop is
      * ever taken. [windowStillPng] shows the whole native window at [stillWindowBounds] (AWT screen
-     * coordinates). Replies with [AgentResponse.Capture].
+     * coordinates). [surfaceId] is the surface the daemon resolved [windowIndex] to before taking
+     * the still; the capture fails if the index now resolves elsewhere. Replies with
+     * [AgentResponse.Capture].
      */
     @Serializable
     @SerialName("captureWithWindowStill")
     data class CaptureWithWindowStill(
         val windowIndex: Int,
+        val surfaceId: String,
         @ByteString val windowStillPng: ByteArray,
         val stillWindowBounds: RectDto,
     ) : AgentRequest {
         override fun equals(other: Any?): Boolean =
             other is CaptureWithWindowStill &&
                 windowIndex == other.windowIndex &&
+                surfaceId == other.surfaceId &&
                 windowStillPng.contentEquals(other.windowStillPng) &&
                 stillWindowBounds == other.stillWindowBounds
 
         override fun hashCode(): Int {
             var result = windowIndex
+            result = 31 * result + surfaceId.hashCode()
             result = 31 * result + windowStillPng.contentHashCode()
             result = 31 * result + stillWindowBounds.hashCode()
             return result

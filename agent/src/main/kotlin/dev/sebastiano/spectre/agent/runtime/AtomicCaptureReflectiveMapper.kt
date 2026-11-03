@@ -42,10 +42,11 @@ internal object AtomicCaptureReflectiveMapper {
     }
 
     /**
-     * Invokes `ComposeAutomator.captureWithWindowStill(windowIndex, BufferedImage, Rectangle)` with
-     * the window still the daemon took (#559). A target whose `spectre-core` predates that method
-     * gets an unsupported-operation error rather than a fallback: the in-process path would need
-     * `spectre-recording` in the target and could never substitute a desktop crop anyway.
+     * Invokes `ComposeAutomator.captureWithWindowStill(windowIndex, surfaceId, BufferedImage,
+     * Rectangle)` with the window still the daemon took (#559). A target whose `spectre-core`
+     * predates that method gets an unsupported-operation error rather than a fallback: the
+     * in-process path would need `spectre-recording` in the target and could never substitute a
+     * desktop crop anyway.
      */
     fun invokeWithWindowStill(
         automator: Any,
@@ -57,6 +58,7 @@ internal object AtomicCaptureReflectiveMapper {
                     it.parameterTypes.contentEquals(
                         arrayOf(
                             Int::class.javaPrimitiveType,
+                            String::class.java,
                             BufferedImage::class.java,
                             Rectangle::class.java,
                         )
@@ -80,6 +82,7 @@ internal object AtomicCaptureReflectiveMapper {
             method.invoke(
                 automator,
                 request.windowIndex,
+                request.surfaceId,
                 image,
                 Rectangle(bounds.x, bounds.y, bounds.width, bounds.height),
             ) ?: return AgentResponse.Error("captureWithWindowStill returned null")

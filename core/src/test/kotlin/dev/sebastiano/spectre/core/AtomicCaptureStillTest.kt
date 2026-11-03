@@ -86,6 +86,8 @@ class AtomicCaptureStillTest {
                 frameInsets = Insets(28, 0, 0, 0),
                 captureRegion = surface,
                 titleCollisions = emptyList(),
+                expectedSurfaceId = "s",
+                liveSurfaceId = "s",
                 osName = "Mac OS X",
                 isWayland = false,
             )
@@ -106,6 +108,8 @@ class AtomicCaptureStillTest {
                     frameInsets = Insets(0, 0, 0, 0),
                     captureRegion = Rectangle(10, 0, 400, 300),
                     titleCollisions = emptyList(),
+                    expectedSurfaceId = "s",
+                    liveSurfaceId = "s",
                     osName = "Mac OS X",
                     isWayland = false,
                 )
@@ -124,11 +128,33 @@ class AtomicCaptureStillTest {
                     frameInsets = Insets(0, 0, 0, 0),
                     captureRegion = Rectangle(0, 0, 400, 300),
                     titleCollisions = listOf("App Settings"),
+                    expectedSurfaceId = "s",
+                    liveSurfaceId = "s",
                     osName = "Mac OS X",
                     isWayland = false,
                 )
             }
         assertTrue(error.message.orEmpty().contains("App Settings"), error.message)
+    }
+
+    @Test
+    fun `an external window still is rejected when the index now resolves to another window`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                externalWindowStill(
+                    image = BufferedImage(400, 300, BufferedImage.TYPE_INT_ARGB),
+                    stillWindowBounds = Rectangle(0, 0, 400, 300),
+                    liveWindowBounds = Rectangle(0, 0, 400, 300),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    captureRegion = Rectangle(0, 0, 400, 300),
+                    titleCollisions = emptyList(),
+                    expectedSurfaceId = "window-a",
+                    liveSurfaceId = "window-b",
+                    osName = "Mac OS X",
+                    isWayland = false,
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("window-a"), error.message)
     }
 
     @Test

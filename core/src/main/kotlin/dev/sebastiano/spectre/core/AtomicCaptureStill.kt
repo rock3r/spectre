@@ -61,7 +61,8 @@ internal fun requireAtomicCaptureNativeStill(
  * would describe different layouts, so this fails and the caller retries.
  *
  * The caller finds the window by title, so the still may show another window of this process when
- * [titleCollisions] is not empty. That also fails: the pixels would not match the tree.
+ * [titleCollisions] is not empty, or if the window index now resolves to a surface other than
+ * [expectedSurfaceId]. Both also fail: the pixels would not match the tree.
  */
 @Suppress("LongParameterList") // Every geometry input is a seam the tests substitute.
 internal fun externalWindowStill(
@@ -71,9 +72,16 @@ internal fun externalWindowStill(
     frameInsets: Insets,
     captureRegion: Rectangle,
     titleCollisions: List<String>,
+    expectedSurfaceId: String,
+    liveSurfaceId: String,
     osName: String = System.getProperty("os.name").orEmpty(),
     isWayland: Boolean = isWaylandSession(),
 ): WindowCapture {
+    check(expectedSurfaceId == liveSurfaceId) {
+        "The window list changed after the native window still was taken: the still shows " +
+            "surface $expectedSurfaceId, but the window index now resolves to $liveSurfaceId. " +
+            "Retry the capture."
+    }
     check(titleCollisions.isEmpty()) {
         "The native window still may show another window: the capture helper finds the target " +
             "by title, and other windows of this process have matching titles " +

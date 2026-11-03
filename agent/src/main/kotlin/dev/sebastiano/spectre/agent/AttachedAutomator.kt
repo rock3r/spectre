@@ -295,13 +295,15 @@ internal constructor(
      *
      * The Spectre daemon uses this so the window still comes from its own native capture helper,
      * never from a `java.awt.Robot` crop inside the target. [windowStillPng] must show the whole
-     * native window at [stillWindowBounds] in AWT screen coordinates. Fails when the target's
-     * `spectre-core` is too old to accept a still, or when the window moved or resized after the
-     * still was taken.
+     * native window at [stillWindowBounds] in AWT screen coordinates, and [surfaceId] must be the
+     * surface [windowIndex] resolved to when the still was taken. Fails when the target's
+     * `spectre-core` is too old to accept a still, or when the window moved, resized, or changed
+     * index after the still was taken.
      */
     @Throws(IOException::class)
     public fun captureWithWindowStill(
         windowIndex: Int,
+        surfaceId: String,
         windowStillPng: ByteArray,
         stillWindowBounds: RectDto,
     ): AtomicCaptureResult =
@@ -309,6 +311,7 @@ internal constructor(
             exchange(
                 AgentRequest.CaptureWithWindowStill(
                     windowIndex = windowIndex,
+                    surfaceId = surfaceId,
                     windowStillPng = windowStillPng,
                     stillWindowBounds = stillWindowBounds,
                 )
