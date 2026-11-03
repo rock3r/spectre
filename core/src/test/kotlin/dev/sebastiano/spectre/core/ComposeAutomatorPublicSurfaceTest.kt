@@ -423,7 +423,8 @@ class ComposeAutomatorPublicSurfaceTest {
         // to internal *members* of classes). Documented here so the surface test treats them as
         // "known not user-facing despite JVM bytecode visibility". R7's BCV pass will refine
         // this once it lands.
-        val HIDPI_KOTLIN_INTERNAL_FUNCTIONS: Set<String> = setOf("composeToAwtX", "composeToAwtY")
+        val HIDPI_KOTLIN_INTERNAL_FUNCTIONS: Set<String> =
+            setOf("composeToAwtX", "composeToAwtY", "composeBoundsToAwtWindowRectangle")
 
         val OBJECT_METHODS: Set<String> = setOf("equals", "hashCode", "toString")
     }

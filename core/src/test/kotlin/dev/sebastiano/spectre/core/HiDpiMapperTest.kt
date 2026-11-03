@@ -146,4 +146,73 @@ class HiDpiMapperTest {
 
         assertEquals(Rectangle(10, 5, 11, 5), result)
     }
+
+    @Test
+    fun `window-relative rectangle subtracts the window origin and keeps title-bar chrome`() {
+        // 2x display; window at (300, 200) on screen; Compose content 28 logical px below the
+        // window's top edge (title bar). A 24x16 logical-pixel button at Compose (40, 60) physical.
+        val result =
+            composeBoundsToAwtWindowRectangle(
+                left = 40f,
+                top = 60f,
+                right = 88f,
+                bottom = 92f,
+                scaleX = 2f,
+                scaleY = 2f,
+                contentOriginOnScreen = Point(300, 228),
+                windowOriginOnScreen = Point(300, 200),
+            )
+
+        assertEquals(Rectangle(20, 58, 24, 16), result)
+    }
+
+    @Test
+    fun `window-relative rectangle matches the on-screen rectangle shifted by the window origin`() {
+        val contentOrigin = Point(1012, 431)
+        val windowOrigin = Point(1000, 400)
+        val onScreen =
+            composeBoundsToAwtRectangle(
+                left = 13.3f,
+                top = 7.7f,
+                right = 141.9f,
+                bottom = 55.1f,
+                scaleX = 1.25f,
+                scaleY = 1.25f,
+                panelScreenX = contentOrigin.x,
+                panelScreenY = contentOrigin.y,
+            )
+
+        val inWindow =
+            composeBoundsToAwtWindowRectangle(
+                left = 13.3f,
+                top = 7.7f,
+                right = 141.9f,
+                bottom = 55.1f,
+                scaleX = 1.25f,
+                scaleY = 1.25f,
+                contentOriginOnScreen = contentOrigin,
+                windowOriginOnScreen = windowOrigin,
+            )
+
+        onScreen.translate(-windowOrigin.x, -windowOrigin.y)
+        assertEquals(onScreen, inWindow)
+    }
+
+    @Test
+    fun `window-relative rectangle is independent of a negative virtual-desktop origin`() {
+        // Secondary monitor left of the primary at 150%: the window sits at negative screen x.
+        val result =
+            composeBoundsToAwtWindowRectangle(
+                left = 30f,
+                top = 45f,
+                right = 180f,
+                bottom = 90f,
+                scaleX = 1.5f,
+                scaleY = 1.5f,
+                contentOriginOnScreen = Point(-1912, 132),
+                windowOriginOnScreen = Point(-1920, 100),
+            )
+
+        assertEquals(Rectangle(28, 62, 100, 30), result)
+    }
 }

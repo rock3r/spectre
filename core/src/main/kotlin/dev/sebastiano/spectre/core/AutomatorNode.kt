@@ -125,7 +125,8 @@ internal constructor(
      * Values are already density-scaled: a 24.dp inset measures 48 here on a 2× display. Compare
      * against `Dp.roundToPx()` / `LocalDensity`-scaled values. For AWT/Robot input and recording
      * regions, use [boundsOnScreen] or [centerOnScreen], which divide by the display scale and add
-     * the surface/panel screen origin; do not multiply this rect by density.
+     * the surface/panel screen origin; do not multiply this rect by density. For bounds relative to
+     * the hosting AWT window, use [boundsInAwtWindow].
      */
     public val boundsInWindow: Rect
         get() = readOnEdt { semanticsNode.boundsInWindow }
@@ -147,6 +148,11 @@ internal constructor(
             )
         }
 
+    /**
+     * Bounds in global AWT screen coordinates, in logical units (the units `java.awt.Robot` and
+     * `Component.getLocationOnScreen()` use). HiDPI-corrected: [boundsInWindow] divided by the
+     * display scale, plus the Compose content's screen origin. See also [boundsInAwtWindow].
+     */
     public val boundsOnScreen: Rectangle
         get() = readOnEdt {
             val bounds = semanticsNode.boundsInWindow
@@ -161,6 +167,33 @@ internal constructor(
                 scaleY = transform.scaleY.toFloat(),
                 panelScreenX = contentOrigin.x,
                 panelScreenY = contentOrigin.y,
+            )
+        }
+
+    /**
+     * Bounds relative to the top-left corner of the hosting AWT window ([AutomatorWindow.window]),
+     * in AWT logical units.
+     *
+     * This is [boundsOnScreen] minus the window's `locationOnScreen`, read in one EDT pass. It uses
+     * the same HiDPI scaling as [boundsOnScreen], so a 24.dp-wide node is 24 wide here on any
+     * display scale. The offset includes window decorations such as the title bar, so the result
+     * matches coordinates in the window's Swing hierarchy (for example from
+     * `SwingUtilities.convertPoint` with the window as the destination). Unlike [boundsInWindow],
+     * it is not in physical Compose pixels and is not relative to the Compose content.
+     */
+    public val boundsInAwtWindow: Rectangle
+        get() = readOnEdt {
+            val bounds = semanticsNode.boundsInWindow
+            val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
+            composeBoundsToAwtWindowRectangle(
+                left = bounds.left,
+                top = bounds.top,
+                right = bounds.right,
+                bottom = bounds.bottom,
+                scaleX = transform.scaleX.toFloat(),
+                scaleY = transform.scaleY.toFloat(),
+                contentOriginOnScreen = trackedWindow.composeContentOrigin,
+                windowOriginOnScreen = trackedWindow.windowOriginOnScreen,
             )
         }
 

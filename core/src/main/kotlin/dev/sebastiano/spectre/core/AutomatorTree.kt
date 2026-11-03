@@ -2,7 +2,10 @@
 
 package dev.sebastiano.spectre.core
 
+import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.semantics.Role
+import java.awt.Component
+import java.awt.Window
 
 /**
  * Read-only snapshot of every Spectre-visible Compose surface and the nodes in it.
@@ -30,7 +33,8 @@ public class AutomatorTree internal constructor(private val windows: List<Automa
  * tree at the time the snapshot was taken and is not a long-lived identifier. Popups ([isPopup] ==
  * `true`) come from the Compose popup layer and are listed alongside their hosting main window. The
  * `findBy*` methods filter the surface's nodes using the same matchers as the top-level
- * [ComposeAutomator] queries.
+ * [ComposeAutomator] queries. [window], [composePanel] and [hostComponent] expose the AWT objects
+ * that host the surface.
  */
 public class AutomatorWindow
 internal constructor(
@@ -41,6 +45,25 @@ internal constructor(
 
     public val surfaceId: String = trackedWindow.surfaceId
     public val isPopup: Boolean = trackedWindow.isPopup
+
+    /**
+     * The AWT [Window] that hosts this surface: a `ComposeWindow`, a Swing `JFrame` / `JDialog`
+     * with an embedded [ComposePanel], or the window Compose created for a popup.
+     */
+    public val window: Window = trackedWindow.window
+
+    /**
+     * The Swing [ComposePanel] that hosts this surface, or `null` when the surface is not inside a
+     * `ComposePanel` (for example a `ComposeWindow` or a Compose popup layer).
+     */
+    public val composePanel: ComposePanel? = trackedWindow.composePanel
+
+    /**
+     * The AWT component the surface draws into: [composePanel] when it is set, otherwise [window].
+     * Use it to place the surface inside the host's Swing hierarchy, for example with
+     * `SwingUtilities.isDescendingFrom` or `SwingUtilities.convertPoint`.
+     */
+    public val hostComponent: Component = composePanel ?: window
 
     public fun allNodes(): List<AutomatorNode> = nodes
 

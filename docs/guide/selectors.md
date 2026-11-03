@@ -112,11 +112,24 @@ It refreshes windows before every poll.
 | `node.editableText`         | Current text-field value.                                         |
 | `node.boundsInWindow`       | Layout bounds within the window's Compose surface.                |
 | `node.boundsOnScreen`       | Bounds in screen coordinates (HiDPI-corrected).                   |
+| `node.boundsInAwtWindow`    | Bounds relative to the hosting AWT window's top-left corner (HiDPI-corrected). |
 | `node.centerOnScreen`       | Centre point in screen coordinates — what input helpers click.    |
 | `node.children`             | Child nodes in the semantics tree.                                |
 | `node.parent`               | Parent node in the semantics tree, or `null` at a root.           |
 
 Use `boundsOnScreen` and `centerOnScreen` for screenshot regions or custom input.
+
+The three bounds properties use different coordinate spaces:
+
+- `boundsInWindow` is a Compose `Rect` in physical pixels, relative to the Compose
+  content. On a 2× display, a 24.dp offset is 48 here.
+- `boundsOnScreen` is an AWT `Rectangle` in logical screen units, the units that
+  `java.awt.Robot` and `Component.getLocationOnScreen()` use.
+- `boundsInAwtWindow` is `boundsOnScreen` minus the hosting window's
+  `locationOnScreen`. It is in the same logical units and includes window decorations
+  such as the title bar, so it matches coordinates in that window's Swing hierarchy
+  (for example, `SwingUtilities.convertPoint(component, point, surface.window)`). The
+  hosting window is `AutomatorWindow.window` for the node's surface.
 The [`HiDpiMapper`](https://github.com/rock3r/spectre/blob/main/core/src/main/kotlin/dev/sebastiano/spectre/core/HiDpiMapper.kt)
 handles macOS Retina, Windows DPI scaling (100/125/150/200%), and mixed-DPI multi-monitor
 setups.

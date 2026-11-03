@@ -68,4 +68,33 @@ public fun composeBoundsToAwtRectangle(
     )
 }
 
+/**
+ * Maps Compose bounds to an AWT rectangle relative to the hosting window's top-left corner.
+ *
+ * Same scaling and rounding as [composeBoundsToAwtRectangle], so the result always equals the
+ * on-screen rectangle translated by `-windowOriginOnScreen`. Both origins are in AWT logical screen
+ * units; the content offset between them includes window decorations such as the title bar.
+ */
+@OptIn(InternalSpectreApi::class)
+internal fun composeBoundsToAwtWindowRectangle(
+    left: Float,
+    top: Float,
+    right: Float,
+    bottom: Float,
+    scaleX: Float,
+    scaleY: Float,
+    contentOriginOnScreen: Point,
+    windowOriginOnScreen: Point,
+): Rectangle =
+    composeBoundsToAwtRectangle(
+        left = left,
+        top = top,
+        right = right,
+        bottom = bottom,
+        scaleX = scaleX,
+        scaleY = scaleY,
+        panelScreenX = contentOriginOnScreen.x - windowOriginOnScreen.x,
+        panelScreenY = contentOriginOnScreen.y - windowOriginOnScreen.y,
+    )
+
 private const val MIN_CAPTURE_SIZE_PX = 1
