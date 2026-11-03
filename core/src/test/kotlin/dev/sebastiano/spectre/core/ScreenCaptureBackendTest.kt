@@ -329,13 +329,17 @@ class ScreenCaptureBackendTest {
 
     @Test
     fun `Wayland detection resolves an absolute WAYLAND_DISPLAY without XDG_RUNTIME_DIR`() {
+        // Host-absolute on every OS (a leading "/" is drive-relative on Windows).
+        val socket =
+            Path.of(System.getProperty("java.io.tmpdir"), "compositor", "wayland-9")
+                .toAbsolutePath()
         val probed = mutableListOf<Path>()
         assertTrue(
             isWaylandSession(
                 getenv = { key ->
                     when (key) {
                         "DISPLAY" -> ":0"
-                        "WAYLAND_DISPLAY" -> "/tmp/compositor/wayland-9"
+                        "WAYLAND_DISPLAY" -> socket.toString()
                         else -> null
                     }
                 },
@@ -347,7 +351,7 @@ class ScreenCaptureBackendTest {
                 },
             )
         )
-        assertEquals(listOf(Path.of("/tmp/compositor/wayland-9")), probed)
+        assertEquals(listOf(socket), probed)
     }
 
     @Test

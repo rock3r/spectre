@@ -7,6 +7,7 @@ import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
@@ -360,6 +361,30 @@ class ScreenshotGoldPathsTest {
     }
 
     @Test
+    fun `linux os key with DISPLAY is linux-wayland when the compositor socket exists`(
+        @TempDir temp: Path
+    ) {
+        assumeTrue(
+            System.getProperty("os.name").contains("linux", ignoreCase = true),
+            "Wayland sockets only exist on Linux",
+        )
+        ServerSocketChannel.open(StandardProtocolFamily.UNIX).use { compositor ->
+            val socket = temp.resolve("wl-0")
+            compositor.bind(UnixDomainSocketAddress.of(socket))
+            assertEquals(
+                "linux-wayland",
+                ScreenshotGoldPaths.osKey(
+                    osName = "Linux",
+                    display = ":113",
+                    waylandDisplay = socket.toString(),
+                    sessionType = null,
+                    captureBackend = null,
+                ),
+            )
+        }
+    }
+
+    @Test
     fun `os keys cover macos windows linux-x11 and linux-wayland`(@TempDir temp: Path) {
         assertEquals(
             "macos",
@@ -390,20 +415,6 @@ class ScreenshotGoldPathsTest {
             ),
         )
         // DISPLAY plus WAYLAND_DISPLAY is Wayland only when the compositor socket exists (#575).
-        ServerSocketChannel.open(StandardProtocolFamily.UNIX).use { compositor ->
-            val socket = temp.resolve("wl-0")
-            compositor.bind(UnixDomainSocketAddress.of(socket))
-            assertEquals(
-                "linux-wayland",
-                ScreenshotGoldPaths.osKey(
-                    osName = "Linux",
-                    display = ":113",
-                    waylandDisplay = socket.toString(),
-                    sessionType = null,
-                    captureBackend = null,
-                ),
-            )
-        }
         assertEquals(
             "linux-x11",
             ScreenshotGoldPaths.osKey(

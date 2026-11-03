@@ -288,7 +288,11 @@ class FfmpegBackendTest {
 
     @Test
     fun `detectWaylandSession resolves an absolute WAYLAND_DISPLAY without XDG_RUNTIME_DIR`() {
-        val env = fakeEnv("DISPLAY" to ":0", "WAYLAND_DISPLAY" to "/tmp/compositor/wayland-9")
+        // Host-absolute on every OS (a leading "/" is drive-relative on Windows).
+        val socket =
+            Path.of(System.getProperty("java.io.tmpdir"), "compositor", "wayland-9")
+                .toAbsolutePath()
+        val env = fakeEnv("DISPLAY" to ":0", "WAYLAND_DISPLAY" to socket.toString())
         val probed = mutableListOf<Path>()
         assertTrue(
             FfmpegBackend.detectWaylandSession(
@@ -301,7 +305,7 @@ class FfmpegBackendTest {
                 },
             )
         )
-        assertEquals(listOf(Path.of("/tmp/compositor/wayland-9")), probed)
+        assertEquals(listOf(socket), probed)
     }
 
     @Test
