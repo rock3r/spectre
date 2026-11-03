@@ -87,7 +87,9 @@ permissions:
 
 jobs:
   validation-linux:
-    runs-on: ubuntu-latest
+    # Pinned to 24.04 until #583: on the 26.04 image the Xvfb real-Robot smoke fails every
+    # check (input has no effect and the screenshot is solid black).
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository

@@ -983,13 +983,16 @@ internal class ReflectiveAutomatorHandler(
         const val NATIVE_CROP_MISS_SNIPPET: String = "does not intersect the captured image"
         /**
          * Fail-closed message for attach/CLI window or surface screenshots (#359). Must mention
-         * occlusion/privacy risk and point callers at explicit fullscreen opt-in.
+         * occlusion/privacy risk, point callers at window-scoped atomic capture (#560), and at
+         * explicit fullscreen opt-in.
          */
         const val WINDOW_SCREENSHOT_UNSUPPORTED_MESSAGE: String =
             "Window/surface screenshots are not supported on the attach path: they would crop " +
                 "occlusion-prone desktop pixels (privacy risk if another window covers the " +
-                "target). Use --fullscreen (or fullscreen=true) for an explicit full-desktop " +
-                "capture."
+                "target). For a window-scoped capture, use " +
+                "'spectre capture <session> [--window <index>] [--out-dir <dir>]' (MCP: the " +
+                "capture tool), which saves the window PNG with its semantics tree. Use " +
+                "--fullscreen (or fullscreen=true) for an explicit full-desktop capture."
         /** Sentinel when a fake/partial AutomatorNode lacks an optional boolean getter. */
         val MISSING_BOOLEAN_METHOD: Method = Object::class.java.getMethod("hashCode")
 
