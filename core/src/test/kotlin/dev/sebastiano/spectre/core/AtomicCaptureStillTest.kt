@@ -137,7 +137,24 @@ class AtomicCaptureStillTest {
             listOf("App Settings"),
             remoteCaptureTitleCollisions(
                 targetTitle = "App",
-                otherTitles = listOf("App Settings", "Other", null),
+                others =
+                    listOf(
+                        CaptureTitleCandidate("App Settings", isShowing = true),
+                        CaptureTitleCandidate("Other", isShowing = true),
+                        CaptureTitleCandidate(null, isShowing = true),
+                    ),
+                osName = "Mac OS X",
+            ),
+        )
+    }
+
+    @Test
+    fun `macOS title collisions ignore hidden windows the helper cannot select`() {
+        assertEquals(
+            emptyList(),
+            remoteCaptureTitleCollisions(
+                targetTitle = "App",
+                others = listOf(CaptureTitleCandidate("App Settings", isShowing = false)),
                 osName = "Mac OS X",
             ),
         )
@@ -149,7 +166,12 @@ class AtomicCaptureStillTest {
             listOf("App"),
             remoteCaptureTitleCollisions(
                 targetTitle = "App",
-                otherTitles = listOf("App Settings", "App"),
+                others =
+                    listOf(
+                        CaptureTitleCandidate("App Settings", isShowing = true),
+                        // The Windows helper enumerates hidden windows too.
+                        CaptureTitleCandidate("App", isShowing = false),
+                    ),
                 osName = "Windows 11",
             ),
         )

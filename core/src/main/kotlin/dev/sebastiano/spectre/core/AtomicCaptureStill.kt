@@ -96,28 +96,37 @@ internal fun externalWindowStill(
  * could select instead of the target.
  *
  * The macOS ScreenCaptureKit helper selects the first window whose title contains [targetTitle].
- * The Windows helper selects a window whose title equals [targetTitle]. [otherTitles] must cover
- * every native window of this process except the target, including plain Swing windows, so the
- * check sees the same candidates as the helper.
+ * The Windows helper selects a window whose title equals [targetTitle]. [others] must cover every
+ * native window of this process except the target, including plain Swing windows, so the check sees
+ * the same candidates as the helper.
  */
 internal fun remoteCaptureTitleCollisions(
     targetTitle: String,
-    otherTitles: List<String?>,
+    others: List<CaptureTitleCandidate>,
     osName: String = System.getProperty("os.name").orEmpty(),
 ): List<String> {
-    val exactMatch = osName.startsWith("Windows", ignoreCase = true)
-    return otherTitles.filterNotNull().filter { title ->
-        if (exactMatch) title == targetTitle else title.contains(targetTitle)
-    }
+    // The Windows helper enumerates every top-level window of the process and compares titles
+    // exactly. The macOS helper only considers on-screen windows and matches "title contains".
+    val windows = osName.startsWith("Windows", ignoreCase = true)
+    return others
+        .filter { windows || it.isShowing }
+        .mapNotNull { it.title }
+        .filter { title -> if (windows) title == targetTitle else title.contains(targetTitle) }
 }
+
+/** Another window of this process, as a native capture helper could see it. */
+internal data class CaptureTitleCandidate(val title: String?, val isShowing: Boolean)
 
 /**
  * [remoteCaptureTitleCollisions] for [target] among this JVM's displayable windows. Call on EDT.
  */
 internal fun remoteCaptureTitleCollisions(target: Window): List<String> {
     val targetTitle = target.nativeTitle()?.takeIf { it.isNotBlank() } ?: return emptyList()
-    val others = Window.getWindows().filter { it !== target && it.isDisplayable }
-    return remoteCaptureTitleCollisions(targetTitle, others.map { it.nativeTitle() })
+    val others =
+        Window.getWindows()
+            .filter { it !== target && it.isDisplayable }
+            .map { CaptureTitleCandidate(it.nativeTitle(), it.isShowing) }
+    return remoteCaptureTitleCollisions(targetTitle, others)
 }
 
 private fun Window.nativeTitle(): String? =
