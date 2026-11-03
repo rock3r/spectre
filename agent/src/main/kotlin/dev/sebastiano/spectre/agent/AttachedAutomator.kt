@@ -304,6 +304,7 @@ internal constructor(
     public fun captureWithWindowStill(
         windowIndex: Int,
         surfaceId: String,
+        windowTitle: String,
         windowStillPng: ByteArray,
         stillWindowBounds: RectDto,
     ): AtomicCaptureResult =
@@ -312,6 +313,7 @@ internal constructor(
                 AgentRequest.CaptureWithWindowStill(
                     windowIndex = windowIndex,
                     surfaceId = surfaceId,
+                    windowTitle = windowTitle,
                     windowStillPng = windowStillPng,
                     stillWindowBounds = stillWindowBounds,
                 )

@@ -60,9 +60,10 @@ internal fun requireAtomicCaptureNativeStill(
  * at [stillWindowBounds]. If the window has moved or resized since then, the pixels and the tree
  * would describe different layouts, so this fails and the caller retries.
  *
- * The caller finds the window by title, so the still may show another window of this process when
- * [titleCollisions] is not empty, or if the window index now resolves to a surface other than
- * [expectedSurfaceId]. Both also fail: the pixels would not match the tree.
+ * The caller finds the window by [expectedTitle], so the still may show another window of this
+ * process when the title has changed since, when [titleCollisions] is not empty, or when the window
+ * index now resolves to a surface other than [expectedSurfaceId]. All of these fail too: the pixels
+ * would not match the tree.
  */
 @Suppress("LongParameterList") // Every geometry input is a seam the tests substitute.
 internal fun externalWindowStill(
@@ -72,6 +73,8 @@ internal fun externalWindowStill(
     frameInsets: Insets,
     captureRegion: Rectangle,
     titleCollisions: List<String>,
+    expectedTitle: String,
+    liveTitle: String?,
     expectedSurfaceId: String,
     liveSurfaceId: String,
     osName: String = System.getProperty("os.name").orEmpty(),
@@ -81,6 +84,11 @@ internal fun externalWindowStill(
         "The window list changed after the native window still was taken: the still shows " +
             "surface $expectedSurfaceId, but the window index now resolves to $liveSurfaceId. " +
             "Retry the capture."
+    }
+    check(expectedTitle == liveTitle) {
+        "The window title changed after the native window still was taken " +
+            "(\"$expectedTitle\" -> \"$liveTitle\"), so the still may show another window. Retry " +
+            "the capture."
     }
     check(titleCollisions.isEmpty()) {
         "The native window still may show another window: the capture helper finds the target " +
@@ -126,18 +134,19 @@ internal fun remoteCaptureTitleCollisions(
 internal data class CaptureTitleCandidate(val title: String?, val isShowing: Boolean)
 
 /**
- * [remoteCaptureTitleCollisions] for [target] among this JVM's displayable windows. Call on EDT.
+ * [remoteCaptureTitleCollisions] for [target], searched by [title], among this JVM's displayable
+ * windows. Call on EDT.
  */
-internal fun remoteCaptureTitleCollisions(target: Window): List<String> {
-    val targetTitle = target.nativeTitle()?.takeIf { it.isNotBlank() } ?: return emptyList()
+internal fun remoteCaptureTitleCollisions(target: Window, title: String): List<String> {
     val others =
         Window.getWindows()
             .filter { it !== target && it.isDisplayable }
             .map { CaptureTitleCandidate(it.nativeTitle(), it.isShowing) }
-    return remoteCaptureTitleCollisions(targetTitle, others)
+    return remoteCaptureTitleCollisions(title, others)
 }
 
-private fun Window.nativeTitle(): String? =
+/** The title a native capture helper sees for this window, or null for an untitled host. */
+internal fun Window.nativeTitle(): String? =
     when (this) {
         is Frame -> title
         is Dialog -> title

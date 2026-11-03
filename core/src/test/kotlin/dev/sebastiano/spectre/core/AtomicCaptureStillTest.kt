@@ -87,6 +87,8 @@ class AtomicCaptureStillTest {
                 captureRegion = surface,
                 titleCollisions = emptyList(),
                 expectedSurfaceId = "s",
+                expectedTitle = "App",
+                liveTitle = "App",
                 liveSurfaceId = "s",
                 osName = "Mac OS X",
                 isWayland = false,
@@ -109,6 +111,8 @@ class AtomicCaptureStillTest {
                     captureRegion = Rectangle(10, 0, 400, 300),
                     titleCollisions = emptyList(),
                     expectedSurfaceId = "s",
+                    expectedTitle = "App",
+                    liveTitle = "App",
                     liveSurfaceId = "s",
                     osName = "Mac OS X",
                     isWayland = false,
@@ -129,6 +133,8 @@ class AtomicCaptureStillTest {
                     captureRegion = Rectangle(0, 0, 400, 300),
                     titleCollisions = listOf("App Settings"),
                     expectedSurfaceId = "s",
+                    expectedTitle = "App",
+                    liveTitle = "App",
                     liveSurfaceId = "s",
                     osName = "Mac OS X",
                     isWayland = false,
@@ -148,6 +154,8 @@ class AtomicCaptureStillTest {
                     frameInsets = Insets(0, 0, 0, 0),
                     captureRegion = Rectangle(0, 0, 400, 300),
                     titleCollisions = emptyList(),
+                    expectedTitle = "App",
+                    liveTitle = "App",
                     expectedSurfaceId = "window-a",
                     liveSurfaceId = "window-b",
                     osName = "Mac OS X",
@@ -155,6 +163,28 @@ class AtomicCaptureStillTest {
                 )
             }
         assertTrue(error.message.orEmpty().contains("window-a"), error.message)
+    }
+
+    @Test
+    fun `an external window still is rejected when the window title changed after it was taken`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                externalWindowStill(
+                    image = BufferedImage(400, 300, BufferedImage.TYPE_INT_ARGB),
+                    stillWindowBounds = Rectangle(0, 0, 400, 300),
+                    liveWindowBounds = Rectangle(0, 0, 400, 300),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    captureRegion = Rectangle(0, 0, 400, 300),
+                    titleCollisions = emptyList(),
+                    expectedTitle = "App",
+                    liveTitle = "Document",
+                    expectedSurfaceId = "s",
+                    liveSurfaceId = "s",
+                    osName = "Mac OS X",
+                    isWayland = false,
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("Document"), error.message)
     }
 
     @Test

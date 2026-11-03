@@ -35,6 +35,7 @@ internal class DaemonSessionCapture(
         (
             windowIndex: Int,
             surfaceId: String,
+            windowTitle: String,
             windowStillPng: ByteArray,
             stillWindowBounds: RectDto,
         ) -> AtomicCaptureResult,
@@ -49,8 +50,8 @@ internal class DaemonSessionCapture(
     ) : this(
         targetPid = delegate.pid,
         windowIdentities = { index -> delegate.windowIdentities(index) },
-        captureWithWindowStill = { index, surfaceId, png, bounds ->
-            delegate.captureWithWindowStill(index, surfaceId, png, bounds)
+        captureWithWindowStill = { index, surfaceId, title, png, bounds ->
+            delegate.captureWithWindowStill(index, surfaceId, title, png, bounds)
         },
         inProcessCapture = { index -> delegate.capture(index) },
     )
@@ -73,6 +74,7 @@ internal class DaemonSessionCapture(
         return captureWithWindowStill(
             windowIndex,
             identity.surfaceId,
+            title,
             encodePng(still),
             identity.windowBoundsOnScreen,
         )

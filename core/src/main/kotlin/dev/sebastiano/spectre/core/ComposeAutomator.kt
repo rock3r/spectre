@@ -519,27 +519,36 @@ private constructor(
      * The Spectre daemon uses this on the attach path (#559). It takes [windowStill] with its own
      * native capture helper, then sends it here so the semantics snapshot and the PNG still come
      * from one call. [windowStill] must show the whole native window, as the platform window
-     * capture helpers produce it, at [stillWindowBounds] in AWT screen coordinates. [surfaceId] is
-     * the surface the caller resolved [windowIndex] to before it took the still. The tree is read
-     * right after the still was taken. If the window moved or resized in between, the index now
-     * resolves to another surface, or another window of this process has a title the capture helper
-     * could have matched instead, this throws [IllegalStateException].
+     * capture helpers produce it, at [stillWindowBounds] in AWT screen coordinates. [surfaceId] and
+     * [windowTitle] are the surface and title the caller resolved [windowIndex] to, and searched
+     * with, before it took the still. The tree is read right after the still was taken. If the
+     * window moved or resized in between, the index now resolves to another surface, the title
+     * changed, or another window of this process has a title the capture helper could have matched
+     * instead, this throws [IllegalStateException].
      */
     @InternalSpectreApi
     public fun captureWithWindowStill(
         windowIndex: Int,
         surfaceId: String,
+        windowTitle: String,
         windowStill: BufferedImage,
         stillWindowBounds: Rectangle,
     ): AtomicCapture =
         captureAtomically(windowIndex) { trackedWindow, pre ->
+            val window = trackedWindow.window
+            val (liveTitle, collisions) =
+                readOnEdt {
+                    window.nativeTitle() to remoteCaptureTitleCollisions(window, windowTitle)
+                }
             externalWindowStill(
                 image = windowStill,
                 stillWindowBounds = stillWindowBounds,
                 liveWindowBounds = pre.windowBounds,
                 frameInsets = pre.frameInsets,
                 captureRegion = pre.captureRegion,
-                titleCollisions = readOnEdt { remoteCaptureTitleCollisions(trackedWindow.window) },
+                titleCollisions = collisions,
+                expectedTitle = windowTitle,
+                liveTitle = liveTitle,
                 expectedSurfaceId = surfaceId,
                 liveSurfaceId = trackedWindow.surfaceId,
             )
