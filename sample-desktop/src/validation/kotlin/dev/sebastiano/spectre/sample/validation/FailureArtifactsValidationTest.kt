@@ -57,6 +57,7 @@ class FailureArtifactsValidationTest {
     fun `JUnit 4 rule writes capture json and png on failure while windows are open`(
         @TempDir reportsRoot: Path
     ): Unit = runBlocking {
+        assumeFalse(isGitHubHostedWindows(), NO_NATIVE_STILL_ON_HOSTED_WINDOWS)
         settleFixture()
         val config = FailureArtifactsConfig(reportsRoot = reportsRoot)
         val rule = ComposeAutomatorRule(factory = { fixture.automator }, failureArtifacts = config)
@@ -91,6 +92,7 @@ class FailureArtifactsValidationTest {
     fun `JUnit 5 extension afterTestExecution writes artifacts and report entries`(
         @TempDir reportsRoot: Path
     ): Unit = runBlocking {
+        assumeFalse(isGitHubHostedWindows(), NO_NATIVE_STILL_ON_HOSTED_WINDOWS)
         settleFixture()
         val config = FailureArtifactsConfig(reportsRoot = reportsRoot)
         val extension =
@@ -338,3 +340,14 @@ private class MapBackedStore : ExtensionContext.Store {
         return requiredType.cast(value)
     }
 }
+
+/**
+ * GitHub-hosted Windows runners have no interactive console for Windows Graphics Capture, so atomic
+ * capture fails there instead of falling back to a desktop crop. Matches core's check.
+ */
+internal fun isGitHubHostedWindows(): Boolean =
+    System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true) &&
+        System.getenv("RUNNER_ENVIRONMENT") == "github-hosted"
+
+internal const val NO_NATIVE_STILL_ON_HOSTED_WINDOWS: String =
+    "Atomic capture needs a native window still, which GitHub-hosted Windows cannot take"

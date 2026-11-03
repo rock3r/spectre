@@ -117,6 +117,7 @@ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/Au
 	public final fun allNodes ()Ljava/util/List;
 	public final fun capture (Ljava/lang/Integer;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
 	public static synthetic fun capture$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/Integer;ILjava/lang/Object;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
+	public final fun captureWithWindowStill (ILjava/lang/String;Ljava/lang/String;[BLdev/sebastiano/spectre/agent/transport/RectDto;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
 	public final fun click (Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;)V
 	public final fun click (Ljava/lang/String;)V
 	public fun close ()V

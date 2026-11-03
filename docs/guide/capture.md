@@ -66,11 +66,38 @@ val result = automator.capture(windowIndex = 0)
 // result.captureJson + result.pngBytes; write via your own paths or the agent/CLI surfaces
 ```
 
-With `spectre-recording` present, the PNG is a **window-scoped** native still (same path as
-`screenshot(windowIndex)`), not a silent desktop crop after a failed native still. Without
-recording on the classpath, the still is a Robot region capture of the Compose surface (agent
-inject payloads often omit recording). Settle the UI before calling so the semantics tree and
-pixels stay decision-grade across native still-helper latency.
+The PNG is always a **window-scoped** native still, taken through the same path as
+`screenshot(windowIndex)`. In-process `capture()` needs `spectre-recording` and the helper
+artifact for your OS (`spectre-recording-macos`, `-windows`, or `-linux`) on the runtime
+classpath. Without them, or when the native still fails, `capture()` throws. It never takes a
+`java.awt.Robot` crop of the screen instead, because a crop can include other windows that cover
+the target. Settle the UI before calling so the semantics tree and pixels stay decision-grade
+across native still-helper latency.
+
+## Attached applications
+
+`spectre capture` and the MCP `capture` tool take the window still in the **daemon**, not in the
+attached application. The application does not need `spectre-recording` on its classpath. The
+daemon finds the window by its title among the windows of the attached process, takes the still
+with its own native helper, and then reads the semantics tree from the application.
+
+This has three consequences:
+
+- **The window needs a unique, non-blank title.** The capture fails and names the problem when
+  the title is blank, or when another window of the same process has a matching title. On macOS a
+  title matches when it contains this window's title, and only visible windows count. On Windows
+  the title must be equal, and hidden windows count too. Plain Swing dialogs count as well as
+  Compose windows.
+- **macOS Screen Recording permission belongs to the daemon's helper.** The same grant that
+  `spectre record` uses covers `spectre capture`. The attached `java` process does not need its
+  own grant. Check it with `spectre permissions check`.
+- **A failed still is an error.** Spectre reports it and does not substitute a desktop crop. If
+  the window moves or resizes between the still and the tree read, the capture also fails; retry
+  once the window is settled.
+
+On Linux the daemon has no way to take a still of another process's window. There, the attached
+application takes the still itself, so it needs `spectre-recording` and its Linux helper on its
+classpath. Without them the capture fails with a message that says what is missing.
 
 Library details live in `:core` under `dev.sebastiano.spectre.core.capture`.
 
@@ -108,9 +135,10 @@ the JUnit failure artifacts below.
     On the attach path the pixels come from the `spectre-core` already on the **target's**
     classpath, not from the CLI. A target running a core older than screen-pixel stills has no
     `screenshotAtDeviceScale`, so `screenshot --fullscreen` falls back to its logical-size
-    `screenshot(region)` and `capture` uses that core's own still behaviour — the command succeeds
-    and returns a **dp-sized** PNG. This is deliberate: refusing would break attach against
-    applications Spectre otherwise drives fine.
+    `screenshot(region)` and returns a **dp-sized** PNG. This is deliberate: refusing would break
+    attach against applications Spectre otherwise drives fine. `capture` is different: a target
+    core too old to accept the daemon's window still makes `capture` fail with a message that
+    asks you to update it.
 
     `capture.json` still describes what you actually got, so the check is the same one as always —
     compare `window.imageWidth` against `window.boundsScreen.width`. Bump the `spectre-core`
@@ -135,10 +163,8 @@ the JUnit failure artifacts below.
     rectangle rather than capturing each display at its own. The still comes back at that display's
     scale, so a desktop centred on a 1x monitor downsamples the Retina parts.
 
-    Window-scoped stills escape this only while `spectre-recording` is on the target's classpath,
-    because the native helpers use the target window's own screen scale. Without it a window still
-    is a Robot region capture too, so a window straddling displays of different densities shares
-    the limit.
+    Window-scoped stills, including every `capture`, do not have this limit, because the native
+    helpers use the target window's own screen scale.
 
     Window-scoped stills are bounded by the window, so they effectively never hit the budget. A
     `capture` of an extremely large window on a high-density display is the exception: it fails

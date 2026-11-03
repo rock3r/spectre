@@ -171,6 +171,42 @@ internal sealed interface AgentRequest {
     @Serializable @SerialName("capture") data class Capture(val windowIndex: Int = 0) : AgentRequest
 
     /**
+     * Atomic capture that pairs the semantics snapshot with a window still the daemon already took
+     * (#559). The daemon captures the native window through its own signed helper, so the target
+     * JVM needs neither `spectre-recording` nor Screen Recording permission, and no desktop crop is
+     * ever taken. [windowStillPng] shows the whole native window at [stillWindowBounds] (AWT screen
+     * coordinates). [surfaceId] and [windowTitle] are the surface the daemon resolved [windowIndex]
+     * to and the title it searched with; the capture fails if either has changed. Replies with
+     * [AgentResponse.Capture].
+     */
+    @Serializable
+    @SerialName("captureWithWindowStill")
+    data class CaptureWithWindowStill(
+        val windowIndex: Int,
+        val surfaceId: String,
+        val windowTitle: String,
+        @ByteString val windowStillPng: ByteArray,
+        val stillWindowBounds: RectDto,
+    ) : AgentRequest {
+        override fun equals(other: Any?): Boolean =
+            other is CaptureWithWindowStill &&
+                windowIndex == other.windowIndex &&
+                surfaceId == other.surfaceId &&
+                windowTitle == other.windowTitle &&
+                windowStillPng.contentEquals(other.windowStillPng) &&
+                stillWindowBounds == other.stillWindowBounds
+
+        override fun hashCode(): Int {
+            var result = windowIndex
+            result = 31 * result + surfaceId.hashCode()
+            result = 31 * result + windowTitle.hashCode()
+            result = 31 * result + windowStillPng.contentHashCode()
+            result = 31 * result + stillWindowBounds.hashCode()
+            return result
+        }
+    }
+
+    /**
      * Describe native window identity so an out-of-process (daemon) recorder can target capture.
      *
      * When [windowIndex] is null, every tracked window is described. When set, only that index is
@@ -298,6 +334,7 @@ internal val AgentRequest.logLabel: String
             is AgentRequest.TypeText -> "typeText"
             is AgentRequest.Screenshot -> "screenshot"
             is AgentRequest.Capture -> "capture"
+            is AgentRequest.CaptureWithWindowStill -> "captureWithWindowStill"
             is AgentRequest.WindowIdentity -> "windowIdentity"
             AgentRequest.Detach -> "detach"
             is AgentRequest.Hello -> "hello"
@@ -330,6 +367,7 @@ internal val AgentRequest.requiresInputLane: Boolean
             is AgentRequest.FindByRole,
             is AgentRequest.Screenshot,
             is AgentRequest.Capture,
+            is AgentRequest.CaptureWithWindowStill,
             is AgentRequest.WindowIdentity,
             AgentRequest.Detach,
             is AgentRequest.Hello,

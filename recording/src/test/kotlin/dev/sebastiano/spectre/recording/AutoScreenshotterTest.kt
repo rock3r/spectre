@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
+import dev.sebastiano.spectre.recording.screencapturekit.TitleDiscriminationAware
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
@@ -151,6 +152,66 @@ class AutoScreenshotterTest {
 
         assertTrue(error.message.orEmpty().contains("unsupported"))
     }
+
+    @Test
+    fun `captureWindowByTitle targets another process's window on macOS without renaming it`() {
+        val sck = StubWindowScreenshotter()
+        val screenshotter = autoScreenshotter(sckScreenshotter = sck, isMacOs = { true })
+
+        screenshotter.captureWindowByTitle(title = "Remote App", windowOwnerPid = 4242L)
+
+        assertEquals(1, sck.captureCallCount)
+        assertEquals("Remote App", sck.lastWindow?.title)
+        assertEquals(4242L, sck.lastWindowOwnerPid)
+        // A discriminator would rename a window object in this JVM, not the remote window, and
+        // the helper would then search the target process for a title that does not exist.
+        assertEquals(
+            false,
+            (sck.lastWindow as? TitleDiscriminationAware)?.requiresTitleDiscriminator,
+        )
+    }
+
+    @Test
+    fun `captureWindowByTitle routes to the Windows helper with the owner pid`() {
+        val windows = StubWindowScreenshotter()
+        val screenshotter =
+            autoScreenshotter(
+                windowsWindowScreenshotter = windows,
+                isMacOs = { false },
+                isWindows = { true },
+            )
+
+        screenshotter.captureWindowByTitle(title = "Remote App", windowOwnerPid = 4242L)
+
+        assertEquals(1, windows.captureCallCount)
+        assertEquals("Remote App", windows.lastWindow?.title)
+        assertEquals(4242L, windows.lastWindowOwnerPid)
+    }
+
+    @Test
+    fun `captureWindowByTitle rejects a blank title`() {
+        val screenshotter = autoScreenshotter(isMacOs = { true })
+
+        assertFailsWith<IllegalArgumentException> {
+            screenshotter.captureWindowByTitle(title = " ", windowOwnerPid = 4242L)
+        }
+    }
+
+    @Test
+    fun `captureWindowByTitle is unsupported on Linux`() {
+        val linux = StubWindowScreenshotter()
+        val screenshotter =
+            autoScreenshotter(
+                linuxWindowScreenshotter = linux,
+                isMacOs = { false },
+                isLinux = { true },
+            )
+
+        assertFailsWith<UnsupportedOperationException> {
+            screenshotter.captureWindowByTitle(title = "Remote App", windowOwnerPid = 4242L)
+        }
+        assertEquals(0, linux.captureCallCount)
+    }
 }
 
 private fun autoScreenshotter(
@@ -190,9 +251,13 @@ private class StubWindowScreenshotter(
     var titleDuringCapture: String? = null
         private set
 
+    var lastWindowOwnerPid: Long? = null
+        private set
+
     override fun captureWindow(window: TitledWindow, windowOwnerPid: Long): BufferedImage {
         captureCallCount += 1
         lastWindow = window
+        lastWindowOwnerPid = windowOwnerPid
         titleDuringCapture = window.title
         return when (behavior) {
             StubScreenshotBehavior.Succeeds -> BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB)

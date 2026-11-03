@@ -10,7 +10,6 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import dev.sebastiano.spectre.core.capture.AtomicCapture
 import dev.sebastiano.spectre.core.capture.AtomicCaptureBuilder
-import dev.sebastiano.spectre.core.capture.CaptureNodeSnapshot
 import dev.sebastiano.spectre.core.perf.ExperimentalSpectreApi
 import dev.sebastiano.spectre.core.perf.RecompositionMonitor
 import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
@@ -487,10 +486,12 @@ private constructor(
      * The tree (including node geometry) is read first; the PNG is taken immediately afterward
      * without returning control to the caller. Prefer settling with [waitForVisualIdle] /
      * [waitForIdle] first so the pair stays decision-grade across any native still-helper latency.
-     * When `spectre-recording` is present the PNG uses the same **window-scoped** native still path
-     * as [screenshot] with a [windowIndex] (fails loudly rather than substituting a screen-region
-     * crop after a native failure). Without that backend (e.g. inject payload that omits
-     * recording), the still is a Robot region capture of the Compose surface.
+     * The PNG always uses the same **window-scoped** native still path as [screenshot] with a
+     * [windowIndex], which needs `spectre-recording` and its platform helper on the classpath.
+     * Without them, or when the native still fails, this throws. It never substitutes a
+     * `java.awt.Robot` crop of the screen, because a crop can include other windows that cover the
+     * target (#559). Attached applications get native stills through the Spectre daemon instead;
+     * see [captureWithWindowStill].
      *
      * The PNG is **screen-pixel** sized, not dp sized: a 1600x1000dp window on a 2x display
      * produces a 3200x2000 pixel PNG, the same resolution `Recorder` writes for that window.
@@ -507,69 +508,72 @@ private constructor(
      * that want "first showing" resolve via [windows] + `isShowing` before calling.
      */
     public fun capture(windowIndex: Int = 0): AtomicCapture {
+        // Fail before reading the tree: without a native window still there is nothing to pair
+        // the tree with, and a Robot desktop crop is never an acceptable substitute (#559).
+        requireAtomicCaptureNativeStill(allowsPlatformCapture = robotDriver.allowsPlatformCapture)
+        return captureAtomically(windowIndex) { trackedWindow, pre ->
+            screenshotTrackedRegionCapture(
+                trackedWindow,
+                pre.captureRegion,
+                pre.windowBounds,
+                pre.frameInsets,
+            )
+        }
+    }
+
+    /**
+     * Atomic capture that uses a window still another process already took, instead of taking one
+     * in this JVM.
+     *
+     * The Spectre daemon uses this on the attach path (#559). It takes [windowStill] with its own
+     * native capture helper, then sends it here so the semantics snapshot and the PNG still come
+     * from one call. [windowStill] must show the whole native window, as the platform window
+     * capture helpers produce it, at [stillWindowBounds] in AWT screen coordinates. [surfaceId] and
+     * [windowTitle] are the surface and title the caller resolved [windowIndex] to, and searched
+     * with, before it took the still. The tree is read right after the still was taken. If the
+     * window moved or resized in between, the index now resolves to another surface, the title
+     * changed, or another window of this process has a title the capture helper could have matched
+     * instead, this throws [IllegalStateException].
+     */
+    @InternalSpectreApi
+    public fun captureWithWindowStill(
+        windowIndex: Int,
+        surfaceId: String,
+        windowTitle: String,
+        windowStill: BufferedImage,
+        stillWindowBounds: Rectangle,
+    ): AtomicCapture =
+        captureAtomically(windowIndex) { trackedWindow, pre ->
+            val window = trackedWindow.window
+            val (liveTitle, collisions) =
+                readOnEdt {
+                    window.nativeTitle() to remoteCaptureTitleCollisions(window, windowTitle)
+                }
+            externalWindowStill(
+                image = windowStill,
+                stillWindowBounds = stillWindowBounds,
+                liveWindowBounds = pre.windowBounds,
+                frameInsets = pre.frameInsets,
+                captureRegion = pre.captureRegion,
+                titleCollisions = collisions,
+                expectedTitle = windowTitle,
+                liveTitle = liveTitle,
+                expectedSurfaceId = surfaceId,
+                liveSurfaceId = trackedWindow.surfaceId,
+            )
+        }
+
+    private fun captureAtomically(
+        windowIndex: Int,
+        windowStill: (TrackedWindow, PreCaptureSnapshot) -> WindowCapture,
+    ): AtomicCapture {
         val startedAt = TimeSource.Monotonic.markNow()
         refreshWindows()
         val trackedWindow = requireShowingTrackedWindow(windowIndex)
-        // Freeze capture region, density, node properties, and screen geometry in one EDT pass
-        // *before* taking the PNG so JSON and pixels cannot describe different window layouts.
-        data class PreCaptureSnapshot(
-            val captureRegion: Rectangle,
-            val windowBounds: Rectangle,
-            val frameInsets: java.awt.Insets,
-            val densityScaleX: Double,
-            val densityScaleY: Double,
-            val nodeSnapshots: List<CaptureNodeSnapshot>,
-        )
-        val pre = readOnEdt {
-            val region = trackedWindow.composeSurfaceBoundsOnScreen
-            val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
-            PreCaptureSnapshot(
-                captureRegion = region,
-                windowBounds = Rectangle(trackedWindow.window.bounds),
-                frameInsets = windowInsets(trackedWindow.window),
-                densityScaleX = transform.scaleX,
-                densityScaleY = transform.scaleY,
-                nodeSnapshots =
-                    semanticsReader.readAllNodes(listOf(trackedWindow)).map { node ->
-                        CaptureNodeSnapshot(
-                            key = node.key.toString(),
-                            testTag = node.testTag,
-                            text = node.text,
-                            texts = node.texts,
-                            editableText = node.editableText,
-                            contentDescription = node.contentDescription,
-                            role = node.role?.toString(),
-                            enabled = !node.isDisabled,
-                            clickable = node.isClickable,
-                            focused = node.isFocused,
-                            selected = node.isSelected,
-                            boundsScreen = node.bothBounds().onScreen,
-                        )
-                    },
-            )
-        }
-        // Window-scoped still when the recording native bridge is present (#355). Injected core
-        // excludes recording, so fall back to an explicit region capture only when the bridge is
-        // absent — never as a silent substitute after a failed native still, and never because
-        // the helper binary is missing (that must fail closed; visual-idle has its own fallback).
-        val windowCapture =
-            if (
-                isNativeWindowCaptureBridgePresent(
-                    allowsPlatformCapture = robotDriver.allowsPlatformCapture
-                )
-            ) {
-                screenshotTrackedRegionCapture(
-                    trackedWindow,
-                    pre.captureRegion,
-                    pre.windowBounds,
-                    pre.frameInsets,
-                )
-            } else {
-                WindowCapture(
-                    image = screenCaptureBackend.captureStillRegion(pre.captureRegion),
-                    boundsOnScreen = pre.captureRegion,
-                )
-            }
+        val pre = readOnEdt { readPreCaptureSnapshot(trackedWindow, semanticsReader) }
+        // Always a window-scoped still (#355, #559). A failed native still fails the capture; it
+        // is never replaced by a Robot crop of whatever sits on screen at the window's bounds.
+        val windowCapture = windowStill(trackedWindow, pre)
         return AtomicCaptureBuilder.build(
             windowIndex = windowIndex,
             trackedWindow = trackedWindow,
