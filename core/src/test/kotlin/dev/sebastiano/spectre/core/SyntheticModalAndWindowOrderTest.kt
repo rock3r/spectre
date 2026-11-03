@@ -28,6 +28,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Timeout
 
 /**
@@ -139,6 +140,63 @@ class SyntheticModalAndWindowOrderTest {
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `a window excluded from application modality stays clickable under a modal dialog`() {
+        assumeLiveAwtAvailable()
+        assumeTrue(
+            Toolkit.getDefaultToolkit()
+                .isModalExclusionTypeSupported(Dialog.ModalExclusionType.APPLICATION_EXCLUDE),
+            "this toolkit does not support modal exclusion",
+        )
+        val excludedTarget = RecordingPanel()
+        try {
+            val root = showFrame(RecordingPanel())
+            showFrame(excludedTarget, x = EXCLUDED_X) {
+                modalExclusionType = Dialog.ModalExclusionType.APPLICATION_EXCLUDE
+            }
+            showModalDialog(owner = root, content = RecordingPanel(), x = DIALOG_X)
+            val (x, y) = centerOnScreen(excludedTarget)
+
+            runOffTestThread { runBlocking { RobotDriver.synthetic(root).click(x, y) } }
+            drainEdt()
+
+            assertTrue(
+                excludedTarget.pressed.isNotEmpty(),
+                "a window excluded from application modality must stay clickable",
+            )
+        } finally {
+            disposeAll()
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `a click whose release hides its target completes`() {
+        assumeLiveAwtAvailable()
+        val target =
+            JPanel().apply {
+                preferredSize = PANEL_SIZE
+                addMouseListener(
+                    object : MouseAdapter() {
+                        override fun mouseReleased(e: MouseEvent) {
+                            // Like a button whose action closes its own window.
+                            SwingUtilities.getWindowAncestor(e.component)?.isVisible = false
+                        }
+                    }
+                )
+            }
+        try {
+            val root = showFrame(target)
+            val (x, y) = centerOnScreen(target)
+
+            // Fails if MOUSE_CLICKED is dispatched to the now-hidden component.
+            runOffTestThread { runBlocking { RobotDriver.synthetic(root).click(x, y) } }
+        } finally {
+            disposeAll()
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `a click whose release opens a modal dialog returns and the dialog stays drivable`() {
         assumeLiveAwtAvailable()
         val dialogTarget = RecordingPanel()
@@ -234,7 +292,11 @@ class SyntheticModalAndWindowOrderTest {
 
     // --- Fixtures ---------------------------------------------------------------------------
 
-    private fun showFrame(content: JPanel, configure: JFrame.() -> Unit = {}): JFrame {
+    private fun showFrame(
+        content: JPanel,
+        x: Int = FRAME_X,
+        configure: JFrame.() -> Unit = {},
+    ): JFrame {
         val frame = onEdt {
             JFrame("SyntheticModalAndWindowOrderTest").apply {
                 defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
@@ -243,7 +305,7 @@ class SyntheticModalAndWindowOrderTest {
                 contentPane.layout = BorderLayout()
                 contentPane.add(content, BorderLayout.CENTER)
                 size = PANEL_SIZE
-                setLocation(FRAME_X, FRAME_Y)
+                setLocation(x, FRAME_Y)
                 isVisible = true
             }
         }
@@ -376,6 +438,7 @@ class SyntheticModalAndWindowOrderTest {
         const val FRAME_X: Int = 120
         const val FRAME_Y: Int = 120
         const val DIALOG_X: Int = 400
+        const val EXCLUDED_X: Int = 680
         val PANEL_SIZE = Dimension(200, 200)
         val COMPOSE_SKIA_LAYER_SUBCLASSES =
             listOf(

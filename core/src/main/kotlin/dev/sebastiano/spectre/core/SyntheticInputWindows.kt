@@ -46,17 +46,26 @@ internal fun Component.isBlockedByModalDialog(): Boolean {
 
 /**
  * Whether this showing modal dialog blocks input to [window], following AWT's modality rules: a
- * dialog never blocks itself or the windows it owns, a document-modal dialog blocks only the
- * windows of its own document (the same owner-less root), and application- and toolkit-modal
- * dialogs block everything else.
+ * dialog never blocks itself or the windows it owns, and a document-modal dialog blocks only the
+ * windows of its own document (the same owner-less root). Application- and toolkit-modal dialogs
+ * block everything else, except windows excluded from that modality through
+ * [Window.getModalExclusionType], on the window itself or on one of its owners.
  */
 private fun Dialog.blocks(window: Window): Boolean {
     if (window.isSameOrOwnedBy(this)) return false
     return when (modalityType) {
         Dialog.ModalityType.DOCUMENT_MODAL -> window.documentRoot() === documentRoot()
+        Dialog.ModalityType.APPLICATION_MODAL ->
+            !window.isModalExcluded(Dialog.ModalExclusionType.APPLICATION_EXCLUDE)
+        Dialog.ModalityType.TOOLKIT_MODAL ->
+            !window.isModalExcluded(Dialog.ModalExclusionType.TOOLKIT_EXCLUDE)
         else -> true
     }
 }
+
+/** Mirrors AWT: TOOLKIT_EXCLUDE also covers APPLICATION_EXCLUDE, and owners pass exclusion down. */
+private fun Window.isModalExcluded(type: Dialog.ModalExclusionType): Boolean =
+    generateSequence(this) { it.owner }.any { it.modalExclusionType >= type }
 
 private fun Window.isSameOrOwnedBy(ancestor: Window): Boolean =
     generateSequence(this) { it.owner }.any { it === ancestor }

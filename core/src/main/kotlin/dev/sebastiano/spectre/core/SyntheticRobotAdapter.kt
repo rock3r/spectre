@@ -235,9 +235,11 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
                 }
                 else -> hitTestComponent() ?: return
             }
-        // A press can open a modal dialog (a popup trigger, a dialog shown on press); AWT then
-        // stops delivering the rest of the gesture to the window the dialog blocks.
-        if (targetComponent.isBlockedByModalDialog()) return
+        // A handler earlier in the gesture can hide or dispose the grabbed or released component
+        // (a button whose action closes its dialog), or open a modal dialog that blocks its
+        // window (a popup trigger, a dialog shown on press). AWT delivers no more mouse events to
+        // it in either case.
+        if (!targetComponent.isShowing || targetComponent.isBlockedByModalDialog()) return
         val origin = targetComponent.locationOnScreen
         val localX = lastX - origin.x
         val localY = lastY - origin.y
