@@ -489,8 +489,9 @@ These cannot currently be made portable and fail-closed by the baseline runner:
 - **Wayland portal over SSH (#501):** run `release-smoke.py` as the user who is logged in on the
   GNOME Wayland seat. When `/run/user/<uid>/` holds a `wayland-*` socket, the harness fills in
   whatever the SSH shell lacks and prints a `linux seat env:` line: `XDG_RUNTIME_DIR`,
-  `WAYLAND_DISPLAY` (`wayland-0` when present), `DISPLAY` (lowest `/tmp/.X11-unix/X<n>`, usually
-  `:0`), `XAUTHORITY` (newest `/run/user/<uid>/.mutter-Xwaylandauth.*`), and
+  `WAYLAND_DISPLAY` (`wayland-0` when present), `XAUTHORITY` (newest
+  `/run/user/<uid>/.mutter-Xwaylandauth.*`), `DISPLAY` (the display that cookie names, or the only
+  `/tmp/.X11-unix/X<n>`; with several X servers and no match it stays unset, so export it), and
   `DBUS_SESSION_BUS_ADDRESS` (`unix:path=/run/user/<uid>/bus`). Values you exported win, except an
   `XAUTHORITY` that is empty or names no file. Without the mutter cookie, Xwayland answers
   `Authorization required` and AWT fails with `Can't connect to X11 window server using ':0'`.
@@ -506,7 +507,8 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   variable (`SPECTRE_WAYLAND_RESTORE_TOKEN_PATH=`) as unset, so it never resolves against the
   working directory. `SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` is a base path that gets `-<key>`
   appended; a full token file path such as `…/wayland-rd-restore-token-rd-monitor-embedded` is
-  used as is and does not grow a second `-rd-monitor-embedded`.
+  used as is for that exact token and does not grow a second `-rd-monitor-embedded`. Other
+  tokens, such as the ScreenCast `monitor-embedded` one, still get their own `-<key>` file.
 - **Wayland Share dialog is easy to miss:** GNOME often logs `xdg-desktop-portal-gnome: Failed to
   associate portal window with parent window`, and the dialog can open behind other windows. The
   harness prints an `ACTION REQUIRED` banner before the warmup, and the helper writes a similar

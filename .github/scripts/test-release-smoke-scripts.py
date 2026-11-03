@@ -1186,7 +1186,27 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
                 expected_mtime_ns=before,
             )
 
-    def _fake_seat(self, tmp: str, uid: int = 1000) -> tuple[Path, Path]:
+    @staticmethod
+    def _xauth_entry(display: str, *, family: int = 256, address: bytes = b"bepi") -> bytes:
+        def field(value: bytes) -> bytes:
+            return len(value).to_bytes(2, "big") + value
+
+        return (
+            family.to_bytes(2, "big")
+            + field(address)
+            + field(display.encode("ascii"))
+            + field(b"MIT-MAGIC-COOKIE-1")
+            + field(bytes(16))
+        )
+
+    def _fake_seat(
+        self,
+        tmp: str,
+        uid: int = 1000,
+        *,
+        x_sockets: tuple[str, ...] = ("X1", "X0"),
+        cookie_display: str | None = "0",
+    ) -> tuple[Path, Path]:
         run_user = Path(tmp) / "run" / "user"
         runtime = run_user / str(uid)
         runtime.mkdir(parents=True)
@@ -1194,14 +1214,58 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
         (runtime / "wayland-0.lock").write_text("", encoding="utf-8")
         (runtime / "bus").write_text("", encoding="utf-8")
         old_auth = runtime / ".mutter-Xwaylandauth.OLD111"
-        old_auth.write_text("old", encoding="utf-8")
+        old_auth.write_bytes(self._xauth_entry("7"))
         os.utime(old_auth, (1_000, 1_000))
-        (runtime / ".mutter-Xwaylandauth.NEW222").write_text("new", encoding="utf-8")
+        new_auth = runtime / ".mutter-Xwaylandauth.NEW222"
+        if cookie_display is None:
+            new_auth.write_bytes(b"\x00")
+        else:
+            new_auth.write_bytes(
+                self._xauth_entry(cookie_display)
+                + self._xauth_entry(cookie_display, family=0, address=bytes(4))
+            )
         x11 = Path(tmp) / "X11-unix"
         x11.mkdir()
-        (x11 / "X1").write_text("", encoding="utf-8")
-        (x11 / "X0").write_text("", encoding="utf-8")
+        for name in x_sockets:
+            (x11 / name).write_text("", encoding="utf-8")
         return run_user, x11
+
+    def test_discover_linux_seat_env_picks_the_display_named_by_the_users_cookie(self):
+        # A greeter or another user's X server on :0 must not be paired with this user's
+        # mutter cookie for Xwayland on :1.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_user, x11 = self._fake_seat(tmp, cookie_display="1")
+            runtime = run_user / "1000"
+            found = smoke_lib.discover_linux_seat_env(
+                {}, uid=1000, run_user_root=run_user, x11_socket_dir=x11
+            )
+            self.assertEqual(":1", found["DISPLAY"])
+            self.assertEqual(
+                str(runtime / ".mutter-Xwaylandauth.NEW222"), found["XAUTHORITY"]
+            )
+
+    def test_discover_linux_seat_env_does_not_guess_between_several_displays(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_user, x11 = self._fake_seat(tmp, cookie_display=None)
+            found = smoke_lib.discover_linux_seat_env(
+                {}, uid=1000, run_user_root=run_user, x11_socket_dir=x11
+            )
+            self.assertNotIn("DISPLAY", found)
+            self.assertNotIn("XAUTHORITY", found)
+            self.assertEqual("wayland-0", found["WAYLAND_DISPLAY"])
+
+    def test_discover_linux_seat_env_uses_the_only_display_without_a_readable_cookie(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_user, x11 = self._fake_seat(tmp, x_sockets=("X1",), cookie_display=None)
+            found = smoke_lib.discover_linux_seat_env(
+                {}, uid=1000, run_user_root=run_user, x11_socket_dir=x11
+            )
+            self.assertEqual(":1", found["DISPLAY"])
+
+    def test_parse_xauthority_displays_reads_display_numbers(self):
+        data = self._xauth_entry("1") + self._xauth_entry("1", family=0) + self._xauth_entry("3")
+        self.assertEqual(["1", "3"], smoke_lib.parse_xauthority_displays(data))
+        self.assertEqual([], smoke_lib.parse_xauthority_displays(b"\x00\x01\x00"))
 
     def test_discover_linux_seat_env_fills_missing_ssh_seat_variables(self):
         with tempfile.TemporaryDirectory() as tmp:

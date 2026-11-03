@@ -379,12 +379,13 @@ pub fn restore_token_file_named(prefix: &str, token_key: &str) -> PathBuf {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or(prefix);
-        // An operator who pasted the full token file path must not get `…-{key}-{key}`.
-        let suffix = format!("-{token_key}");
-        if name.ends_with(&suffix) {
+        // An operator who pasted the full token file path must not get `…-{key}-{key}`. Match
+        // the whole `{prefix}-{key}` name: a bare key suffix would let the ScreenCast key
+        // `monitor-embedded` reuse the RemoteDesktop `…-rd-monitor-embedded` file.
+        if name == format!("{prefix}-{token_key}") {
             return base;
         }
-        return parent.join(format!("{name}{suffix}"));
+        return parent.join(format!("{name}-{token_key}"));
     }
     restore_token_state_dir().join(format!("{prefix}-{token_key}"))
 }
@@ -901,6 +902,15 @@ mod restore_token_tests {
         assert_eq!(
             restore_token_file_named("wayland-rd-restore-token", "rd-monitor-embedded"),
             full
+        );
+        // The ScreenCast key `monitor-embedded` is a suffix of the RemoteDesktop file name, but
+        // it must not share that file: the screenshot path could clear the RemoteDesktop grant.
+        let screencast =
+            restore_token_file_named("wayland-screencast-restore-token", "monitor-embedded");
+        assert_ne!(screencast, full);
+        assert_eq!(
+            screencast,
+            dir.join("wayland-rd-restore-token-rd-monitor-embedded-monitor-embedded")
         );
         // A plain base path still gets the key appended, so keys stay separate.
         let base = dir.join("tokens");

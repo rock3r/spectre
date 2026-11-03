@@ -2133,6 +2133,65 @@ def _x11_display_number(name: str) -> int | None:
         return None
 
 
+def parse_xauthority_displays(data: bytes) -> list[str]:
+    """Display numbers named by an Xauthority file, in file order, without duplicates.
+
+    Each entry is: family (u16), then address, display number, auth name and auth data,
+    each as a big-endian u16 length plus bytes. A truncated file stops the scan.
+    """
+    displays: list[str] = []
+    offset = 0
+
+    def take() -> bytes | None:
+        nonlocal offset
+        if offset + 2 > len(data):
+            return None
+        size = int.from_bytes(data[offset : offset + 2], "big")
+        start = offset + 2
+        if start + size > len(data):
+            return None
+        offset = start + size
+        return data[start:offset]
+
+    while offset + 2 <= len(data):
+        offset += 2  # family
+        fields = [take() for _ in range(4)]
+        if any(value is None for value in fields):
+            break
+        number = (fields[1] or b"").decode("ascii", errors="replace")
+        if number and number not in displays:
+            displays.append(number)
+    return displays
+
+
+def _seat_x_display(cookie: Path | None, x11_socket_dir: Path) -> str | None:
+    """The X display that belongs to this seat, or None when it cannot be told apart.
+
+    Prefer the display number mutter wrote into the user's Xwayland cookie: the lowest
+    global socket may be a greeter or another user's server, which rejects this cookie.
+    """
+    socket_dir = Path(x11_socket_dir)
+    sockets = {
+        number
+        for number in (
+            _x11_display_number(entry.name)
+            for entry in (socket_dir.iterdir() if socket_dir.is_dir() else [])
+        )
+        if number is not None
+    }
+    if cookie is not None:
+        try:
+            named = parse_xauthority_displays(cookie.read_bytes())
+        except OSError:
+            named = []
+        for number in named:
+            if number.isdigit() and int(number) in sockets:
+                return f":{int(number)}"
+    if len(sockets) == 1:
+        return f":{next(iter(sockets))}"
+    return None
+
+
 def discover_linux_seat_env(
     environ: Mapping[str, str] | None = None,
     *,
@@ -2146,7 +2205,8 @@ def discover_linux_seat_env(
     operator exported win. Without a `wayland-*` socket in the runtime dir there is no
     Wayland seat to reach and nothing is returned, which keeps X11 and headless hosts
     unchanged. XAUTHORITY comes from mutter's `.mutter-Xwaylandauth.*`; without it Xwayland
-    answers `Authorization required` and AWT cannot open `DISPLAY`.
+    answers `Authorization required` and AWT cannot open `DISPLAY`. DISPLAY is the display
+    that cookie names, or the only X socket; with several sockets and no match it stays unset.
     """
     env = os.environ if environ is None else environ
 
@@ -2179,27 +2239,17 @@ def discover_linux_seat_env(
     if not present("XDG_RUNTIME_DIR"):
         found["XDG_RUNTIME_DIR"] = str(runtime_dir)
 
+    cookie = _newest(list(runtime_dir.glob(".mutter-Xwaylandauth.*")))
     display = present("DISPLAY")
     if not display:
-        numbers = sorted(
-            n
-            for n in (
-                _x11_display_number(entry.name)
-                for entry in (
-                    Path(x11_socket_dir).iterdir() if Path(x11_socket_dir).is_dir() else []
-                )
-            )
-            if n is not None
-        )
-        if numbers:
-            display = f":{numbers[0]}"
+        discovered = _seat_x_display(cookie, x11_socket_dir)
+        if discovered:
+            display = discovered
             found["DISPLAY"] = display
 
     xauthority = present("XAUTHORITY")
-    if display and not (xauthority and Path(xauthority).is_file()):
-        cookie = _newest(list(runtime_dir.glob(".mutter-Xwaylandauth.*")))
-        if cookie is not None:
-            found["XAUTHORITY"] = str(cookie)
+    if display and cookie is not None and not (xauthority and Path(xauthority).is_file()):
+        found["XAUTHORITY"] = str(cookie)
 
     bus = runtime_dir / "bus"
     if not present("DBUS_SESSION_BUS_ADDRESS") and bus.exists():
