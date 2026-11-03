@@ -1186,6 +1186,223 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
                 expected_mtime_ns=before,
             )
 
+    @staticmethod
+    def _xauth_entry(display: str, *, family: int = 256, address: bytes = b"bepi") -> bytes:
+        def field(value: bytes) -> bytes:
+            return len(value).to_bytes(2, "big") + value
+
+        return (
+            family.to_bytes(2, "big")
+            + field(address)
+            + field(display.encode("ascii"))
+            + field(b"MIT-MAGIC-COOKIE-1")
+            + field(bytes(16))
+        )
+
+    def _fake_seat(
+        self,
+        tmp: str,
+        uid: int = 1000,
+        *,
+        x_sockets: tuple[str, ...] = ("X1", "X0"),
+        cookie_display: str | None = "0",
+    ) -> tuple[Path, Path]:
+        run_user = Path(tmp) / "run" / "user"
+        runtime = run_user / str(uid)
+        runtime.mkdir(parents=True)
+        (runtime / "wayland-0").write_text("", encoding="utf-8")
+        (runtime / "wayland-0.lock").write_text("", encoding="utf-8")
+        (runtime / "bus").write_text("", encoding="utf-8")
+        old_auth = runtime / ".mutter-Xwaylandauth.OLD111"
+        old_auth.write_bytes(self._xauth_entry("7"))
+        os.utime(old_auth, (1_000, 1_000))
+        new_auth = runtime / ".mutter-Xwaylandauth.NEW222"
+        if cookie_display is None:
+            new_auth.write_bytes(b"\x00")
+        else:
+            new_auth.write_bytes(
+                self._xauth_entry(cookie_display)
+                + self._xauth_entry(cookie_display, family=0, address=bytes(4))
+            )
+        x11 = Path(tmp) / "X11-unix"
+        x11.mkdir()
+        for name in x_sockets:
+            (x11 / name).write_text("", encoding="utf-8")
+        return run_user, x11
+
+    def test_discover_linux_seat_env_picks_the_display_named_by_the_users_cookie(self):
+        # A greeter or another user's X server on :0 must not be paired with this user's
+        # mutter cookie for Xwayland on :1.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_user, x11 = self._fake_seat(tmp, cookie_display="1")
+            runtime = run_user / "1000"
+            found = smoke_lib.discover_linux_seat_env(
+                {}, uid=1000, run_user_root=run_user, x11_socket_dir=x11
+            )
+            self.assertEqual(":1", found["DISPLAY"])
+            self.assertEqual(
+                str(runtime / ".mutter-Xwaylandauth.NEW222"), found["XAUTHORITY"]
+            )
+
+    def test_discover_linux_seat_env_does_not_guess_between_several_displays(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_user, x11 = self._fake_seat(tmp, cookie_display=None)
+            found = smoke_lib.discover_linux_seat_env(
+                {}, uid=1000, run_user_root=run_user, x11_socket_dir=x11
+            )
+            self.assertNotIn("DISPLAY", found)
+            self.assertNotIn("XAUTHORITY", found)
+            self.assertEqual("wayland-0", found["WAYLAND_DISPLAY"])
+
+    def test_discover_linux_seat_env_uses_the_only_display_without_a_readable_cookie(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_user, x11 = self._fake_seat(tmp, x_sockets=("X1",), cookie_display=None)
+            found = smoke_lib.discover_linux_seat_env(
+                {}, uid=1000, run_user_root=run_user, x11_socket_dir=x11
+            )
+            self.assertEqual(":1", found["DISPLAY"])
+
+    def test_parse_xauthority_displays_reads_display_numbers(self):
+        data = self._xauth_entry("1") + self._xauth_entry("1", family=0) + self._xauth_entry("3")
+        self.assertEqual(["1", "3"], smoke_lib.parse_xauthority_displays(data))
+        self.assertEqual([], smoke_lib.parse_xauthority_displays(b"\x00\x01\x00"))
+
+    def test_discover_linux_seat_env_fills_missing_ssh_seat_variables(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_user, x11 = self._fake_seat(tmp)
+            runtime = run_user / "1000"
+            found = smoke_lib.discover_linux_seat_env(
+                {"PATH": "/usr/bin", "SSH_CONNECTION": "10.0.0.2 5 10.0.0.1 22"},
+                uid=1000,
+                run_user_root=run_user,
+                x11_socket_dir=x11,
+            )
+            self.assertEqual(
+                {
+                    "XDG_RUNTIME_DIR": str(runtime),
+                    "WAYLAND_DISPLAY": "wayland-0",
+                    "DISPLAY": ":0",
+                    "XAUTHORITY": str(runtime / ".mutter-Xwaylandauth.NEW222"),
+                    "DBUS_SESSION_BUS_ADDRESS": f"unix:path={runtime / 'bus'}",
+                },
+                found,
+            )
+
+    def test_discover_linux_seat_env_keeps_operator_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_user, x11 = self._fake_seat(tmp)
+            runtime = run_user / "1000"
+            existing_auth = Path(tmp) / "my-xauth"
+            existing_auth.write_text("cookie", encoding="utf-8")
+            found = smoke_lib.discover_linux_seat_env(
+                {
+                    "XDG_RUNTIME_DIR": str(runtime),
+                    "WAYLAND_DISPLAY": "wayland-0",
+                    "DISPLAY": ":1",
+                    "XAUTHORITY": str(existing_auth),
+                    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/custom/bus",
+                },
+                uid=1000,
+                run_user_root=run_user,
+                x11_socket_dir=x11,
+            )
+            self.assertEqual({}, found)
+
+    def test_discover_linux_seat_env_replaces_missing_or_empty_xauthority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_user, x11 = self._fake_seat(tmp)
+            runtime = run_user / "1000"
+            for stale in ("", str(Path(tmp) / "gone")):
+                found = smoke_lib.discover_linux_seat_env(
+                    {
+                        "XDG_RUNTIME_DIR": str(runtime),
+                        "WAYLAND_DISPLAY": "wayland-0",
+                        "DISPLAY": ":0",
+                        "XAUTHORITY": stale,
+                        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/custom/bus",
+                    },
+                    uid=1000,
+                    run_user_root=run_user,
+                    x11_socket_dir=x11,
+                )
+                self.assertEqual(
+                    {"XAUTHORITY": str(runtime / ".mutter-Xwaylandauth.NEW222")}, found
+                )
+
+    def test_discover_linux_seat_env_is_noop_without_wayland_seat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_user = Path(tmp) / "run" / "user"
+            (run_user / "1000").mkdir(parents=True)
+            (run_user / "1000" / "bus").write_text("", encoding="utf-8")
+            x11 = Path(tmp) / "X11-unix"
+            x11.mkdir()
+            (x11 / "X0").write_text("", encoding="utf-8")
+            found = smoke_lib.discover_linux_seat_env(
+                {"PATH": "/usr/bin"},
+                uid=1000,
+                run_user_root=run_user,
+                x11_socket_dir=x11,
+            )
+            self.assertEqual({}, found)
+            self.assertEqual(
+                {},
+                smoke_lib.discover_linux_seat_env(
+                    {},
+                    uid=4242,
+                    run_user_root=run_user,
+                    x11_socket_dir=x11,
+                ),
+            )
+
+    def test_apply_linux_seat_env_writes_into_target_mapping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_user, x11 = self._fake_seat(tmp)
+            target = {"PATH": "/usr/bin", "XAUTHORITY": ""}
+            found = smoke_lib.apply_linux_seat_env(
+                target, uid=1000, run_user_root=run_user, x11_socket_dir=x11
+            )
+            self.assertEqual("wayland-0", target["WAYLAND_DISPLAY"])
+            self.assertEqual(":0", target["DISPLAY"])
+            self.assertTrue(target["XAUTHORITY"].endswith(".mutter-Xwaylandauth.NEW222"))
+            self.assertEqual(found["DISPLAY"], target["DISPLAY"])
+            self.assertEqual("/usr/bin", target["PATH"])
+
+    def test_wayland_portal_warmup_command_avoids_shared_gradle_daemon(self):
+        command = smoke_lib.wayland_portal_warmup_command("/repo/gradlew")
+        self.assertEqual("/repo/gradlew", command[0])
+        self.assertIn("--no-daemon", command)
+        self.assertIn(":recording:runWaylandPortalSmoke", command)
+
+    def test_release_smoke_runs_warmup_through_no_daemon_command(self):
+        source = RELEASE_SMOKE.read_text(encoding="utf-8")
+        self.assertIn("wayland_portal_warmup_command(gradle)", source)
+        self.assertIn("apply_linux_seat_env()", source)
+        self.assertIn("portal_warmup_failure_hint(", source)
+
+    def test_portal_warmup_operator_banner_mentions_activities_and_timeout(self):
+        banner = smoke_lib.portal_warmup_operator_banner()
+        self.assertIn("ACTION REQUIRED", banner)
+        self.assertIn("Activities", banner)
+        self.assertIn("60", banner)
+
+    def test_portal_warmup_failure_hint_recognises_seat_problems(self):
+        timed_out = smoke_lib.portal_warmup_failure_hint(
+            "Error: Timed out after 60s waiting for Response signal on /org/x"
+        )
+        self.assertIsNotNone(timed_out)
+        self.assertIn("Activities", timed_out or "")
+        associate = smoke_lib.portal_warmup_failure_hint(
+            "xdg-desktop-portal-gnome: Failed to associate portal window with parent window"
+        )
+        self.assertIsNotNone(associate)
+        x11 = smoke_lib.portal_warmup_failure_hint(
+            "Authorization required, but no authorization protocol specified\n"
+            "java.awt.AWTError: Can't connect to X11 window server using ':0'"
+        )
+        self.assertIsNotNone(x11)
+        self.assertIn("XAUTHORITY", x11 or "")
+        self.assertIsNone(smoke_lib.portal_warmup_failure_hint("BUILD FAILED: compile error"))
+
     def test_portal_token_warmup_is_na_on_non_wayland(self):
         result = smoke_lib.portal_token_warmup_skip_reason(
             {"DISPLAY": ":99", "XDG_SESSION_TYPE": "x11"},

@@ -342,7 +342,7 @@ pub fn extract_restore_token(results: &PropMap) -> Option<String> {
 
 /// Directory for the persisted ScreenCast restore token (mode 0700).
 pub fn restore_token_state_dir() -> PathBuf {
-    if let Ok(override_path) = std::env::var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR") {
+    if let Some(override_path) = non_empty_env("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR") {
         return PathBuf::from(override_path);
     }
     if let Ok(state_home) = std::env::var("XDG_STATE_HOME") {
@@ -363,8 +363,14 @@ fn restore_token_file(token_key: &str) -> PathBuf {
     restore_token_file_named("wayland-screencast-restore-token", token_key)
 }
 
+/// An env var's value, or `None` when it is unset or empty. A shell `VAR=` must not
+/// count as an override: an empty path would resolve against the working directory.
+fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
 pub fn restore_token_file_named(prefix: &str, token_key: &str) -> PathBuf {
-    if let Ok(override_path) = std::env::var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH") {
+    if let Some(override_path) = non_empty_env("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH") {
         // Always a file base path (not a directory). Append -{token_key} so keys stay separate.
         // Use SPECTRE_WAYLAND_RESTORE_TOKEN_DIR for directory-only overrides.
         let base = PathBuf::from(override_path);
@@ -373,6 +379,12 @@ pub fn restore_token_file_named(prefix: &str, token_key: &str) -> PathBuf {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or(prefix);
+        // An operator who pasted the full token file path must not get `…-{key}-{key}`. Match
+        // the whole `{prefix}-{key}` name: a bare key suffix would let the ScreenCast key
+        // `monitor-embedded` reuse the RemoteDesktop `…-rd-monitor-embedded` file.
+        if name == format!("{prefix}-{token_key}") {
+            return base;
+        }
         return parent.join(format!("{name}-{token_key}"));
     }
     restore_token_state_dir().join(format!("{prefix}-{token_key}"))
@@ -408,7 +420,7 @@ pub fn save_restore_token_named(prefix: &str, token_key: &str, token: &str) -> R
             .with_context(|| format!("creating restore_token dir {}", parent.display()))?;
         // Only chmod Spectre-owned state dirs, never an operator PATH override's parent
         // (e.g. /tmp or a shared secrets mount).
-        if std::env::var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH").is_err() {
+        if non_empty_env("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH").is_none() {
             let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
         }
     }
@@ -848,6 +860,65 @@ mod restore_token_tests {
             Some("xyz")
         );
         clear_restore_token("monitor-embedded").unwrap();
+        std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH");
+    }
+
+    #[test]
+    fn empty_path_override_is_treated_as_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("spectre-empty-path-{}", std::process::id()));
+        std::env::set_var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR", &dir);
+        std::env::set_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH", "");
+        assert_eq!(
+            restore_token_file_named("wayland-rd-restore-token", "rd-monitor-embedded"),
+            dir.join("wayland-rd-restore-token-rd-monitor-embedded")
+        );
+        std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH");
+        std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR");
+    }
+
+    #[test]
+    fn empty_dir_override_is_treated_as_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous_state = std::env::var_os("XDG_STATE_HOME");
+        let state = std::env::temp_dir().join(format!("spectre-empty-dir-{}", std::process::id()));
+        std::env::set_var("XDG_STATE_HOME", &state);
+        std::env::set_var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR", "");
+        std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH");
+        assert_eq!(restore_token_state_dir(), state.join("spectre"));
+        std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR");
+        match previous_state {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+    }
+
+    #[test]
+    fn full_file_path_override_does_not_double_the_token_key() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("spectre-full-path-{}", std::process::id()));
+        let full = dir.join("wayland-rd-restore-token-rd-monitor-embedded");
+        std::env::set_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH", &full);
+        assert_eq!(
+            restore_token_file_named("wayland-rd-restore-token", "rd-monitor-embedded"),
+            full
+        );
+        // The ScreenCast key `monitor-embedded` is a suffix of the RemoteDesktop file name, but
+        // it must not share that file: the screenshot path could clear the RemoteDesktop grant.
+        let screencast =
+            restore_token_file_named("wayland-screencast-restore-token", "monitor-embedded");
+        assert_ne!(screencast, full);
+        assert_eq!(
+            screencast,
+            dir.join("wayland-rd-restore-token-rd-monitor-embedded-monitor-embedded")
+        );
+        // A plain base path still gets the key appended, so keys stay separate.
+        let base = dir.join("tokens");
+        std::env::set_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH", &base);
+        assert_eq!(
+            restore_token_file_named("wayland-rd-restore-token", "rd-monitor-embedded"),
+            dir.join("tokens-rd-monitor-embedded")
+        );
         std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH");
     }
 

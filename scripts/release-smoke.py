@@ -38,6 +38,7 @@ from smoke_lib import (  # noqa: E402
     RESULT_FAIL,
     RESULT_PASS,
     ScenarioResult,
+    apply_linux_seat_env,
     apply_linux_toolchain_path,
     assert_junit_testcases_passed,
     assert_linux_portal_tokens_captured,
@@ -59,6 +60,8 @@ from smoke_lib import (  # noqa: E402
     packaged_cli_executable,
     pointer_move_api_skip_reason,
     portal_token_warmup_skip_reason,
+    portal_warmup_failure_hint,
+    portal_warmup_operator_banner,
     prepare_linux_portal_token_env,
     probe_macos_accessibility,
     probe_macos_screen_recording,
@@ -72,6 +75,7 @@ from smoke_lib import (  # noqa: E402
     scenario_result,
     utc_now_iso,
     validate_report,
+    wayland_portal_warmup_command,
     write_json_report,
     write_markdown_report,
     xvfb_prefix,
@@ -370,6 +374,15 @@ def _packaged_cli_portal_env(env: dict[str, str] | None) -> dict[str, str] | Non
     return packaged
 
 
+def _read_log(path: str | None) -> str:
+    if not path:
+        return ""
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 def _maven_local_version(release_version: str) -> str:
     # Keep smoke publication off the SNAPSHOT and release coordinates consumers might already have.
     return f"{release_version}-rc.smoke"
@@ -463,6 +476,15 @@ def main(argv: list[str] | None = None) -> int:
         # Non-login SSH PATH lacks ~/.cargo/bin; xvfb-run inherits that and
         # :recording:buildWaylandHelper then cannot start cargo.
         apply_linux_toolchain_path()
+        # SSH shells also lack the seat's WAYLAND_DISPLAY / DISPLAY / XAUTHORITY / D-Bus
+        # address, so portal detection and the seated JFrame would fail (#501).
+        seat_env = apply_linux_seat_env()
+        if seat_env:
+            print(
+                "linux seat env: "
+                + " ".join(f"{key}={value}" for key, value in seat_env.items()),
+                flush=True,
+            )
     if system == "Windows":
         print(
             "Use scripts/windows-release-smoke.ps1 from the interactive desktop "
@@ -637,12 +659,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     else:
-        print(
-            "portal-token-warmup: approve Share + Remember for the whole screen; "
-            "only helper monitor ScreenCast cells reuse that token. Robot-backed "
-            "cells stay under xvfb-run. Window-source prompts are per-window.",
-            flush=True,
-        )
+        print(portal_warmup_operator_banner(), flush=True)
         scenario_env = prepare_linux_portal_token_env(ROOT, out_dir)
         if "SPECTRE_WAYLAND_HELPER" not in scenario_env:
             staged = run_scenario(
@@ -672,9 +689,10 @@ def main(argv: list[str] | None = None) -> int:
             warmup = run_scenario(
                 "portal-token-warmup",
                 name="Capture persistent ScreenCast restore token",
-                command=[gradle, ":recording:runWaylandPortalSmoke", "--console=plain"],
+                command=wayland_portal_warmup_command(gradle),
                 cwd=ROOT,
-                timeout=180,
+                # --no-daemon pays JVM startup + configuration on top of the dialog wait.
+                timeout=300,
                 out_dir=out_dir,
                 env=scenario_env,
                 overall_deadline=overall_deadline,
@@ -696,6 +714,16 @@ def main(argv: list[str] | None = None) -> int:
                     scenario_env = None
             else:
                 scenario_env = None
+                hint = portal_warmup_failure_hint(_read_log(warmup.log))
+                if hint:
+                    warmup = scenario_result(
+                        "portal-token-warmup",
+                        name=warmup.name,
+                        result=RESULT_FAIL,
+                        seconds=warmup.seconds,
+                        detail=f"{warmup.detail}; {hint}" if warmup.detail else hint,
+                        log=warmup.log,
+                    )
             add(warmup)
 
     seat_prefix = _ui_prefix(system, wayland_portal=scenario_env is not None)
