@@ -301,12 +301,17 @@ public surface:
   the live window hierarchy. No real cursor motion, no global focus, doesn't fight
   with other processes. The no-window factory hit-tests every visible top-level window;
   passing `rootWindow` pins the starting tree. Mouse and wheel events hit-test against
-  that tree plus other visible top-level windows. Key events go to the current AWT focus
-  owner when one exists; when AWT has no focus owner (for example, a macOS helper JVM
-  launched with `apple.awt.UIElement=true`), Spectre falls back to the key-listening AWT
-  descendant under the last pointer target or Compose host. That lets Compose Desktop's
-  internal focus model route `typeText` into focused `TextField`s even when the host
-  window is not the OS-foreground app.
+  that tree plus other visible top-level windows; where they overlap, the pinned tree
+  wins. While a modal dialog is showing, the windows it blocks get no synthetic clicks
+  or keys, as with real input. A click or key press that opens a modal dialog returns
+  once the dialog's event loop starts, so the next call can drive the dialog. Key events
+  go to the current AWT focus owner when one exists, and a press on Compose content moves
+  AWT focus there, as a real click does. When AWT has no focus owner (for example, a
+  macOS helper JVM launched with `apple.awt.UIElement=true`), Spectre falls back to the
+  key-listening AWT descendant under the last pointer target, then to the Compose surface
+  that holds the focused node. That lets Compose Desktop's internal focus model route
+  `typeText` into focused `TextField`s even when the host window is not the OS-foreground
+  app.
   `screenshot()` under a synthetic driver still uses the OS framebuffer via
   `Robot.createScreenCapture`, so screenshots show the pixels the display compositor
   currently exposes rather than a Swing repaint of the Compose host. On macOS this
