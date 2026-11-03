@@ -466,15 +466,15 @@ private sealed interface DaemonSocketProtection {
         if (isTrustedTempAlias(directory)) return
         rejectSymbolicLink(directory)
         if ("unix" in directory.fileSystem.supportedFileAttributeViews()) {
-            val mode = Files.getAttribute(directory, "unix:mode", NOFOLLOW_LINKS) as Int
-            if (!isTrustedOwner(directory)) {
-                throw IOException("Daemon socket ancestor $directory must be owned by root or user")
-            }
-            if (mode and STICKY_BIT != 0) return
-            if (mode and GROUP_OR_OTHER_WRITE_BITS == 0) return
-            throw IOException(
-                "Daemon socket ancestor $directory must not be group or world writable"
-            )
+            val rejection =
+                DaemonSocketAncestorPolicy.rejection(
+                    directory = directory,
+                    ownerName = Files.getOwner(directory, NOFOLLOW_LINKS).name,
+                    ownerUid = Files.getAttribute(directory, "unix:uid", NOFOLLOW_LINKS) as? Int,
+                    mode = Files.getAttribute(directory, "unix:mode", NOFOLLOW_LINKS) as Int,
+                    currentUser = System.getProperty("user.name"),
+                )
+            if (rejection != null) throw IOException(rejection)
         }
     }
 
@@ -488,12 +488,6 @@ private sealed interface DaemonSocketProtection {
         path == Path.of("/tmp") &&
             runCatching { Files.readSymbolicLink(path) == Path.of("private/tmp") }
                 .getOrDefault(false)
-
-    private fun isTrustedOwner(directory: Path): Boolean {
-        val owner = Files.getOwner(directory, NOFOLLOW_LINKS).name
-        val currentUser = System.getProperty("user.name")
-        return owner == "root" || owner == currentUser
-    }
 
     @Throws(IOException::class) fun protectSocket(socketPath: Path)
 
@@ -581,5 +575,3 @@ private val ALL_ACL_PERMISSIONS: Set<AclEntryPermission> =
     EnumSet.allOf(AclEntryPermission::class.java)
 private const val FILE_TYPE_MASK: Int = 0xF000
 private const val UNIX_SOCKET_FILE_TYPE: Int = 0xC000
-private const val STICKY_BIT: Int = 0x200
-private const val GROUP_OR_OTHER_WRITE_BITS: Int = 0x12

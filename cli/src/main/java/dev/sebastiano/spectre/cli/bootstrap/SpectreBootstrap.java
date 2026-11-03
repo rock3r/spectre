@@ -29,14 +29,15 @@ import java.util.Optional;
  *       discarded stdio — promotes the result to the cache location, and then execs the
  *       real command against it, or, when training fails for any reason, execs the real
  *       command uncached,
- *   <li>execs a child JVM without AOT flags when caching is explicitly disabled, so the
- *       real CLI never runs inside this JVM (packaged launches give the bootstrap lean
- *       startup flags the long-lived MCP server must not inherit),
+ *   <li>execs a child JVM without AOT flags when caching is explicitly disabled or
+ *       unavailable (including JDK 21&ndash;24, which have no Leyden cache), so the real
+ *       CLI never runs inside this JVM (packaged launches give the bootstrap lean startup
+ *       flags the long-lived MCP server must not inherit),
  *   <li>execs a child JVM carrying the caller's own JVM options — without the frontend
  *       contract or a managed cache — when the caller manages AOT or the collector
  *       themselves, or
- *   <li>runs the real CLI in-process when caching is unavailable (JDK &lt; 25, exploded
- *       or multi-entry classpath — the latter is the thin start-script distribution,
+ *   <li>runs the real CLI in-process for an exploded or multi-entry classpath (the
+ *       latter is the thin start-script distribution,
  *       whose child could not be built from the CLI jar alone) or when the caller
  *       attached any instrumentation agent, which may already hold a fixed resource
  *       (a JDWP listen address, an exporter port) in this JVM, so behaviour is
@@ -155,6 +156,10 @@ public final class SpectreBootstrap {
      * run, and the cache-assembly JVM — so all three share one collector and one archived
      * heap representation.
      *
+     * <p>Only JDK 25+ JVMs get this list (see {@link #frontendJvmArguments}): it exists for
+     * the Leyden cache, and {@code -XX:-UseCompactObjectHeaders} is unknown on JDK 21 and
+     * experimental-locked on 24, so an older JVM would refuse to start.
+     *
      * <p>G1 is explicit: the packaged launcher defaults to ZGC, which JDK 25's Leyden AOT
      * cache does not support, and merely omitting the choice would let JVM ergonomics pick
      * different collectors on different machines. The remaining flags pin the object
@@ -173,7 +178,18 @@ public final class SpectreBootstrap {
                     "-XX:ObjectAlignmentInBytes=8");
 
     /**
-     * The full child command: this JVM's {@code java}, the planned AOT flags, the real CLI.
+     * {@link #FRONTEND_JVM_ARGUMENTS} on a JVM that has the Leyden cache (JDK 25+), and
+     * nothing on JDK 21&ndash;24: those run uncached, with the JVM's default collector.
+     */
+    static List<String> frontendJvmArguments(int runtimeFeature) {
+        return runtimeFeature >= AotCache.MINIMUM_FEATURE_VERSION
+                ? FRONTEND_JVM_ARGUMENTS
+                : List.of();
+    }
+
+    /**
+     * The full child command: this JVM's {@code java}, the frontend contract (JDK 25+ only),
+     * the planned AOT flags, the real CLI.
      *
      * <p>A production child also gets {@code -Xlog:aot=off} (see the class javadoc: a
      * rejected cache must not put {@code [aot]} lines on stdout) and, on JDK 24+, {@code
@@ -192,7 +208,7 @@ public final class SpectreBootstrap {
             List<String> callerSystemProperties) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable);
-        command.addAll(FRONTEND_JVM_ARGUMENTS);
+        command.addAll(frontendJvmArguments(runtimeFeature));
         command.addAll(plan.jvmArguments());
         command.addAll(forwardedJvmOptions);
         command.addAll(callerSystemProperties);

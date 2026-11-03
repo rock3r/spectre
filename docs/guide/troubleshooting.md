@@ -255,6 +255,23 @@ Use `pressKey(...)` for individual key events (modifier shortcuts, navigation ke
 `<kbd>Tab</kbd>`, `<kbd>Esc</kbd>`). They go through the AWT key map and bypass
 the clipboard, so none of the paste-specific caveats apply.
 
+## "Daemon socket ancestor … must be owned by root or user" {#daemon-socket-ancestor}
+
+The CLI daemon keeps its socket in an owner-only directory under `java.io.tmpdir`
+(`/tmp` on Linux). Before it uses that directory, it checks every ancestor. Each ancestor
+must be owned by `root` or by you, and must be either sticky (like `/tmp`) or not
+writable by group or others.
+
+Rootless containers and sandboxes that run in a Linux user namespace often leave host
+`root` unmapped. Inside them, `/` and `/tmp` appear owned by `nobody` (uid 65534). Spectre
+accepts such an ancestor when the process runs in a user namespace that leaves that uid
+unmapped, so no process inside the namespace can own it. The sticky-or-not-writable rule
+still applies.
+
+If your namespace maps uid 65534 to a real user, the check still fails for directories it
+owns. In that case, start the CLI with `-Djava.io.tmpdir=<dir>` pointing at a directory
+whose ancestors all pass these rules. The CLI forwards `java.io.tmpdir` to the daemon.
+
 ## Compose Hot Reload {#compose-hot-reload}
 
 ### "`wait --reload-settled` says hotReloadUnavailable"
@@ -528,10 +545,11 @@ returns a human-readable diagnostic without throwing.
 - **Locally**: JBR 21 is the dev-loop default. JBR 25 is exercised by the scheduled
   [runtime matrix](https://github.com/rock3r/spectre/blob/main/.github/workflows/runtime-matrix.yml)
   and by the IDE-hosted UI test (IntelliJ 2026.2 / platform 262 bundles JBR 25).
-- **On CI (per-PR)**: Temurin 25 (the CLI requires JDK 25). The full JBR/Temurin × OS matrix is
+- **On CI (per-PR)**: Temurin 25 (the CLI builds and tests its AOT cache on JDK 25). The full JBR/Temurin × OS matrix is
   scheduled and **release-gated**, not per-PR.
-- **For consumers**: any JDK **21+** works for non-IDE modules; the `spectre`
-  CLI and its daemon require JDK **25+** (the packaged CLI bundles its own runtime). The codified supported
+- **For consumers**: any JDK **21+** works for non-IDE modules and for the `spectre`
+  CLI and its daemon. The CLI uses its Leyden AOT cache only on JDK **25+** (the packaged
+  CLI bundles a Temurin 25 runtime). The codified supported
   set and what “supported” means operationally live in
   [Stability policy — JVM runtime support tiers](../STABILITY.md#jvm-runtime-support-tiers).
 

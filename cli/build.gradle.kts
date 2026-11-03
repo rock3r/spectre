@@ -18,6 +18,7 @@ import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.jvm.toolchain.JavaToolchainService
 import org.gradle.jvm.toolchain.JvmVendorSpec
 import org.gradle.process.CommandLineArgumentProvider
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     application
@@ -32,8 +33,9 @@ plugins {
 application {
     applicationName = "spectre"
     // Packaged launches enter through the dependency-free bootstrap, which execs the real
-    // CLI (SpectreCliKt) in a child JVM with a trained JDK 25 Leyden AOT cache when one
-    // matches this jar, and trains that cache on first run. See
+    // CLI (SpectreCliKt) in a child JVM. On JDK 25+ that child uses a trained Leyden AOT
+    // cache when one matches this jar, and the first run trains it; JDK 21-24 run it
+    // uncached. See
     // cli/src/main/java/dev/sebastiano/spectre/cli/bootstrap/SpectreBootstrap.java.
     mainClass = "dev.sebastiano.spectre.cli.bootstrap.SpectreBootstrap"
 }
@@ -56,6 +58,10 @@ val cliJlinkToolchain =
 val cliJava25Launcher = javaToolchains.launcherFor {
     languageVersion.set(JavaLanguageVersion.of(25))
     vendor.set(JvmVendorSpec.ADOPTIUM)
+}
+// The CLI's minimum runtime: the packaged jar must also start and serve MCP on JDK 21.
+val cliJava21Launcher = javaToolchains.launcherFor {
+    languageVersion.set(JavaLanguageVersion.of(21))
 }
 
 // Construo runs the host jlink against each downloaded target JDK's jmods and then packages
@@ -241,10 +247,21 @@ val verifyCliShadowJar =
     tasks.register<VerifyCliShadowJar>("verifyCliShadowJar") {
         dependsOn(tasks.shadowJar)
         artifact.set(tasks.shadowJar.flatMap { it.archiveFile })
-        // Run the 25-bytecode jar on the JDK 25 toolchain, not the Gradle JVM: a
-        // contributor whose Gradle runs on 21 must still be able to verify the CLI.
+        // Run the jar on the JDK 25 toolchain, not the Gradle JVM: this is the runtime the
+        // packaged CLI bundles, and the one that exercises the Leyden AOT cache.
         javaExecutablePath.set(
             cliJava25Launcher.map { launcher -> launcher.executablePath.asFile.path }
+        )
+    }
+
+// Same checks on the CLI's minimum runtime: JDK 21 has no Leyden cache, so the bootstrap
+// must launch the CLI uncached and without any JDK 25-only JVM flags.
+val verifyCliShadowJarOnJdk21 =
+    tasks.register<VerifyCliShadowJar>("verifyCliShadowJarOnJdk21") {
+        dependsOn(tasks.shadowJar)
+        artifact.set(tasks.shadowJar.flatMap { it.archiveFile })
+        javaExecutablePath.set(
+            cliJava21Launcher.map { launcher -> launcher.executablePath.asFile.path }
         )
     }
 
@@ -318,6 +335,7 @@ tasks.assemble { dependsOn(verifyCliShadowJar, verifyCliRuntimeImage) }
 tasks.check {
     dependsOn(
         verifyCliShadowJar,
+        verifyCliShadowJarOnJdk21,
         verifyCliRuntimeImage,
         verifyCliDistributionZip,
         verifyRoastCliDistribution,
@@ -478,12 +496,18 @@ private fun hostRoastTarget(): RoastTarget =
     }
 
 kotlin {
-    // The CLI and its daemon require JDK 25 (Leyden AOT cache). Every other module in
-    // the build keeps jvmToolchain(21): the published libraries and the injected
-    // agent-runtime must still load into JDK 21 consumer/target JVMs.
+    // The CLI builds and tests on JDK 25 (the bundled runtime, and the one with the Leyden
+    // AOT cache), but its bytecode targets 21: the CLI and its daemon run on JDK 21+, like
+    // the published libraries and the injected agent-runtime.
     jvmToolchain(25)
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_21)
+        freeCompilerArgs.add("-Xjdk-release=21")
+    }
     explicitApi()
 }
+
+tasks.withType<JavaCompile>().configureEach { options.release.set(21) }
 
 dependencies {
     implementation(projects.agent)

@@ -48,8 +48,10 @@ extract it, and put its `spectre` executable on `PATH`.
 
 ## Startup and the AOT cache
 
-The CLI requires **JDK 25+** (packaged distributions bundle a Temurin 25 runtime) and
-uses the JDK 25 Project Leyden AOT cache (JEP 483/514/515) to start faster.
+The CLI runs on **JDK 21+**. Packaged distributions bundle a Temurin 25 runtime. On
+JDK 25+ the CLI uses the Project Leyden AOT cache (JEP 483/514/515) to start faster.
+On JDK 21–24 the CLI and its daemon run uncached: nothing is trained or consumed,
+and the frontend JVM keeps the JVM's default collector.
 
 An AOT cache is only valid for the exact JDK build, OS/architecture, jar path, and jar
 contents it was trained against, so Spectre never ships one. Instead:
@@ -545,7 +547,7 @@ The CLI table's capture-mode distinctions also apply to MCP tool names
 
 ## Requirements and limits
 
-- `ps` and `attach` require **JDK 25+** for the CLI and the daemon it spawns, and
+- `ps` and `attach` require **JDK 21+** for the CLI and the daemon it spawns, and
   **JDK 21+** in the target JVM. The CLI needs a full JDK with `jdk.attach`. A JRE lacks the
   required attach module.
 - **Target shape (two paths, one attach command):**
