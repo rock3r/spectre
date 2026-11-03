@@ -111,6 +111,15 @@ internal class ReflectiveAutomatorHandler(
                 it.parameterTypes[1].name == CONTINUATION_FQN
         }
 
+    /**
+     * `ComposeAutomator.inputCapabilities` getter. Null on cores that predate it; those always
+     * drive real OS input, so callers treat a missing getter as real input.
+     */
+    private val inputCapabilitiesMethod: java.lang.reflect.Method? =
+        automatorClass.methods.firstOrNull {
+            it.name == "getInputCapabilities" && it.parameterCount == 0
+        }
+
     private val suspendInvoker = BlockingSuspendInvoker()
     private val waitOps = WaitOpsReflectiveMapper(automator, suspendInvoker, ::mapAutomatorNode)
     private val inputOps =
@@ -121,6 +130,8 @@ internal class ReflectiveAutomatorHandler(
             allNodes = { allNodesMethod.invoke(automator) as List<*> },
             extractKey = ::extractKey,
             isTargetJvmFocused = isTargetJvmFocused,
+            deliversRealOsInput = ::deliversRealOsInput,
+            hasTrackedWindow = { (getWindowsMethod.invoke(automator) as List<*>).isNotEmpty() },
         )
 
     override fun handle(request: AgentRequest): AgentResponse =
@@ -353,7 +364,9 @@ internal class ReflectiveAutomatorHandler(
                         .wireName,
             )
         }
-        if (!isTargetJvmFocused()) {
+        // Synthetic input types into the focused node inside the target JVM, so it needs no OS
+        // keyboard focus (#556). Only real OS key events could land in another app.
+        if (deliversRealOsInput() && !isTargetJvmFocused()) {
             return AgentResponse.Error(
                 message =
                     "Refusing typeText because the target JVM does not currently own OS keyboard " +
@@ -365,6 +378,19 @@ internal class ReflectiveAutomatorHandler(
         }
         suspendInvoker.invoke(method, automator, text)
         return AgentResponse.Ok
+    }
+
+    /**
+     * Whether the automator sends real OS input (`InputCapabilities.realOsInput`). Defaults to true
+     * when the capability cannot be read, so the OS keyboard focus gate stays on.
+     */
+    private fun deliversRealOsInput(): Boolean {
+        val capabilities = inputCapabilitiesMethod?.invoke(automator) ?: return true
+        val getter =
+            capabilities.javaClass.methods.firstOrNull {
+                it.name == "getRealOsInput" && it.parameterCount == 0
+            } ?: return true
+        return getter.invoke(capabilities) as? Boolean ?: true
     }
 
     private fun handlePrintTree(): AgentResponse {

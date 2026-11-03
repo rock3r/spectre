@@ -238,8 +238,10 @@ All `suspend` on `ComposeAutomator`:
   keys, or scroll. For parallel JVM tests that also type text, use
   `RobotDriver.synthetic(rootWindow)`.
 - `focusWindow(node)` — raises and focuses the window hosting `node`. Over attach,
-  use `AttachedAutomator.focusWindow(nodeKey)` (#364) before `pressKey` / `typeText`
-  when the target app may not own OS keyboard focus.
+  use `AttachedAutomator.focusWindow(nodeKey)` (#364), or `spectre focus-window` /
+  the `focus_window` MCP tool, before `pressKey` / `typeText` when real OS input is in
+  use and the target app may not own OS keyboard focus. Synthetic input (the attach
+  default) does not need OS focus.
 
 ## Synchronization
 
