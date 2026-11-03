@@ -60,6 +60,15 @@ public data class TrackedWindow(
                 ?: Point(window.x, window.y)
 
     /**
+     * The screen location of [window]'s top-left corner, in the same units as
+     * [composeContentOrigin]. Falls back to the window's layout position when it is not showing,
+     * matching the fallback [composeContentOrigin] uses, so the difference between the two stays
+     * the content offset inside the window.
+     */
+    internal val windowOriginOnScreen: Point
+        get() = locationOnScreenOrNull(window) ?: Point(window.x, window.y)
+
+    /**
      * Compose surface bounds in screen coordinates.
      *
      * Tries live `locationOnScreen` first (panel → content pane → window). When the host is

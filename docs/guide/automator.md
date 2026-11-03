@@ -59,6 +59,25 @@ for (window in tree.windows()) {
 }
 ```
 
+Each `AutomatorWindow` also exposes the AWT objects that host it. Use them when an
+in-process harness needs to match a surface to its Swing hierarchy:
+
+| Property                 | Meaning |
+| ------------------------ | ------- |
+| `surface.window`         | The AWT `Window` that hosts the surface (a `ComposeWindow`, `JFrame`, `JDialog`, or popup window). |
+| `surface.composePanel`   | The Swing `ComposePanel` that hosts the surface, or `null` when the surface is not in a `ComposePanel` (for example a `ComposeWindow` or a Compose popup layer). |
+| `surface.hostComponent`  | `composePanel` when it is set, otherwise `window`. |
+
+```kotlin
+import javax.swing.SwingUtilities
+
+val tree = automator.tree()
+for (surface in tree.windows()) {
+    val inFrame = SwingUtilities.isDescendingFrom(surface.hostComponent, myFrame)
+    println("${surface.surfaceId} hosted in myFrame: $inFrame")
+}
+```
+
 For ad-hoc debugging, `automator.printTree()` returns a human-readable dump of every
 window with its node hierarchy, test tags, text, and roles.
 

@@ -158,8 +158,11 @@ Choose a selector by the semantics the application provides:
 `AutomatorNode` exposes `testTag`, `text`/`texts`, `contentDescription(s)`,
 `role`, `isFocused`, `isDisabled`, `isSelected`, `editableText`, plus
 coordinates: `boundsInWindow` (Compose pixels, already density-scaled),
-`boundsOnScreen` (screen pixels, post-HiDPI), `centerOnScreen`. Tree
-navigation via `children`/`parent`. Compare `boundsInWindow` against
+`boundsOnScreen` (screen pixels, post-HiDPI), `boundsInAwtWindow`
+(`boundsOnScreen` relative to the hosting AWT window, title bar included),
+`centerOnScreen`. Tree navigation via `children`/`parent`. Each
+`AutomatorWindow` from `tree()` exposes its AWT host: `window`,
+`composePanel` (or `null`), and `hostComponent` (`composePanel ?: window`). Compare `boundsInWindow` against
 `Dp.roundToPx()` / `LocalDensity`-scaled values. For `boundsOnScreen`, only
 compare sizes and coordinate deltas against dp figures; absolute `x`/`y` also
 include the Compose surface origin, so subtract that (or prefer
