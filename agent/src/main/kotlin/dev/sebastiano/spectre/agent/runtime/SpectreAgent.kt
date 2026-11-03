@@ -36,7 +36,8 @@ import java.util.concurrent.atomic.AtomicReference
  * `loadAgent` calls so this matters in practice. A second invocation naming a *different* socket
  * path (or the same path after its socket file vanished) comes from a new attacher whose
  * predecessor died without sending Detach: the stale state is released as Detach would release it,
- * and the agent bootstraps again on the new path (#557).
+ * except that its Spectre classloader carries over, and the agent bootstraps again on the new path
+ * (#557).
  *
  * **Detach contract** (plan D-7): [onClientDetach] performs the full Path A cleanup — closes the
  * [IpcServer] (releases ServerSocketChannel + unlinks UDS), closes target-side input coordination,
@@ -84,6 +85,7 @@ public object SpectreAgent {
         val parsedArgs = AgentBootstrapArgs.parse(agentArgs)
         val requestedUdsPath = parsedArgs.udsPath?.let(Path::of)
 
+        var inheritedBootstrap: SpectreBootstrapResult? = null
         val boundState = agentState.get()
         if (boundState != null) {
             if (!replacesBoundAgent(boundState.udsPath, requestedUdsPath)) {
@@ -92,14 +94,11 @@ public object SpectreAgent {
                 )
                 return
             }
-            // An attacher that died without sending Detach (#557) leaves this state bound to a
-            // socket nobody will connect to again, while the new attacher waits on its own path.
-            // Release the stale state the way Detach would, then bootstrap afresh.
             System.err.println(
                 "[spectre-agent] re-entry asks for $requestedUdsPath; releasing the agent bound " +
                     "to ${boundState.udsPath}"
             )
-            releaseState(boundState)
+            inheritedBootstrap = retireForReplacement(boundState)
         }
 
         // findSpectre throws SpectreNotOnClasspathException /
@@ -107,7 +106,7 @@ public object SpectreAgent {
         // createAutomatorReflectively throws ReflectiveOperationException. Both propagate to the
         // JVM agent layer which surfaces them at the attaching `VirtualMachine.loadAgent` call
         // site.
-        val bootstrap = AgentBootstrap.findSpectre(instrumentation)
+        val bootstrap = inheritedBootstrap ?: AgentBootstrap.findSpectre(instrumentation)
         // When AgentState is published successfully, detach/shutdown owns target-input and inject
         // cleanup. Until then (or on any failure path), we release both in the finally below.
         var resourcesOwnedByAgentState = false
@@ -225,16 +224,41 @@ public object SpectreAgent {
     }
 
     /**
-     * Clears the global slot if it still holds [state], then releases everything [state] owns.
-     * Returns false, releasing nothing, when another caller already took [state] out of the slot.
+     * Clears the global slot if it still holds [state], then releases everything [state] owns,
+     * keeping its inject classloader and jar open when [releaseInjectResources] is false so a
+     * replacement state can take them over. Returns false, releasing nothing, when another caller
+     * already took [state] out of the slot.
      */
-    private fun releaseState(state: AgentState): Boolean {
+    private fun releaseState(state: AgentState, releaseInjectResources: Boolean = true): Boolean {
         if (!agentState.compareAndSet(state, null)) return false
         runCatching { state.server.close() }
         runCatching { state.targetInputResource?.close() }
         runCatching { Runtime.getRuntime().removeShutdownHook(state.shutdownHook) }
-        state.bootstrap.releaseInjectResources()
+        if (releaseInjectResources) state.bootstrap.releaseInjectResources()
         return true
+    }
+
+    /**
+     * Releases [state] for a re-entry that replaces it, and returns its Spectre bootstrap for the
+     * replacement to take over, or null when another caller (a concurrent Detach) released it
+     * first.
+     *
+     * An attacher that died without sending Detach (#557) leaves [state] bound to a socket nobody
+     * will connect to again. It is released the way Detach releases it: the server stops first, and
+     * input coordination closes only after every input call the dead attacher started has finished.
+     * The Spectre classloader is the exception, and carries over: an injected loader cannot be
+     * closed and found again, because its already-defined classes stay visible to the bootstrap
+     * scan while the closed loader can no longer define the ones not yet used.
+     */
+    private fun retireForReplacement(state: AgentState): SpectreBootstrapResult? {
+        runCatching { state.server.close() }
+        val interrupted = state.server.awaitInputWorkersTerminated()
+        try {
+            return if (releaseState(state, releaseInjectResources = false)) state.bootstrap
+            else null
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt()
+        }
     }
 
     /**

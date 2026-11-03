@@ -162,16 +162,6 @@ class AgentAttachIntegrationTest {
         }
     }
 
-    /**
-     * Closes this automator's socket without sending Detach, the way a killed attacher does. The
-     * agent sees EOF and keeps its state, exactly as after a daemon crash.
-     */
-    private fun AttachedAutomator.dropConnectionWithoutDetach() {
-        val clientField = AttachedAutomator::class.java.getDeclaredField("client")
-        clientField.isAccessible = true
-        (clientField.get(this) as AutoCloseable).close()
-    }
-
     @Test
     fun `attach explains when the target JVM disables dynamic agent loading`() {
         assumeWindowsAttachE2eAllowed()
@@ -820,4 +810,14 @@ class AgentAttachIntegrationTest {
         val PNG_MAGIC: ByteArray =
             byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
     }
+}
+
+/**
+ * Closes this automator's socket without sending Detach, the way a killed attacher does. The agent
+ * sees EOF and keeps its state, exactly as after a daemon crash (#557).
+ */
+internal fun AttachedAutomator.dropConnectionWithoutDetach() {
+    val clientField = AttachedAutomator::class.java.getDeclaredField("client")
+    clientField.isAccessible = true
+    (clientField.get(this) as AutoCloseable).close()
 }
