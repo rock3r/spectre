@@ -190,14 +190,23 @@ class SpectreCliUxTest {
     }
 
     @Test
-    fun `hints point at spectre help when there is no guide command`() {
+    fun `unknown commands without a match point at guide search`() {
         val errorOutput = StringBuilder()
         val cli = usageOnlyCli(errorOutput = errorOutput)
 
         assertEquals(2, cli.run(listOf("frobnicate")))
         assertTrue(
-            errorOutput.contains("hint: run 'spectre --help' to list every command"),
+            errorOutput.contains("hint: see 'spectre guide --search frobnicate' for usage details"),
             errorOutput.toString(),
+        )
+        assertEquals(1, Regex("spectre guide").findAll(errorOutput).count(), errorOutput.toString())
+    }
+
+    @Test
+    fun `hints point at spectre help when there is no guide command`() {
+        assertEquals(
+            "run 'spectre --help' to list every command",
+            CommandHints.helpPointer("frobnicate", availableCommands = setOf("tree", "click")),
         )
     }
 

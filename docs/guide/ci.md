@@ -217,6 +217,8 @@ val macRecordingTest by tasks.registering(Test::class) {
 
 Install `xvfb` on Linux and run the test task through `xvfb-run`.
 Keep JVM flags in Gradle so local and CI runs use the same test configuration.
+Pass `--no-daemon`: a Gradle daemon started under `xvfb-run` keeps its pipes open, and
+`xvfb-run` then never exits. See [Traps and gotchas](traps.md#xvfb-run-hangs-after-the-tests-finish).
 
 ```yaml
 jobs:
@@ -231,7 +233,7 @@ jobs:
       - name: Install xvfb
         run: sudo apt-get update && sudo apt-get install -y xvfb
       - name: Run Spectre UI tests
-        run: xvfb-run --auto-servernum ./gradlew spectreTest
+        run: xvfb-run --auto-servernum ./gradlew --no-daemon spectreTest
       - name: Upload Spectre failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4

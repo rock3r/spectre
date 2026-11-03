@@ -27,6 +27,33 @@ writing a JUnit test. MCP clients can use the same operations.
 The command starts a private local daemon when needed.
 The daemon keeps sessions open across CLI calls and shares them with `spectre mcp`.
 
+## Built-in guide
+
+The CLI bundles this user guide, including [Traps and gotchas](traps.md), at build time.
+`spectre guide` always matches the installed version, works offline, and does not start
+the daemon:
+
+```shell
+spectre guide                                   # CLI workflow and the list of topics
+spectre guide traps                             # print one topic as Markdown
+spectre guide gotchas                           # another name for traps
+spectre guide --search "xvfb-run hangs"         # best-matching sections
+spectre guide -s "type text does not reach the field" -n 5 --json
+```
+
+Search ranks every heading section, bullet with a bold lead, and table row with BM25.
+It also matches the alias comments in each page and a small built-in synonym table, so
+"gotcha" finds "trap" and "stuck" finds "hang". Each result starts with its breadcrumb,
+for example `traps › CI and headless runs › xvfb-run hangs after the tests finish`.
+Output stays within about 4 KB; a cut section names the topic that holds the rest.
+`-n` sets the number of results (default 3, at most 20).
+
+With `--json`, a search prints `version`, `query`, `results` (each with `topic`, `path`,
+`breadcrumb`, `text`, `score`, and `truncated`), and `omitted`, the number of results that
+did not fit. A topic prints `version`, `topic`, and `text`.
+
+Usage errors and daemon errors end with a hint that names the matching guide topic.
+
 ## Install
 
 On macOS, install the formula from this repository:
@@ -235,6 +262,7 @@ Run `spectre <command> --help` for the installed option list.
 
 | Command | Purpose | Important args / defaults |
 | --- | --- | --- |
+| `guide [topic]` | Print the bundled guide, or search it | `--search`/`-s <words>`, `-n`, `--json` |
 | `ps` | List attachable JVM processes | `--json` |
 | `attach <pid>` | Attach daemon to target JVM; print session | `--json` → `id`, `sessionId`, `pid` |
 | `detach <session-id>` | End session; leftover capture report | `--json` includes `capturePaths`, `pruneCommand` |

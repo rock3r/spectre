@@ -31,6 +31,11 @@ import dev.sebastiano.spectre.cli.daemon.DaemonProtocol
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
+import dev.sebastiano.spectre.cli.guide.GUIDE_HELP_FOOTER
+import dev.sebastiano.spectre.cli.guide.GUIDE_USAGE_HINT
+import dev.sebastiano.spectre.cli.guide.GuideCommand
+import dev.sebastiano.spectre.cli.guide.guideHint
+import dev.sebastiano.spectre.cli.guide.guideTopicFor
 import dev.sebastiano.spectre.cli.mcp.SpectreMcpServer
 import java.io.IOException
 import java.nio.file.Files
@@ -81,7 +86,11 @@ public class SpectreCli(
         } catch (exception: CliOutputException) {
             outputFailure(exception.message ?: "failed to write command output")
         } catch (exception: DaemonCommandException) {
-            daemonFailure(exception.message ?: "daemon command failed", exitCodeFor(exception.code))
+            daemonFailure(
+                exception.message ?: "daemon command failed",
+                exitCodeFor(exception.code),
+                guideTopicFor(exception.code),
+            )
         } catch (exception: IOException) {
             daemonFailure(exception.message ?: "I/O failure")
         } catch (exception: IllegalArgumentException) {
@@ -130,6 +139,11 @@ public class SpectreCli(
                 errorOutput.appendLine()
                 errorOutput.append("hint: $hint")
             }
+            // A hint from CommandHints may already point at `spectre guide --search`.
+            if (hints.none { "spectre guide" in it }) {
+                errorOutput.appendLine()
+                errorOutput.append(GUIDE_USAGE_HINT)
+            }
         }
         errorOutput.appendLine()
         return EXIT_USAGE_FAILURE
@@ -162,8 +176,14 @@ public class SpectreCli(
         }
     }
 
-    private fun daemonFailure(message: String, exitCode: Int = EXIT_DAEMON_FAILURE): Int {
+    private fun daemonFailure(
+        message: String,
+        exitCode: Int = EXIT_DAEMON_FAILURE,
+        guideTopic: String = guideTopicFor(null),
+    ): Int {
         errorOutput.append("Spectre daemon error: $message")
+        errorOutput.appendLine()
+        errorOutput.append(guideHint(guideTopic))
         errorOutput.appendLine()
         return exitCode
     }
@@ -224,6 +244,7 @@ private class RootCommand(
 ) : CliktCommand(name = "spectre") {
     init {
         subcommands(
+            GuideCommand(output),
             AttachCommand(request, output),
             DetachCommand(request, output),
             LaunchCommand(output, errorOutput),
@@ -282,6 +303,8 @@ private class RootCommand(
                         "--max-frame-bytes must be a positive size (e.g. 64MiB), got '$raw'"
                     )
             }
+
+    override fun helpEpilog(context: Context): String = GUIDE_HELP_FOOTER
 
     override fun run() {
         // Re-resolve per invocation: SpectreCli.run can be called repeatedly in one process, and a

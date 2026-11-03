@@ -41,6 +41,14 @@ The full tree stays on disk in `capture.json`. Query it with `jq` or another JSO
 
 The skill name is **`spectre-capture`**. Capture summaries and detach reports use that name.
 
+The installed CLI bundles the user guide for its version. Run `spectre guide capture` for
+this workflow and `spectre guide --search "<words>"` to look up an error.
+
+`capture` writes window pixels, not a full-desktop screenshot. On the attach path,
+`spectre screenshot` needs `--fullscreen`. Without `spectre-recording` in the target JVM,
+`capture` crops the screen at the window bounds, so windows on top of the target appear in
+`screenshot.png`; keep the target in front.
+
 ## Where captures live
 
 Default root (mode `0700`):
@@ -224,4 +232,6 @@ Validate with the skill and Spectre CLI:
 - User guide CLI: <https://spectre.sebastiano.dev/guide/cli/>
 - Capture skill page: <https://spectre.sebastiano.dev/guide/capture/>
 - Compose Hot Reload awareness: <https://spectre.sebastiano.dev/guide/hot-reload/>
-- General UI automation skill: `spectre-ui-automation` / `spectre`
+- General UI automation skill: `spectre`
+- Bundled user guide: `spectre guide capture`, `spectre guide traps`, or
+  `spectre guide --search "<words>"`

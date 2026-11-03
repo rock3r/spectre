@@ -36,6 +36,9 @@ abstract class VerifyCliShadowJar : DefaultTask() {
             check(archive.getEntry(KTOR_SERVICE_ENTRY) != null) {
                 "${jar.name} does not retain Ktor's ServiceLoader entry at $KTOR_SERVICE_ENTRY"
             }
+            check(archive.getEntry(GUIDE_ENTRY) != null) {
+                "${jar.name} does not bundle the user guide for `spectre guide` at $GUIDE_ENTRY"
+            }
         }
 
         verifyHelp(jar)
@@ -132,6 +135,7 @@ abstract class VerifyCliShadowJar : DefaultTask() {
         private const val CLI_MAIN_CLASS = "dev.sebastiano.spectre.cli.bootstrap.SpectreBootstrap"
         private const val AGENT_RUNTIME_ENTRY = "spectre/agent-runtime.jar"
         private const val KTOR_SERVICE_ENTRY = "META-INF/services/io.ktor.server.config.ConfigLoader"
+        private const val GUIDE_ENTRY = "spectre-guide/traps.md"
         private const val PROCESS_TIMEOUT_SECONDS: Long = 10
         private const val PROCESS_KILL_TIMEOUT_SECONDS: Long = 1
         private const val INITIALIZE_REQUEST =

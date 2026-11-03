@@ -27,6 +27,11 @@ The guide walks through using Spectre end-to-end:
     invalidation when the target runs under HR (CLI/MCP only).
 17. **[IntelliJ-hosted Compose](intellij.md)** — Jewel-on-IntelliJ tool windows.
 18. **[Troubleshooting](troubleshooting.md)** — platform-specific gotchas.
+19. **[Traps and gotchas](traps.md)** — the mistakes that most often cost time, from CLI
+    attach to `xvfb-run` on CI.
+
+The `spectre` CLI bundles these pages: run `spectre guide`, or search them with
+`spectre guide --search "<words>"`. See [CLI — Built-in guide](cli.md#built-in-guide).
 
 If you're new to Spectre, start with [Installation](installation.md) and
 [Getting started](getting-started.md), then read [The automator](automator.md) before

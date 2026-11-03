@@ -109,6 +109,7 @@ nav:
       - Compose Hot Reload: guide/hot-reload.md
       - IntelliJ-hosted Compose: guide/intellij.md
       - Troubleshooting: guide/troubleshooting.md
+      - Traps and gotchas: guide/traps.md
   - Reference:
       - Architecture: ARCHITECTURE.md
       - Testing policy: TESTING.md
