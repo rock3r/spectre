@@ -3,12 +3,15 @@ package dev.sebastiano.spectre.cli
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.Context
+import com.github.ajalt.clikt.core.PrintMessage
 import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.parse
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.arguments.argument
+import com.github.ajalt.clikt.parameters.arguments.convert
 import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.default
+import com.github.ajalt.clikt.parameters.options.eagerOption
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.int
@@ -61,17 +64,20 @@ public class SpectreCli(
     public fun run(arguments: List<String>): Int {
         val command = RootCommand(request, shutdownRequest, output, errorOutput)
         return try {
-            command.parse(arguments)
+            command.parse(versionFlagAsCommand(arguments))
             EXIT_SUCCESS
         } catch (exception: ProgramResult) {
             // Intentional early exit with a custom status (e.g. permissions denied → 1). Do not
             // treat as a usage error or print Clikt help — the command already wrote its output.
             exception.statusCode
         } catch (exception: CliktError) {
-            val destination = if (exception.statusCode == EXIT_SUCCESS) output else errorOutput
-            destination.append(command.getFormattedHelp(exception))
-            destination.appendLine()
-            if (exception.statusCode == EXIT_SUCCESS) EXIT_SUCCESS else EXIT_USAGE_FAILURE
+            if (exception.statusCode == EXIT_SUCCESS) {
+                output.append(command.getFormattedHelp(exception))
+                output.appendLine()
+                EXIT_SUCCESS
+            } else {
+                usageFailure(command, exception, arguments)
+            }
         } catch (exception: CliOutputException) {
             outputFailure(exception.message ?: "failed to write command output")
         } catch (exception: DaemonCommandException) {
@@ -80,6 +86,79 @@ public class SpectreCli(
             daemonFailure(exception.message ?: "I/O failure")
         } catch (exception: IllegalArgumentException) {
             daemonFailure(exception.message ?: "invalid daemon endpoint")
+        }
+    }
+
+    /**
+     * `spectre --version` / `spectre -v` (optionally with `--json`) run the `version` command, so
+     * both spellings share one implementation and its `--json` output.
+     */
+    private fun versionFlagAsCommand(arguments: List<String>): List<String> {
+        val flags = arguments.filter { it != JSON_FLAG }
+        return if (flags.size == 1 && flags.single() in VERSION_FLAGS) {
+            listOf(VERSION_COMMAND) + arguments.filter { it == JSON_FLAG }
+        } else {
+            arguments
+        }
+    }
+
+    /**
+     * Prints a usage error with "maybe you meant" hints for unknown commands and options (#560).
+     * With `--json` the error is a [UsageErrorJson] object instead of Clikt's text.
+     */
+    private fun usageFailure(
+        command: RootCommand,
+        exception: CliktError,
+        arguments: List<String>,
+    ): Int {
+        val (reportedCommand, reportedError) =
+            unknownCommandError(command, arguments) ?: (command to exception)
+        val formattedHelp = reportedCommand.getFormattedHelp(reportedError).orEmpty()
+        val hints = usageHints(reportedError, registeredCommandPaths(reportedCommand))
+        if (JSON_FLAG in arguments.takeWhile { it != "--" }) {
+            errorOutput.append(
+                CLI_JSON.encodeToString(
+                    UsageErrorJson(
+                        error = usageErrorMessage(formattedHelp, reportedError),
+                        hint = hints.firstOrNull(),
+                    )
+                )
+            )
+        } else {
+            errorOutput.append(formattedHelp.trimEnd())
+            hints.forEach { hint ->
+                errorOutput.appendLine()
+                errorOutput.append("hint: $hint")
+            }
+        }
+        errorOutput.appendLine()
+        return EXIT_USAGE_FAILURE
+    }
+
+    /**
+     * Clikt reports `spectre keys pid-42 Enter` as "unexpected extra arguments", hiding the unknown
+     * command name. When the arguments name an unknown command, re-parse only up to that name with
+     * a throwaway root, so Clikt reports "no such subcommand" for it. The throwaway root cannot
+     * reach the daemon or the real output streams, and parsing stops at the unknown name, so no
+     * command runs.
+     */
+    private fun unknownCommandError(
+        command: RootCommand,
+        arguments: List<String>,
+    ): Pair<RootCommand, CliktError>? {
+        val index = unknownCommandIndex(command, arguments) ?: return null
+        val probe =
+            RootCommand(
+                request = { error("usage probe must not contact the daemon") },
+                shutdownRequest = { error("usage probe must not contact the daemon") },
+                output = StringBuilder(),
+                errorOutput = StringBuilder(),
+            )
+        return try {
+            probe.parse(arguments.subList(0, index + 1))
+            null
+        } catch (exception: CliktError) {
+            probe to exception
         }
     }
 
@@ -173,7 +252,11 @@ private class RootCommand(
             DaemonCommand(request, shutdownRequest, output),
             InputLockCommand.default(output),
             McpCommand(request),
+            VersionCommand(output),
         )
+        eagerOption(VERSION_FLAGS, help = "Print the Spectre CLI version and exit.") {
+            throw PrintMessage(HUMAN_VERSION)
+        }
     }
 
     /**
@@ -214,6 +297,35 @@ private class RootCommand(
         }
     }
 }
+
+private class VersionCommand(private val output: Appendable) :
+    CliktCommand(name = VERSION_COMMAND) {
+    private val json: Boolean by option(JSON_FLAG).flag(default = false)
+
+    override fun help(context: Context): String = "Print the Spectre CLI version."
+
+    override fun run() {
+        if (json) {
+            output.append(
+                CLI_JSON.encodeToString(VersionJson(spectreVersion = SpectreBuildMetadata.version))
+            )
+        } else {
+            output.append(HUMAN_VERSION)
+        }
+        output.appendLine()
+    }
+}
+
+/** `--json` body for a usage error, written to stderr. [hint] is `null` when there is none. */
+@Serializable
+private data class UsageErrorJson(
+    val version: Int = JSON_VERSION,
+    val error: String,
+    val hint: String?,
+)
+
+@Serializable
+private data class VersionJson(val version: Int = JSON_VERSION, val spectreVersion: String)
 
 private class McpCommand(private val request: (DaemonRequest) -> DaemonResponse) :
     CliktCommand(name = "mcp") {
@@ -650,11 +762,40 @@ private class PressKeyCommand(
     private val output: Appendable,
 ) : CliktCommand(name = "press-key") {
     private val sessionId: String by argument()
-    private val keyCode: Int by argument().int()
-    private val modifiers: Int by option("--modifiers").int().default(0)
+    private val key: KeyChord by
+        argument(
+                name = "key",
+                help =
+                    "Key name (Enter, Tab, Escape, A, Digit7, F5, PageDown, /), chord (Ctrl+Shift+P, " +
+                        "Cmd+K), or integer java.awt.event.KeyEvent code",
+            )
+            .convert { raw ->
+                try {
+                    parseKeyChord(raw)
+                } catch (exception: IllegalArgumentException) {
+                    fail(exception.message ?: "invalid key '$raw'")
+                }
+            }
+    private val extraModifiers: Int by
+        option(
+                "--modifiers",
+                help =
+                    "Modifier names (shift, ctrl/control, alt/option, meta/cmd/command; comma- " +
+                        "or '+'-separated) or an integer java.awt.event.InputEvent mask",
+            )
+            .convert { raw ->
+                try {
+                    parseModifiers(raw)
+                } catch (exception: IllegalArgumentException) {
+                    fail(exception.message ?: "invalid modifiers '$raw'")
+                }
+            }
+            .default(0)
     private val json: Boolean by option("--json").flag(default = false)
 
     override fun run() {
+        val keyCode = key.keyCode
+        val modifiers = key.modifiers or extraModifiers
         val completedSessionId =
             when (val response = request(DaemonRequest.PressKey(sessionId, keyCode, modifiers))) {
                 is DaemonResponse.Completed -> response.sessionId
@@ -713,8 +854,7 @@ private class FindCommand(
                 else -> error("Daemon returned an unexpected response to find")
             }
         if (json) output.append(CLI_JSON.encodeToString(TreeJson(nodes = nodes.map(::NodeJson))))
-        else
-            output.append(nodes.joinToString("\n") { node -> "${node.key} ${node.role ?: "Node"}" })
+        else output.append(nodes.joinToString("\n", transform = ::formatNodeLine))
         output.appendLine()
     }
 }
@@ -746,8 +886,7 @@ private class FindByTextCommand(
                 else -> error("Daemon returned an unexpected response to find-text")
             }
         if (json) output.append(CLI_JSON.encodeToString(TreeJson(nodes = nodes.map(::NodeJson))))
-        else
-            output.append(nodes.joinToString("\n") { node -> "${node.key} ${node.role ?: "Node"}" })
+        else output.append(nodes.joinToString("\n", transform = ::formatNodeLine))
         output.appendLine()
     }
 }
@@ -887,7 +1026,10 @@ private class WaitCommand(
     override fun run() {
         if (!reloadSettled) {
             throw CliktError(
-                "Specify --reload-settled (the only wait mode supported by this command)."
+                "Specify --reload-settled (the only wait mode supported by this command). Other " +
+                    "commands already wait for the UI to be idle; to wait for UI state, use " +
+                    "'spectre wait-for-node', 'spectre wait-until-gone', or " +
+                    "'spectre wait-for-visual-idle'."
             )
         }
         val completedSessionId =
@@ -926,8 +1068,7 @@ private class TreeCommand(
                 else -> error("Daemon returned an unexpected response to tree")
             }
         if (json) output.append(CLI_JSON.encodeToString(TreeJson(nodes = nodes.map(::NodeJson))))
-        else
-            output.append(nodes.joinToString("\n") { node -> "${node.key} ${node.role ?: "Node"}" })
+        else output.append(nodes.joinToString("\n", transform = ::formatNodeLine))
         output.appendLine()
     }
 }
@@ -1137,10 +1278,18 @@ private data class DaemonStatusJson(
 @Serializable
 private data class DaemonKillJson(val version: Int = JSON_VERSION, val stopped: Boolean = true)
 
-@Serializable private data class DaemonSessionJson(val id: String, val pid: Long)
-
+/** [sessionId] repeats [id] under the key `record status --json` and MCP use (#560). */
 @Serializable
-private data class AttachJson(val version: Int = JSON_VERSION, val id: String, val pid: Long)
+private data class DaemonSessionJson(val id: String, val sessionId: String = id, val pid: Long)
+
+/** [sessionId] repeats [id] under the key `record status --json` and MCP use (#560). */
+@Serializable
+private data class AttachJson(
+    val version: Int = JSON_VERSION,
+    val id: String,
+    val sessionId: String = id,
+    val pid: Long,
+)
 
 @Serializable
 private data class DetachJson(
@@ -1358,6 +1507,11 @@ private const val EXIT_ATTACH_FAILURE: Int = 3
 private const val EXIT_TARGET_NOT_FOUND: Int = 4
 private const val EXIT_DAEMON_FAILURE: Int = 5
 private const val JSON_VERSION: Int = 1
+private const val JSON_FLAG: String = "--json"
+private const val VERSION_COMMAND: String = "version"
+private val VERSION_FLAGS: List<String> = listOf("--version", "-v")
+private val HUMAN_VERSION: String
+    get() = "spectre ${SpectreBuildMetadata.version}"
 private val CLI_JSON: Json = Json { encodeDefaults = true }
 
 internal class CliOutputException(cause: IOException) : IOException(cause.message, cause)
