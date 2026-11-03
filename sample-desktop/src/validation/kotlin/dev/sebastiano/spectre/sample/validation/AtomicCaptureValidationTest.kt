@@ -12,11 +12,13 @@ import javax.imageio.ImageIO
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assumptions.assumeFalse
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.TestInstance
 
@@ -45,7 +47,18 @@ class AtomicCaptureValidationTest {
     @AfterAll fun stop() = fixture.stop()
 
     @Test
+    fun `capture fails closed instead of cropping the desktop on GitHub-hosted Windows`() {
+        assumeTrue(isGitHubHostedWindows(), "Only GitHub-hosted Windows lacks a native still")
+        val error =
+            assertFailsWith<UnsupportedOperationException> {
+                fixture.automator.capture(windowIndex = 0)
+            }
+        assertTrue(error.message.orEmpty().contains("GitHub-hosted"), error.message)
+    }
+
+    @Test
     fun `capture boundsImage matches PNG pixels for a tagged HiDPI target`() = runBlocking {
+        assumeFalse(isGitHubHostedWindows(), NO_NATIVE_STILL_ON_HOSTED_WINDOWS)
         with(fixture.automator) {
             navigateToScenario("scenario.hidpi")
             // Semantics settle is enough here; waitForVisualIdle can hang under the synthetic
