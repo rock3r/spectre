@@ -387,7 +387,7 @@ The cross-platform runner covers the stable baseline that should not be reinvent
   pass) + strict stdio (version / tools/list including `detach` / unknown-session detach `isError`)
 - host native recording smoke (macOS SCK region / Linux X11; Windows WGC via interactive PS script)
 - Maven Local `verifyMavenLocalPublication` + fresh consumer jar resolve
-- Linux Wayland `portal-token-warmup`: one `:recording:runWaylandPortalSmoke` with a pinned `SPECTRE_WAYLAND_HELPER` + `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` under `build/smoke/wayland-restore-tokens/`. Approve **Share** + **Remember** / **Allow remote interaction** for the **whole screen**; the warmup writes `wayland-rd-restore-token-rd-monitor-embedded`. Later helper monitor cells (`host-native-recording`) reuse that grant via the long-lived session. Robot-backed cells stay under `xvfb-run`. Window-source prompts are per-window and may still appear. Xvfb / macOS / Windows record hard `n/a`.
+- Linux Wayland `portal-token-warmup`: one `--no-daemon` `:recording:runWaylandPortalSmoke` with a pinned `SPECTRE_WAYLAND_HELPER` + `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` under `build/smoke/wayland-restore-tokens/`. Approve **Share** + **Remember** / **Allow remote interaction** for the **whole screen**; the warmup writes `wayland-rd-restore-token-rd-monitor-embedded`. Later helper monitor cells (`host-native-recording`) reuse that grant via the long-lived session. Robot-backed cells stay under `xvfb-run`. Window-source prompts are per-window and may still appear. Xvfb / macOS / Windows record hard `n/a`.
 - `pointer-move` ([#433](https://github.com/rock3r/spectre/issues/433) / [#435](https://github.com/rock3r/spectre/pull/435)): live hover via `moveTo(node)` / `moveBy` / `moveTo(x, y)` against the sample `scenario.hover` fixture, with JUnit XML fail-closed so assumption-skips cannot fake PASS. If `ComposeAutomator` ever loses both verbs the cell is hard `n/a` with reason. This is the in-process gap; CLI / MCP / agent verbs are a follow-up. Windows: `SampleAppFixture` keeps `exitProcessOnExit = false` so the validation worker can close the Gradle test-event socket after `exitApplication`. If a residual `#72` / `#500` `MessageIOException` still kills the worker, the smoke cell still **passes** when PointerMoveLive XML is green.
 
 Each release still needs delta cells based on `git log <previous-tag>..HEAD`. Add reusable delta
@@ -486,6 +486,34 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   reuse that grant (`host-native-recording`). `check`, attach, corpus, inject, CLI, and MCP stay under
   `xvfb-run` even when `DISPLAY=:0` so Robot-heavy cells do not fight the seated session.
   Missing `xvfb-run` is a hard fail for those cells, not a fallback onto the seat.
+- **Wayland portal over SSH (#501):** run `release-smoke.py` as the user who is logged in on the
+  GNOME Wayland seat. When `/run/user/<uid>/` holds a `wayland-*` socket, the harness fills in
+  whatever the SSH shell lacks and prints a `linux seat env:` line: `XDG_RUNTIME_DIR`,
+  `WAYLAND_DISPLAY` (`wayland-0` when present), `DISPLAY` (lowest `/tmp/.X11-unix/X<n>`, usually
+  `:0`), `XAUTHORITY` (newest `/run/user/<uid>/.mutter-Xwaylandauth.*`), and
+  `DBUS_SESSION_BUS_ADDRESS` (`unix:path=/run/user/<uid>/bus`). Values you exported win, except an
+  `XAUTHORITY` that is empty or names no file. Without the mutter cookie, Xwayland answers
+  `Authorization required` and AWT fails with `Can't connect to X11 window server using ':0'`.
+  Hosts without a Wayland socket are left alone. Do not use `ssh -X`: a forwarded `DISPLAY` is not
+  the seat.
+- **Wayland portal warmup runs alone:** the cell runs `./gradlew --no-daemon
+  :recording:runWaylandPortalSmoke` (5 min cell budget). A reused daemon can keep an older
+  client's environment, so a freshly exported `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` may not reach
+  the JVM. Do not run other Gradle builds on the machine during the warmup: a parallel
+  `:agent:test` once broke the portal reader thread with `NoClassDefFoundError: Event$Error`.
+- **Wayland restore-token paths:** relocate tokens with `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` and
+  leave `SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` unset. The helper treats an empty value of either
+  variable (`SPECTRE_WAYLAND_RESTORE_TOKEN_PATH=`) as unset, so it never resolves against the
+  working directory. `SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` is a base path that gets `-<key>`
+  appended; a full token file path such as `…/wayland-rd-restore-token-rd-monitor-embedded` is
+  used as is and does not grow a second `-rd-monitor-embedded`.
+- **Wayland Share dialog is easy to miss:** GNOME often logs `xdg-desktop-portal-gnome: Failed to
+  associate portal window with parent window`, and the dialog can open behind other windows. The
+  harness prints an `ACTION REQUIRED` banner before the warmup, and the helper writes a similar
+  banner to the cell log whenever it has no stored token. Each portal step still times out after
+  60s. If nothing appears within about 10s, open the Activities overview (Super key). When the
+  warmup fails with a portal timeout or an X authorization error, the cell detail names the likely
+  cause.
 - **Homebrew/Scoop/public archives:** after the draft artifacts exist, install through the real
   package manager and rerun launcher/MCP smoke. Local packaging does not prove channel metadata.
 - **Input focus/lock keys:** real Robot input uses global desktop state. Record focus failures and

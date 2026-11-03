@@ -2100,6 +2100,180 @@ def assert_linux_portal_tokens_captured(
         )
 
 
+WAYLAND_PORTAL_WARMUP_TASK = ":recording:runWaylandPortalSmoke"
+# spectre-wayland-helper waits this long for each portal Response (DEFAULT_RESPONSE_TIMEOUT).
+WAYLAND_PORTAL_RESPONSE_TIMEOUT_SECONDS = 60
+LINUX_SEAT_ENV_KEYS: tuple[str, ...] = (
+    "XDG_RUNTIME_DIR",
+    "WAYLAND_DISPLAY",
+    "DISPLAY",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+)
+
+
+def _newest(paths: Sequence[Path]) -> Path | None:
+    best: tuple[int, Path] | None = None
+    for path in paths:
+        try:
+            mtime = path.stat().st_mtime_ns
+        except OSError:
+            continue
+        if best is None or mtime > best[0]:
+            best = (mtime, path)
+    return best[1] if best else None
+
+
+def _x11_display_number(name: str) -> int | None:
+    if not name.startswith("X"):
+        return None
+    try:
+        return int(name[1:])
+    except ValueError:
+        return None
+
+
+def discover_linux_seat_env(
+    environ: Mapping[str, str] | None = None,
+    *,
+    uid: int | None = None,
+    run_user_root: Path = Path("/run/user"),
+    x11_socket_dir: Path = Path("/tmp/.X11-unix"),
+) -> dict[str, str]:
+    """Seat variables an SSH shell lacks but the logged-in GNOME Wayland seat provides.
+
+    Returns only keys that are missing (or, for XAUTHORITY, point at no file), so values the
+    operator exported win. Without a `wayland-*` socket in the runtime dir there is no
+    Wayland seat to reach and nothing is returned, which keeps X11 and headless hosts
+    unchanged. XAUTHORITY comes from mutter's `.mutter-Xwaylandauth.*`; without it Xwayland
+    answers `Authorization required` and AWT cannot open `DISPLAY`.
+    """
+    env = os.environ if environ is None else environ
+
+    def present(key: str) -> str:
+        return (env.get(key) or "").strip()
+
+    if uid is None:
+        getuid = getattr(os, "getuid", None)
+        if getuid is None:
+            return {}
+        uid = int(getuid())
+    runtime_dir = Path(present("XDG_RUNTIME_DIR") or Path(run_user_root) / str(uid))
+    if not runtime_dir.is_dir():
+        return {}
+
+    found: dict[str, str] = {}
+    wayland_display = present("WAYLAND_DISPLAY")
+    if not wayland_display:
+        sockets = sorted(
+            entry.name
+            for entry in runtime_dir.glob("wayland-*")
+            if not entry.name.endswith(".lock")
+        )
+        if not sockets:
+            return {}
+        wayland_display = "wayland-0" if "wayland-0" in sockets else sockets[0]
+        found["WAYLAND_DISPLAY"] = wayland_display
+    elif not (runtime_dir / wayland_display).exists():
+        return {}
+    if not present("XDG_RUNTIME_DIR"):
+        found["XDG_RUNTIME_DIR"] = str(runtime_dir)
+
+    display = present("DISPLAY")
+    if not display:
+        numbers = sorted(
+            n
+            for n in (
+                _x11_display_number(entry.name)
+                for entry in (
+                    Path(x11_socket_dir).iterdir() if Path(x11_socket_dir).is_dir() else []
+                )
+            )
+            if n is not None
+        )
+        if numbers:
+            display = f":{numbers[0]}"
+            found["DISPLAY"] = display
+
+    xauthority = present("XAUTHORITY")
+    if display and not (xauthority and Path(xauthority).is_file()):
+        cookie = _newest(list(runtime_dir.glob(".mutter-Xwaylandauth.*")))
+        if cookie is not None:
+            found["XAUTHORITY"] = str(cookie)
+
+    bus = runtime_dir / "bus"
+    if not present("DBUS_SESSION_BUS_ADDRESS") and bus.exists():
+        found["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+
+    # Stable order for logs.
+    return {key: found[key] for key in LINUX_SEAT_ENV_KEYS if key in found}
+
+
+def apply_linux_seat_env(
+    environ: MutableMapping[str, str] | None = None,
+    **discover_kwargs: Any,
+) -> dict[str, str]:
+    """Write [discover_linux_seat_env] into the mapping (default os.environ); return what changed."""
+    target: MutableMapping[str, str] = os.environ if environ is None else environ
+    found = discover_linux_seat_env(target, **discover_kwargs)
+    target.update(found)
+    return found
+
+
+def wayland_portal_warmup_command(gradle: str) -> list[str]:
+    """Warmup runs in a fresh Gradle JVM.
+
+    A long-lived daemon can keep the environment of an earlier client, so a freshly
+    exported SPECTRE_WAYLAND_RESTORE_TOKEN_DIR or seat variable may not reach the
+    JavaExec. A private JVM also keeps the cell serial: no other build shares its
+    classloaders (a parallel `:agent:test` once broke the portal reader thread).
+    """
+    return [gradle, "--no-daemon", WAYLAND_PORTAL_WARMUP_TASK, "--console=plain"]
+
+
+def portal_warmup_operator_banner() -> str:
+    """Live cue printed before warmup. Helper stderr only reaches the log after the cell."""
+    rule = "=" * 78
+    return "\n".join(
+        [
+            "",
+            rule,
+            "portal-token-warmup: ACTION REQUIRED ON THE SEAT",
+            rule,
+            "A Share / Allow remote interaction dialog opens on the logged-in desktop.",
+            "Select the whole screen, tick Remember, and click Share.",
+            f"Each portal step times out after {WAYLAND_PORTAL_RESPONSE_TIMEOUT_SECONDS}s.",
+            "No dialog after ~10s? Open the Activities overview (Super key): GNOME may log",
+            "'Failed to associate portal window with parent window' and leave the dialog",
+            "behind other windows.",
+            "Only helper monitor ScreenCast cells reuse the token. Robot-backed cells stay",
+            "under xvfb-run. Window-source prompts are per-window.",
+            rule,
+            "",
+        ]
+    )
+
+
+def portal_warmup_failure_hint(log_text: str) -> str | None:
+    """Operator hint for a failed warmup, or None when the log shows no seat problem."""
+    text = log_text or ""
+    if "Authorization required" in text or "Can't connect to X11 window server" in text:
+        return (
+            "the JVM could not open the seat X display: run on the GNOME Wayland seat's "
+            "user, and check DISPLAY plus XAUTHORITY (/run/user/<uid>/.mutter-Xwaylandauth.*)"
+        )
+    if (
+        "waiting for Response signal" in text
+        or "Failed to associate portal window" in text
+    ):
+        return (
+            "the portal dialog was not answered in time: it may be hidden behind other "
+            "windows (open the Activities overview) or GNOME failed to associate it with "
+            "the Spectre window; re-run and approve Share + Remember for the whole screen"
+        )
+    return None
+
+
 def linux_toolchain_path(environ: Mapping[str, str] | None = None) -> str:
     """PATH that includes rustup/cargo for non-login SSH and xvfb-run children.
 

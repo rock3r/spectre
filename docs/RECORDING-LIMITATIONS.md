@@ -46,8 +46,9 @@ CI and hermetic tests can redirect token storage with:
   Monitor+input grants are `wayland-rd-restore-token-rd-monitor-{cursor}`. Window-only
   ScreenCast grants remain `wayland-screencast-restore-token-{key}` (e.g. `…-window-embedded`).
 - `SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` — **base path** for separate token files. Spectre
-  writes `{basename}-{key}` next to that path (mode `0600`), so keys stay separate.
-  Prefer `DIR` when only the directory needs relocation.
+  writes `{basename}-{key}` next to that path (mode `0600`), so keys stay separate. A path
+  whose name already ends in `-{key}` is used as is. Empty values of either variable count as
+  unset. Prefer `DIR` when only the directory needs relocation.
 - `SPECTRE_WAYLAND_SESSION_DIR` — directory for the long-lived helper lock and unix socket
   (`wayland-session.lock` / `wayland-session.sock`). Defaults to `$XDG_RUNTIME_DIR/spectre`.
 - `SPECTRE_WAYLAND_DESKTOP_DIR` — override for the installed
