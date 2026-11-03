@@ -19,6 +19,7 @@ import java.awt.Dimension
 import java.awt.GraphicsEnvironment
 import java.awt.Window
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 import javax.swing.JFrame
 import javax.swing.JTextField
@@ -53,7 +54,7 @@ class HybridSwingComposeSyntheticInputValidationTest {
     fun `clicking a Compose field moves AWT focus away from a focused Swing field`() {
         assumeFalse(GraphicsEnvironment.isHeadless(), "Needs a real AWT display")
         val composeText = mutableStateOf("")
-        val swingField = JTextField().apply { preferredSize = Dimension(FIELD_WIDTH, 0) }
+        val swingField = onEdt { JTextField().apply { preferredSize = Dimension(FIELD_WIDTH, 0) } }
         val panel = composePanel { TextField(composeText, requestFocus = false) }
         val frame = showFrame(x = FRAME_X, panel = panel, west = swingField)
         SwingUtilities.invokeAndWait {
@@ -110,8 +111,9 @@ class HybridSwingComposeSyntheticInputValidationTest {
         assertEquals("", otherText.value, "the unfocused window must get no keys")
     }
 
-    private fun composePanel(content: @Composable () -> Unit): ComposePanel =
+    private fun composePanel(content: @Composable () -> Unit): ComposePanel = onEdt {
         ComposePanel().apply { setContent(content) }
+    }
 
     private fun showFrame(
         x: Int,
@@ -119,23 +121,28 @@ class HybridSwingComposeSyntheticInputValidationTest {
         west: Component? = null,
         focusable: Boolean = true,
     ): JFrame {
-        var frame: JFrame? = null
-        SwingUtilities.invokeAndWait {
-            frame =
-                JFrame("HybridSwingComposeSyntheticInputValidationTest").apply {
-                    isUndecorated = true
-                    focusableWindowState = focusable
-                    contentPane.layout = BorderLayout()
-                    west?.let { contentPane.add(it, BorderLayout.WEST) }
-                    contentPane.add(panel, BorderLayout.CENTER)
-                    size = Dimension(FRAME_WIDTH, FRAME_HEIGHT)
-                    setLocation(x, FRAME_Y)
-                    isVisible = true
-                }
+        val frame = onEdt {
+            JFrame("HybridSwingComposeSyntheticInputValidationTest").apply {
+                isUndecorated = true
+                focusableWindowState = focusable
+                contentPane.layout = BorderLayout()
+                west?.let { contentPane.add(it, BorderLayout.WEST) }
+                contentPane.add(panel, BorderLayout.CENTER)
+                size = Dimension(FRAME_WIDTH, FRAME_HEIGHT)
+                setLocation(x, FRAME_Y)
+                isVisible = true
+            }
         }
-        windows += frame!!
+        windows += frame
         check(awaitCondition { panel.isShowing }) { "frame never showed" }
-        return frame!!
+        return frame
+    }
+
+    // Swing and Compose components must be created and configured on the EDT.
+    private fun <T> onEdt(block: () -> T): T {
+        val task = FutureTask<T> { block() }
+        SwingUtilities.invokeAndWait(task)
+        return task.get()
     }
 
     private fun centerOnScreen(component: Component): Pair<Int, Int> {
