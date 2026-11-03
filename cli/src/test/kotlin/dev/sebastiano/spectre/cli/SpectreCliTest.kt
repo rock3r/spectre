@@ -130,7 +130,12 @@ class SpectreCliTest {
             ),
         )
         assertEquals("", output.toString())
-        assertEquals("Spectre daemon error: $diagnostics\n", errorOutput.toString())
+        assertEquals(
+            "Spectre daemon error: $diagnostics\n" +
+                "Hint: run \"spectre guide synchronization\" or " +
+                "\"spectre guide --search <words>\".\n",
+            errorOutput.toString(),
+        )
     }
 
     @Test
@@ -460,7 +465,8 @@ class SpectreCliTest {
         assertEquals(3, cli.run(listOf("ps")))
         assertEquals("", output.toString())
         assertEquals(
-            "Spectre daemon error: The JDK Attach API is not available\n",
+            "Spectre daemon error: The JDK Attach API is not available\n" +
+                "Hint: run \"spectre guide agent\" or \"spectre guide --search <words>\".\n",
             errorOutput.toString(),
         )
     }
@@ -584,7 +590,12 @@ class SpectreCliTest {
 
         assertEquals(5, cli.run(listOf("daemon", "status")))
         assertEquals("", output.toString())
-        assertEquals("Spectre daemon error: Socket unavailable\n", errorOutput.toString())
+        assertEquals(
+            "Spectre daemon error: Socket unavailable\n" +
+                "Hint: run \"spectre guide troubleshooting\" or " +
+                "\"spectre guide --search <words>\".\n",
+            errorOutput.toString(),
+        )
     }
 
     @Test

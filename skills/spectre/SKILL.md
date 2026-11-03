@@ -14,7 +14,18 @@ Use Spectre to test application windows, popups, IntelliJ or Jewel hosts, and vi
 
 ## User guide source of truth
 
-Check the published guides when answering setup questions:
+The installed `spectre` CLI bundles the user guide for its own version. It is the primary,
+always-current reference and works offline:
+
+```shell
+spectre guide                          # CLI workflow and the topic list
+spectre guide traps                    # known traps and how to avoid them
+spectre guide --search "<symptom>"     # best-matching sections, with breadcrumbs
+spectre guide -s "<words>" --json      # the same, as JSON
+```
+
+Search the guide before guessing at an error. CLI errors end with a hint that names the
+matching topic. The published guides hold the same pages:
 
 - Installation and coordinates: <https://spectre.sebastiano.dev/guide/installation/>
 - Experimental desktop input coordination: <https://spectre.sebastiano.dev/guide/input-coordination/>
@@ -23,6 +34,43 @@ Check the published guides when answering setup questions:
 - Compose Hot Reload awareness (CLI/MCP only): <https://spectre.sebastiano.dev/guide/hot-reload/>
 
 In the Spectre repository, the same pages live under `docs/guide/`.
+
+## CLI attach workflow
+
+`spectre attach <pid>` drives a running Compose Desktop, Swing-hosted Compose, or
+IntelliJ/Jewel JVM (JDK 21+, same OS user) without any Gradle or classpath change in the
+target; when the target lacks `spectre-core`, Spectre injects it. Store the session ID;
+the shell has no current session.
+
+```shell
+spectre ps --json                                   # attachable JVMs
+SESSION=$(spectre attach <pid> --json | jq -r .id)
+spectre windows "$SESSION"
+spectre tree "$SESSION" --json                      # node keys
+spectre find "$SESSION" <test-tag> --json           # or find-text / wait-for-node
+spectre click "$SESSION" <node-key>                 # keys, not tags
+spectre type "$SESSION" "text"                      # into the focused node
+spectre press-key "$SESSION" 10                     # AWT VK code (Enter)
+spectre capture "$SESSION" --json                   # window PNG + capture.json
+spectre record start "$SESSION" --window 0 --output ./run.mp4
+spectre record stop "$SESSION"
+spectre detach "$SESSION"
+```
+
+Key gotchas (`spectre guide traps` has the full list):
+
+- **Keys are per session and tree.** Run `tree` or `find` again after any UI change.
+- **`type` needs focus.** Click the field first. Over attach, `type` and `press-key`
+  also refuse while the target JVM lacks OS keyboard focus; bring its window to the front.
+- **`screenshot` needs `--fullscreen` on attach.** Use `capture` for one window. Without
+  `spectre-recording` in the target, `capture` crops the screen, so keep the target in front.
+- **Off-screen children of `Column(Modifier.verticalScroll(…))`** have `0×0` window bounds
+  (`1×1` screen bounds in `tree --json`). Scroll before clicking.
+- **The daemon can die with the caller's process group.** `session not found` right
+  after attach means a fresh daemon; see `spectre guide --search "process group"`.
+- **`xvfb-run ./gradlew …` hangs** when it starts a Gradle daemon. Pass `--no-daemon`.
+- **JUnit window lifecycle.** Wait for `isShowing` and a non-zero size before the first
+  query. `exitApplication()` is asynchronous: wait for `!window.isDisplayable` in teardown.
 
 ## Compose Hot Reload MCP and Spectre
 

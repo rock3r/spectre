@@ -513,16 +513,31 @@ dependencies {
     testImplementation(projects.agentTestFixture)
 }
 
+val userGuideDir: Directory = rootProject.layout.projectDirectory.dir("docs/guide")
+
 // Expand VERSION_NAME / project.version into the packaged classpath resource so MCP
 // serverInfo.version (and any other CLI version surfaces) match the release metadata.
 tasks.named<ProcessResources>("processResources") {
     val publishVersion = project.version.toString()
     inputs.property("spectre.version", publishVersion)
     filesMatching("spectre-build.properties") { expand(mapOf("version" to publishVersion)) }
+    // `spectre guide` prints and searches the user guide from these copies (#561), so the
+    // installed CLI always carries the guide for its own version. index.md is the site's
+    // table of contents; `spectre guide` builds its own topic list.
+    from(userGuideDir) {
+        include("*.md")
+        exclude("index.md")
+        into("spectre-guide")
+    }
 }
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    // SpectreCliGuideTest lists docs/guide to check that every page is a bundled topic.
+    inputs
+        .dir(userGuideDir)
+        .withPropertyName("userGuideDir")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     systemProperty(
         "spectre.cli.testRuntimeClasspath",
         sourceSets.test.get().runtimeClasspath.asPath,
