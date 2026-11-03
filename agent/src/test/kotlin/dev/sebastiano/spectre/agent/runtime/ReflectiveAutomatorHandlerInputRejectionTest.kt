@@ -10,6 +10,7 @@ import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 /**
  * How [ReflectiveAutomatorHandler] classifies a `:core` guard that throws **after a suspension
@@ -53,6 +54,32 @@ class ReflectiveAutomatorHandlerInputRejectionTest {
         }
     }
 
+    /**
+     * `:core`'s empty-bounds guard (#564) throws before the click suspends, so it reaches the
+     * handler wrapped by `Method.invoke`. It is a caller problem, not the OS refusing input: the
+     * attacher must get the guard's own explanation, and it must not be filed as `inputRejected`.
+     */
+    @Test
+    fun `off-viewport guard thrown before suspending reaches the attacher with its message`() {
+        val guardMessage =
+            "Cannot click AutomatorNode(key=main:0:42, tag=row.49): its in-window bounds are " +
+                "empty (Rect.fromLTRB(0.0, 0.0, 0.0, 0.0)), so it has no on-screen point to " +
+                "target. The node is most likely scrolled outside its container's viewport, or " +
+                "not measured yet. Scroll it into view first."
+        val automator =
+            ClickFailingBeforeSuspensionAutomator(
+                FakeKeyedNode("k1"),
+                IllegalStateException(guardMessage),
+            )
+
+        val response =
+            ReflectiveAutomatorHandler(automator).handle(AgentRequest.Click(nodeKey = "k1"))
+
+        check(response is AgentResponse.Error) { "expected an Error response, got $response" }
+        assertTrue(guardMessage in response.message, "message lost: ${response.message}")
+        assertEquals(AgentErrorCategory.InternalError.wireName, response.category)
+    }
+
     private fun clickFailingAfterSuspension(failure: IllegalStateException): AgentResponse {
         val automator = ClickFailingAfterSuspensionAutomator(FakeKeyedNode("k1"), failure)
         return ReflectiveAutomatorHandler(automator).handle(AgentRequest.Click(nodeKey = "k1"))
@@ -87,4 +114,21 @@ private class ClickFailingAfterSuspensionAutomator(
         continuation.resumeWith(Result.failure(failure))
         return COROUTINE_SUSPENDED
     }
+}
+
+/** Like [ClickFailingAfterSuspensionAutomator], but the click throws before it ever suspends. */
+private class ClickFailingBeforeSuspensionAutomator(
+    private val node: Any,
+    private val failure: Throwable,
+) {
+    @Suppress("unused") fun refreshWindows() = Unit
+
+    @Suppress("unused") fun getWindows(): List<Any> = emptyList()
+
+    @Suppress("unused") fun allNodes(): List<Any> = listOf(node)
+
+    @Suppress("unused", "UNUSED_PARAMETER") fun findByTestTag(tag: String): List<Any> = emptyList()
+
+    @Suppress("unused", "UNUSED_PARAMETER")
+    fun click(node: Any, continuation: Continuation<Any?>): Any? = throw failure
 }
