@@ -18,8 +18,9 @@ abstract class VerifyCliShadowJar : DefaultTask() {
     @get:InputFile abstract val artifact: RegularFileProperty
 
     /**
-     * Java executable used to run the jar. The CLI jar is JDK 25 bytecode, so callers wire
-     * the JDK 25 toolchain here instead of assuming the Gradle JVM can run it.
+     * Java executable used to run the jar. Callers wire a specific toolchain here (JDK 25 for
+     * the Leyden AOT cache path, JDK 21 for the CLI's minimum runtime) instead of assuming the
+     * Gradle JVM.
      */
     @get:Input abstract val javaExecutablePath: Property<String>
 

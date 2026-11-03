@@ -95,10 +95,10 @@ internal fun hashTrackedSurfacesForVisualIdle(
  * True when the recording-owned native still bridge is on the classpath and this host is allowed to
  * use it.
  *
- * Used by atomic [ComposeAutomator.capture]: class presence means take the native path and fail
- * closed if the helper cannot run. Do **not** treat a missing `gst-launch-1.0` as "use Robot
- * region" here — that would silently crop another application's pixels into an atomic artifact
- * (#355). GitHub Actions hosted Windows is still treated as non-interactive (WGC needs a console).
+ * Atomic [ComposeAutomator.capture] applies the same checks through
+ * [atomicCaptureNativeStillUnavailableReason], and fails when they do not pass instead of taking a
+ * Robot crop (#355, #559). GitHub Actions hosted Windows is still treated as non-interactive (WGC
+ * needs a console).
  */
 internal fun isNativeWindowCaptureBridgePresent(
     classLoader: ClassLoader = VisualIdleSurfaceCapture::class.java.classLoader,
@@ -117,8 +117,8 @@ internal fun isNativeWindowCaptureBridgePresent(
  * Requires the recording-owned bridge **and** a host where the platform helper can actually run.
  * Class presence alone is not enough: Linux stills need `gst-launch-1.0` (#503). When the helper
  * cannot run, [waitForVisualIdle] region-falls back like 0.4.0 instead of marking every sample
- * unsampleable. Atomic [ComposeAutomator.capture] uses [isNativeWindowCaptureBridgePresent] instead
- * so a missing helper stays fail-closed.
+ * unsampleable. Atomic [ComposeAutomator.capture] uses [atomicCaptureNativeStillUnavailableReason]
+ * instead so a missing helper stays fail-closed.
  */
 internal fun isNativeWindowCaptureAvailable(
     classLoader: ClassLoader = VisualIdleSurfaceCapture::class.java.classLoader,

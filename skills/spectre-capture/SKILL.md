@@ -210,6 +210,19 @@ jq '.summary' "$CAP"
 
 Return summary fields first. Read `capture.json` when the full tree is needed.
 
+`screenshot.png` is always a native still of the window. Spectre never substitutes a desktop crop,
+because a crop can include other windows that cover the target. When the native still is not
+possible, capture fails with a message that says why. Common causes:
+
+- **Blank or ambiguous window title.** CLI and MCP capture find the window by its title among the
+  windows of the attached process. Give the window a unique, non-blank title.
+- **macOS Screen Recording not granted.** Run `spectre permissions check`. Ask a human to grant it;
+  do not retry in a loop.
+- **The window moved or resized during the capture.** Settle the UI and retry once.
+- **In-process capture without `spectre-recording`.** `ComposeAutomator.capture` and
+  `AttachedAutomator.capture` take the still inside the target JVM, so that JVM needs
+  `spectre-recording` and its platform helper. Prefer `spectre capture` for attached apps.
+
 ## Cleanup guidance
 
 - Default root is lazy-capped (keep last 50 **closed** captures). Live sessions are never auto-pruned.

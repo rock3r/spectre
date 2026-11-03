@@ -543,9 +543,8 @@ internal suspend fun scenarioPressKeyOnUnfocusedField(
 internal suspend fun scenarioClickOnUnfocusedCounter(
     driver: RobotDriver,
     state: SmokeState,
-    distractor: JFrame,
 ): ScenarioResult {
-    val target = unfocusedCounterClick(state, distractor)
+    val target = awtCenter(state, state.counterBounds)
     if (target == null) {
         return ScenarioResult("click on unfocused counter", false, "no target rect available")
     }
@@ -619,22 +618,18 @@ internal suspend fun runUnfocusedScenarios(
     state: SmokeState,
     distractor: JFrame,
 ): List<ScenarioResult> {
-    // Xvfb without a WM can ignore the requested setLocation and map both always-on-top
-    // frames at the origin. Separate them from the *observed* screen bounds so the
-    // counter click cannot land on the distractor.
-    pinUnfocusedWindowsApart(state, distractor)
     val results = mutableListOf<ScenarioResult>()
     results += scenarioStartsUnfocused(state, distractor)
     // Robot warmup click on the *distractor* — primes the input pipeline (the same cold-JVM
     // dropped-first-click flake the focused smoke documents) without clicking SUT, because
     // clicking SUT would transfer focus to it and ruin the unfocused starting state.
-    // Use locationOnScreen, not JFrame.bounds: bounds keeps the requested (80,80) even when
-    // the X peer actually mapped at (0,0).
+    // Aim at the distractor's on-screen bounds; on headless Xvfb these match the X window only
+    // after the smoke's reapplyFrameLocation (#583).
     val warmup = screenCenter(distractor)
     driver.click(warmup.x, warmup.y)
     delay(POST_CLICK_SETTLE_MS.milliseconds)
     results += scenarioPressKeyOnUnfocusedField(driver, state)
-    results += scenarioClickOnUnfocusedCounter(driver, state, distractor)
+    results += scenarioClickOnUnfocusedCounter(driver, state)
     // A click miss is the root failure (#470). Do not run typeText on top of it — that
     // downstream assertion is what made the Xvfb flake look like a paste problem.
     if (results.last().passed) {

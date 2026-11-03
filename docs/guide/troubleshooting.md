@@ -257,6 +257,35 @@ Use `pressKey(...)` for individual key events (modifier shortcuts, navigation ke
 `<kbd>Tab</kbd>`, `<kbd>Esc</kbd>`). They go through the AWT key map and bypass
 the clipboard, so none of the paste-specific caveats apply.
 
+## "Daemon socket ancestor … is owned by …" {#daemon-socket-ancestor}
+
+The CLI daemon keeps its socket in an owner-only directory below a base directory: `/tmp`
+on Linux and macOS, `java.io.tmpdir` on Windows. Before it uses that directory, it checks
+every ancestor up to `/`. Each ancestor must be owned by `root` or by you, and must be
+either sticky (like `/tmp`) or not writable by group or others. The error names the
+directory that failed and its owner.
+
+Rootless containers and sandboxes that run in a Linux user namespace often leave host
+`root` unmapped. Inside them, `/tmp` and other host directories appear owned by `nobody`
+(uid 65534). Spectre refuses such ancestors on purpose. Every unmapped host user appears
+as uid 65534, so from inside the namespace a directory owned by host `root` can't be told
+apart from one owned by another host user, who could replace the daemon's socket
+directory.
+
+To move the socket, set `SPECTRE_DAEMON_SOCKET_DIR` to an absolute directory you own
+whose ancestors all pass the check, for example:
+
+```bash
+export SPECTRE_DAEMON_SOCKET_DIR="$XDG_RUNTIME_DIR"
+```
+
+A directory under `$HOME` works too. The override can't help when `/` itself appears
+owned by `nobody`, because every path runs through `/`. In that case, run the CLI in a
+container or sandbox whose root directory appears owned by `root` or by you.
+
+See [CLI — daemon socket location](cli.md#daemon-socket-location) for how the override
+behaves.
+
 ## Compose Hot Reload {#compose-hot-reload}
 
 ### "`wait --reload-settled` says hotReloadUnavailable"
@@ -325,12 +354,12 @@ wrapper when the UI reads Jewel locals such as `LocalComponent`.
 `screenshot(windowIndex)` and `screenshot(node)` use the platform window-capture backend when
 `spectre-recording` is on the runtime classpath. They fail if that backend is unavailable or cannot
 identify the requested window; they never substitute a screen-region crop. `capture()` uses the
-same window-scoped still whenever recording is present (GitHub Actions hosted Windows is treated
-as non-interactive for WGC). If the helper cannot actually run, such as Linux without
-`gst-launch-1.0`, `capture()` fails. It does not substitute a Robot crop of whatever sits
-under the window. Without recording (for example an inject payload that omits it) `capture()`
-uses Robot region capture of the Compose surface. On Linux X11/Xvfb native stills read visible
-framebuffer pixels; keep the target frontmost. Settle the UI
+same window-scoped still. If the backend is missing, or the helper cannot actually run (such as
+Linux without `gst-launch-1.0`, or GitHub Actions hosted Windows, which has no interactive
+desktop for WGC), `capture()` fails. It never substitutes a Robot crop of whatever sits under
+the window. For attached applications, `spectre capture` takes the still in the daemon instead;
+see [Atomic capture — Attached applications](capture.md#attached-applications). On Linux
+X11/Xvfb native stills read visible framebuffer pixels; keep the target frontmost. Settle the UI
 (`waitForIdle` / `waitForVisualIdle`) before `capture()` so the semantics snapshot and PNG stay a
 usable pair across one-shot native still latency.
 
@@ -530,10 +559,11 @@ returns a human-readable diagnostic without throwing.
 - **Locally**: JBR 21 is the dev-loop default. JBR 25 is exercised by the scheduled
   [runtime matrix](https://github.com/rock3r/spectre/blob/main/.github/workflows/runtime-matrix.yml)
   and by the IDE-hosted UI test (IntelliJ 2026.2 / platform 262 bundles JBR 25).
-- **On CI (per-PR)**: Temurin 25 (the CLI requires JDK 25). The full JBR/Temurin × OS matrix is
+- **On CI (per-PR)**: Temurin 25 (the CLI builds and tests its AOT cache on JDK 25). The full JBR/Temurin × OS matrix is
   scheduled and **release-gated**, not per-PR.
-- **For consumers**: any JDK **21+** works for non-IDE modules; the `spectre`
-  CLI and its daemon require JDK **25+** (the packaged CLI bundles its own runtime). The codified supported
+- **For consumers**: any JDK **21+** works for non-IDE modules and for the `spectre`
+  CLI and its daemon. The CLI uses its Leyden AOT cache only on JDK **25+** (the packaged
+  CLI bundles a Temurin 25 runtime). The codified supported
   set and what “supported” means operationally live in
   [Stability policy — JVM runtime support tiers](../STABILITY.md#jvm-runtime-support-tiers).
 

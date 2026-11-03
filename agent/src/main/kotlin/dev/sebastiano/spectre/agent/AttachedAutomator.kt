@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentResponse
 import dev.sebastiano.spectre.agent.transport.IpcClient
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
+import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.agent.transport.WindowIdentityDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import dev.sebastiano.spectre.agent.transport.logLabel
@@ -285,7 +286,41 @@ internal constructor(
             windowIndex
                 ?: windows().firstOrNull { it.isShowing }?.index
                 ?: error("No showing tracked window to capture")
-        val resp = exchange(AgentRequest.Capture(resolvedIndex))
+        return atomicCaptureResult(exchange(AgentRequest.Capture(resolvedIndex)))
+    }
+
+    /**
+     * Atomic capture that pairs the target's semantics tree with a window still the caller already
+     * took out of process (#559).
+     *
+     * The Spectre daemon uses this so the window still comes from its own native capture helper,
+     * never from a `java.awt.Robot` crop inside the target. [windowStillPng] must show the whole
+     * native window at [stillWindowBounds] in AWT screen coordinates, and [surfaceId] must be the
+     * surface [windowIndex] resolved to when the still was taken. Fails when the target's
+     * `spectre-core` is too old to accept a still, or when the window moved, resized, or changed
+     * index after the still was taken.
+     */
+    @Throws(IOException::class)
+    public fun captureWithWindowStill(
+        windowIndex: Int,
+        surfaceId: String,
+        windowTitle: String,
+        windowStillPng: ByteArray,
+        stillWindowBounds: RectDto,
+    ): AtomicCaptureResult =
+        atomicCaptureResult(
+            exchange(
+                AgentRequest.CaptureWithWindowStill(
+                    windowIndex = windowIndex,
+                    surfaceId = surfaceId,
+                    windowTitle = windowTitle,
+                    windowStillPng = windowStillPng,
+                    stillWindowBounds = stillWindowBounds,
+                )
+            )
+        )
+
+    private fun atomicCaptureResult(resp: AgentResponse): AtomicCaptureResult {
         val capture = resp as? AgentResponse.Capture ?: throw wireMismatch("Capture", resp)
         return AtomicCaptureResult(
             windowIndex = capture.windowIndex,

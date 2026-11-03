@@ -156,18 +156,20 @@ action, wait for the expected state with `wait-for-node`, `wait-until-gone`,
 
 ### Off-screen children of an eager scrolling column
 
-<!-- aliases: scroll, verticalScroll, offscreen, 0x0, 1x1, empty bounds, viewport, click misses, click lands on edge, LazyColumn -->
+<!-- aliases: scroll, verticalScroll, offscreen, 0x0, 1x1, empty bounds, in-window bounds are empty, viewport, click fails, cannot click, LazyColumn -->
 
 A `LazyColumn` leaves off-screen items out of the semantics tree. An eager
-`Column(Modifier.verticalScroll(…))` keeps them, but clips their bounds to the scroll
-viewport:
+`Column(Modifier.verticalScroll(…))` keeps them after they scroll out of view, but with
+empty bounds:
 
-- `boundsInWindow` is `0×0`.
-- `boundsOnScreen` (`bounds` in `spectre tree --json`) is `1×1`, at the edge of the
-  scroll container.
+- `boundsInWindow` is empty (`0×0`).
+- `boundsOnScreen` (`bounds` in `spectre tree --json`) is clamped to `1×1` at the top-left
+  corner of the Compose surface.
 
-A click on such a node lands on the edge of the viewport. It does not scroll to the node.
-Check the size first, scroll, then read the node again:
+Node-targeted pointer actions (`click`, `double-click`, `long-click`, `scroll-wheel`,
+`swipe` between nodes, and the matching library calls) refuse such a node without sending
+any input. The error reads `Cannot click … its in-window bounds are empty …`. Scroll the
+container, look the node up again, then act:
 
 ```kotlin
 import dev.sebastiano.spectre.core.ComposeAutomator
@@ -176,7 +178,7 @@ suspend fun clickAfterScrolling(automator: ComposeAutomator, tag: String, listTa
     val list = automator.findOneByTestTag(listTag) ?: error("No node tagged $listTag")
     repeat(20) {
         val target = automator.findOneByTestTag(tag) ?: error("No node tagged $tag")
-        if (target.boundsInWindow.width > 0f && target.boundsInWindow.height > 0f) {
+        if (!target.boundsInWindow.isEmpty) {
             automator.click(target)
             return
         }
@@ -187,8 +189,10 @@ suspend fun clickAfterScrolling(automator: ComposeAutomator, tag: String, listTa
 }
 ```
 
-From the CLI, run `spectre scroll-wheel <session-id> <container-key> <wheel-clicks>`, then
-`tree` again until the node's `bounds` are larger than `1×1`.
+Aim `scroll-wheel` at the container, not at the off-screen item. From the CLI, run
+`spectre scroll-wheel <session-id> <container-key> <wheel-clicks>`, then `tree` again until
+the node's `bounds` are larger than `1×1`. See
+[Driving input](interactions.md#nodes-outside-the-viewport-fail-fast).
 
 ### Tests start before the window is ready
 
@@ -288,7 +292,7 @@ Unlock the session and retry. See [Troubleshooting](troubleshooting.md).
 | `Refusing typeText`/`pressKey` because the JVM lacks OS keyboard focus | Real OS keyboard input needs the foreground window | Run `spectre focus-window <session-id> --window <index>` first |
 | `screenshot` fails without `--fullscreen` | Window screenshots fail closed on attach | Use `spectre capture` for one window |
 | `capture` PNG shows another app's window | No `spectre-recording` in the target; the capture crops the screen | Keep the target in front, or add `spectre-recording` |
-| Click lands on the edge of a scrolling column | Eager `verticalScroll` children have `0×0` window bounds off-screen | Scroll first, then read the node again |
+| `Cannot click … in-window bounds are empty` | The node is scrolled out of an eager `verticalScroll` column | Scroll the container, then look the node up again |
 | `find` or `tree` misses a node that appears later | Queries read once | Use `wait-for-node` or `waitForNode` |
 | A previous test's window shows up in the next test | `exitApplication()` is asynchronous | Wait for `!window.isDisplayable` in teardown |
 | Old node keys fail with `nodeNotFound` | Keys belong to one session and one tree | Run `tree` or `find` again |

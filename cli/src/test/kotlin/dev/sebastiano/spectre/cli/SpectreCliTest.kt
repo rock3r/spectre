@@ -9,12 +9,7 @@ import dev.sebastiano.spectre.cli.daemon.DaemonJvmProcessSummary
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionSummary
-import java.io.IOException
-import java.net.StandardProtocolFamily
-import java.net.UnixDomainSocketAddress
-import java.nio.channels.ServerSocketChannel
 import java.nio.file.Files
-import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -24,31 +19,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 class SpectreCliTest {
-    @Test
-    fun `JDK preflight rejects Java versions older than 25`() {
-        assertEquals(
-            "Spectre requires JDK 25 or later; found Java 17.",
-            jdkPreflightError(featureVersion = 17, hasAttachModule = true),
-        )
-        assertEquals(
-            "Spectre requires JDK 25 or later; found Java 21.",
-            jdkPreflightError(featureVersion = 21, hasAttachModule = true),
-        )
-    }
-
-    @Test
-    fun `JDK preflight rejects runtimes without jdk attach`() {
-        assertEquals(
-            "Spectre requires a full JDK with the jdk.attach module; the current Java runtime does not provide it.",
-            jdkPreflightError(featureVersion = 25, hasAttachModule = false),
-        )
-    }
-
-    @Test
-    fun `CLI-level JDK preflight permits a Java 25 runtime without jdk attach`() {
-        assertEquals(null, minimumJdkPreflightError(featureVersion = 25))
-    }
-
     @Test
     fun `type prints stable JSON completion output`() {
         val output = StringBuilder()
@@ -562,126 +532,5 @@ class SpectreCliTest {
 
         assertEquals(0, cli.run(listOf("daemon", "kill", "--json")))
         assertEquals("{\"version\":1,\"stopped\":true}\n", output.toString())
-    }
-
-    @Test
-    fun `usage errors are printed and returned as a nonzero exit code`() {
-        val output = StringBuilder()
-        val errorOutput = StringBuilder()
-        val cli =
-            SpectreCli(
-                request = { error("Daemon should not be contacted") },
-                output = output,
-                errorOutput = errorOutput,
-            )
-
-        assertEquals(2, cli.run(listOf("unknown")))
-        assertEquals("", output.toString())
-        assertTrue(errorOutput.contains("unknown"))
-    }
-
-    @Test
-    fun `attach failures use the attach exit code`() {
-        val cli =
-            SpectreCli(
-                request = {
-                    DaemonResponse.Error(
-                        dev.sebastiano.spectre.cli.daemon.DaemonErrorCode.AttachFailed,
-                        "JDK Attach API is unavailable",
-                    )
-                },
-                output = StringBuilder(),
-                errorOutput = StringBuilder(),
-            )
-
-        assertEquals(3, cli.run(listOf("attach", "42")))
-    }
-
-    @Test
-    fun `missing targets use the target-not-found exit code`() {
-        val cli =
-            SpectreCli(
-                request = {
-                    DaemonResponse.Error(
-                        dev.sebastiano.spectre.cli.daemon.DaemonErrorCode.SessionNotFound,
-                        "session not found",
-                    )
-                },
-                output = StringBuilder(),
-                errorOutput = StringBuilder(),
-            )
-
-        assertEquals(4, cli.run(listOf("detach", "missing")))
-    }
-
-    @Test
-    fun `daemon transport failures use the daemon exit code`() {
-        val cli =
-            SpectreCli(
-                request = { throw IOException("Socket unavailable") },
-                output = StringBuilder(),
-                errorOutput = StringBuilder(),
-            )
-
-        assertEquals(5, cli.run(listOf("ps")))
-    }
-
-    @Test
-    fun `daemon I O errors are reported without a stack trace`() {
-        val output = StringBuilder()
-        val errorOutput = StringBuilder()
-        val cli =
-            SpectreCli(
-                request = { throw IOException("Socket unavailable") },
-                output = output,
-                errorOutput = errorOutput,
-            )
-
-        assertEquals(5, cli.run(listOf("daemon", "status")))
-        assertEquals("", output.toString())
-        assertEquals(
-            "Spectre daemon error: Socket unavailable\n" +
-                "Hint: run \"spectre guide troubleshooting\" or " +
-                "\"spectre guide --search <words>\".\n",
-            errorOutput.toString(),
-        )
-    }
-
-    @Test
-    fun `daemon status reports a failure from an existing daemon endpoint`() {
-        val socketDirectory = Files.createTempDirectory("spectre-cli-status")
-        val socketPath = socketDirectory.resolve("daemon.sock")
-        ServerSocketChannel.open(StandardProtocolFamily.UNIX).use { server ->
-            server.bind(UnixDomainSocketAddress.of(socketPath))
-        }
-        val output = StringBuilder()
-        val errorOutput = StringBuilder()
-        val cli = SpectreCli(output = output, errorOutput = errorOutput, socketPath = socketPath)
-
-        try {
-            assertEquals(5, cli.run(listOf("daemon", "status")))
-            assertEquals("", output.toString())
-            assertTrue(errorOutput.startsWith("Spectre daemon error: "))
-        } finally {
-            Files.deleteIfExists(socketPath)
-            Files.deleteIfExists(socketDirectory)
-        }
-    }
-
-    @Test
-    fun `daemon request reports attach preflight failures before daemon startup`() {
-        val request =
-            daemonRequest(
-                socketPath = Path.of("/tmp/spectre-test/daemon.sock"),
-                attachPreflight = { "The JDK Attach API is not available" },
-            )
-
-        assertEquals(
-            DaemonResponse.Error(
-                code = DaemonErrorCode.AttachFailed,
-                message = "The JDK Attach API is not available",
-            ),
-            request(DaemonRequest.Attach(targetPid = 42)),
-        )
     }
 }

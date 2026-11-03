@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
 import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitScreenshotter
+import dev.sebastiano.spectre.recording.screencapturekit.TitleDiscriminationAware
 import dev.sebastiano.spectre.recording.screencapturekit.TitleDiscriminator
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import dev.sebastiano.spectre.recording.windows.WindowsWindowScreenshotter
@@ -78,6 +79,38 @@ internal constructor(
         )
     }
 
+    /**
+     * Still screenshot of a window that belongs to another process, found by [title] among the
+     * windows of [windowOwnerPid].
+     *
+     * The Spectre daemon uses this on the attach path (#559), so the capture runs through the
+     * daemon's own signed helper instead of inside the target JVM. Spectre cannot rename a window
+     * in another process, so [title] must already identify one window of [windowOwnerPid]. The
+     * image shows the whole native window, the same as [captureWindow] produces.
+     *
+     * Supported on macOS (ScreenCaptureKit) and Windows (Windows Graphics Capture). On Linux this
+     * throws [UnsupportedOperationException]: the Linux helpers need the window in this process.
+     */
+    public fun captureWindowByTitle(title: String, windowOwnerPid: Long): BufferedImage {
+        require(title.isNotBlank()) { "captureWindowByTitle requires a non-blank title" }
+        val window = RemoteTitledWindow(title)
+        if (isMacOs()) {
+            return try {
+                sckScreenshotter.captureWindow(window, windowOwnerPid)
+            } catch (e: HelperNotBundledException) {
+                throw unavailable("macOS window screenshot", e)
+            }
+        }
+        if (isWindows()) {
+            return windowsWindowScreenshotter?.captureWindow(window, windowOwnerPid)
+                ?: throw unavailable("Windows window screenshot", null)
+        }
+        throw UnsupportedOperationException(
+            "AutoScreenshotter.captureWindowByTitle is unsupported on this platform: the native " +
+                "window screenshot backend can only capture windows of this process."
+        )
+    }
+
     private fun unavailable(mode: String, cause: Throwable?): IllegalStateException {
         val detail = cause?.message?.takeIf { it.isNotBlank() } ?: cause?.javaClass?.simpleName
         val message =
@@ -135,4 +168,17 @@ public interface WindowScreenshotter {
 
 public interface RegionScreenshotter {
     public fun captureRegion(region: Rectangle): BufferedImage
+}
+
+/**
+ * A window of another process, known only by its title. Its title is never rewritten: a title
+ * discriminator would only rename this local object, and the helper would then search the target
+ * process for a title that does not exist.
+ */
+private class RemoteTitledWindow(title: String) : TitledWindow, TitleDiscriminationAware {
+    override var title: String? = title
+
+    override val bounds: Rectangle = Rectangle()
+
+    override val requiresTitleDiscriminator: Boolean = false
 }

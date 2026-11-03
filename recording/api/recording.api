@@ -22,6 +22,7 @@ public final class dev/sebastiano/spectre/recording/AutoScreenshotter {
 	public synthetic fun <init> (Ldev/sebastiano/spectre/recording/WindowScreenshotter;Ldev/sebastiano/spectre/recording/WindowScreenshotter;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun captureWindow (Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;J)Ljava/awt/image/BufferedImage;
 	public static synthetic fun captureWindow$default (Ldev/sebastiano/spectre/recording/AutoScreenshotter;Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;JILjava/lang/Object;)Ljava/awt/image/BufferedImage;
+	public final fun captureWindowByTitle (Ljava/lang/String;J)Ljava/awt/image/BufferedImage;
 }
 
 public final class dev/sebastiano/spectre/recording/FfmpegRecorder : dev/sebastiano/spectre/recording/Recorder {

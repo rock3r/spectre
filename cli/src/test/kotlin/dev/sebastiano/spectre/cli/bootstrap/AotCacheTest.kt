@@ -462,6 +462,36 @@ class AotCacheTest {
     }
 
     @Test
+    fun `daemon consumes no cache and no frontend layout before JDK 25`() {
+        // The CLI runs on JDK 21+, but only 25+ has the Leyden cache and accepts the
+        // pinned frontend layout (-XX:-UseCompactObjectHeaders is unknown on 21): a
+        // daemon spawned from an older JVM must get no AOT or layout flags at all, even
+        // when a cache file sits at the fingerprint path.
+        val jar = jar()
+        val training = plan(jar)
+        Files.createDirectories(training.cacheFile().parent)
+        Files.write(training.cacheFile(), byteArrayOf(9))
+
+        for (feature in listOf(21, 24)) {
+            assertEquals(
+                emptyList(),
+                AotCache.daemonJvmArguments(
+                    jar.toString(),
+                    emptyMap(),
+                    root.resolve("home"),
+                    "Linux",
+                    "x86_64",
+                    "25.0.1",
+                    feature,
+                    emptyList(),
+                    emptyList(),
+                ),
+                "JDK $feature",
+            )
+        }
+    }
+
+    @Test
     fun `user supplied AOT options win over managed caching`() {
         val plan =
             plan(jar(), environment = mapOf("JAVA_TOOL_OPTIONS" to "-XX:AOTCache=/tmp/user.aot"))

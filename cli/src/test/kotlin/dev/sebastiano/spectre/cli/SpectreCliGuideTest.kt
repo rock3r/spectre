@@ -109,7 +109,7 @@ class SpectreCliGuideTest {
 
     @Test
     fun `guide search finds the eager scroll bounds trap`() {
-        val result = runGuide("guide", "-s", "click lands on scroll viewport edge", "--json")
+        val result = runGuide("guide", "-s", "cannot click in-window bounds are empty", "--json")
 
         val first =
             Json.parseToJsonElement(result.output)

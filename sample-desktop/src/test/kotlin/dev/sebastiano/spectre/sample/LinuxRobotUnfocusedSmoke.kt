@@ -45,9 +45,10 @@ import kotlinx.coroutines.runBlocking
  *    An intermittent Xvfb miss that never reaches this JVM is reported at the click, with an AWT
  *    press verdict (never dispatched vs dispatched with no Compose effect), not at the downstream
  *    `typeText` assertion. Headless Xvfb without a WM can leave AWT reporting a frame at the origin
- *    while its X window sits at the requested spot, so the click lands on the distractor (CI miss
+ *    while its X window sits at the requested spot, so the click aims at the wrong pixel (CI miss
  *    at (270,96)). The smoke re-applies both locations once the frames show (see
- *    [reapplyFrameLocation], #583); the shared rig still clicks an unobscured counter pixel.
+ *    [reapplyFrameLocation], #583). After that the frames never overlap and the rig clicks the
+ *    counter center, as on Windows and macOS.
  * 4. **typeText-after-focus-click works through XWayland.** `typeText` sends key events rather than
  *    touching the clipboard. Both XWayland and Xvfb produce the expected text after the
  *    focus-handoff click.

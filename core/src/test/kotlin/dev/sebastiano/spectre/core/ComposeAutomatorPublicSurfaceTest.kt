@@ -404,8 +404,9 @@ class ComposeAutomatorPublicSurfaceTest {
         // - `windows: List<TrackedWindow>` (property getter `getWindows`) for the experimental
         //   server transport
         // - `windowIdentities` / `windowIdentity` for daemon-owned recording (#184)
+        // - `captureWithWindowStill` for daemon-owned atomic capture stills (#559)
         val COMPOSE_AUTOMATOR_ESCAPE_HATCH_MEMBERS: Set<String> =
-            setOf("getWindows", "windowIdentities", "windowIdentity")
+            setOf("getWindows", "windowIdentities", "windowIdentity", "captureWithWindowStill")
 
         // Public factory methods on ComposeAutomator.Companion. R1 narrowed `inProcess(...)`
         // to a single `robotDriver` parameter; restoring `windowTracker` / `semanticsReader`

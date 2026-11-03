@@ -468,13 +468,17 @@ private sealed interface DaemonSocketProtection {
         if ("unix" in directory.fileSystem.supportedFileAttributeViews()) {
             val mode = Files.getAttribute(directory, "unix:mode", NOFOLLOW_LINKS) as Int
             if (!isTrustedOwner(directory)) {
-                throw IOException("Daemon socket ancestor $directory must be owned by root or user")
+                throw IOException(
+                    socketAncestorOwnerError(
+                        directory,
+                        owner = Files.getOwner(directory, NOFOLLOW_LINKS).name,
+                        currentUser = System.getProperty("user.name"),
+                    )
+                )
             }
             if (mode and STICKY_BIT != 0) return
             if (mode and GROUP_OR_OTHER_WRITE_BITS == 0) return
-            throw IOException(
-                "Daemon socket ancestor $directory must not be group or world writable"
-            )
+            throw IOException(socketAncestorWritableError(directory))
         }
     }
 
