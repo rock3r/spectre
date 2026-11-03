@@ -27,11 +27,13 @@ public final class dev/sebastiano/spectre/core/AutomatorNode {
 	public final fun getEditableText ()Ljava/lang/String;
 	public final fun getKey ()Ldev/sebastiano/spectre/core/NodeKey;
 	public final fun getParent ()Ldev/sebastiano/spectre/core/AutomatorNode;
+	public final fun getProgressBarRangeInfo ()Landroidx/compose/ui/semantics/ProgressBarRangeInfo;
 	public final fun getRole-RLKlGQI ()Landroidx/compose/ui/semantics/Role;
 	public final fun getSurfaceId ()Ljava/lang/String;
 	public final fun getTestTag ()Ljava/lang/String;
 	public final fun getText ()Ljava/lang/String;
 	public final fun getTexts ()Ljava/util/List;
+	public final fun getToggleableState ()Landroidx/compose/ui/state/ToggleableState;
 	public final fun isClickable ()Z
 	public final fun isDisabled ()Z
 	public final fun isFocused ()Z

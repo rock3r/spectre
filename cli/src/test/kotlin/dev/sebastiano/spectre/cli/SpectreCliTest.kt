@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.cli
 
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
+import dev.sebastiano.spectre.agent.transport.ProgressRangeDto
 import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
@@ -299,7 +300,10 @@ class SpectreCliTest {
         assertEquals(
             "{\"version\":1,\"nodes\":[{\"key\":\"main:0:1\",\"testTag\":\"submit\",\"texts\":[\"Submit\"]," +
                 "\"editableText\":null,\"role\":\"Button\",\"contentDescription\":null,\"isFocused\":false," +
-                "\"isVisible\":true,\"bounds\":{\"x\":1,\"y\":2,\"width\":3,\"height\":4}}]}\n",
+                "\"isVisible\":true,\"bounds\":{\"x\":1,\"y\":2,\"width\":3,\"height\":4}," +
+                "\"isDisabled\":false,\"isSelected\":false,\"isClickable\":false," +
+                "\"toggleableState\":null,\"progress\":null,\"parentKey\":null,\"childKeys\":[]," +
+                "\"boundsInWindow\":null}]}\n",
             output.toString(),
         )
     }
@@ -324,7 +328,49 @@ class SpectreCliTest {
         assertEquals(
             "{\"version\":1,\"nodes\":[{\"key\":\"main:0:1\",\"testTag\":\"submit\",\"texts\":[\"Submit\"]," +
                 "\"editableText\":null,\"role\":\"Button\",\"contentDescription\":null,\"isFocused\":false," +
-                "\"isVisible\":true,\"bounds\":{\"x\":1,\"y\":2,\"width\":3,\"height\":4}}]}\n",
+                "\"isVisible\":true,\"bounds\":{\"x\":1,\"y\":2,\"width\":3,\"height\":4}," +
+                "\"isDisabled\":false,\"isSelected\":false,\"isClickable\":false," +
+                "\"toggleableState\":null,\"progress\":null,\"parentKey\":null,\"childKeys\":[]," +
+                "\"boundsInWindow\":null}]}\n",
+            output.toString(),
+        )
+    }
+
+    @Test
+    fun `tree JSON carries node state, progress, tree links, and window bounds`() {
+        val output = StringBuilder()
+        val node =
+            NodeSnapshotDto(
+                key = "main:0:2",
+                testTag = "mute",
+                texts = emptyList(),
+                role = "Checkbox",
+                contentDescription = null,
+                isFocused = true,
+                isDisabled = true,
+                isSelected = true,
+                isVisible = true,
+                bounds = RectDto(1, 2, 3, 4),
+                isClickable = true,
+                toggleableState = "Indeterminate",
+                progress = ProgressRangeDto(current = 0.5f, min = 0f, max = 1f, steps = 4),
+                parentKey = "main:0:1",
+                childKeys = listOf("main:0:3"),
+                boundsInWindow = RectDto(2, 4, 6, 8),
+            )
+        val cli =
+            SpectreCli(request = { DaemonResponse.Nodes("pid-42", listOf(node)) }, output = output)
+
+        assertEquals(0, cli.run(listOf("tree", "pid-42", "--json")))
+        assertEquals(
+            "{\"version\":1,\"nodes\":[{\"key\":\"main:0:2\",\"testTag\":\"mute\",\"texts\":[]," +
+                "\"editableText\":null,\"role\":\"Checkbox\",\"contentDescription\":null,\"isFocused\":true," +
+                "\"isVisible\":true,\"bounds\":{\"x\":1,\"y\":2,\"width\":3,\"height\":4}," +
+                "\"isDisabled\":true,\"isSelected\":true,\"isClickable\":true," +
+                "\"toggleableState\":\"Indeterminate\"," +
+                "\"progress\":{\"current\":0.5,\"min\":0.0,\"max\":1.0,\"steps\":4}," +
+                "\"parentKey\":\"main:0:1\",\"childKeys\":[\"main:0:3\"]," +
+                "\"boundsInWindow\":{\"x\":2,\"y\":4,\"width\":6,\"height\":8}}]}\n",
             output.toString(),
         )
     }

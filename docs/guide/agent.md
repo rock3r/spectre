@@ -419,6 +419,24 @@ Beyond `findByTestTag`, the agent transport supports:
 parity). On-screen `bounds` stay integer AWT units on the agent; HTTP keeps double
 window+screen rects.
 
+`NodeSnapshotDto` also carries node state and tree links:
+
+| Field | Meaning |
+| --- | --- |
+| `isClickable` | `true` when the node has a click action. |
+| `toggleableState` | `"On"`, `"Off"`, or `"Indeterminate"` for a checkbox or switch; `null` otherwise. |
+| `progress` | `ProgressRangeDto` (`current`, `min`, `max`, `steps`) for a slider or progress bar; `null` otherwise. |
+| `parentKey` | `key` of the parent node; `null` at a root. |
+| `childKeys` | `key`s of the child nodes, in tree order. |
+| `boundsInWindow` | Integer layout bounds within the Compose surface, in Compose (physical) pixels. |
+
+`boundsInWindow` matches `AutomatorNode.boundsInWindow`, rounded to whole pixels. It is not
+divided by the display scale, so use `bounds` for Robot input and screenshot regions.
+
+These fields have defaults, so an attacher or runtime from an older Spectre release still
+exchanges nodes with a newer one. The older side ignores the fields. The newer side reads the
+defaults when the older side does not send them.
+
 ### Payload limits (#204)
 
 Each IPC frame is length-prefixed, with **two** separate bounds:

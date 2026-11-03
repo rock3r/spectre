@@ -4,15 +4,20 @@
 package dev.sebastiano.spectre.agent.fixture
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
@@ -29,9 +34,10 @@ import javax.swing.WindowConstants
 
 /**
  * Compose Desktop fixture used by `:agent`'s `AgentAttachIntegrationTest`. Puts up one JFrame with
- * a [ComposePanel] holding three tagged nodes — one [Text], one [TextField], one [Button] — so the
- * integration test can assert against real, non-empty semantics-tree data (non-empty windows,
- * findByTestTag matches, DTO bounds, click).
+ * a [ComposePanel] holding five tagged nodes — one [Text], one [TextField], one [Button], one
+ * checked [Checkbox], and one [LinearProgressIndicator] — so the integration test can assert
+ * against real, non-empty semantics-tree data (non-empty windows, findByTestTag matches, DTO
+ * bounds, node state, click).
  *
  * **Why not Compose Desktop's `application { Window { ... } }`?** That runtime starts an
  * application-scoped coroutine and never returns from main; combined with `ProcessBuilder`-spawned
@@ -117,6 +123,7 @@ fun main() {
                             ) {
                                 Text(text = "Click me")
                             }
+                            NodeStateRow()
                         }
                     }
                 }
@@ -203,6 +210,23 @@ public const val FIXTURE_DEFAULT_CLOSE_OPERATION: Int = WindowConstants.DO_NOTHI
 /** Sentinel the parent integration test scans `stdout` for to confirm the window is up. */
 public const val READY_SENTINEL: String = "SPECTRE-FIXTURE-READY"
 
+/**
+ * A checked [Checkbox] and a determinate [LinearProgressIndicator], so the integration test can
+ * read real toggleable and progress semantics over the wire (#576).
+ */
+@Composable
+private fun NodeStateRow() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        // A null onCheckedChange drops the toggleable semantics, so pass a no-op: the box stays
+        // checked, and the test reads its ToggleableState.
+        Checkbox(checked = true, onCheckedChange = {}, modifier = Modifier.testTag(TAG_CHECKBOX))
+        LinearProgressIndicator(
+            progress = { FIXTURE_PROGRESS },
+            modifier = Modifier.testTag(TAG_PROGRESS),
+        )
+    }
+}
+
 /** The window title — assertable from the integration test via `WindowSummaryDto.title`. */
 public const val SPECTRE_FIXTURE_WINDOW_TITLE: String = "Spectre Agent Test Fixture"
 
@@ -218,9 +242,18 @@ public const val TAG_TEXT_FIELD: String = "agent-fixture-text-field"
 /** Test tag on the [androidx.compose.material3.Button]. */
 public const val TAG_BUTTON: String = "agent-fixture-button"
 
+/** Test tag on the always-checked [androidx.compose.material3.Checkbox] (#576). */
+public const val TAG_CHECKBOX: String = "agent-fixture-checkbox"
+
+/** Test tag on the determinate [androidx.compose.material3.LinearProgressIndicator] (#576). */
+public const val TAG_PROGRESS: String = "agent-fixture-progress"
+
+/** Value the fixture's progress indicator reports, out of the default `0f..1f` range. */
+public const val FIXTURE_PROGRESS: Float = 0.5f
+
 private const val SPECTRE_FIXTURE_PADDING_DP: Int = 16
 private const val FIXTURE_WIDTH_PX: Int = 320
-private const val FIXTURE_HEIGHT_PX: Int = 240
+private const val FIXTURE_HEIGHT_PX: Int = 300
 private const val READY_POLL_INTERVAL_MS: Long = 25
 private const val READY_POLL_TIMEOUT_MS: Long = 15_000
 
