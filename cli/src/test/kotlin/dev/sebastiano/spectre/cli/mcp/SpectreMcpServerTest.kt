@@ -444,7 +444,7 @@ class SpectreMcpServerTest {
             invokeTool(server, "focus_window", buildJsonObject { put("session_id", "pid-42") })
 
         assertEquals(
-            listOf(
+            listOf<DaemonRequest>(
                 DaemonRequest.FocusWindow("pid-42", windowIndex = 1),
                 DaemonRequest.FocusWindow("pid-42", windowIndex = 0),
             ),
