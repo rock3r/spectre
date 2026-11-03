@@ -63,8 +63,9 @@ Key gotchas (`spectre guide traps` has the full list):
 - **`type` needs a focused node.** Click the field first. Synthetic input, the attach
   default, needs no OS focus. With real OS input, `type` and `press-key` refuse while the
   target lacks OS keyboard focus: run `spectre focus-window <session-id> --window <index>`.
-- **`screenshot` needs `--fullscreen` on attach.** Use `capture` for one window. Without
-  `spectre-recording` in the target, `capture` crops the screen, so keep the target in front.
+- **`screenshot` needs `--fullscreen` on attach.** Use `capture` for one window. `capture`
+  never crops the screen: it fails instead, most often on a blank or non-unique window
+  title. On Linux the target needs `spectre-recording` for `capture`.
 - **Off-screen children of `Column(Modifier.verticalScroll(…))`** have empty window bounds
   (`1×1` screen bounds in `tree --json`), and pointer actions on them fail with
   `in-window bounds are empty`. Scroll the container, then look the node up again.

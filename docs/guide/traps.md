@@ -126,15 +126,30 @@ you need:
 `capture` writes `screenshot.png` and `capture.json` and prints their paths. See
 [CLI — Capture and recording](cli.md#capture-and-recording) and [Atomic capture](capture.md).
 
-### `capture` can include overlapping windows
+### `capture` needs a unique window title and never crops the screen
 
-<!-- aliases: capture shows other windows, privacy, robot crop, region fallback, occluded, wrong pixels, capture fallback -->
+<!-- aliases: capture fails, capture error, blank title, window title, ambiguous title, robot crop, capture fallback, screen recording permission, privacy, occluded -->
 
-`capture` uses a window-scoped native still when the target JVM has `spectre-recording`
-on its classpath. Without it, which is always the case for an injected attach, it crops
-the screen at the window bounds. Any window on top of the target then appears in the PNG.
-Keep the target visible and in front while capturing, or add `spectre-recording` to the
-target.
+`capture` always writes a native still of the window. It never falls back to a crop of
+the screen, because a crop can include other windows that cover the target. When no native
+still is possible, `capture` fails with a message that says why.
+
+On the attach path the daemon takes the still with its own helper. It finds the window by
+its title among the windows of the attached process, so the target needs no
+`spectre-recording`. That has consequences:
+
+- **The window needs a unique, non-blank title.** A blank title, or another window of the
+  same process with a matching title, fails the capture. Give each window its own title.
+- **macOS Screen Recording belongs to the daemon's helper.** Check it with
+  `spectre permissions check`; the attached `java` process needs no grant of its own.
+- **A window that moves or resizes mid-capture fails it.** Settle the UI and retry once.
+- **Linux has no out-of-process window still.** There the attached application takes the
+  still itself, so it needs `spectre-recording` and its Linux helper on its classpath.
+- **An older `spectre-core` in the target** cannot accept the daemon's still; update it.
+
+In-process `ComposeAutomator.capture` needs `spectre-recording` and its platform helper
+on the test runtime classpath, and throws without them. See
+[Atomic capture — Attached applications](capture.md#attached-applications).
 
 ### MCP needs a clean standard output
 
@@ -291,7 +306,7 @@ Unlock the session and retry. See [Troubleshooting](troubleshooting.md).
 | `Refusing typeText because no focused Spectre node was found` | `type` needs a focused node | `spectre click` the field first |
 | `Refusing typeText`/`pressKey` because the JVM lacks OS keyboard focus | Real OS keyboard input needs the foreground window | Run `spectre focus-window <session-id> --window <index>` first |
 | `screenshot` fails without `--fullscreen` | Window screenshots fail closed on attach | Use `spectre capture` for one window |
-| `capture` PNG shows another app's window | No `spectre-recording` in the target; the capture crops the screen | Keep the target in front, or add `spectre-recording` |
+| `capture` fails on a blank or ambiguous window title | The daemon finds the window by title in the attached process | Give the window a unique, non-blank title |
 | `Cannot click … in-window bounds are empty` | The node is scrolled out of an eager `verticalScroll` column | Scroll the container, then look the node up again |
 | `find` or `tree` misses a node that appears later | Queries read once | Use `wait-for-node` or `waitForNode` |
 | A previous test's window shows up in the next test | `exitApplication()` is asynchronous | Wait for `!window.isDisplayable` in teardown |

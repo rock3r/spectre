@@ -45,9 +45,8 @@ The installed CLI bundles the user guide for its version. Run `spectre guide cap
 this workflow and `spectre guide --search "<words>"` to look up an error.
 
 `capture` writes window pixels, not a full-desktop screenshot. On the attach path,
-`spectre screenshot` needs `--fullscreen`. Without `spectre-recording` in the target JVM,
-`capture` crops the screen at the window bounds, so windows on top of the target appear in
-`screenshot.png`; keep the target in front.
+`spectre screenshot` needs `--fullscreen`. `capture` never crops the screen. When it fails, see
+"Capture from MCP / CLI / library" below for the common causes.
 
 ## Where captures live
 

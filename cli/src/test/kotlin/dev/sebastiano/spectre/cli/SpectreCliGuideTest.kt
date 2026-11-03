@@ -122,6 +122,22 @@ class SpectreCliGuideTest {
     }
 
     @Test
+    fun `guide search finds the capture window title trap`() {
+        // A query that starts with "capture" prefers the capture topic by design, so describe
+        // the symptom without naming a topic first.
+        val result = runGuide("guide", "-s", "blank window title fails", "--json")
+
+        val first =
+            Json.parseToJsonElement(result.output)
+                .jsonObject
+                .getValue("results")
+                .jsonArray
+                .first()
+                .jsonObject
+        assertEquals("traps", first.getValue("topic").jsonPrimitive.content, result.output)
+    }
+
+    @Test
     fun `guide search JSON is versioned and stays within the byte budget`() {
         val result =
             runGuide("guide", "--search", "screenshot window capture", "-n", "10", "--json")
