@@ -4,6 +4,11 @@ package dev.sebastiano.spectre.sample.validation
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.platform.testTag
@@ -138,8 +143,15 @@ class EmbeddedPanelOnWindowPopupValidationTest {
         ComposePanel().apply {
             preferredSize = Dimension(HOST_SIZE_PX, HOST_SIZE_PX)
             setContent {
+                // Open the popup one frame later. Composed during the panel's first composition
+                // (inside addNotify), an OnWindow popup fails: Compose's container doesn't know
+                // its window yet, so WindowComposeSceneLayer's requireNotNull(window) throws.
+                var showPopup by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) { showPopup = true }
                 Box(Modifier.size(HOST_CONTENT_DP.dp).testTag(HOST_TAG)) {
-                    Popup { Box(Modifier.size(POPUP_SIZE_DP.dp).testTag(POPUP_TAG)) }
+                    if (showPopup) {
+                        Popup { Box(Modifier.size(POPUP_SIZE_DP.dp).testTag(POPUP_TAG)) }
+                    }
                 }
             }
         }
