@@ -1,7 +1,13 @@
 package dev.sebastiano.spectre.agent.runtime
 
+import dev.sebastiano.spectre.agent.transport.AgentErrorCategory
+import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentResponse
 import dev.sebastiano.spectre.agent.transport.FrameLimits
+import java.awt.Rectangle
+import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
+import javax.imageio.ImageIO
 
 /**
  * Invokes `ComposeAutomator.capture` reflectively and maps the result onto the agent wire
@@ -33,6 +39,51 @@ internal object AtomicCaptureReflectiveMapper {
             captureMethod.invoke(automator, windowIndex)
                 ?: return AgentResponse.Error("capture returned null")
         return map(result, windowIndex)
+    }
+
+    /**
+     * Invokes `ComposeAutomator.captureWithWindowStill(windowIndex, BufferedImage, Rectangle)` with
+     * the window still the daemon took (#559). A target whose `spectre-core` predates that method
+     * gets an unsupported-operation error rather than a fallback: the in-process path would need
+     * `spectre-recording` in the target and could never substitute a desktop crop anyway.
+     */
+    fun invokeWithWindowStill(
+        automator: Any,
+        request: AgentRequest.CaptureWithWindowStill,
+    ): AgentResponse {
+        val method =
+            automator.javaClass.methods.firstOrNull {
+                it.name == "captureWithWindowStill" &&
+                    it.parameterTypes.contentEquals(
+                        arrayOf(
+                            Int::class.javaPrimitiveType,
+                            BufferedImage::class.java,
+                            Rectangle::class.java,
+                        )
+                    )
+            }
+                ?: return AgentResponse.Error(
+                    message =
+                        "The spectre-core in the target application is too old to accept a " +
+                            "window still from the Spectre daemon. Update the target's " +
+                            "spectre-core dependency to the same version as the Spectre CLI.",
+                    category = AgentErrorCategory.UnsupportedOperation.wireName,
+                )
+        val image =
+            ImageIO.read(ByteArrayInputStream(request.windowStillPng))
+                ?: return AgentResponse.Error(
+                    message = "The window still sent by the Spectre daemon is not a readable PNG",
+                    category = AgentErrorCategory.InternalError.wireName,
+                )
+        val bounds = request.stillWindowBounds
+        val result =
+            method.invoke(
+                automator,
+                request.windowIndex,
+                image,
+                Rectangle(bounds.x, bounds.y, bounds.width, bounds.height),
+            ) ?: return AgentResponse.Error("captureWithWindowStill returned null")
+        return map(result, request.windowIndex)
     }
 
     private fun map(result: Any, windowIndex: Int): AgentResponse {

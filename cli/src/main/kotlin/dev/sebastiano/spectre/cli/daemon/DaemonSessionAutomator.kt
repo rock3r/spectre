@@ -126,6 +126,7 @@ internal class AttachedDaemonSession(
             clock = clock,
             ledger = ledger,
         )
+    private val atomicCapture = DaemonSessionCapture(delegate)
 
     override fun windows(): List<WindowSummaryDto> = delegate.windows()
 
@@ -208,7 +209,7 @@ internal class AttachedDaemonSession(
             fullscreen = fullscreen,
         )
 
-    override fun capture(windowIndex: Int): AtomicCaptureResult = delegate.capture(windowIndex)
+    override fun capture(windowIndex: Int): AtomicCaptureResult = atomicCapture.capture(windowIndex)
 
     override fun startRecording(
         outputPath: String?,

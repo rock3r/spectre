@@ -84,6 +84,7 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public final fun allNodes ()Ljava/util/List;
 	public final fun capture (I)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
 	public static synthetic fun capture$default (Ldev/sebastiano/spectre/core/ComposeAutomator;IILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
+	public final fun captureWithWindowStill (ILjava/awt/image/BufferedImage;Ljava/awt/Rectangle;)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
 	public final fun clearAndTypeText (Ldev/sebastiano/spectre/core/AutomatorNode;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun click (Ldev/sebastiano/spectre/core/AutomatorNode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun doubleClick (Ldev/sebastiano/spectre/core/AutomatorNode;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

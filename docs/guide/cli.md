@@ -326,7 +326,7 @@ The three capture commands return different outputs:
 | Surface | CLI | Output | Targeting notes |
 | --- | --- | --- | --- |
 | **Fullscreen screenshot** | `screenshot … --fullscreen` | Single PNG of the **full virtual desktop** | Attach/CLI supports whole-desktop mode only. Default / `--window` / `--surface` **fail closed** (occlusion/privacy risk). MCP returns inline PNG bytes; no path is returned. |
-| **Atomic capture** | `capture` | Window PNG + full semantics tree on **daemon disk** (`capture.json` + `screenshot.png`) | `--window` defaults to **0**. Stdout/MCP returns only a summary (paths + counts). See [Atomic capture](capture.md). |
+| **Atomic capture** | `capture` | Window PNG + full semantics tree on **daemon disk** (`capture.json` + `screenshot.png`) | `--window` defaults to **0**. The daemon takes a native still of the window, found by its title, so the window needs a unique, non-blank title. It never falls back to a desktop crop. Stdout/MCP returns only a summary (paths + counts). See [Atomic capture](capture.md#attached-applications). |
 | **Recording** | `record start` / `stop` / `status` | MP4 path on **daemon filesystem** | The default is tracked **window index 0**. `--fullscreen` captures the **primary display only**; multi-monitor recording is unsupported. Returns **paths**, never video bytes. |
 
 ```shell
@@ -368,7 +368,7 @@ it applies the lazy cap. It never automatically deletes client `--out-dir` captu
 Detach reports leftover files and a `captures prune --session` command.
 The [Atomic capture](capture.md) guide links to `spectre-capture` `jq` recipes.
 
-Recording needs the platform helper on the daemon host (`spectre-recording-macos` /
+Recording and atomic capture need the platform helper on the daemon host (`spectre-recording-macos` /
 `spectre-recording-linux` / `spectre-recording-windows` as appropriate), plus OS permissions
 (macOS Screen Recording TCC, Linux portal/X11 display, Windows helper runtimes). See
 [Recording](recording.md) and [Recording limitations](../RECORDING-LIMITATIONS.md).
