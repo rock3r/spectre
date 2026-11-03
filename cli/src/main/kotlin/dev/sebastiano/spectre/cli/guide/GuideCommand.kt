@@ -150,7 +150,7 @@ private val WORKFLOW: List<Pair<String, String>> =
         "spectre find <session-id> <test-tag>" to "find nodes by test tag (find-text for text)",
         "spectre click <session-id> <node-key>" to "click; also double-click, long-click, swipe",
         "spectre type <session-id> <text>" to "type into the focused node; click the field first",
-        "spectre press-key <session-id> <code>" to "send an AWT key code, e.g. 10 for Enter",
+        "spectre press-key <session-id> <key>" to "press a key or chord, e.g. Enter or Ctrl+S",
         "spectre capture <session-id> --json" to "window PNG plus capture.json",
         "spectre record start <session-id>" to "record window video; stop with record stop",
         "spectre detach <session-id>" to "end the session",

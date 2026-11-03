@@ -406,7 +406,10 @@ class SpectreCliTest {
             )
 
         assertEquals(0, cli.run(listOf("attach", "42", "--json")))
-        assertEquals("{\"version\":1,\"id\":\"pid-42\",\"pid\":42}\n", output.toString())
+        assertEquals(
+            "{\"version\":1,\"id\":\"pid-42\",\"sessionId\":\"pid-42\",\"pid\":42}\n",
+            output.toString(),
+        )
     }
 
     @Test
@@ -487,7 +490,7 @@ class SpectreCliTest {
 
         assertEquals(0, cli.run(listOf("daemon", "status", "--json")))
         assertEquals(
-            "{\"version\":1,\"sessions\":[{\"id\":\"pid-42\",\"pid\":42}]}\n",
+            "{\"version\":1,\"sessions\":[{\"id\":\"pid-42\",\"sessionId\":\"pid-42\",\"pid\":42}]}\n",
             output.toString(),
         )
     }

@@ -193,6 +193,30 @@ class SpectreCliGuideTest {
     }
 
     @Test
+    fun `usage errors without an unknown command end with the guide hint`() {
+        val result = runGuide("guide", "-n", "0")
+
+        assertEquals(2, result.exitCode)
+        assertTrue(
+            result.errorOutput
+                .trimEnd()
+                .endsWith(
+                    "Run \"spectre guide\" for the CLI workflow, or " +
+                        "\"spectre guide --search <words>\" to look up an error."
+                ),
+            result.errorOutput,
+        )
+    }
+
+    @Test
+    fun `JSON usage errors stay a single JSON object`() {
+        val result = runGuide("frobnicate", "--json")
+
+        assertEquals(2, result.exitCode)
+        Json.parseToJsonElement(result.errorOutput)
+    }
+
+    @Test
     fun `daemon errors point to the matching guide topic`() {
         val errorOutput = StringBuilder()
         val cli =

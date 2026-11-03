@@ -44,13 +44,13 @@ the shell has no current session.
 
 ```shell
 spectre ps --json                                   # attachable JVMs
-SESSION=$(spectre attach <pid> --json | jq -r .id)
+SESSION=$(spectre attach <pid> --json | jq -r .sessionId)
 spectre windows "$SESSION"
 spectre tree "$SESSION" --json                      # node keys
 spectre find "$SESSION" <test-tag> --json           # or find-text / wait-for-node
 spectre click "$SESSION" <node-key>                 # keys, not tags
 spectre type "$SESSION" "text"                      # into the focused node
-spectre press-key "$SESSION" 10                     # AWT VK code (Enter)
+spectre press-key "$SESSION" Enter                  # key name, chord (Ctrl+S), or AWT code
 spectre capture "$SESSION" --json                   # window PNG + capture.json
 spectre record start "$SESSION" --window 0 --output ./run.mp4
 spectre record stop "$SESSION"

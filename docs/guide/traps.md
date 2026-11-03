@@ -27,13 +27,13 @@ The CLI workflow is:
 
 ```shell
 spectre ps --json                               # find the target pid
-SESSION=$(spectre attach <pid> --json | jq -r .id)
+SESSION=$(spectre attach <pid> --json | jq -r .sessionId)
 spectre windows "$SESSION"
 spectre tree "$SESSION" --json
 spectre find "$SESSION" <test-tag> --json       # node keys come from tree/find
 spectre click "$SESSION" <node-key>
 spectre type "$SESSION" "text"
-spectre press-key "$SESSION" 10                 # VK_ENTER
+spectre press-key "$SESSION" Enter              # or Ctrl+S, or an AWT code
 spectre capture "$SESSION" --json
 spectre record start "$SESSION" --window 0 --output ./run.mp4
 spectre record stop "$SESSION"
