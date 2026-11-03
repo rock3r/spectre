@@ -22,6 +22,8 @@ class ActiveModalDialogSelectionTest {
 
     @AfterTest
     fun disposeAll() {
+        // A skipped test created no windows; touching the EDT would start AWT despite the opt-in.
+        if (windows.isEmpty()) return
         SwingUtilities.invokeAndWait { windows.reversed().forEach(Window::dispose) }
         windows.clear()
     }
