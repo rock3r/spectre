@@ -14,6 +14,7 @@ import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JDialog
@@ -235,23 +236,21 @@ class SyntheticModalAndWindowOrderTest {
     // --- Fixtures ---------------------------------------------------------------------------
 
     private fun showFrame(content: JPanel, configure: JFrame.() -> Unit = {}): JFrame {
-        var frame: JFrame? = null
-        SwingUtilities.invokeAndWait {
-            frame =
-                JFrame("SyntheticModalAndWindowOrderTest").apply {
-                    defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
-                    isUndecorated = true
-                    configure()
-                    contentPane.layout = BorderLayout()
-                    contentPane.add(content, BorderLayout.CENTER)
-                    size = PANEL_SIZE
-                    setLocation(FRAME_X, FRAME_Y)
-                    isVisible = true
-                }
+        val frame = onEdt {
+            JFrame("SyntheticModalAndWindowOrderTest").apply {
+                defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
+                isUndecorated = true
+                configure()
+                contentPane.layout = BorderLayout()
+                contentPane.add(content, BorderLayout.CENTER)
+                size = PANEL_SIZE
+                setLocation(FRAME_X, FRAME_Y)
+                isVisible = true
+            }
         }
-        windows += frame!!
+        windows += frame
         waitUntil("frame showing") { content.isShowing }
-        return frame!!
+        return frame
     }
 
     private fun showModalDialog(
@@ -260,15 +259,12 @@ class SyntheticModalAndWindowOrderTest {
         x: Int,
         focusable: Boolean = true,
     ): JDialog {
-        var dialog: JDialog? = null
-        SwingUtilities.invokeAndWait {
-            dialog =
-                newModalDialog(owner, content).apply {
-                    focusableWindowState = focusable
-                    setLocation(x, FRAME_Y)
-                }
+        val modal = onEdt {
+            newModalDialog(owner, content).apply {
+                focusableWindowState = focusable
+                setLocation(x, FRAME_Y)
+            }
         }
-        val modal = dialog!!
         windows += modal
         // setVisible(true) on a modal dialog blocks in a nested loop, so it must be posted.
         SwingUtilities.invokeLater { modal.isVisible = true }
@@ -294,6 +290,12 @@ class SyntheticModalAndWindowOrderTest {
             center = (origin.x + target.width / 2) to (origin.y + target.height / 2)
         }
         return center
+    }
+
+    private fun <T> onEdt(block: () -> T): T {
+        val task = FutureTask<T> { block() }
+        SwingUtilities.invokeAndWait(task)
+        return task.get()
     }
 
     /** Runs [block] on a helper thread and fails (instead of hanging) if it does not return. */
