@@ -3,11 +3,14 @@
 package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsConfiguration
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.state.ToggleableState
 import java.awt.Point
 import java.awt.Rectangle
 
@@ -96,6 +99,21 @@ internal constructor(
     /** True when the node declares a Compose `OnClick` semantics action. */
     public val isClickable: Boolean =
         semanticsNode.config.getOrNull(SemanticsActions.OnClick) != null
+
+    /**
+     * Toggle state of a checkbox, switch, or tri-state checkbox: [ToggleableState.On],
+     * [ToggleableState.Off], or [ToggleableState.Indeterminate]. `null` when the node is not
+     * toggleable.
+     */
+    public val toggleableState: ToggleableState? = semanticsNode.config.toggleableStateOrNull()
+
+    /**
+     * Value, range, and step count of a slider or progress indicator. `null` when the node has no
+     * progress semantics. An indeterminate progress indicator reports
+     * [ProgressBarRangeInfo.Indeterminate].
+     */
+    public val progressBarRangeInfo: ProgressBarRangeInfo? =
+        semanticsNode.config.progressBarRangeInfoOrNull()
     public val isVisible: Boolean = true
 
     // Geometry is always read live: layout can change between node lookup and action,
@@ -186,6 +204,12 @@ internal constructor(
         append(")")
     }
 }
+
+internal fun SemanticsConfiguration.toggleableStateOrNull(): ToggleableState? =
+    getOrNull(SemanticsProperties.ToggleableState)
+
+internal fun SemanticsConfiguration.progressBarRangeInfoOrNull(): ProgressBarRangeInfo? =
+    getOrNull(SemanticsProperties.ProgressBarRangeInfo)
 
 /** Atomic snapshot of [AutomatorNode.boundsInWindow] and [AutomatorNode.boundsOnScreen]. */
 public data class BothBounds(val inWindow: Rect, val onScreen: Rectangle)

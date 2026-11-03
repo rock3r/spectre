@@ -156,7 +156,9 @@ Choose a selector by the semantics the application provides:
    `null`.
 
 `AutomatorNode` exposes `testTag`, `text`/`texts`, `contentDescription(s)`,
-`role`, `isFocused`, `isDisabled`, `isSelected`, `editableText`, plus
+`role`, `isFocused`, `isDisabled`, `isSelected`, `isClickable`, `editableText`,
+`toggleableState` (checkbox/switch `On`/`Off`/`Indeterminate`),
+`progressBarRangeInfo` (slider/progress value, range, steps), plus
 coordinates: `boundsInWindow` (Compose pixels, already density-scaled),
 `boundsOnScreen` (screen pixels, post-HiDPI), `centerOnScreen`. Tree
 navigation via `children`/`parent`. Compare `boundsInWindow` against

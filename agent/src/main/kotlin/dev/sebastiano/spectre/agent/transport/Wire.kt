@@ -493,6 +493,10 @@ public data class WindowSummaryDto(
  * Field set aligns with HTTP `NodeSnapshotDto` where practical: [contentDescriptions], state flags.
  * [contentDescription] is the first description (legacy singular). [bounds] is on-screen integer
  * AWT coords (agent/Robot); HTTP keeps window+screen double rects — intentional divergence.
+ *
+ * The node state fields after [bounds] (#576) are all defaulted, so peers built before they existed
+ * still decode payloads in both directions: an older decoder drops them as unknown keys, and a
+ * newer decoder fills in the defaults.
  */
 @ExperimentalSpectreAgentApi
 @Serializable
@@ -513,6 +517,39 @@ public data class NodeSnapshotDto(
     // v2 clients whose NodeSnapshotDto decoder still requires this field on the wire.
     public val isVisible: Boolean,
     public val bounds: RectDto,
+    /** True when the node declares a Compose `OnClick` semantics action. */
+    public val isClickable: Boolean = false,
+    /**
+     * Compose `ToggleableState` name of a checkbox, switch, or tri-state checkbox: `"On"`, `"Off"`,
+     * or `"Indeterminate"`. `null` when the node is not toggleable.
+     */
+    public val toggleableState: String? = null,
+    /** Value and range of a slider or progress indicator; `null` when the node has neither. */
+    public val progress: ProgressRangeDto? = null,
+    /** [key] of this node's semantics parent; `null` for a root node. */
+    public val parentKey: String? = null,
+    /** [key]s of this node's semantics children, in tree order. */
+    public val childKeys: List<String> = emptyList(),
+    /**
+     * Layout bounds within the Compose surface, in Compose (physical) pixels, rounded to integers.
+     * Unlike [bounds], these are not divided by the display scale and do not include the surface's
+     * screen origin. `null` when the peer did not send them.
+     */
+    public val boundsInWindow: RectDto? = null,
+)
+
+/**
+ * Compose `ProgressBarRangeInfo` on the wire: [current] within [min]..[max]. [steps] is the number
+ * of discrete steps between [min] and [max] (`0` for a continuous range). An indeterminate progress
+ * indicator reports `0` within `0..0`.
+ */
+@ExperimentalSpectreAgentApi
+@Serializable
+public data class ProgressRangeDto(
+    public val current: Float,
+    public val min: Float,
+    public val max: Float,
+    public val steps: Int = 0,
 )
 
 /** Integer screen-space rectangle. */

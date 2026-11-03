@@ -77,6 +77,7 @@ internal class ReflectiveAutomatorHandler(
         }
     private val nodeBooleanMethods = ConcurrentHashMap<Pair<Class<*>, String>, Method>()
     private val nodeEditableTextMethods = ConcurrentHashMap<Class<*>, Method>()
+    private val nodeState = NodeStateReflectiveMapper()
 
     /**
      * `ComposeAutomator.windows` is a Volatile cache populated by `refreshWindows()` (or by any of
@@ -851,6 +852,7 @@ internal class ReflectiveAutomatorHandler(
                 ?: klass.methods
                     .firstOrNull { it.name == "getContentDescription" && it.parameterCount == 0 }
                     ?.invoke(node) as? String
+        val bothBounds = nodeState.bothBounds(node)
         return NodeSnapshotDto(
             key = extractKey(node),
             testTag =
@@ -875,11 +877,21 @@ internal class ReflectiveAutomatorHandler(
             isVisible = requireNodeBoolean(node, methodName = "isVisible"),
             bounds =
                 boundsToRect(
+                    // One EDT read for both bounds when the node offers it; otherwise
                     // `AutomatorNode.boundsOnScreen: Rectangle` → getBoundsOnScreen().
-                    klass.methods
-                        .firstOrNull { it.name == "getBoundsOnScreen" && it.parameterCount == 0 }
-                        ?.invoke(node)
+                    bothBounds?.onScreen
+                        ?: klass.methods
+                            .firstOrNull {
+                                it.name == "getBoundsOnScreen" && it.parameterCount == 0
+                            }
+                            ?.invoke(node)
                 ),
+            isClickable = nodeBooleanProperty(node, methodName = "isClickable", default = false),
+            toggleableState = nodeState.toggleableState(node),
+            progress = nodeState.progress(node),
+            parentKey = nodeState.parentKey(node, ::extractKey),
+            childKeys = nodeState.childKeys(node, ::extractKey),
+            boundsInWindow = bothBounds?.inWindow,
         )
     }
 

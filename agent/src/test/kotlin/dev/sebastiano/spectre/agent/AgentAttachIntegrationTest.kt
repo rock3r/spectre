@@ -2,10 +2,13 @@
 
 package dev.sebastiano.spectre.agent
 
+import dev.sebastiano.spectre.agent.fixture.FIXTURE_PROGRESS
 import dev.sebastiano.spectre.agent.fixture.READY_SENTINEL
 import dev.sebastiano.spectre.agent.fixture.SPECTRE_FIXTURE_WINDOW_TITLE
 import dev.sebastiano.spectre.agent.fixture.TAG_BUTTON
+import dev.sebastiano.spectre.agent.fixture.TAG_CHECKBOX
 import dev.sebastiano.spectre.agent.fixture.TAG_LABEL
+import dev.sebastiano.spectre.agent.fixture.TAG_PROGRESS
 import dev.sebastiano.spectre.agent.fixture.TAG_TEXT_FIELD
 import dev.sebastiano.spectre.agent.launch.LaunchReadiness
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
@@ -24,6 +27,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -246,6 +250,7 @@ class AgentAttachIntegrationTest {
                 buttonKey.isNotBlank(),
                 "iteration $iteration: button node key should be non-blank; got '$buttonKey'",
             )
+            assertNodeStateFields(automator, buttonMatches.first(), iteration = iteration)
             // #184 window-identity: assert before keyboard focus work so OS-focus flakes do not
             // mask identity regressions (identity does not need keyboard focus).
             assertWindowIdentityMatchesWindows(automator, windows, iteration = iteration)
@@ -285,6 +290,51 @@ class AgentAttachIntegrationTest {
         assertFalse(
             Files.exists(udsPath),
             "iteration $iteration: UDS path $udsPath should not exist after detach",
+        )
+    }
+
+    /**
+     * #576: real Compose nodes carry clickability, toggleable state, progress range, tree links,
+     * and window-relative bounds across the wire. Reading them off live nodes is what proves the
+     * reflective mapping copes with Compose's own types (the `ToggleableState` enum and the stdlib
+     * range inside `ProgressBarRangeInfo`).
+     */
+    private fun assertNodeStateFields(
+        automator: AttachedAutomator,
+        buttonNode: NodeSnapshotDto,
+        iteration: Int,
+    ) {
+        assertTrue(buttonNode.isClickable, "iteration $iteration: button must be clickable")
+        val windowBounds =
+            assertNotNull(buttonNode.boundsInWindow, "iteration $iteration: button boundsInWindow")
+        assertTrue(
+            windowBounds.width > 0 && windowBounds.height > 0,
+            "iteration $iteration: button boundsInWindow must be non-empty; got $windowBounds",
+        )
+        val parentKey =
+            assertNotNull(buttonNode.parentKey, "iteration $iteration: button parentKey")
+        val parent = automator.allNodes().single { it.key == parentKey }
+        assertTrue(
+            buttonNode.key in parent.childKeys,
+            "iteration $iteration: parent $parentKey childKeys ${parent.childKeys} must list " +
+                "the button ${buttonNode.key}",
+        )
+
+        val checkbox = automator.findByTestTag(TAG_CHECKBOX).single()
+        assertEquals("On", checkbox.toggleableState, "iteration $iteration: checkbox state")
+
+        val progress =
+            assertNotNull(
+                automator.findByTestTag(TAG_PROGRESS).single().progress,
+                "iteration $iteration: progress indicator must report a progress range",
+            )
+        assertEquals(FIXTURE_PROGRESS, progress.current, "iteration $iteration: progress value")
+        assertEquals(0f, progress.min, "iteration $iteration: progress min")
+        assertEquals(1f, progress.max, "iteration $iteration: progress max")
+        println(
+            "[576] iter=$iteration button.clickable=${buttonNode.isClickable} " +
+                "button.parent=$parentKey checkbox.state=${checkbox.toggleableState} " +
+                "progress=$progress"
         )
     }
 
