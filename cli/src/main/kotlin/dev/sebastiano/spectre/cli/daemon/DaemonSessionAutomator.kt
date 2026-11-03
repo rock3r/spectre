@@ -74,6 +74,9 @@ internal interface DaemonSessionAutomator : AutoCloseable {
 
     @Throws(IOException::class) fun typeText(text: String)
 
+    /** Raise and focus the window that hosts [nodeKey] (#556). */
+    @Throws(IOException::class) fun focusWindow(nodeKey: String)
+
     @Throws(IOException::class)
     fun screenshot(
         windowIndex: Int? = null,
@@ -201,6 +204,8 @@ internal class AttachedDaemonSession(
         delegate.pressKey(keyCode, modifiers)
 
     override fun typeText(text: String): Unit = delegate.typeText(text)
+
+    override fun focusWindow(nodeKey: String): Unit = delegate.focusWindow(nodeKey)
 
     override fun screenshot(windowIndex: Int?, surfaceId: String?, fullscreen: Boolean): ByteArray =
         delegate.screenshot(

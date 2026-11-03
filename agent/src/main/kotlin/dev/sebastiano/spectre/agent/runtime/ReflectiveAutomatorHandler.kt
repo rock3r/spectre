@@ -111,6 +111,15 @@ internal class ReflectiveAutomatorHandler(
                 it.parameterTypes[1].name == CONTINUATION_FQN
         }
 
+    /**
+     * `ComposeAutomator.inputCapabilities` getter. Null on cores that predate it; those always
+     * drive real OS input, so callers treat a missing getter as real input.
+     */
+    private val inputCapabilitiesMethod: java.lang.reflect.Method? =
+        automatorClass.methods.firstOrNull {
+            it.name == "getInputCapabilities" && it.parameterCount == 0
+        }
+
     private val suspendInvoker = BlockingSuspendInvoker()
     private val waitOps = WaitOpsReflectiveMapper(automator, suspendInvoker, ::mapAutomatorNode)
     private val inputOps =
@@ -121,6 +130,8 @@ internal class ReflectiveAutomatorHandler(
             allNodes = { allNodesMethod.invoke(automator) as List<*> },
             extractKey = ::extractKey,
             isTargetJvmFocused = isTargetJvmFocused,
+            deliversRealOsInput = ::deliversRealOsInput,
+            hasTrackedWindow = { (getWindowsMethod.invoke(automator) as List<*>).isNotEmpty() },
         )
 
     override fun handle(request: AgentRequest): AgentResponse =
@@ -355,7 +366,9 @@ internal class ReflectiveAutomatorHandler(
                         .wireName,
             )
         }
-        if (!isTargetJvmFocused()) {
+        // Synthetic input types into the focused node inside the target JVM, so it needs no OS
+        // keyboard focus (#556). Only real OS key events could land in another app.
+        if (deliversRealOsInput() && !isTargetJvmFocused()) {
             return AgentResponse.Error(
                 message =
                     "Refusing typeText because the target JVM does not currently own OS keyboard " +
@@ -367,6 +380,19 @@ internal class ReflectiveAutomatorHandler(
         }
         suspendInvoker.invoke(method, automator, text)
         return AgentResponse.Ok
+    }
+
+    /**
+     * Whether the automator sends real OS input (`InputCapabilities.realOsInput`). Defaults to true
+     * when the capability cannot be read, so the OS keyboard focus gate stays on.
+     */
+    private fun deliversRealOsInput(): Boolean {
+        val capabilities = inputCapabilitiesMethod?.invoke(automator) ?: return true
+        val getter =
+            capabilities.javaClass.methods.firstOrNull {
+                it.name == "getRealOsInput" && it.parameterCount == 0
+            } ?: return true
+        return getter.invoke(capabilities) as? Boolean ?: true
     }
 
     private fun handlePrintTree(): AgentResponse {
@@ -973,13 +999,16 @@ internal class ReflectiveAutomatorHandler(
         const val NATIVE_CROP_MISS_SNIPPET: String = "does not intersect the captured image"
         /**
          * Fail-closed message for attach/CLI window or surface screenshots (#359). Must mention
-         * occlusion/privacy risk and point callers at explicit fullscreen opt-in.
+         * occlusion/privacy risk, point callers at window-scoped atomic capture (#560), and at
+         * explicit fullscreen opt-in.
          */
         const val WINDOW_SCREENSHOT_UNSUPPORTED_MESSAGE: String =
             "Window/surface screenshots are not supported on the attach path: they would crop " +
                 "occlusion-prone desktop pixels (privacy risk if another window covers the " +
-                "target). Use --fullscreen (or fullscreen=true) for an explicit full-desktop " +
-                "capture."
+                "target). For a window-scoped capture, use " +
+                "'spectre capture <session> [--window <index>] [--out-dir <dir>]' (MCP: the " +
+                "capture tool), which saves the window PNG with its semantics tree. Use " +
+                "--fullscreen (or fullscreen=true) for an explicit full-desktop capture."
         /** Sentinel when a fake/partial AutomatorNode lacks an optional boolean getter. */
         val MISSING_BOOLEAN_METHOD: Method = Object::class.java.getMethod("hashCode")
 

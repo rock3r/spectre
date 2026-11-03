@@ -377,6 +377,7 @@ public object SpectreMcpServer {
                 )
                 .asResult { it is DaemonResponse.Completed }
         }
+        registerFocusWindowTool(server, request)
         server.addTool(
             name = "type_text",
             description =
@@ -622,21 +623,20 @@ public object SpectreMcpServer {
     private fun CallToolRequest.requiredLong(name: String): Long =
         requiredString(name).toLongOrNull()
             ?: throw IllegalArgumentException("MCP tool argument '$name' must be an integer")
-
-    private fun DaemonResponse.asResult(expected: (DaemonResponse) -> Boolean): CallToolResult =
-        when {
-            this is DaemonResponse.Error ->
-                CallToolResult(listOf(TextContent(message)), isError = true)
-            expected(this) -> CallToolResult(listOf(TextContent(MCP_JSON.encodeToString(this))))
-            else ->
-                CallToolResult(
-                    listOf(TextContent("Spectre daemon returned an unexpected response.")),
-                    isError = true,
-                )
-        }
-
-    private val MCP_JSON: Json = Json { encodeDefaults = true }
 }
+
+private val MCP_JSON: Json = Json { encodeDefaults = true }
+
+private fun DaemonResponse.asResult(expected: (DaemonResponse) -> Boolean): CallToolResult =
+    when {
+        this is DaemonResponse.Error -> CallToolResult(listOf(TextContent(message)), isError = true)
+        expected(this) -> CallToolResult(listOf(TextContent(MCP_JSON.encodeToString(this))))
+        else ->
+            CallToolResult(
+                listOf(TextContent("Spectre daemon returned an unexpected response.")),
+                isError = true,
+            )
+    }
 
 internal fun normalizeRecordingOutputPath(outputPath: String): String =
     java.nio.file.Path.of(outputPath).toAbsolutePath().normalize().toString()
@@ -673,6 +673,26 @@ private fun CallToolRequest.requiredSessionId(): String {
     val content = primitive.content
     require(content.isNotBlank()) { "MCP tool requires a non-empty 'session_id' argument" }
     return content
+}
+
+private fun registerFocusWindowTool(server: Server, request: (DaemonRequest) -> DaemonResponse) {
+    val properties = buildJsonObject {
+        put("session_id", buildJsonObject { put("type", "string") })
+        put("window_index", buildJsonObject { put("type", "integer") })
+    }
+    server.addTool(
+        name = "focus_window",
+        description =
+            "Raise and focus a window by window_index (default 0, as listed by windows). " +
+                "Only real OS input needs it before press_key or type_text.",
+        inputSchema = ToolSchema(properties = properties, required = listOf("session_id")),
+    ) { call ->
+        val windowIndex =
+            call.arguments?.get("window_index")?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+        request(DaemonRequest.FocusWindow(call.requiredSessionId(), windowIndex)).asResult {
+            it is DaemonResponse.Completed
+        }
+    }
 }
 
 private fun registerScreenshotTool(server: Server, request: (DaemonRequest) -> DaemonResponse) {

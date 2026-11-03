@@ -14,6 +14,7 @@ internal class TestDaemonSessionAutomator(
     private val findByTestTagResult: (String) -> List<NodeSnapshotDto> = { emptyList() },
     private val clickAction: (String) -> Unit = {},
     private val typeTextAction: (String) -> Unit = {},
+    private val focusWindowAction: (String) -> Unit = {},
     private val screenshotResult:
         (windowIndex: Int?, surfaceId: String?, fullscreen: Boolean) -> ByteArray =
         { _, _, _ ->
@@ -122,6 +123,11 @@ internal class TestDaemonSessionAutomator(
     override fun pressKey(keyCode: Int, modifiers: Int): Unit = Unit
 
     override fun typeText(text: String): Unit = typeTextAction(text)
+
+    override fun focusWindow(nodeKey: String) {
+        ensureOpen("focusWindow")
+        focusWindowAction(nodeKey)
+    }
 
     override fun screenshot(windowIndex: Int?, surfaceId: String?, fullscreen: Boolean): ByteArray {
         ensureOpen("screenshot")

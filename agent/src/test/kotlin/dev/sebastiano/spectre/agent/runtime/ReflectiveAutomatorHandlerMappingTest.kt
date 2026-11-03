@@ -426,6 +426,10 @@ class ReflectiveAutomatorHandlerMappingTest {
             message.contains("fullscreen", ignoreCase = true),
             "error must point users to explicit fullscreen: $message",
         )
+        assertTrue(
+            message.contains("spectre capture <session> [--window <index>]"),
+            "error must point users to window-scoped atomic capture: $message",
+        )
     }
 
     @Test

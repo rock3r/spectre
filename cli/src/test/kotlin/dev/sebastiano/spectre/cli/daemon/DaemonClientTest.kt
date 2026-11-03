@@ -8,7 +8,10 @@ import java.nio.file.Path
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.condition.EnabledOnOs
+import org.junit.jupiter.api.condition.OS
 
 @OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonClientTest {
@@ -69,6 +72,45 @@ class DaemonClientTest {
                                 .start()
                     },
                 )
+                assertEquals(DaemonResponse.ShuttingDown, client.request(DaemonRequest.Shutdown))
+                shutdownConfirmed = true
+            }
+
+            awaitDaemonClientSocketRemoval(socketPath)
+        } finally {
+            if (!shutdownConfirmed) process?.destroyForcibly()?.waitFor()
+            deleteTemporaryDaemonClientSocketPath(socketPath)
+        }
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX, OS.MAC)
+    fun `starts the daemon in its own process group so reaping the caller's group spares it`() {
+        // #557: tool runners kill a finished command's whole process group. A daemon left in the
+        // CLI's group dies with it, taking every attached session along.
+        val socketPath = temporaryDaemonClientSocketPath()
+        var process: Process? = null
+        var shutdownConfirmed = false
+
+        try {
+            DaemonClient(socketPath).use { client ->
+                client.requestOrStart(DaemonRequest.ListSessions) {
+                    process =
+                        DaemonProcessLauncher(
+                                socketPath = socketPath,
+                                classPath = testRuntimeClassPath(),
+                            )
+                            .start()
+                }
+                val daemonPid = requireNotNull(process).pid()
+
+                assertEquals(
+                    daemonPid,
+                    processGroupOf(daemonPid),
+                    "daemon should lead its own process group",
+                )
+                assertNotEquals(processGroupOf(ProcessHandle.current().pid()), daemonPid)
+
                 assertEquals(DaemonResponse.ShuttingDown, client.request(DaemonRequest.Shutdown))
                 shutdownConfirmed = true
             }
@@ -191,6 +233,14 @@ private fun awaitDaemonClientSocketRemoval(socketPath: Path) {
         Thread.sleep(SOCKET_REMOVAL_WAIT_MILLIS)
     }
     error("Timed out waiting for daemon socket removal")
+}
+
+/** Reads a process's group id with `ps`, which Linux and macOS both ship. */
+private fun processGroupOf(pid: Long): Long {
+    val ps = ProcessBuilder("ps", "-o", "pgid=", "-p", pid.toString()).start()
+    val output = ps.inputStream.bufferedReader().readText().trim()
+    check(ps.waitFor() == 0) { "ps failed for pid $pid: $output" }
+    return output.toLong()
 }
 
 private const val MAX_SOCKET_REMOVAL_ATTEMPTS: Int = 100

@@ -63,6 +63,40 @@ class AgentInjectAttachIntegrationTest {
         }
     }
 
+    @Test
+    fun `inject re-attach on a new socket path recovers after the previous client vanished`() {
+        // #557: the replacement agent has to keep serving from a working injected runtime. The
+        // first session only lists windows, so the tree dump after re-attach needs classes the
+        // injected loader has not defined yet; a closed loader could not define them.
+        assumeWindowsAttachE2eAllowed()
+        assumeFalse(
+            GraphicsEnvironment.isHeadless(),
+            "Requires non-headless JVM for Compose Desktop",
+        )
+        val agentJar = locateAgentJarOrSkip()
+
+        spawnInjectFixture().use { fixture ->
+            val abandonedUdsPath = AttachOptions.defaultUdsPath(fixture.pid)
+            val abandoned =
+                AgentAttach.attach(
+                    pid = fixture.pid,
+                    options = AttachOptions(agentJarPath = agentJar, udsPath = abandonedUdsPath),
+                )
+            assertTrue(abandoned.windows().isNotEmpty(), "first attach should see the fixture")
+            abandoned.dropConnectionWithoutDetach()
+
+            AgentAttach.attach(pid = fixture.pid, options = AttachOptions(agentJarPath = agentJar))
+                .use { automator ->
+                    assertTrue(
+                        automator.allNodes().isNotEmpty(),
+                        "expected a tree dump from the replacement agent",
+                    )
+                    assertTrue(automator.findByTestTag(TAG_BUTTON).isNotEmpty())
+                }
+            Files.deleteIfExists(abandonedUdsPath)
+        }
+    }
+
     private fun spawnInjectFixture(): FixtureProcess {
         val javaExe =
             if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true))

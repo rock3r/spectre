@@ -22,6 +22,9 @@ public class DaemonProcessLauncher(
             java.lang.management.ManagementFactory.getRuntimeMXBean().inputArguments
         )
     },
+    private val newSessionPrefix: () -> List<String> = {
+        newSessionPrefixFor(System.getProperty("os.name"))
+    },
 ) {
     private var startupErrorLog: Path? = null
     private var daemonProcess: Process? = null
@@ -61,15 +64,18 @@ public class DaemonProcessLauncher(
     }
 
     /**
-     * The builder for the daemon process: the isolated command, with the JVM option environment
-     * variables removed from the inherited environment. The daemon's options are reconstructed
-     * explicitly on its command line (see [command]); a thin start-script launch keeps
-     * `JAVA_TOOL_OPTIONS` & friends in the CLI's environment, and leaving them in the daemon's
-     * would apply them a second time — agents initialized twice, an environment collector colliding
-     * with the cache-consuming daemon's pinned G1.
+     * The builder for the daemon process: the isolated command, started in a new session where the
+     * platform allows it (see [newSessionPrefixFor]), with the JVM option environment variables
+     * removed from the inherited environment. The daemon's options are reconstructed explicitly on
+     * its command line (see [command]); a thin start-script launch keeps `JAVA_TOOL_OPTIONS` &
+     * friends in the CLI's environment, and leaving them in the daemon's would apply them a second
+     * time — agents initialized twice, an environment collector colliding with the cache-consuming
+     * daemon's pinned G1.
      */
     internal fun processBuilder(): ProcessBuilder =
-        ProcessBuilder(command()).also { sanitizeDaemonEnvironment(it.environment()) }
+        ProcessBuilder(newSessionPrefix() + command()).also {
+            sanitizeDaemonEnvironment(it.environment())
+        }
 
     /** Returns the isolated daemon command without starting a process. */
     public fun command(): List<String> = buildList {
@@ -139,6 +145,43 @@ public class DaemonProcessLauncher(
         internal fun sanitizeDaemonEnvironment(environment: MutableMap<String, String>) {
             SpectreBootstrap.sanitizeChildEnvironment(environment)
         }
+
+        /**
+         * The command prefix that starts the daemon as the leader of a new session, and so of a new
+         * process group, or an empty list where none is available.
+         *
+         * The daemon outlives the CLI command that started it. Left in the CLI's process group, it
+         * dies whenever a shell or agent tool runner reaps a finished command by signalling that
+         * whole group, and takes every attached session with it (#557). `ProcessBuilder` has no way
+         * to start a child in a new session, so a small POSIX tool does it: `setsid(1)` where it
+         * exists (Linux), otherwise perl's `POSIX::setsid` (macOS ships perl but no `setsid(1)`).
+         * Both call `setsid()` and then exec the daemon in place, so the [Process] this launcher
+         * returns is the daemon itself. `setsid(1)` would fork first only if its caller led a
+         * process group, which a `ProcessBuilder` child never does. Windows has no POSIX sessions
+         * to leave, so the daemon starts directly there.
+         */
+        internal fun newSessionPrefixFor(
+            osName: String,
+            isExecutable: (String) -> Boolean = { Files.isExecutable(Path.of(it)) },
+        ): List<String> {
+            if (osName.startsWith("Windows", ignoreCase = true)) return emptyList()
+            val setsid = SETSID_CANDIDATES.firstOrNull(isExecutable)
+            return when {
+                setsid != null -> listOf(setsid)
+                isExecutable(PERL) -> listOf(PERL, "-MPOSIX", "-e", PERL_SETSID_EXEC, "--")
+                else -> emptyList()
+            }
+        }
+
+        /** POSIX locations, kept as strings: they are only ever used on POSIX hosts. */
+        private val SETSID_CANDIDATES: List<String> = listOf("/usr/bin/setsid", "/bin/setsid")
+
+        private const val PERL: String = "/usr/bin/perl"
+
+        /** Leaves the caller's session, then replaces perl with the daemon command in `@ARGV`. */
+        private const val PERL_SETSID_EXEC: String =
+            "POSIX::setsid(); exec { \$ARGV[0] } @ARGV " +
+                "or die \"spectre: cannot exec \$ARGV[0]: \$!\\n\""
 
         private const val DAEMON_MAIN_CLASS: String =
             "dev.sebastiano.spectre.cli.daemon.DaemonMainKt"
