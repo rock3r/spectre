@@ -406,7 +406,8 @@ Spectre matches method names containing `(` through the full generated identity.
 
 The default root is `src/test/resources/spectre-golds/` in the main JUnit source set.
 Linux path keys follow window-capture session detection: `SPECTRE_CAPTURE_BACKEND`,
-pure-X11 or Xvfb `DISPLAY`, then `XDG_SESSION_TYPE` and `WAYLAND_DISPLAY`.
+then an Xwayland or pure-X11 (such as Xvfb) `DISPLAY`, then `XDG_SESSION_TYPE` and
+`WAYLAND_DISPLAY`. With `DISPLAY` set, those two count only if the Wayland socket exists.
 A Wayland desktop with XWayland `DISPLAY` still uses `linux-wayland`.
 Its golds stay separate from Xvfb `SOFTWARE_COMPAT` captures.
 Theme, Skiko render API, JDK, and font antialiasing add **no** path key.

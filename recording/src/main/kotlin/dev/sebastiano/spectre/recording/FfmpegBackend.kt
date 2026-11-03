@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.recording
 import java.awt.Rectangle
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.BasicFileAttributes
 
 /**
  * Picks the platform-appropriate `ffmpeg` argv builder for [FfmpegRecorder].
@@ -104,19 +105,24 @@ internal sealed interface FfmpegBackend {
         /**
          * Returns true when capture should use the Linux Wayland/portal path, false for X11/Xvfb.
          *
-         * Order of signals (#397 — Xvfb must not be hijacked by residual Wayland env/sockets):
+         * Order of signals (#397, #575 — an X11 DISPLAY must not be hijacked by residual or
+         * inherited Wayland env/sockets):
          * 0. `SPECTRE_CAPTURE_BACKEND=x11|wayland` — explicit override (also accepts `xorg` /
-         *    `xvfb` → X11, `portal` → Wayland). Use when nested Xvfb probes are unavailable.
-         * 1. Active pure-X11 [DISPLAY] (Xvfb / non-XWayland Xorg) — process windows live on that
-         *    server; prefer `ximagesrc` even if the login session exported Wayland vars.
-         * 2. `XDG_SESSION_TYPE=wayland` — logind/GDM graphical Wayland session.
-         * 3. `WAYLAND_DISPLAY` non-blank — compositor socket name for this session.
-         * 4. A `wayland-*` socket under `XDG_RUNTIME_DIR` **only when DISPLAY is unset** — SSH into
-         *    a Wayland host without X11 forwarding. Residual sockets must not override an active
-         *    Xvfb/Xorg DISPLAY (that was the #397 misroute).
+         *    `xvfb` → X11, `portal` → Wayland). Use when the probes below cannot decide.
+         * 1. Without [DISPLAY]: `XDG_SESSION_TYPE=wayland` or a non-blank `WAYLAND_DISPLAY` means
+         *    Wayland. Otherwise a `wayland-*` socket under `XDG_RUNTIME_DIR` does — SSH into a
+         *    Wayland host without X11 forwarding.
+         * 2. With [DISPLAY] and no Wayland env var: X11. Residual sockets must not override an
+         *    active Xvfb/Xorg DISPLAY (that was the #397 misroute).
+         * 3. With [DISPLAY] and a Wayland env var, the env var needs evidence (#575):
+         *     - an Xwayland process serving [DISPLAY] → Wayland;
+         *     - a pure X11 server (Xvfb / Xvnc / Xtigervnc / Xephyr / Xorg process, or `xdpyinfo`
+         *       without `XWAYLAND`) → X11;
+         *     - otherwise Wayland only if the `WAYLAND_DISPLAY` socket (default `wayland-0`,
+         *       relative to `XDG_RUNTIME_DIR` unless absolute) exists. An inherited variable whose
+         *       socket is missing, as in a container or nested Xvfb, leaves DISPLAY in charge.
          *
-         * Real Wayland+XWayland still returns true: pure-X11 probe is false for XWayland, and tiers
-         * 2–3 fire. Do not treat "DISPLAY is set" alone as X11 — XWayland always has DISPLAY.
+         * Do not treat "DISPLAY is set" alone as X11 — XWayland always has DISPLAY.
          *
          * Injectable [getenv] / probes keep the matrix unit-testable without process env mutation.
          */
@@ -125,6 +131,8 @@ internal sealed interface FfmpegBackend {
             getenv: (String) -> String?,
             runtimeDirHasWaylandSocket: (Path) -> Boolean = ::defaultRuntimeDirHasWaylandSocket,
             displayIsPureX11: (String) -> Boolean = ::defaultDisplayIsPureX11,
+            displayIsXwayland: (String) -> Boolean = ::defaultDisplayIsXwayland,
+            waylandSocketExists: (Path) -> Boolean = ::isWaylandSocket,
         ): Boolean {
             when (getenv("SPECTRE_CAPTURE_BACKEND")?.trim()?.lowercase()) {
                 "x11",
@@ -134,16 +142,20 @@ internal sealed interface FfmpegBackend {
                 "portal" -> return true
             }
             val display = getenv("DISPLAY")?.takeIf { it.isNotBlank() }
-            if (display != null && displayIsPureX11(display)) return false
-            val sessionType = getenv("XDG_SESSION_TYPE")?.lowercase()
-            if (sessionType == "wayland") return true
-            val waylandDisplay = getenv("WAYLAND_DISPLAY")
-            if (!waylandDisplay.isNullOrBlank()) return true
-            // Tier 4: residual compositor socket. Only when this process has no X11 DISPLAY —
-            // otherwise Xvfb-under-SSH would misroute to portal (#397).
-            if (display != null) return false
-            val runtimeDir = getenv("XDG_RUNTIME_DIR")?.takeIf { it.isNotBlank() } ?: return false
-            return runtimeDirHasWaylandSocket(Path.of(runtimeDir))
+            val sessionIsWayland = getenv("XDG_SESSION_TYPE")?.lowercase() == "wayland"
+            val waylandDisplay = getenv("WAYLAND_DISPLAY")?.takeIf { it.isNotBlank() }
+            if (display == null) {
+                if (sessionIsWayland || waylandDisplay != null) return true
+                val runtimeDir =
+                    getenv("XDG_RUNTIME_DIR")?.takeIf { it.isNotBlank() } ?: return false
+                return runtimeDirHasWaylandSocket(Path.of(runtimeDir))
+            }
+            if (!sessionIsWayland && waylandDisplay == null) return false
+            if (displayIsXwayland(display)) return true
+            if (displayIsPureX11(display)) return false
+            val socket =
+                resolveWaylandSocket(waylandDisplay, getenv("XDG_RUNTIME_DIR")) ?: return false
+            return runCatching { waylandSocketExists(socket) }.getOrDefault(false)
         }
 
         /**
@@ -167,56 +179,94 @@ internal sealed interface FfmpegBackend {
         }
 
         /**
-         * True when [display] talks to a pure X11 server (Xvfb / Xorg), not XWayland.
+         * Resolves the compositor socket the way libwayland does: an absolute [waylandDisplay] is
+         * used as is, a relative one (default `wayland-0`) lives under [runtimeDir]. Null when it
+         * cannot be resolved, which libwayland would also fail to connect to.
+         */
+        internal fun resolveWaylandSocket(waylandDisplay: String?, runtimeDir: String?): Path? {
+            val raw = waylandDisplay ?: DEFAULT_WAYLAND_DISPLAY
+            val name = runCatching { Path.of(raw) }.getOrNull()
+            if (name == null || name.isAbsolute) return name
+            val dir = runtimeDir?.takeIf { it.isNotBlank() } ?: return null
+            return runCatching { Path.of(dir).resolve(name) }.getOrNull()
+        }
+
+        /** True when [path] exists and is a socket (or other special file), not a file or dir. */
+        internal fun isWaylandSocket(path: Path): Boolean {
+            val attributes = runCatching {
+                Files.readAttributes(path, BasicFileAttributes::class.java)
+            }
+            return attributes.getOrNull()?.isOther == true
+        }
+
+        /** True when [display] is served by an Xwayland process visible in `/proc`. */
+        internal fun defaultDisplayIsXwayland(display: String): Boolean =
+            isXwaylandServer(linuxDisplayServerName(display))
+
+        /**
+         * True when [display] talks to a pure X11 server, not XWayland.
          *
          * Used so `xvfb-run` on a host that still exports Wayland session vars routes capture to
-         * X11. Prefer an Xvfb process match for [display]; fall back to `xdpyinfo` and treat the
-         * presence of the `XWAYLAND` extension as "not pure X11". Probe failures return false (do
-         * not claim pure X11 without evidence).
+         * X11. Prefer a visible Xvfb / Xvnc / Xtigervnc / Xephyr / Xorg process serving [display];
+         * fall back to `xdpyinfo` and treat the presence of the `XWAYLAND` extension as "not pure
+         * X11". Probe failures return false (do not claim pure X11 without evidence).
          */
-        @Suppress("TooGenericExceptionCaught")
         internal fun defaultDisplayIsPureX11(display: String): Boolean {
-            if (linuxDisplayMatchesXvfbProcess(display)) return true
+            if (isPureX11Server(linuxDisplayServerName(display))) return true
             return runCatching { xdpyinfoReportsPureX11(display) }.getOrDefault(false)
         }
 
+        internal fun isXwaylandServer(serverName: String?): Boolean = serverName == XWAYLAND_SERVER
+
+        internal fun isPureX11Server(serverName: String?): Boolean = serverName in PURE_X11_SERVERS
+
         /**
-         * Scans Linux `/proc/<pid>/cmdline` entries for an `Xvfb` process serving [display] (e.g.
-         * `:99`). Returns false on other OSes or when `/proc` is unavailable.
+         * Scans Linux `/proc/<pid>/cmdline` entries for the X server serving [display] (e.g.
+         * `:99`). Returns null on other OSes, when `/proc` is unavailable, or when no known X
+         * server for [display] is visible (for example with `hidepid=2` or another PID namespace).
          */
-        @Suppress("TooGenericExceptionCaught")
-        internal fun linuxDisplayMatchesXvfbProcess(display: String): Boolean {
-            val displayToken = normalizeDisplayToken(display) ?: return false
+        internal fun linuxDisplayServerName(display: String): String? {
+            val displayToken = normalizeDisplayToken(display) ?: return null
             val proc = Path.of("/proc")
-            if (!Files.isDirectory(proc)) return false
+            if (!Files.isDirectory(proc)) return null
             return runCatching {
-                    Files.list(proc).use { stream ->
-                        stream.anyMatch { entry ->
-                            val name = entry.fileName.toString()
-                            if (name.toLongOrNull() == null) return@anyMatch false
-                            val cmdline =
-                                runCatching { Files.readAllBytes(entry.resolve("cmdline")) }
-                                    .getOrNull() ?: return@anyMatch false
-                            val args =
-                                cmdline.toString(Charsets.UTF_8).split('\u0000').filter {
-                                    it.isNotEmpty()
-                                }
-                            cmdlineMatchesXvfbDisplay(args, displayToken)
+                Files.list(proc).use { stream ->
+                    stream
+                        .filter { it.fileName.toString().toLongOrNull() != null }
+                        .map { entry ->
+                            runCatching { Files.readAllBytes(entry.resolve("cmdline")) }
+                                .getOrNull()
+                                ?.toString(Charsets.UTF_8)
+                                ?.split('\u0000')
+                                ?.filter { it.isNotEmpty() }
+                                ?.let { displayServerForCmdline(it, displayToken) }
                         }
-                    }
+                        .filter { it != null }
+                        .findFirst()
+                        .orElse(null)
                 }
-                .getOrDefault(false)
+            }
+                .getOrNull()
         }
 
         /**
-         * True when [args] is an Xvfb argv that serves [displayToken] (normalized, e.g. `:99`).
+         * Returns the X server name when [args] runs a known X server that serves [displayToken]
+         * (normalized, e.g. `:99`), else null. The display argument must follow the server binary.
          * Non-display args (binary path, `-screen`, geometry) are skipped — must not abort the scan
          * when `normalizeDisplayToken` returns null.
          */
-        internal fun cmdlineMatchesXvfbDisplay(args: List<String>, displayToken: String): Boolean {
-            if (args.none { it == "Xvfb" || it.endsWith("/Xvfb") }) return false
-            return args.any { normalizeDisplayToken(it) == displayToken }
+        internal fun displayServerForCmdline(args: List<String>, displayToken: String): String? {
+            val serverIndex = args.indexOfFirst { it.substringAfterLast('/') in KNOWN_X_SERVERS }
+            if (serverIndex < 0) return null
+            val serves =
+                args.drop(serverIndex + 1).any { normalizeDisplayToken(it) == displayToken }
+            return if (serves) args[serverIndex].substringAfterLast('/') else null
         }
+
+        private const val DEFAULT_WAYLAND_DISPLAY = "wayland-0"
+        private const val XWAYLAND_SERVER = "Xwayland"
+        private val PURE_X11_SERVERS = setOf("Xvfb", "Xvnc", "Xtigervnc", "Xephyr", "Xorg")
+        private val KNOWN_X_SERVERS = PURE_X11_SERVERS + XWAYLAND_SERVER
 
         /** `:99.0` / `host:99` → `:99` for comparison with Xvfb argv. */
         internal fun normalizeDisplayToken(raw: String): String? {

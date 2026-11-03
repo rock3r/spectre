@@ -1,5 +1,8 @@
 package dev.sebastiano.spectre.testing
 
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.ServerSocketChannel
 import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -357,7 +360,7 @@ class ScreenshotGoldPathsTest {
     }
 
     @Test
-    fun `os keys cover macos windows linux-x11 and linux-wayland`() {
+    fun `os keys cover macos windows linux-x11 and linux-wayland`(@TempDir temp: Path) {
         assertEquals(
             "macos",
             ScreenshotGoldPaths.osKey(osName = "Mac OS X", display = null, waylandDisplay = null),
@@ -386,13 +389,28 @@ class ScreenshotGoldPathsTest {
                 captureBackend = null,
             ),
         )
+        // DISPLAY plus WAYLAND_DISPLAY is Wayland only when the compositor socket exists (#575).
+        ServerSocketChannel.open(StandardProtocolFamily.UNIX).use { compositor ->
+            val socket = temp.resolve("wl-0")
+            compositor.bind(UnixDomainSocketAddress.of(socket))
+            assertEquals(
+                "linux-wayland",
+                ScreenshotGoldPaths.osKey(
+                    osName = "Linux",
+                    display = ":113",
+                    waylandDisplay = socket.toString(),
+                    sessionType = null,
+                    captureBackend = null,
+                ),
+            )
+        }
         assertEquals(
-            "linux-wayland",
+            "linux-x11",
             ScreenshotGoldPaths.osKey(
                 osName = "Linux",
                 display = ":113",
-                waylandDisplay = "wayland-0",
-                sessionType = null,
+                waylandDisplay = temp.resolve("missing-wl").toString(),
+                sessionType = "wayland",
                 captureBackend = null,
             ),
         )

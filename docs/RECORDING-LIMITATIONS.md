@@ -133,11 +133,15 @@ X11, macOS, and Windows keep their input and capture paths.
   `xvfb-run` use the `ximagesrc` helper path. Validate portal consent, PipeWire capture,
   token reuse, and compositor behaviour on a real Wayland desktop.
 
-  Session detection (#397) keeps a pure-X11 `DISPLAY`, such as Xvfb, in X11 mode.
-  Residual `wayland-*` sockets under `XDG_RUNTIME_DIR` or inherited
-  `WAYLAND_DISPLAY` and `XDG_SESSION_TYPE=wayland` do not override it.
-  Spectre checks for an Xvfb process or runs `xdpyinfo` without the `XWAYLAND`
-  extension. With no `DISPLAY`, a residual compositor socket indicates Wayland,
+  Session detection (#397, #575) keeps an X11 `DISPLAY`, such as Xvfb, in X11 mode.
+  Residual `wayland-*` sockets under `XDG_RUNTIME_DIR` never override it.
+  When `DISPLAY` is set, inherited `WAYLAND_DISPLAY` or `XDG_SESSION_TYPE=wayland`
+  count only with evidence. An `Xwayland` process serving `DISPLAY` means Wayland.
+  An Xvfb, Xvnc, Xtigervnc, Xephyr, or Xorg process serving `DISPLAY` means X11,
+  and so does `xdpyinfo` output without the `XWAYLAND` extension. Otherwise the
+  session is Wayland only if the `WAYLAND_DISPLAY` socket exists: `wayland-0` by
+  default, resolved under `XDG_RUNTIME_DIR` unless the value is an absolute path.
+  With no `DISPLAY`, a residual compositor socket indicates Wayland,
   including SSH sessions into a Wayland host.
   Real Wayland+XWayland still routes to the portal. Override with
   `SPECTRE_CAPTURE_BACKEND=x11` or `wayland` when probes cannot decide.
