@@ -416,8 +416,10 @@ private fun Component.composeHostAncestorOrSelf(): Component? {
     return null
 }
 
-private fun Component.isComposeHostComponent(): Boolean =
-    javaClass.name == COMPOSE_PANEL_CLASS_NAME || javaClass.name == COMPOSE_WINDOW_PANEL_CLASS_NAME
+private fun Component.isComposeHostComponent(): Boolean = javaClass.isComposeHostClass()
+
+internal fun Class<*>.isComposeHostClass(): Boolean =
+    name == COMPOSE_PANEL_CLASS_NAME || name == COMPOSE_WINDOW_PANEL_CLASS_NAME
 
 /**
  * Returns this component if it has any registered AWT [java.awt.event.KeyListener]s, otherwise the
