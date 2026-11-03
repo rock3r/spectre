@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.agent.runtime
 
 import dev.sebastiano.spectre.agent.AttachInputCoordination
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.AgentRequestHandler
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.IpcServer
 import java.lang.instrument.Instrumentation
@@ -19,11 +20,15 @@ import java.util.concurrent.atomic.AtomicReference
  *   [com.sun.tools.attach.VirtualMachine.loadAgent].
  *
  * Both go through [bootstrap]:
- * 1. Locate Spectre on the target's classpath via [AgentBootstrap.findSpectreClassLoader].
+ * 1. Locate Spectre on the target's classpath via [AgentBootstrap.findSpectre].
  * 2. Reflectively construct a `ComposeAutomator.inProcess(...)` instance in that classloader.
  * 3. If `agentArgs` carries a UDS path (see [AgentBootstrapArgs] for the accepted forms), start an
  *    [IpcServer] there that dispatches [dev.sebastiano.spectre.agent.transport.AgentRequest]s
  *    against the automator via [ReflectiveAutomatorHandler].
+ *
+ * An IntelliJ IDE that has not loaded Compose yet (#574) skips steps 1 and 2 at attach: the server
+ * starts with a [DeferredAutomatorHandler], which reports no Compose windows and runs those steps
+ * once Compose loads.
  *
  * **Failure propagation**: any exception thrown by [bootstrap] escapes [premain] / [agentmain]. The
  * JVM's `loadClassAndStartAgent` rethrows it, which causes `VirtualMachine.loadAgent` on the
@@ -36,13 +41,13 @@ import java.util.concurrent.atomic.AtomicReference
  * `loadAgent` calls so this matters in practice. A second invocation naming a *different* socket
  * path (or the same path after its socket file vanished) comes from a new attacher whose
  * predecessor died without sending Detach: the stale state is released as Detach would release it,
- * except that its Spectre classloader carries over, and the agent bootstraps again on the new path
- * (#557).
+ * and the agent bootstraps again on the new path (#557).
  *
  * **Detach contract** (plan D-7): [onClientDetach] performs the full Path A cleanup — closes the
  * [IpcServer] (releases ServerSocketChannel + unlinks UDS), closes target-side input coordination,
  * removes the shutdown hook, and clears the global state slot. A registered shutdown hook (Path B)
- * is the backstop for crashes.
+ * is the backstop for crashes. An injected Spectre runtime outlives both: [AgentBootstrap] keeps it
+ * for every later attach in this JVM and releases it when the JVM exits (#574).
  */
 @ExperimentalSpectreAgentApi
 public object SpectreAgent {
@@ -85,7 +90,6 @@ public object SpectreAgent {
         val parsedArgs = AgentBootstrapArgs.parse(agentArgs)
         val requestedUdsPath = parsedArgs.udsPath?.let(Path::of)
 
-        var inheritedBootstrap: SpectreBootstrapResult? = null
         val boundState = agentState.get()
         if (boundState != null) {
             if (!replacesBoundAgent(boundState.udsPath, requestedUdsPath)) {
@@ -98,32 +102,21 @@ public object SpectreAgent {
                 "[spectre-agent] re-entry asks for $requestedUdsPath; releasing the agent bound " +
                     "to ${boundState.udsPath}"
             )
-            inheritedBootstrap = retireForReplacement(boundState)
+            retireForReplacement(boundState)
         }
 
-        // findSpectre throws SpectreNotOnClasspathException /
-        // AmbiguousSpectreClasspathException / ComposeNotOnClasspathException;
-        // createAutomatorReflectively throws ReflectiveOperationException. Both propagate to the
-        // JVM agent layer which surfaces them at the attaching `VirtualMachine.loadAgent` call
-        // site.
-        val bootstrap = inheritedBootstrap ?: AgentBootstrap.findSpectre(instrumentation)
-        // When AgentState is published successfully, detach/shutdown owns target-input and inject
-        // cleanup. Until then (or on any failure path), we release both in the finally below.
+        // When AgentState is published successfully, detach/shutdown owns target-input cleanup.
+        // Until then (or on any failure path), we release it in the finally below.
         var resourcesOwnedByAgentState = false
         var targetInputResource: AutoCloseable? = null
         try {
-            val loader = bootstrap.classLoader
-            System.err.println("[spectre-agent] found Spectre via $loader")
-
-            // Open AWT peer packages so core window-identity can resolve host HWND/NSWindow*/XID
-            // for embedded ComposePanel surfaces (Compose windowHandle is 0 there). Best-effort:
-            // failures are logged and identity falls back to null handles.
-            AwtPeerModuleOpener.openFor(loader, instrumentation)
-
-            val agentAutomator = createAutomatorReflectively(loader, parsedArgs.inputCoordination)
-            val automator = agentAutomator.instance
-            targetInputResource = agentAutomator.targetInputResource
-            System.err.println("[spectre-agent] ComposeAutomator ready: $automator")
+            // findSpectre throws SpectreNotOnClasspathException /
+            // AmbiguousSpectreClasspathException / ComposeNotOnClasspathException;
+            // createAutomatorReflectively throws ReflectiveOperationException. Both propagate to
+            // the JVM agent layer which surfaces them at the attaching `VirtualMachine.loadAgent`
+            // call site.
+            val attached = connectOrWaitForCompose(instrumentation, parsedArgs.inputCoordination)
+            targetInputResource = attached.targetInputResource
 
             // The attacher's frame budget has to be adopted before the IPC server can answer: this
             // JVM writes the bulky screenshot frames and cannot read the daemon's environment.
@@ -139,7 +132,7 @@ public object SpectreAgent {
             if (udsPath == null) {
                 // No UDS path means manual diagnostic mode: report window count to stderr so a
                 // user can verify Spectre is correctly on a target's classpath.
-                val count = invokeWindowsCountReflectively(automator)
+                val count = attached.automator?.let(::invokeWindowsCountReflectively) ?: 0
                 System.err.println(
                     "[spectre-agent] no UDS path provided; spike mode reports " +
                         "getWindows().size = $count"
@@ -149,7 +142,7 @@ public object SpectreAgent {
 
             // IpcServer's constructor throws IOException on bind failure (path too long,
             // permission issue, …). Let it propagate.
-            val handler = ReflectiveAutomatorHandler(automator)
+            val handler = attached.handler
             // Detach releases only the state this server belongs to: once a re-entry has replaced
             // it, a late Detach from the old server's client must not tear down its successor.
             val publishedState = AtomicReference<AgentState?>(null)
@@ -169,7 +162,6 @@ public object SpectreAgent {
                         // Path B — crash safety. close() handles its own idempotency.
                         runCatching { server.close() }
                         runCatching { targetInputResource?.close() }
-                        bootstrap.releaseInjectResources()
                     },
                     SHUTDOWN_HOOK_NAME,
                 )
@@ -180,7 +172,6 @@ public object SpectreAgent {
                     server = server,
                     udsPath = udsPath,
                     shutdownHook = shutdownHook,
-                    bootstrap = bootstrap,
                     targetInputResource = targetInputResource,
                 )
             publishedState.set(newState)
@@ -203,7 +194,6 @@ public object SpectreAgent {
         } finally {
             if (!resourcesOwnedByAgentState) {
                 runCatching { targetInputResource?.close() }
-                bootstrap.releaseInjectResources()
             }
         }
     }
@@ -211,8 +201,8 @@ public object SpectreAgent {
     /**
      * Called by [IpcServer] when it processes an `AgentRequest.Detach`. Performs the full D-7 Path
      * A cleanup: clears the global slot, closes the server and target-side input coordination (both
-     * idempotent), removes the shutdown hook, and releases inject payload resources when the attach
-     * used injection (#209).
+     * idempotent), and removes the shutdown hook. An injected Spectre runtime (#209) stays loaded
+     * for the next attach (#574).
      *
      * The server has *already* set its `running` flag to false before invoking this; the `close()`
      * here ensures the ServerSocketChannel native fd is released and the UDS path unlinked. Without
@@ -224,38 +214,31 @@ public object SpectreAgent {
     }
 
     /**
-     * Clears the global slot if it still holds [state], then releases everything [state] owns,
-     * keeping its inject classloader and jar open when [releaseInjectResources] is false so a
-     * replacement state can take them over. Returns false, releasing nothing, when another caller
-     * already took [state] out of the slot.
+     * Clears the global slot if it still holds [state], then releases everything [state] owns.
+     * Returns false, releasing nothing, when another caller already took [state] out of the slot.
      */
-    private fun releaseState(state: AgentState, releaseInjectResources: Boolean = true): Boolean {
+    private fun releaseState(state: AgentState): Boolean {
         if (!agentState.compareAndSet(state, null)) return false
         runCatching { state.server.close() }
         runCatching { state.targetInputResource?.close() }
         runCatching { Runtime.getRuntime().removeShutdownHook(state.shutdownHook) }
-        if (releaseInjectResources) state.bootstrap.releaseInjectResources()
         return true
     }
 
     /**
-     * Releases [state] for a re-entry that replaces it, and returns its Spectre bootstrap for the
-     * replacement to take over, or null when another caller (a concurrent Detach) released it
-     * first.
+     * Releases [state] for a re-entry that replaces it, unless another caller (a concurrent Detach)
+     * released it first.
      *
      * An attacher that died without sending Detach (#557) leaves [state] bound to a socket nobody
      * will connect to again. It is released the way Detach releases it: the server stops first, and
      * input coordination closes only after every input call the dead attacher started has finished.
-     * The Spectre classloader is the exception, and carries over: an injected loader cannot be
-     * closed and found again, because its already-defined classes stay visible to the bootstrap
-     * scan while the closed loader can no longer define the ones not yet used.
+     * Like after Detach, an injected Spectre runtime stays loaded for the replacement.
      */
-    private fun retireForReplacement(state: AgentState): SpectreBootstrapResult? {
+    private fun retireForReplacement(state: AgentState) {
         runCatching { state.server.close() }
         val interrupted = state.server.awaitInputWorkersTerminated()
         try {
-            return if (releaseState(state, releaseInjectResources = false)) state.bootstrap
-            else null
+            releaseState(state)
         } finally {
             if (interrupted) Thread.currentThread().interrupt()
         }
@@ -277,6 +260,66 @@ public object SpectreAgent {
     ): Boolean =
         requestedUdsPath != null &&
             (requestedUdsPath != boundUdsPath || !socketExists(boundUdsPath))
+
+    /**
+     * Builds the automator for this attach. When an IntelliJ IDE has not loaded Compose yet (#574),
+     * returns a [DeferredAutomatorHandler] that builds it once Compose loads.
+     */
+    private fun connectOrWaitForCompose(
+        instrumentation: Instrumentation,
+        inputCoordination: AttachInputCoordination,
+    ): AttachedHandler {
+        val connected = connectIfComposeLoaded(instrumentation, inputCoordination)
+        if (connected != null) {
+            return AttachedHandler(
+                handler = connected.handler,
+                targetInputResource = connected.targetInputResource,
+                automator = connected.automator,
+            )
+        }
+        System.err.println(
+            "[spectre-agent] no Compose UI has loaded in this IntelliJ Platform JVM yet; " +
+                "reporting no Compose windows until one does"
+        )
+        val deferred =
+            DeferredAutomatorHandler(
+                connect = { connectIfComposeLoaded(instrumentation, inputCoordination) }
+            )
+        return AttachedHandler(handler = deferred, targetInputResource = deferred, automator = null)
+    }
+
+    /**
+     * Finds Spectre and builds the automator, or returns null while an IntelliJ IDE has not loaded
+     * Compose yet. Every other bootstrap failure propagates.
+     */
+    private fun connectIfComposeLoaded(
+        instrumentation: Instrumentation,
+        inputCoordination: AttachInputCoordination,
+    ): ConnectedAutomator? {
+        val bootstrap =
+            try {
+                AgentBootstrap.findSpectre(instrumentation)
+            } catch (missingCompose: ComposeNotOnClasspathException) {
+                if (AgentBootstrap.canWaitForCompose(instrumentation)) return null
+                throw missingCompose
+            }
+        val loader = bootstrap.classLoader
+        System.err.println("[spectre-agent] found Spectre via $loader")
+
+        // Open AWT peer packages so core window-identity can resolve host HWND/NSWindow*/XID
+        // for embedded ComposePanel surfaces (Compose windowHandle is 0 there). Best-effort:
+        // failures are logged and identity falls back to null handles.
+        AwtPeerModuleOpener.openFor(loader, instrumentation)
+
+        val agentAutomator = createAutomatorReflectively(loader, inputCoordination)
+        val automator = agentAutomator.instance
+        System.err.println("[spectre-agent] ComposeAutomator ready: $automator")
+        return ConnectedAutomator(
+            automator = automator,
+            handler = ReflectiveAutomatorHandler(automator),
+            targetInputResource = agentAutomator.targetInputResource,
+        )
+    }
 
     private fun createAutomatorReflectively(
         classLoader: ClassLoader,
@@ -386,12 +429,21 @@ public object SpectreAgent {
 
     private data class AgentAutomator(val instance: Any, val targetInputResource: AutoCloseable?)
 
+    /**
+     * What an attach serves requests with. [automator] is null while the attach waits for Compose
+     * to load.
+     */
+    private class AttachedHandler(
+        val handler: AgentRequestHandler,
+        val targetInputResource: AutoCloseable?,
+        val automator: Any?,
+    )
+
     /** Single live agent state, swapped under [agentState] atomically. */
     private data class AgentState(
         val server: IpcServer,
         val udsPath: Path,
         val shutdownHook: Thread,
-        val bootstrap: SpectreBootstrapResult,
         val targetInputResource: AutoCloseable?,
     )
 }

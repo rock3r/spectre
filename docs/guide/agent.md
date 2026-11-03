@@ -172,8 +172,13 @@ Bootstrap order inside the target:
 
 Inject is an **experimental inspection** path for occasional attach, inspect, and detach
 sessions. Use preinstalled core for frequent CI attach loops.
-Class unloading after detach depends on garbage collection; inject has no leak-free
-production guarantee.
+The injected runtime stays loaded after detach, and every later attach to the same JVM
+reuses it. The target JVM deletes the extracted jar when it exits.
+
+An IntelliJ Platform IDE keeps Compose in a plugin classloader and loads it only when the
+first Compose surface opens. An attach to such an IDE succeeds before that and reports no
+Compose windows until Compose loads. Other JVMs without Compose still fail the attach with
+`ComposeNotOnClasspathException`. See [IntelliJ-hosted Compose](intellij.md).
 
 Both paths use `AgentAttach.attach(pid)`. The public API has no inject flag.
 
