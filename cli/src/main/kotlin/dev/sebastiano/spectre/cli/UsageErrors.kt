@@ -6,15 +6,6 @@ import com.github.ajalt.clikt.core.MultiUsageError
 import com.github.ajalt.clikt.core.NoSuchOption
 import com.github.ajalt.clikt.core.NoSuchSubcommand
 import com.github.ajalt.clikt.core.UsageError
-import kotlinx.serialization.Serializable
-
-/** `--json` body for a usage error, written to stderr. [hint] is `null` when there is none. */
-@Serializable
-internal data class UsageErrorJson(
-    val version: Int = USAGE_ERROR_JSON_VERSION,
-    val error: String,
-    val hint: String?,
-)
 
 /**
  * Hints for the unknown commands and options in [error], most specific first, ending with where to
@@ -98,4 +89,3 @@ internal fun registeredCommandPaths(command: BaseCliktCommand<*>): Set<String> =
         .toSet()
 
 private const val ERROR_PREFIX: String = "Error: "
-private const val USAGE_ERROR_JSON_VERSION: Int = 1

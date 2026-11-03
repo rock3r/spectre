@@ -315,6 +315,14 @@ private class VersionCommand(private val output: Appendable) :
     }
 }
 
+/** `--json` body for a usage error, written to stderr. [hint] is `null` when there is none. */
+@Serializable
+private data class UsageErrorJson(
+    val version: Int = JSON_VERSION,
+    val error: String,
+    val hint: String?,
+)
+
 @Serializable
 private data class VersionJson(val version: Int = JSON_VERSION, val spectreVersion: String)
 
