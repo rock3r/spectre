@@ -75,6 +75,7 @@ public fun composeBoundsToAwtRectangle(
  * on-screen rectangle translated by `-windowOriginOnScreen`. Both origins are in AWT logical screen
  * units; the content offset between them includes window decorations such as the title bar.
  */
+@OptIn(InternalSpectreApi::class)
 internal fun composeBoundsToAwtWindowRectangle(
     left: Float,
     top: Float,
