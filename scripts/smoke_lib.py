@@ -2032,7 +2032,7 @@ def linux_wayland_helper_path(root: Path) -> Path | None:
 
 
 def prepare_linux_portal_token_env(root: Path, out_dir: Path) -> dict[str, str]:
-    """Pin a restore-token dir, and a helper binary when one is already staged."""
+    """Pin a restore-token dir, and a private copy of the helper when one is already staged."""
     token_dir = Path(out_dir) / "wayland-restore-tokens"
     token_dir.mkdir(parents=True, exist_ok=True)
     token_dir.chmod(0o700)
@@ -2047,8 +2047,26 @@ def prepare_linux_portal_token_env(root: Path, out_dir: Path) -> dict[str, str]:
     }
     helper = linux_wayland_helper_path(root)
     if helper is not None:
-        env["SPECTRE_WAYLAND_HELPER"] = str(helper)
+        env["SPECTRE_WAYLAND_HELPER"] = str(_private_helper_copy(helper, session_dir / "bin"))
     return env
+
+
+def _private_helper_copy(helper: Path, dest_dir: Path) -> Path:
+    """Copy the staged helper next to the session state and return the copy.
+
+    The warmup leaves a `--session` helper running for later cells. If it ran from
+    Gradle's output path, the next `:recording:assembleWaylandHelper` would fail with
+    "Text file busy" while overwriting it. The copy is replaced by rename, so a helper
+    that is still running keeps its old file.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_dir.chmod(0o700)
+    dest = dest_dir / helper.name
+    tmp = dest_dir / f".{helper.name}.{os.getpid()}.tmp"
+    shutil.copy2(helper, tmp)
+    tmp.chmod(0o700)
+    os.replace(tmp, dest)
+    return dest
 
 
 def linux_portal_token_path(

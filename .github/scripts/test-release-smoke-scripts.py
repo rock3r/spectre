@@ -1070,11 +1070,36 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
             self.assertTrue(token_dir.is_dir())
             self.assertEqual(str(out_dir / "wayland-session"), env["SPECTRE_WAYLAND_SESSION_DIR"])
             self.assertTrue(Path(env["SPECTRE_WAYLAND_SESSION_DIR"]).is_dir())
-            self.assertEqual(str(helper), env["SPECTRE_WAYLAND_HELPER"])
+            # The long-lived `--session` helper must not run from Gradle's output path:
+            # later cells re-run `:recording:assembleWaylandHelper`, which fails with
+            # "Text file busy" when it overwrites a running binary (seen on bepi).
+            private = Path(env["SPECTRE_WAYLAND_HELPER"])
+            self.assertNotEqual(helper, private)
+            self.assertEqual(out_dir / "wayland-session" / "bin" / helper.name, private)
+            self.assertEqual(helper.read_bytes(), private.read_bytes())
+            self.assertTrue(os.access(private, os.X_OK))
             if os.name == "nt":
                 self.assertTrue(token_dir.is_dir())
             else:
                 self.assertEqual("0700", oct(token_dir.stat().st_mode)[-4:])
+
+    def test_prepare_linux_portal_token_env_replaces_the_private_helper_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper = smoke_lib.linux_wayland_helper_candidates(root)[0]
+            helper.parent.mkdir(parents=True)
+            helper.write_text("#!/bin/sh\necho v1\n", encoding="utf-8")
+            helper.chmod(0o755)
+            out_dir = root / "build" / "smoke"
+            first = Path(smoke_lib.prepare_linux_portal_token_env(root, out_dir)["SPECTRE_WAYLAND_HELPER"])
+            old_inode = first.stat().st_ino
+            helper.write_text("#!/bin/sh\necho v2\n", encoding="utf-8")
+            second = Path(smoke_lib.prepare_linux_portal_token_env(root, out_dir)["SPECTRE_WAYLAND_HELPER"])
+            self.assertEqual(first, second)
+            self.assertIn("v2", second.read_text(encoding="utf-8"))
+            if os.name != "nt":
+                # Replaced by rename, not rewritten in place, so a running copy is untouched.
+                self.assertNotEqual(old_inode, second.stat().st_ino)
 
     def test_prepare_linux_portal_token_env_without_helper_omits_override(self):
         with tempfile.TemporaryDirectory() as tmp:
