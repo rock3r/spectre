@@ -255,24 +255,34 @@ Use `pressKey(...)` for individual key events (modifier shortcuts, navigation ke
 `<kbd>Tab</kbd>`, `<kbd>Esc</kbd>`). They go through the AWT key map and bypass
 the clipboard, so none of the paste-specific caveats apply.
 
-## "Daemon socket ancestor … must be owned by root or user" {#daemon-socket-ancestor}
+## "Daemon socket ancestor … is owned by …" {#daemon-socket-ancestor}
 
-The CLI daemon keeps its socket in an owner-only directory under `java.io.tmpdir`
-(`/tmp` on Linux). Before it uses that directory, it checks every ancestor. Each ancestor
-must be owned by `root` or by you, and must be either sticky (like `/tmp`) or not
-writable by group or others.
+The CLI daemon keeps its socket in an owner-only directory below a base directory: `/tmp`
+on Linux and macOS, `java.io.tmpdir` on Windows. Before it uses that directory, it checks
+every ancestor up to `/`. Each ancestor must be owned by `root` or by you, and must be
+either sticky (like `/tmp`) or not writable by group or others. The error names the
+directory that failed and its owner.
 
 Rootless containers and sandboxes that run in a Linux user namespace often leave host
-`root` unmapped. Inside them, `/` and `/tmp` appear owned by `nobody` (uid 65534), and the
-daemon refuses to start. This is deliberate. Every unmapped host user appears as uid 65534,
-so from inside the namespace a directory owned by host `root` can't be told apart from one
-owned by another host user, who could replace the daemon's socket directory.
+`root` unmapped. Inside them, `/tmp` and other host directories appear owned by `nobody`
+(uid 65534). Spectre refuses such ancestors on purpose. Every unmapped host user appears
+as uid 65534, so from inside the namespace a directory owned by host `root` can't be told
+apart from one owned by another host user, who could replace the daemon's socket
+directory.
 
-Run the CLI where `/` and `/tmp` appear owned by `root` or by you. For example, use a
-container whose user namespace maps host `root`, or one with its own root filesystem. If
-only `/tmp` fails the check, start the CLI with `-Djava.io.tmpdir=<dir>` pointing at a
-directory whose ancestors all pass these rules. The CLI forwards `java.io.tmpdir` to the
-daemon.
+To move the socket, set `SPECTRE_DAEMON_SOCKET_DIR` to an absolute directory you own
+whose ancestors all pass the check, for example:
+
+```bash
+export SPECTRE_DAEMON_SOCKET_DIR="$XDG_RUNTIME_DIR"
+```
+
+A directory under `$HOME` works too. The override can't help when `/` itself appears
+owned by `nobody`, because every path runs through `/`. In that case, run the CLI in a
+container or sandbox whose root directory appears owned by `root` or by you.
+
+See [CLI — daemon socket location](cli.md#daemon-socket-location) for how the override
+behaves.
 
 ## Compose Hot Reload {#compose-hot-reload}
 

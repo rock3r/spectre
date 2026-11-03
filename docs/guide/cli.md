@@ -101,6 +101,30 @@ Use the installed binary's help text for its exact arguments and options.
 `spectre --version`, `spectre -v`, and `spectre version` print the installed version;
 add `--json` for `{"version":1,"spectreVersion":"…"}`.
 
+## Daemon socket location
+
+The CLI talks to a per-user daemon over a Unix domain socket. The socket lives in an
+owner-only `sp-d-<id>` directory below a base directory: `/tmp` on Linux and macOS, and
+`java.io.tmpdir` on Windows. Every ancestor of that directory must be owned by `root` or by
+you, and must be sticky or not writable by group or others. Otherwise the daemon refuses to
+start; see [troubleshooting](troubleshooting.md#daemon-socket-ancestor).
+
+Set `SPECTRE_DAEMON_SOCKET_DIR` to use another base directory:
+
+```bash
+export SPECTRE_DAEMON_SOCKET_DIR="$XDG_RUNTIME_DIR"
+```
+
+- The value must be an absolute path. An empty value keeps the default.
+- The directory gets the same ownership and permission checks as the default base.
+- The full socket path must fit in 100 bytes. A longer path fails with an error that names
+  the path and its length; Spectre never falls back to another directory.
+- The CLI resolves the path and passes it to the daemon it starts, so they always agree. A
+  CLI run with a different value talks to a different daemon: it starts its own at the new
+  path, and a daemon already running at the old path keeps running until it shuts down.
+  Set the variable everywhere you run `spectre`, including the environment of MCP clients
+  that launch `spectre mcp`.
+
 ## What it can do
 
 For a typical session:
