@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.core
 import androidx.compose.ui.awt.ComposePanel
 import java.awt.Window
 import javax.swing.JFrame
+import javax.swing.SwingUtilities
 import kotlin.test.Test
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -50,17 +51,19 @@ class AutomatorWindowHostAccessorsTest {
     @Test
     fun `embedded panel surface reports the panel as its host component`() {
         assumeLiveAwtAvailable()
-        val frame = JFrame("host-accessors-embedded")
+        // ComposePanel must be created on the EDT; off it, construction throws on Windows.
+        val (host, embedded) = readOnEdt {
+            val frame = JFrame("host-accessors-embedded")
+            frame to ComposePanel().also { frame.contentPane.add(it) }
+        }
         try {
-            val panel = ComposePanel()
-            frame.contentPane.add(panel)
-            val window = automatorWindowFor(frame, composePanel = panel)
+            val window = automatorWindowFor(host, composePanel = embedded)
 
-            assertSame<Window>(frame, window.window)
-            assertSame(panel, window.composePanel)
-            assertSame(panel, window.hostComponent)
+            assertSame<Window>(host, window.window)
+            assertSame(embedded, window.composePanel)
+            assertSame(embedded, window.hostComponent)
         } finally {
-            frame.dispose()
+            SwingUtilities.invokeAndWait { host.dispose() }
         }
     }
 
