@@ -1254,6 +1254,7 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
             self.assertNotIn("XAUTHORITY", found)
             self.assertEqual("wayland-0", found["WAYLAND_DISPLAY"])
 
+    @unittest.skipUnless(hasattr(os, "getuid"), "Linux seat discovery uses POSIX uids and /proc")
     def test_discover_linux_seat_env_finds_display_of_xwayland_using_a_wildcard_cookie(self):
         # Real mutter layout (bepi, GNOME 50): the Xwayland cookie has an empty display
         # number, which X treats as "any display", so the cookie alone cannot name the seat's
@@ -1274,6 +1275,7 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
             self.assertEqual(":0", found["DISPLAY"])
             self.assertEqual(str(cookie), found["XAUTHORITY"])
 
+    @unittest.skipUnless(hasattr(os, "getuid"), "Linux seat discovery uses POSIX uids and /proc")
     def test_discover_linux_seat_env_ignores_xwayland_of_another_user(self):
         with tempfile.TemporaryDirectory() as tmp:
             uid = os.getuid()
