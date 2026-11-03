@@ -1,3 +1,5 @@
+@file:OptIn(InternalSpectreApi::class)
+
 package dev.sebastiano.spectre.sample.validation
 
 import androidx.compose.foundation.layout.Box
@@ -8,6 +10,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.TrackedWindow
 import java.awt.BorderLayout
 import java.awt.Dimension
