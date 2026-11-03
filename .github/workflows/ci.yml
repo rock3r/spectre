@@ -12,7 +12,7 @@ permissions:
 jobs:
   linux-helper-tests:
     name: Linux helper unit tests
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
@@ -30,9 +30,7 @@ jobs:
         run: cargo test --manifest-path recording/native/linux/Cargo.toml
 
   check:
-    # Pinned to 24.04: `ubuntu-latest` moved to 26.04 ("resolute"), where the arm64 multi-arch
-    # install below asks apt to downgrade host packages and fails. Move to 26.04 deliberately.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
@@ -63,57 +61,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
 
-      - name: Enable arm64 dpkg multi-arch + install aarch64 cross-toolchain (issue #86)
-        # `:recording:assembleWaylandHelperAllArches` cross-compiles the Wayland helper for
-        # aarch64 from this x86_64 runner. Two prereqs:
-        #   - `gcc-aarch64-linux-gnu` provides the cross-linker that cargo invokes via
-        #     CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER.
-        #   - `libdbus-1-dev:arm64` provides the aarch64-arch sysroot libdbus + .pc files
-        #     pkg-config picks via PKG_CONFIG_PATH_aarch64_unknown_linux_gnu. dpkg
-        #     multi-arch must be enabled before apt resolves foreign-arch packages.
-        # Ubuntu 24.04 runners' default sources point at azure.archive.ubuntu.com which
-        # only ships amd64 binaries — so adding `arm64` to dpkg without redirecting arm64
-        # apt lookups to ports.ubuntu.com makes `apt-get update` 404 on every arm64 list.
-        # We restrict the default sources to amd64 (deb822 + legacy formats both, since
-        # the layout has shifted across Ubuntu releases) and add a ports.ubuntu.com source
-        # for arm64.
-        run: |
-          set -euo pipefail
-          sudo dpkg --add-architecture arm64
-          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
-            # deb822 format (ubuntu 24.04+): inject `Architectures: amd64` into each
-            # stanza that doesn't already declare one.
-            sudo sed -i '/^Architectures:/!{ /^Signed-By:/i\
-          Architectures: amd64
-          }' /etc/apt/sources.list.d/ubuntu.sources
-          fi
-          if [ -f /etc/apt/sources.list ]; then
-            # Legacy one-line format (older runners or .list.d additions): add the
-            # [arch=amd64] qualifier in front of every existing `deb ` line that doesn't
-            # already specify an arch.
-            sudo sed -i 's|^deb \([^[]\)|deb [arch=amd64] \1|' /etc/apt/sources.list
-          fi
-          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
-          sudo tee /etc/apt/sources.list.d/ubuntu-arm64.sources >/dev/null <<EOF
-          Types: deb
-          URIs: http://ports.ubuntu.com/ubuntu-ports/
-          Suites: $codename $codename-updates $codename-backports $codename-security
-          Components: main universe restricted multiverse
-          Architectures: arm64
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-          EOF
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu libdbus-1-dev:arm64
-
       - name: Set up Rust (stable, MSRV-pinned to spectre-wayland-helper's rust-version)
         # `:recording:assembleWaylandHelper` runs `cargo build --release` from
         # recording/native/linux/. The crate's `rust-version = "1.75"` pin matches what
         # Ubuntu 22.04's jammy-backports apt provides on the dev VM; the action installs
-        # latest stable (≥ 1.75) on the runner. The aarch64 cross target is added below;
-        # the host-arch `x86_64-unknown-linux-gnu` is part of the default rustup install.
+        # latest stable (≥ 1.75) on the runner. Only the host target is needed here: the
+        # aarch64 helper is built natively in the `linux-helpers` job below.
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-gnu
 
       - name: Run checks
         id: check
@@ -201,16 +155,43 @@ jobs:
           fi
         shell: bash
 
-      - name: Verify cross-arch helper bundling (issue #86)
-        # Proves on every PR that `:recording:assembleWaylandHelperAllArches` can produce
-        # both x86_64 and aarch64 binaries from this x86_64 runner. Doesn't run as part of
-        # the default `check` graph (which uses the host-arch `assembleWaylandHelper`) so
-        # contributor builds without the cross toolchain still pass `check` cleanly. When
-        # #84's publish pipeline lands, the release job will pass `-PallLinuxArches` so
-        # `:recording-linux:processResources` bundles both arches into the published
-        # platform-helper jar.
-        #
-        # `-PallLinuxArches` makes `:recording-linux:processResources` depend on the
-        # cross-arch staging task and `verifyRecordingLinuxHelpers` expect both resource
-        # entries in the platform-helper jar.
-        run: ./gradlew :recording-linux:verifyRecordingLinuxHelpers -PallLinuxArches
+  linux-helpers:
+    name: Linux helpers
+    # Builds the Wayland helper natively on x86_64 and aarch64 runners, exactly as the release
+    # does, and uploads them as the `linux-helpers` artifact. See linux-helpers.yml for why this
+    # replaced the x86_64 -> aarch64 cross build (#583).
+    uses: ./.github/workflows/linux-helpers.yml
+
+  linux-helpers-bundle:
+    name: Verify cross-arch helper bundling
+    # Proves on every PR that the per-arch helpers from `linux-helpers` land in the
+    # spectre-recording-linux jar, through the same `-PprebuiltLinuxHelpersDir` staging the
+    # release publish job uses. With that property set, `verifyRecordingLinuxHelpers` expects
+    # both `native/linux/x86_64/...` and `native/linux/aarch64/...` jar entries, and no cargo
+    # build runs here.
+    needs: linux-helpers
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Download Linux helpers
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-helpers
+          path: ${{ runner.temp }}/linux-helpers
+
+      - name: Verify both arches are bundled
+        run: >-
+          ./gradlew :recording-linux:verifyRecordingLinuxHelpers
+          -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/linux-helpers"

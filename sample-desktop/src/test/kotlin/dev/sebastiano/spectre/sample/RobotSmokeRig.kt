@@ -170,6 +170,20 @@ internal suspend fun waitForFrame(ref: AtomicReference<JFrame>) {
     error("frame never showed within ${WINDOW_OPEN_TIMEOUT_MS}ms")
 }
 
+/**
+ * Re-applies [frame]'s location once it is showing, so AWT and the X server agree on where it is.
+ *
+ * Headless Xvfb runs without a window manager. There, `pack()` creates the X window at (0,0), and
+ * if AWT handles that window's first ConfigureNotify after the caller's `setLocation`, its one-time
+ * insets correction writes (0,0) back into the frame's bounds. The X window still moves to the
+ * requested spot, but `locationOnScreen` keeps returning (0,0), so Robot clicks and captures miss
+ * the window (#583). Setting the location again after the window is mapped puts AWT back in line.
+ * When AWT already has the right location, this changes nothing.
+ */
+internal fun reapplyFrameLocation(frame: JFrame, place: JFrame.() -> Unit) {
+    invokeOnEdt { frame.place() }
+}
+
 internal suspend fun waitForLayout(state: SmokeState) {
     val deadline = System.nanoTime() + LAYOUT_TIMEOUT_MS * 1_000_000L
     while (System.nanoTime() < deadline) {
