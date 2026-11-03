@@ -2,7 +2,9 @@ package dev.sebastiano.spectre.core
 
 import java.awt.Component
 import java.awt.Dialog
+import java.awt.KeyboardFocusManager
 import java.awt.Window
+import java.lang.reflect.Method
 import javax.swing.SwingUtilities
 
 /**
@@ -39,9 +41,58 @@ internal fun syntheticInputWindows(): List<Window> {
  */
 internal fun Component.canReceiveMouseInput(): Boolean = isShowing && !isBlockedByModalDialog()
 
-/** The most recently created modal dialog that is showing, or `null` if none is. */
+/** The showing modal dialog that takes input, or `null` if none is showing. */
 internal fun activeModalDialog(): Dialog? =
-    Window.getWindows().filterIsInstance<Dialog>().lastOrNull { it.isModal && it.isShowing }
+    selectActiveModalDialog(
+        showingModals =
+            Window.getWindows().filterIsInstance<Dialog>().filter { it.isModal && it.isShowing },
+        isModalBlocked = awtModalBlockedCheck(),
+        activeWindow = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow,
+    )
+
+/**
+ * Picks the modal dialog that takes input from [showingModals], which are in creation order.
+ *
+ * AWT makes the dialog shown last interactive, which is not always the newest one: a reused or
+ * pre-created dialog shown from a handler in a newer modal blocks that newer modal. AWT does not
+ * expose the show order, so the most exact signal available wins:
+ * 1. [isModalBlocked], AWT's own blocked state, when `java.awt` is open to Spectre. Only the
+ *    dialogs it reports as not blocked stay candidates.
+ * 2. The candidate closest to [activeWindow] in its owner chain, that is the dialog that is, or
+ *    owns, the active window.
+ * 3. The most recently created candidate.
+ */
+internal fun selectActiveModalDialog(
+    showingModals: List<Dialog>,
+    isModalBlocked: ((Window) -> Boolean)?,
+    activeWindow: Window?,
+): Dialog? {
+    if (showingModals.size <= 1) return showingModals.firstOrNull()
+    val candidates =
+        isModalBlocked
+            ?.let { blocked -> showingModals.filterNot(blocked) }
+            ?.takeIf { it.isNotEmpty() } ?: showingModals
+    val ownerOfActiveWindow =
+        generateSequence(activeWindow) { it.owner }.firstOrNull { it in candidates }
+    return ownerOfActiveWindow as? Dialog ?: candidates.last()
+}
+
+/**
+ * `java.awt.Window.isModalBlocked()`, or `null` when Spectre cannot call it. The method is
+ * package-private, so it needs `java.awt` opened to Spectre: the agent runtime opens it at attach,
+ * and in-process hosts can pass `--add-opens java.desktop/java.awt=ALL-UNNAMED`.
+ */
+private fun awtModalBlockedCheck(): ((Window) -> Boolean)? {
+    val method = isModalBlockedMethod ?: return null
+    return { window -> runCatching { method.invoke(window) as Boolean }.getOrDefault(false) }
+}
+
+private val isModalBlockedMethod: Method? by lazy {
+    runCatching {
+        Window::class.java.getDeclaredMethod("isModalBlocked").apply { isAccessible = true }
+    }
+        .getOrNull()
+}
 
 /**
  * Whether the showing modal dialog, if any, blocks input to the window that holds this component.
@@ -56,13 +107,14 @@ internal fun Component.isBlockedByModalDialog(): Boolean {
  * Whether this showing modal dialog blocks input to [window], following AWT's modality rules: a
  * dialog never blocks itself or the windows it owns, and a document-modal dialog blocks only the
  * windows of its own document (the same owner-less root). Application- and toolkit-modal dialogs
- * block everything else, except windows excluded from that modality through
- * [Window.getModalExclusionType], on the window itself or on one of its owners.
+ * block everything else. Windows excluded from a modality through [Window.getModalExclusionType],
+ * on the window itself or on one of its owners, are not blocked by it; application exclusion also
+ * exempts a window from document modality unless the window owns the dialog.
  */
 private fun Dialog.blocks(window: Window): Boolean {
     if (window.isSameOrOwnedBy(this)) return false
     return when (modalityType) {
-        Dialog.ModalityType.DOCUMENT_MODAL -> window.documentRoot() === documentRoot()
+        Dialog.ModalityType.DOCUMENT_MODAL -> blocksInDocument(window)
         Dialog.ModalityType.APPLICATION_MODAL ->
             !window.isModalExcluded(Dialog.ModalExclusionType.APPLICATION_EXCLUDE)
         Dialog.ModalityType.TOOLKIT_MODAL ->
@@ -70,6 +122,18 @@ private fun Dialog.blocks(window: Window): Boolean {
         else -> true
     }
 }
+
+/**
+ * Mirrors AWT's `Dialog.shouldBlock` for a document-modal dialog: a window excluded from
+ * application modality is blocked only when it is an owner of this dialog, and any other window
+ * only when it belongs to the same document.
+ */
+private fun Dialog.blocksInDocument(window: Window): Boolean =
+    if (window.isModalExcluded(Dialog.ModalExclusionType.APPLICATION_EXCLUDE)) {
+        isSameOrOwnedBy(window)
+    } else {
+        window.documentRoot() === documentRoot()
+    }
 
 /** Mirrors AWT: TOOLKIT_EXCLUDE also covers APPLICATION_EXCLUDE, and owners pass exclusion down. */
 private fun Window.isModalExcluded(type: Dialog.ModalExclusionType): Boolean =

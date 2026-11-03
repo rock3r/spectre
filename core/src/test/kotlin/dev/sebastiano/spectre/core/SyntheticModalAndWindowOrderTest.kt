@@ -170,6 +170,80 @@ class SyntheticModalAndWindowOrderTest {
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `an earlier-created modal dialog shown over a newer one receives synthetic clicks`() {
+        assumeLiveAwtAvailable()
+        val earlierTarget = RecordingPanel()
+        val newerTarget = RecordingPanel()
+        try {
+            val root = showFrame(RecordingPanel())
+            // A is created first but not shown yet, like a reused or pre-created dialog.
+            val earlier = onEdt {
+                newModalDialog(root, earlierTarget).apply { setLocation(DIALOG_X, FRAME_Y) }
+            }
+            windows += earlier
+            showModalDialog(owner = root, content = newerTarget, x = EXCLUDED_X)
+            // Runs inside B's modal loop, like a handler in B that opens A.
+            SwingUtilities.invokeLater { earlier.isVisible = true }
+            waitUntil("earlier modal dialog showing") { earlierTarget.isShowing }
+            val driver = RobotDriver.synthetic(root)
+
+            val (earlierX, earlierY) = centerOnScreen(earlierTarget)
+            runOffTestThread { runBlocking { driver.click(earlierX, earlierY) } }
+            val (newerX, newerY) = centerOnScreen(newerTarget)
+            runOffTestThread { runBlocking { driver.click(newerX, newerY) } }
+            drainEdt()
+
+            assertTrue(
+                earlierTarget.pressed.isNotEmpty(),
+                "the modal dialog shown last must receive synthetic clicks, even if created first",
+            )
+            assertTrue(
+                newerTarget.pressed.isEmpty(),
+                "the modal dialog blocked by the one shown over it must not receive clicks",
+            )
+        } finally {
+            disposeAll()
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `a tool window excluded from application modality stays clickable under a document-modal dialog`() {
+        assumeLiveAwtAvailable()
+        assumeTrue(
+            Toolkit.getDefaultToolkit()
+                .isModalExclusionTypeSupported(Dialog.ModalExclusionType.APPLICATION_EXCLUDE),
+            "this toolkit does not support modal exclusion",
+        )
+        val toolTarget = RecordingPanel()
+        try {
+            val root = showFrame(RecordingPanel())
+            showToolWindow(owner = root, content = toolTarget, x = EXCLUDED_X) {
+                modalExclusionType = Dialog.ModalExclusionType.APPLICATION_EXCLUDE
+            }
+            showModalDialog(
+                owner = root,
+                content = RecordingPanel(),
+                x = DIALOG_X,
+                modality = Dialog.ModalityType.DOCUMENT_MODAL,
+            )
+            val (x, y) = centerOnScreen(toolTarget)
+
+            runOffTestThread { runBlocking { RobotDriver.synthetic(root).click(x, y) } }
+            drainEdt()
+
+            assertTrue(
+                toolTarget.pressed.isNotEmpty(),
+                "a tool window excluded from application modality must stay clickable under a " +
+                    "document-modal dialog of the same document",
+            )
+        } finally {
+            disposeAll()
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `a click whose release hides its target completes`() {
         assumeLiveAwtAvailable()
         val target =
@@ -314,14 +388,37 @@ class SyntheticModalAndWindowOrderTest {
         return frame
     }
 
+    private fun showToolWindow(
+        owner: Window,
+        content: JPanel,
+        x: Int,
+        configure: JDialog.() -> Unit = {},
+    ): JDialog {
+        val tool = onEdt {
+            JDialog(owner, "tool", Dialog.ModalityType.MODELESS).apply {
+                isUndecorated = true
+                configure()
+                contentPane.layout = BorderLayout()
+                contentPane.add(content, BorderLayout.CENTER)
+                size = PANEL_SIZE
+                setLocation(x, FRAME_Y)
+                isVisible = true
+            }
+        }
+        windows += tool
+        waitUntil("tool window showing") { content.isShowing }
+        return tool
+    }
+
     private fun showModalDialog(
         owner: Window,
         content: JPanel,
         x: Int,
         focusable: Boolean = true,
+        modality: Dialog.ModalityType = Dialog.ModalityType.APPLICATION_MODAL,
     ): JDialog {
         val modal = onEdt {
-            newModalDialog(owner, content).apply {
+            newModalDialog(owner, content, modality).apply {
                 focusableWindowState = focusable
                 setLocation(x, FRAME_Y)
             }
@@ -333,8 +430,12 @@ class SyntheticModalAndWindowOrderTest {
         return modal
     }
 
-    private fun newModalDialog(owner: Window?, content: JPanel): JDialog =
-        JDialog(owner, "modal", Dialog.ModalityType.APPLICATION_MODAL).apply {
+    private fun newModalDialog(
+        owner: Window?,
+        content: JPanel,
+        modality: Dialog.ModalityType = Dialog.ModalityType.APPLICATION_MODAL,
+    ): JDialog =
+        JDialog(owner, "modal", modality).apply {
             isUndecorated = true
             contentPane.layout = BorderLayout()
             contentPane.add(content, BorderLayout.CENTER)
