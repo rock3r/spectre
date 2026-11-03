@@ -1,0 +1,86 @@
+name: Diagnostics for issue 583 (temporary)
+
+on:
+  push:
+    branches:
+      - claude/blissful-dirac-jjy53s
+
+permissions:
+  contents: read
+
+jobs:
+  apt-root-cause:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Installed vs candidate versions before multi-arch
+        run: |
+          set -x
+          cat /etc/os-release | head -3
+          ls -la /etc/apt/sources.list.d/ /etc/apt/preferences.d/ || true
+          cat /etc/apt/sources.list.d/*.sources || true
+          cat /etc/apt/preferences.d/* || true
+          sudo apt-get update -qq
+          apt-cache policy binutils gcc-16-base libgcc-s1 libstdc++6 libdbus-1-3 libdbus-1-dev libsystemd-dev pkgconf gcc
+      - name: Same multi-arch dance as ci.yml, then simulate
+        run: |
+          set -x
+          sudo dpkg --add-architecture arm64
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo sed -i '/^Architectures:/!{ /^Signed-By:/i\
+          Architectures: amd64
+          }' /etc/apt/sources.list.d/ubuntu.sources
+          fi
+          cat /etc/apt/sources.list.d/ubuntu.sources
+          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          sudo tee /etc/apt/sources.list.d/ubuntu-arm64.sources >/dev/null <<EOT
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports/
+          Suites: $codename $codename-updates $codename-backports $codename-security
+          Components: main universe restricted multiverse
+          Architectures: arm64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOT
+          sudo apt-get update -qq
+          apt-cache policy binutils gcc-16-base gcc-16-base:arm64 libgcc-s1 libgcc-s1:arm64 libdbus-1-3 libdbus-1-3:arm64 libdbus-1-dev libdbus-1-dev:arm64 libsystemd-dev pkgconf
+          apt-get install -s gcc-aarch64-linux-gnu libdbus-1-dev:arm64 | grep -E "^(Inst|Remv)" | head -80 || true
+
+  native-helper:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-26.04-arm, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install libdbus + pkg-config
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build helper natively
+        run: |
+          uname -m; . /etc/os-release; echo "$PRETTY_NAME"; ldd --version | head -1
+          cargo build --release --manifest-path recording/native/linux/Cargo.toml
+          bin=recording/native/linux/target/release/spectre-wayland-helper
+          file "$bin"
+          echo "Required glibc symbol versions:"
+          objdump -T "$bin" | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -5
+          ldd "$bin"
+
+  xvfb-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: sudo apt-get update -qq && sudo apt-get install -y xvfb
+      - name: Probe AWT frame location under Xvfb (unpatched vs re-applied)
+        run: |
+          ls /usr/lib/jvm; J=/usr/lib/jvm/temurin-21-jdk-amd64/bin/java; $J -version
+          dpkg-query -W xvfb
+          cd .github/diag-583
+          for v in FrameLocationProbe ProbeReapply; do
+            ok=0; bad=0
+            for i in $(seq 1 15); do
+              if xvfb-run -a $J $v.java > out.txt 2>&1; then ok=$((ok+1)); else bad=$((bad+1)); grep RESULT out.txt || tail -5 out.txt; fi
+            done
+            echo "$v ok=$ok bad=$bad"
+          done
