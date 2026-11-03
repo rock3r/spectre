@@ -42,9 +42,11 @@ internal fun isXwaylandServer(serverName: String?): Boolean = serverName == XWAY
 
 internal fun isPureX11Server(serverName: String?): Boolean = serverName in PURE_X11_SERVERS
 
-/** Scans Linux /proc pid cmdlines for the X server serving [display]; null when none is visible. */
+/**
+ * Scans Linux /proc pid cmdlines for the local X server serving [display]; null if none is seen.
+ */
 internal fun linuxDisplayServerName(display: String): String? {
-    val displayToken = normalizeDisplayToken(display) ?: return null
+    val displayToken = localDisplayToken(display) ?: return null
     val proc = Path.of("/proc")
     if (!Files.isDirectory(proc)) return null
     return runCatching {
@@ -65,6 +67,16 @@ internal fun linuxDisplayServerName(display: String): String? {
         }
     }
         .getOrNull()
+}
+
+/**
+ * Normalized token for a [display] served on this host (`:N` or `unix:N`), else null. Remote and
+ * TCP displays such as `host:0` or `localhost:10` must not match a local X server with the same
+ * number in `/proc`.
+ */
+internal fun localDisplayToken(display: String): String? {
+    val host = display.trim().substringBeforeLast(':', missingDelimiterValue = "-")
+    return if (host.isEmpty() || host == "unix") normalizeDisplayToken(display) else null
 }
 
 /**

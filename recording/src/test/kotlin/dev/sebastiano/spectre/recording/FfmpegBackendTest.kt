@@ -423,6 +423,19 @@ class FfmpegBackendTest {
     }
 
     @Test
+    fun `localDisplayToken accepts only displays served on this host`() {
+        // Remote DISPLAYs must not match local /proc X servers with the same number.
+        assertEquals(":0", FfmpegBackend.localDisplayToken(":0"))
+        assertEquals(":99", FfmpegBackend.localDisplayToken(":99.0"))
+        assertEquals(":1", FfmpegBackend.localDisplayToken("unix:1.0"))
+        assertNull(FfmpegBackend.localDisplayToken("remote-host:0"))
+        assertNull(FfmpegBackend.localDisplayToken("localhost:10.0"))
+        assertNull(FfmpegBackend.localDisplayToken("[::1]:0"))
+        assertNull(FfmpegBackend.localDisplayToken("wayland-0"))
+        assertNull(FfmpegBackend.linuxDisplayServerName("remote-host:0"))
+    }
+
+    @Test
     fun `X server names split into Xwayland and pure X11`() {
         assertTrue(FfmpegBackend.isXwaylandServer("Xwayland"))
         for (name in listOf("Xvfb", "Xvnc", "Xtigervnc", "Xephyr", "Xorg")) {

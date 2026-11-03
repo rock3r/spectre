@@ -222,11 +222,12 @@ internal sealed interface FfmpegBackend {
 
         /**
          * Scans Linux `/proc/<pid>/cmdline` entries for the X server serving [display] (e.g.
-         * `:99`). Returns null on other OSes, when `/proc` is unavailable, or when no known X
-         * server for [display] is visible (for example with `hidepid=2` or another PID namespace).
+         * `:99`). Returns null on other OSes, when `/proc` is unavailable, for a remote [display],
+         * or when no known X server for [display] is visible (for example with `hidepid=2` or
+         * another PID namespace).
          */
         internal fun linuxDisplayServerName(display: String): String? {
-            val displayToken = normalizeDisplayToken(display) ?: return null
+            val displayToken = localDisplayToken(display) ?: return null
             val proc = Path.of("/proc")
             if (!Files.isDirectory(proc)) return null
             return runCatching {
@@ -247,6 +248,16 @@ internal sealed interface FfmpegBackend {
                 }
             }
                 .getOrNull()
+        }
+
+        /**
+         * Normalized token for a [display] served on this host (`:N` or `unix:N`), else null.
+         * Remote and TCP displays such as `host:0` or `localhost:10` must not match a local X
+         * server with the same number in `/proc`.
+         */
+        internal fun localDisplayToken(display: String): String? {
+            val host = display.trim().substringBeforeLast(':', missingDelimiterValue = "-")
+            return if (host.isEmpty() || host == "unix") normalizeDisplayToken(display) else null
         }
 
         /**

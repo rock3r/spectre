@@ -445,6 +445,19 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `localDisplayToken accepts only displays served on this host`() {
+        // Remote DISPLAYs must not match local /proc X servers with the same number.
+        assertEquals(":0", localDisplayToken(":0"))
+        assertEquals(":99", localDisplayToken(":99.0"))
+        assertEquals(":1", localDisplayToken("unix:1.0"))
+        assertNull(localDisplayToken("remote-host:0"))
+        assertNull(localDisplayToken("localhost:10.0"))
+        assertNull(localDisplayToken("[::1]:0"))
+        assertNull(localDisplayToken("wayland-0"))
+        assertNull(linuxDisplayServerName("remote-host:0"))
+    }
+
+    @Test
     fun `X server names split into Xwayland and pure X11`() {
         assertTrue(isXwaylandServer("Xwayland"))
         for (name in listOf("Xvfb", "Xvnc", "Xtigervnc", "Xephyr", "Xorg")) {
