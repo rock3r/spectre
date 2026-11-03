@@ -85,7 +85,7 @@ jobs:
 
   release-gate:
     name: Validate release tag
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs:
       - runtime-matrix
     outputs:
@@ -153,7 +153,7 @@ jobs:
 
   linux-helpers:
     name: Build cross-arch Linux helpers
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs:
       - release-gate
 
@@ -263,7 +263,7 @@ jobs:
 
   publish:
     name: Publish to Maven Central + GitHub release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs:
       - release-gate
       - macos-release-artifacts
