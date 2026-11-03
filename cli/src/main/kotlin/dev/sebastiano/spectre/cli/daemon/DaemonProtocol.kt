@@ -12,7 +12,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 13)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 14)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -67,6 +67,7 @@ public object DaemonProtocol {
             is DaemonRequest.WaitForNode,
             is DaemonRequest.WaitForVisualIdle -> versionFor(WAIT_OPS_INTRODUCED_MINOR)
             is DaemonRequest.WaitUntilGone -> versionFor(WAIT_UNTIL_GONE_INTRODUCED_MINOR)
+            is DaemonRequest.FocusWindow -> versionFor(FOCUS_WINDOW_INTRODUCED_MINOR)
             is DaemonRequest.WaitForReloadSettled -> versionFor(RELOAD_SETTLE_INTRODUCED_MINOR)
             is DaemonRequest.FindByText,
             is DaemonRequest.FindByContentDescription,
@@ -134,6 +135,14 @@ public object DaemonProtocol {
      * protocol is too old, run `spectre daemon kill`" error.
      */
     private const val WAIT_UNTIL_GONE_INTRODUCED_MINOR: Int = 13
+
+    /**
+     * `focusWindow`, which raises and focuses a window by index (#556).
+     *
+     * A capability floor for the same reason as [WAIT_UNTIL_GONE_INTRODUCED_MINOR]: a daemon built
+     * before it rejects the new discriminator.
+     */
+    private const val FOCUS_WINDOW_INTRODUCED_MINOR: Int = 14
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -224,6 +233,17 @@ public sealed interface DaemonRequest {
         public val keyCode: Int,
         public val modifiers: Int = 0,
     ) : DaemonRequest
+
+    /**
+     * Raise and focus the window at [windowIndex] (the index `windows` reports) (#556).
+     *
+     * Replies with [DaemonResponse.Completed]. Synthetic input does not need it before `typeText`
+     * or `pressKey`; real OS input does when another app is in front.
+     */
+    @Serializable
+    @SerialName("focusWindow")
+    public data class FocusWindow(public val sessionId: String, public val windowIndex: Int = 0) :
+        DaemonRequest
 
     @Serializable
     @SerialName("typeText")

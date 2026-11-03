@@ -378,6 +378,26 @@ public object SpectreMcpServer {
                 .asResult { it is DaemonResponse.Completed }
         }
         server.addTool(
+            name = "focus_window",
+            description =
+                "Raise and focus a window by window_index (default 0, as listed by windows). " +
+                    "Only real OS input needs it before press_key or type_text.",
+            inputSchema =
+                schema(
+                    "session_id" to "string",
+                    "window_index" to "integer",
+                    required = listOf("session_id"),
+                ),
+        ) { call ->
+            request(
+                    DaemonRequest.FocusWindow(
+                        call.requiredSessionId(),
+                        windowIndex = call.optionalInt("window_index") ?: 0,
+                    )
+                )
+                .asResult { it is DaemonResponse.Completed }
+        }
+        server.addTool(
             name = "type_text",
             description =
                 "Type text into the focused target UI. Attach to current Spectre core uses synthetic input.",
