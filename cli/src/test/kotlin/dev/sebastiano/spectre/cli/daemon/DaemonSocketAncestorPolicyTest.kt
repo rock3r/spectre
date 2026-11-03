@@ -21,13 +21,31 @@ class DaemonSocketAncestorPolicyTest {
     @Test
     fun `world-writable non-sticky ancestor owned by the overflow uid is still rejected`() {
         assertEquals(
-            "Daemon socket ancestor /shared must not be group or world writable",
-            rejection(Path.of("/shared"), "nobody", OVERFLOW_UID, WORLD_WRITABLE),
+            "Daemon socket ancestor /tmp must not be group or world writable",
+            rejection(Path.of("/tmp"), "nobody", OVERFLOW_UID, WORLD_WRITABLE),
         )
         assertEquals(
-            "Daemon socket ancestor /shared must not be group or world writable",
-            rejection(Path.of("/shared"), "nobody", OVERFLOW_UID, GROUP_WRITABLE),
+            "Daemon socket ancestor / must not be group or world writable",
+            rejection(Path.of("/"), "nobody", OVERFLOW_UID, GROUP_WRITABLE),
         )
+    }
+
+    @Test
+    fun `overflow uid owner is trusted only for the root and system temp directories`() {
+        // Every unmapped host uid appears as the overflow uid, not just host root. A host
+        // user's own sticky directory would look identical, and its real owner could rename
+        // the daemon's directory inside it. Only `/` and `/tmp`, which ordinary host users
+        // cannot own, get the overflow-owner exception.
+        for (path in listOf("/shared", "/tmp/shared", "/var/tmp", "/home/someone")) {
+            assertEquals(
+                "Daemon socket ancestor $path must be owned by root or user",
+                rejection(Path.of(path), "nobody", OVERFLOW_UID, STICKY_WORLD_WRITABLE),
+            )
+            assertEquals(
+                "Daemon socket ancestor $path must be owned by root or user",
+                rejection(Path.of(path), "nobody", OVERFLOW_UID, OWNER_WRITABLE_ONLY),
+            )
+        }
     }
 
     @Test

@@ -264,13 +264,15 @@ writable by group or others.
 
 Rootless containers and sandboxes that run in a Linux user namespace often leave host
 `root` unmapped. Inside them, `/` and `/tmp` appear owned by `nobody` (uid 65534). Spectre
-accepts such an ancestor when the process runs in a user namespace that leaves that uid
-unmapped, so no process inside the namespace can own it. The sticky-or-not-writable rule
-still applies.
+accepts `/` and `/tmp` owned by that uid when the process runs in a user namespace that
+leaves it unmapped, so no process inside the namespace can own them. Other directories
+owned by `nobody` stay rejected, because any unmapped host user appears the same way. The
+sticky-or-not-writable rule still applies.
 
-If your namespace maps uid 65534 to a real user, the check still fails for directories it
-owns. In that case, start the CLI with `-Djava.io.tmpdir=<dir>` pointing at a directory
-whose ancestors all pass these rules. The CLI forwards `java.io.tmpdir` to the daemon.
+If the check still fails, for example because your namespace maps uid 65534 to a real user
+or `java.io.tmpdir` points elsewhere, start the CLI with `-Djava.io.tmpdir=<dir>` pointing
+at a directory whose ancestors all pass these rules. The CLI forwards `java.io.tmpdir` to
+the daemon.
 
 ## Compose Hot Reload {#compose-hot-reload}
 

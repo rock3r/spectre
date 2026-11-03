@@ -16,6 +16,10 @@ import java.nio.file.Path
  * only while this process runs in a non-initial user namespace that leaves it unmapped: then no
  * process inside the namespace can hold it. When the namespace maps the overflow uid to a real
  * user, ownership is ambiguous and stays untrusted.
+ *
+ * The overflow uid also stands for every other unmapped host user, whose own sticky directory would
+ * look the same and who could rename the daemon's directory inside it. The exception therefore
+ * covers only `/` and `/tmp`, which an ordinary host user cannot own.
  */
 internal object DaemonSocketAncestorPolicy {
     /** The overflow uid unmapped in this process's user namespace, or `null` if none applies. */
@@ -35,7 +39,9 @@ internal object DaemonSocketAncestorPolicy {
         val trustedOwner =
             ownerName == "root" ||
                 ownerName == currentUser ||
-                (unmappedOverflowUid != null && ownerUid == unmappedOverflowUid)
+                (unmappedOverflowUid != null &&
+                    ownerUid == unmappedOverflowUid &&
+                    directory in OVERFLOW_OWNER_PATHS)
         return when {
             !trustedOwner -> "Daemon socket ancestor $directory must be owned by root or user"
             mode and STICKY_BIT != 0 -> null
@@ -69,7 +75,8 @@ internal object DaemonSocketAncestorPolicy {
 
     private fun readOrNull(path: String): String? = runCatching {
         Files.readString(Path.of(path))
-    }.getOrNull()
+    }
+        .getOrNull()
 
     private const val UID_MAP_PATH = "/proc/self/uid_map"
     private const val OVERFLOW_UID_PATH = "/proc/sys/kernel/overflowuid"
@@ -78,4 +85,5 @@ internal object DaemonSocketAncestorPolicy {
     private const val STICKY_BIT: Int = 0x200
     private const val GROUP_OR_OTHER_WRITE_BITS: Int = 0x12
     private val WHITESPACE = Regex("\\s+")
+    private val OVERFLOW_OWNER_PATHS = setOf(Path.of("/"), Path.of("/tmp"))
 }
