@@ -1254,6 +1254,52 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
             self.assertNotIn("XAUTHORITY", found)
             self.assertEqual("wayland-0", found["WAYLAND_DISPLAY"])
 
+    def test_discover_linux_seat_env_finds_display_of_xwayland_using_a_wildcard_cookie(self):
+        # Real mutter layout (bepi, GNOME 50): the Xwayland cookie has an empty display
+        # number, which X treats as "any display", so the cookie alone cannot name the seat's
+        # display. A stale socket on :1 must not block discovery: the user's own Xwayland
+        # process, started with `-auth <cookie>`, names its display on the command line.
+        with tempfile.TemporaryDirectory() as tmp:
+            uid = os.getuid()
+            run_user, x11 = self._fake_seat(tmp, uid, cookie_display="")
+            cookie = run_user / str(uid) / ".mutter-Xwaylandauth.NEW222"
+            proc = Path(tmp) / "proc"
+            self._fake_process(proc, 9319, ["/usr/bin/Xwayland", ":0", "-rootless", "-auth", str(cookie)])
+            self._fake_process(proc, 9400, ["/usr/bin/Xwayland", ":5", "-auth", "/elsewhere/cookie"])
+            self._fake_process(proc, 9500, ["/usr/bin/python3", "-auth", str(cookie), ":7"])
+            (proc / "self").mkdir()
+            found = smoke_lib.discover_linux_seat_env(
+                {}, uid=uid, run_user_root=run_user, x11_socket_dir=x11, proc_root=proc
+            )
+            self.assertEqual(":0", found["DISPLAY"])
+            self.assertEqual(str(cookie), found["XAUTHORITY"])
+
+    def test_discover_linux_seat_env_ignores_xwayland_of_another_user(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            uid = os.getuid()
+            run_user, x11 = self._fake_seat(tmp, uid, cookie_display="")
+            cookie = run_user / str(uid) / ".mutter-Xwaylandauth.NEW222"
+            proc = Path(tmp) / "proc"
+            self._fake_process(proc, 9319, ["/usr/bin/Xwayland", ":0", "-auth", str(cookie)])
+            found = smoke_lib.discover_linux_seat_env(
+                {}, uid=uid + 1, run_user_root=Path(tmp) / "other", x11_socket_dir=x11, proc_root=proc
+            )
+            self.assertEqual({}, found)
+            found = smoke_lib.discover_linux_seat_env(
+                {"XDG_RUNTIME_DIR": str(run_user / str(uid))},
+                uid=uid + 1,
+                run_user_root=run_user,
+                x11_socket_dir=x11,
+                proc_root=proc,
+            )
+            self.assertNotIn("DISPLAY", found)
+
+    @staticmethod
+    def _fake_process(proc_root: Path, pid: int, argv: list[str]) -> None:
+        entry = proc_root / str(pid)
+        entry.mkdir(parents=True)
+        (entry / "cmdline").write_bytes(b"\0".join(arg.encode() for arg in argv) + b"\0")
+
     def test_discover_linux_seat_env_uses_the_only_display_without_a_readable_cookie(self):
         with tempfile.TemporaryDirectory() as tmp:
             run_user, x11 = self._fake_seat(tmp, x_sockets=("X1",), cookie_display=None)
