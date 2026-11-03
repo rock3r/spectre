@@ -186,27 +186,34 @@ private constructor(
      * JVM's own nodes, so a press that never arrives can only be a failure. Silently succeeding
      * here is what made #460 present as a stale semantics tree. Verification runs on Windows for
      * every mouse verb and on X11 for clicks; macOS and X11 wheel stay unverified.
+     *
+     * Throws [IllegalStateException] without sending any input when [node]'s `boundsInWindow` is
+     * empty, which usually means it is scrolled outside its container's viewport or not measured
+     * yet. Every node-targeted pointer verb below applies the same check.
      */
     public suspend fun click(node: AutomatorNode) {
-        val center = node.centerOnScreen
+        val center = pointerTargetOnScreen(node, action = "click")
         robotDriver.clickVerified(center.x, center.y)
     }
 
     /** Double-clicks [node]'s centre, with the delivery guarantee described on [click]. */
     public suspend fun doubleClick(node: AutomatorNode) {
-        val center = node.centerOnScreen
+        val center = pointerTargetOnScreen(node, action = "double-click")
         robotDriver.doubleClickVerified(center.x, center.y)
     }
 
     /** Long-clicks [node]'s centre, with the delivery guarantee described on [click]. */
     public suspend fun longClick(node: AutomatorNode, holdFor: Duration = 500.milliseconds) {
-        val center = node.centerOnScreen
+        val center = pointerTargetOnScreen(node, action = "long-click")
         robotDriver.longClickVerified(center.x, center.y, holdFor)
     }
 
-    /** Moves the pointer to [node]'s centre without pressing a button. */
+    /**
+     * Moves the pointer to [node]'s centre without pressing a button. Fails like [click] when
+     * [node] has empty bounds.
+     */
     public suspend fun moveTo(node: AutomatorNode) {
-        val center = node.centerOnScreen
+        val center = pointerTargetOnScreen(node, action = "move the pointer to")
         robotDriver.moveTo(center.x, center.y)
     }
 
@@ -239,8 +246,8 @@ private constructor(
 
     /**
      * Swipes from [from]'s centre to [to]'s centre, with the delivery guarantee described on
-     * [click]. Calls the driver directly rather than delegating to the coordinate overload, which
-     * is deliberately unverified.
+     * [click], and the same empty-bounds check on both nodes. Calls the driver directly rather than
+     * delegating to the coordinate overload, which is deliberately unverified.
      */
     public suspend fun swipe(
         from: AutomatorNode,
@@ -248,8 +255,8 @@ private constructor(
         steps: Int = 12,
         duration: Duration = 200.milliseconds,
     ) {
-        val fromCenter = from.centerOnScreen
-        val toCenter = to.centerOnScreen
+        val fromCenter = pointerTargetOnScreen(from, action = "swipe from")
+        val toCenter = pointerTargetOnScreen(to, action = "swipe to")
         robotDriver.swipeVerified(
             fromCenter.x,
             fromCenter.y,
@@ -263,10 +270,12 @@ private constructor(
     /**
      * Scrolls vertically at [node]'s centre. Positive [wheelClicks] scrolls down (revealing items
      * lower in the list); negative scrolls up. Drives Compose's `Modifier.scrollable` /
-     * `LazyColumn` on desktop, which respond to wheel events rather than touch-style drags.
+     * `LazyColumn` on desktop, which respond to wheel events rather than touch-style drags. Fails
+     * like [click] when [node] has empty bounds: aim at the scrollable container, not at an item
+     * that is still outside its viewport.
      */
     public suspend fun scrollWheel(node: AutomatorNode, wheelClicks: Int) {
-        val center = node.centerOnScreen
+        val center = pointerTargetOnScreen(node, action = "scroll the wheel over")
         robotDriver.scrollWheelVerified(center.x, center.y, wheelClicks)
     }
 

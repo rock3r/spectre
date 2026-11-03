@@ -369,6 +369,98 @@ class ScreenCaptureKitRecorderTest {
             output.deleteIfExists()
         }
     }
+
+    @Test
+    fun `start does not mutate a uniquely titled window and matches its original title`() {
+        val window = DiscriminationAwareFakeWindow("Unique title", requiresDiscriminator = false)
+        val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        val (recorder, factory) = newRecorder()
+        try {
+            val handle = recorder.start(window, 4242L, output, RecordingOptions())
+            assertEquals("Unique title", window.title)
+            assertContainsSequence(factory.lastArgv, listOf("--title-contains", "Unique title"))
+            handle.stop()
+            assertEquals("Unique title", window.title)
+            assertEquals(0, window.titleWrites, "Recorder must never write a unique window title")
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `startCropped does not mutate a uniquely titled window`() {
+        val window = DiscriminationAwareFakeWindow("Unique title", requiresDiscriminator = false)
+        val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        val (recorder, factory) = newRecorder()
+        try {
+            val handle =
+                recorder.startCropped(
+                    window = window,
+                    cropInWindow = Rectangle(1, 2, 30, 40),
+                    windowOwnerPid = 4242L,
+                    output = output,
+                    options = RecordingOptions(),
+                )
+            assertContainsSequence(factory.lastArgv, listOf("--title-contains", "Unique title"))
+            handle.stop()
+            assertEquals(0, window.titleWrites, "Recorder must never write a unique window title")
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `start with a unique title does not touch the title when helper start fails`() {
+        val window = DiscriminationAwareFakeWindow("Unique title", requiresDiscriminator = false)
+        val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        val (recorder, _) = newRecorder(process = InstantlyExitingFakeProcess(exitCode = 3))
+        try {
+            assertFailsWith<IllegalStateException> {
+                recorder.start(window, 4242L, output, RecordingOptions())
+            }
+            assertEquals(0, window.titleWrites, "Recorder must never write a unique window title")
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `start applies and restores the discriminator when the window requires one`() {
+        val window = DiscriminationAwareFakeWindow("Shared title", requiresDiscriminator = true)
+        val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        val (recorder, factory) = newRecorder()
+        try {
+            val handle = recorder.start(window, 4242L, output, RecordingOptions())
+            assertTrue(window.title!!.startsWith("Shared title Spectre/"))
+            val titleContains = factory.lastArgv[factory.lastArgv.indexOf("--title-contains") + 1]
+            assertTrue(titleContains.startsWith("Spectre/"), "Got: $titleContains")
+            assertTrue(window.title!!.contains(titleContains))
+            handle.stop()
+            assertEquals("Shared title", window.title)
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+}
+
+/** Fake window that reports whether its title is unique, and counts title writes. */
+private class DiscriminationAwareFakeWindow(
+    initialTitle: String?,
+    private val requiresDiscriminator: Boolean,
+) : TitledWindow, TitleDiscriminationAware {
+    var titleWrites: Int = 0
+        private set
+
+    override var title: String? = initialTitle
+        set(value) {
+            titleWrites += 1
+            field = value
+        }
+
+    override val bounds: Rectangle = Rectangle(0, 0, 100, 100)
+
+    override val requiresTitleDiscriminator: Boolean
+        get() = requiresDiscriminator
 }
 
 private class RecordingProcessFactory(private val process: Process) :

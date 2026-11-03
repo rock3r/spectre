@@ -64,16 +64,26 @@ public fun Dialog.asTitledWindow(): TitledWindow =
     }
 
 private fun requiresDiscriminator(target: Window, title: String?): Boolean {
-    if (title.isNullOrBlank()) return true
-    return Window.getWindows().any { candidate ->
-        candidate !== target &&
-            candidate.isShowing &&
-            when (candidate) {
-                is Frame -> candidate.title == title
-                is Dialog -> candidate.title == title
-                else -> false
+    val otherTitles =
+        Window.getWindows()
+            .filter { candidate -> candidate !== target && candidate.isShowing }
+            .mapNotNull { candidate ->
+                when (candidate) {
+                    is Frame -> candidate.title
+                    is Dialog -> candidate.title
+                    else -> null
+                }
             }
-    }
+    return titleNeedsDiscriminator(title, otherTitles)
+}
+
+/**
+ * The native helper matches `--title-contains` as a substring of each window title, so [title] is
+ * only safe to pass as-is when it is not blank and no title in [otherTitles] contains it.
+ */
+internal fun titleNeedsDiscriminator(title: String?, otherTitles: List<String?>): Boolean {
+    if (title.isNullOrBlank()) return true
+    return otherTitles.any { other -> other?.contains(title) == true }
 }
 
 /**

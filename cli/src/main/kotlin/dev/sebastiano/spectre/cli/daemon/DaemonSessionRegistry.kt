@@ -98,6 +98,7 @@ internal constructor(
             is DaemonRequest.Swipe,
             is DaemonRequest.ScrollWheel,
             is DaemonRequest.PressKey,
+            is DaemonRequest.FocusWindow,
             is DaemonRequest.TypeText,
             is DaemonRequest.Screenshot,
             is DaemonRequest.Capture,
@@ -231,6 +232,7 @@ internal constructor(
             is DaemonRequest.Swipe,
             is DaemonRequest.ScrollWheel,
             is DaemonRequest.PressKey,
+            is DaemonRequest.FocusWindow,
             is DaemonRequest.TypeText -> handleInputSessionCommand(request)
             is DaemonRequest.Screenshot ->
                 invoke(request.sessionId) { automator ->
@@ -471,6 +473,8 @@ internal constructor(
                     automator.typeText(request.text)
                     DaemonResponse.Completed(request.sessionId)
                 }
+            is DaemonRequest.FocusWindow ->
+                invoke(request.sessionId) { automator -> focusWindowResponse(automator, request) }
             else -> error("Not an input session command: ${request::class.simpleName}")
         }
 

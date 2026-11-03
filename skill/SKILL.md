@@ -128,7 +128,7 @@ automator.printTree()                        // dump the full semantics tree —
 Prefer `testTag` for nodes that tests click, scroll, or type into.
 Copy and translation changes can break text selectors. Use text queries to check visible content.
 
-Key `AutomatorNode` properties: `testTag`, `text`, `texts`, `contentDescription`, `role`, `isFocused`, `isDisabled`, `isSelected`, `editableText`, `boundsInWindow`, `boundsOnScreen`, `centerOnScreen`, `children`, `parent`.
+Key `AutomatorNode` properties: `testTag`, `text`, `texts`, `contentDescription`, `role`, `isFocused`, `isDisabled`, `isSelected`, `isClickable`, `toggleableState`, `progressBarRangeInfo`, `editableText`, `boundsInWindow`, `boundsOnScreen`, `centerOnScreen`, `children`, `parent`.
 
 ## Interactions
 
