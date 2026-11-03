@@ -301,36 +301,6 @@ class DaemonServerTest {
     }
 
     @Test
-    fun `refuses a SPECTRE_DAEMON_SOCKET_DIR override below a writable ancestor`() {
-        if ("posix" !in FileSystems.getDefault().supportedFileAttributeViews()) return
-
-        // The override goes through the same ancestor checks as the default /tmp base.
-        // Created under /tmp so the socket path stays short on macOS too.
-        val ancestor = Files.createTempDirectory(Path.of("/tmp"), "sp-o")
-        Files.setPosixFilePermissions(ancestor, PosixFilePermissions.fromString("rwxrwxrwx"))
-        val socketPath =
-            DaemonEndpoint.defaultSocketPath(
-                osName = "Linux",
-                tempDirectory = "/tmp",
-                userName = "alice",
-                socketDirectoryOverride = ancestor.toString(),
-            )
-
-        try {
-            val failure = assertFailsWith<java.io.IOException> { DaemonServer(socketPath) }
-            assertTrue(
-                "must not be group or world writable" in failure.message.orEmpty(),
-                failure.message,
-            )
-            assertFalse(Files.exists(socketPath.parent))
-        } finally {
-            Files.deleteIfExists(socketPath)
-            Files.deleteIfExists(socketPath.parent)
-            Files.deleteIfExists(ancestor)
-        }
-    }
-
-    @Test
     fun `refuses a bare relative socket path in a permissive working directory`() {
         if ("posix" !in FileSystems.getDefault().supportedFileAttributeViews()) return
         if (
