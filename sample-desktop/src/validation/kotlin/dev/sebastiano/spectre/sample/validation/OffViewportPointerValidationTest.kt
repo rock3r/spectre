@@ -127,8 +127,15 @@ private const val ORIGIN_CLICKS_TAG: String = "offViewport.originClicks"
 private fun OffViewportContent() {
     var originClicks by remember { mutableIntStateOf(0) }
     Column {
-        Box(modifier = Modifier.size(width = 240.dp, height = 60.dp).clickable { originClicks++ }) {
-            Text("originClicks:$originClicks", modifier = Modifier.testTag(ORIGIN_CLICKS_TAG))
+        // Tag the clickable Box, not the Text: Spectre reads the merged semantics tree, where the
+        // clickable absorbs its child's text and the child's own test tag is dropped.
+        Box(
+            modifier =
+                Modifier.size(width = 240.dp, height = 60.dp).testTag(ORIGIN_CLICKS_TAG).clickable {
+                    originClicks++
+                }
+        ) {
+            Text("originClicks:$originClicks")
         }
         Column(
             modifier =

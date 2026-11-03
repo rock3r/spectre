@@ -1024,6 +1024,12 @@ internal class ReflectiveAutomatorHandler(
     }
 }
 
+/**
+ * Stable, lowercase phrase from core's empty-bounds pointer guard (`checkPointerTargetBounds`).
+ * Matched as text because `:agent` has no compile dependency on `:core`.
+ */
+private const val EMPTY_BOUNDS_GUARD_SNIPPET: String = "in-window bounds are empty"
+
 /** TCC / Accessibility / permission refusals from Robot — taxonomy inputRejected (#199). */
 private fun reflectiveIsInputRejection(ex: ReflectiveOperationException): Boolean {
     val root = ex.cause ?: ex
@@ -1040,6 +1046,9 @@ private fun reflectiveIsInputRejection(ex: ReflectiveOperationException): Boolea
  */
 private fun isInputRejectionMessage(message: String?): Boolean {
     val msg = message.orEmpty().lowercase()
+    // #564: core's empty-bounds guard fails before any input is sent, and its message embeds the
+    // node's text and tag. A node labelled "Permissions" must not turn it into a refusal.
+    if (EMPTY_BOUNDS_GUARD_SNIPPET in msg) return false
     return "accessibility" in msg ||
         "tcc" in msg ||
         "permission" in msg ||

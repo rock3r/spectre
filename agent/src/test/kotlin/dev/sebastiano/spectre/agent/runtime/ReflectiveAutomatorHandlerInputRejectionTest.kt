@@ -80,6 +80,29 @@ class ReflectiveAutomatorHandlerInputRejectionTest {
         assertEquals(AgentErrorCategory.InternalError.wireName, response.category)
     }
 
+    /**
+     * The guard's message embeds the node's text and tag, so a node labelled "Permissions" puts an
+     * input-rejection keyword in it. The bounds failure must still not be reported as a refusal.
+     */
+    @Test
+    fun `off-viewport guard on a node whose text holds a rejection keyword is not inputRejected`() {
+        val guardMessage =
+            "Cannot click AutomatorNode(key=main:0:7, tag=settings.permissions, " +
+                "text=Accessibility permissions): its in-window bounds are empty " +
+                "(Rect.fromLTRB(0.0, 0.0, 0.0, 0.0)), so it has no on-screen point to target."
+        val automator =
+            ClickFailingBeforeSuspensionAutomator(
+                FakeKeyedNode("k1"),
+                IllegalStateException(guardMessage),
+            )
+
+        val response =
+            ReflectiveAutomatorHandler(automator).handle(AgentRequest.Click(nodeKey = "k1"))
+
+        check(response is AgentResponse.Error) { "expected an Error response, got $response" }
+        assertEquals(AgentErrorCategory.InternalError.wireName, response.category)
+    }
+
     private fun clickFailingAfterSuspension(failure: IllegalStateException): AgentResponse {
         val automator = ClickFailingAfterSuspensionAutomator(FakeKeyedNode("k1"), failure)
         return ReflectiveAutomatorHandler(automator).handle(AgentRequest.Click(nodeKey = "k1"))

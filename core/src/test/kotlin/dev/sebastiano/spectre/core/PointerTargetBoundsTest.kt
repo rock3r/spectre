@@ -24,7 +24,8 @@ class PointerTargetBoundsTest {
 
         val message = error.message.orEmpty()
         assertTrue("Cannot click $NODE" in message, "names action and node: $message")
-        assertTrue("bounds are empty" in message, "explains the empty bounds: $message")
+        // :agent keys its "not an input refusal" exclusion on this exact phrase.
+        assertTrue("in-window bounds are empty" in message, "explains the empty bounds: $message")
         assertTrue("viewport" in message, "names the likely cause: $message")
         assertTrue("Scroll it into view" in message, "suggests scrolling first: $message")
     }

@@ -19,7 +19,13 @@ internal fun pointerTargetOnScreen(node: AutomatorNode, action: String): Point {
     return center
 }
 
-/** Fails with a message naming [action] and [nodeDescription] when [boundsInWindow] is empty. */
+/**
+ * Fails with a message naming [action] and [nodeDescription] when [boundsInWindow] is empty.
+ *
+ * `:agent` recognises this failure by the phrase "in-window bounds are empty", so it is not
+ * reported as an OS input refusal even when the node's text contains a word such as "permission".
+ * Keep that phrase in the message.
+ */
 internal fun checkPointerTargetBounds(
     boundsInWindow: Rect,
     action: String,
