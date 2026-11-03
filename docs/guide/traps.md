@@ -85,20 +85,29 @@ spectre type "$SESSION" "Ada Lovelace"
 tag. Without a focused node, `type` fails with
 `Refusing typeText because no focused Spectre node was found`.
 
-### Keyboard input needs OS keyboard focus
+### Real OS keyboard input needs OS focus
 
-<!-- aliases: focus gate, focus, foreground, refusing typeText, refusing pressKey, keyboard focus, press-key, UIElement -->
+<!-- aliases: focus gate, focus, foreground, refusing typeText, refusing pressKey, keyboard focus, press-key, UIElement, focus-window, focus window -->
 
-On the attach path, `type` and `press-key` refuse to send keys when the target JVM does
-not own OS keyboard focus. The error reads
+Attach uses synthetic input by default. Spectre dispatches synthetic key events inside
+the target JVM, so `type` and `press-key` work while the terminal or IDE that runs the
+CLI stays the foreground app, and in macOS apps started with `-Dapple.awt.UIElement=true`.
+Synthetic `type` still needs a focused node (see above), and synthetic `press-key` needs
+a tracked window.
+
+A target that opted into real OS input receives keys through the operating system, so
+`type` and `press-key` refuse to run while the target JVM does not own OS keyboard focus.
+The same refusal applies when the target's `spectre-core` is too old to report whether
+its input is real. The error reads
 `Refusing typeText because the target JVM does not currently own OS keyboard focus`
-(or `Refusing pressKey …`). A Spectre click can focus a Compose node while the terminal
-or IDE that runs the CLI stays the foreground app.
+(or `Refusing pressKey …`). Bring the target window to the front first:
 
-Bring the target window to the front before typing, for example by clicking its title
-bar. The CLI has no focus command; the agent API offers `AttachedAutomator.focusWindow`.
-A macOS app started with `-Dapple.awt.UIElement=true` never becomes the foreground app,
-so keyboard commands over attach cannot reach it.
+```shell
+spectre focus-window "$SESSION" --window 0      # index from spectre windows
+```
+
+MCP clients use the `focus_window` tool. A `UIElement` app never becomes the foreground
+app, so real OS keyboard input cannot reach it; use synthetic input there.
 
 ### `screenshot` needs `--fullscreen`; use `capture` for one window
 
@@ -276,7 +285,7 @@ Unlock the session and retry. See [Troubleshooting](troubleshooting.md).
 | `session not found` after a successful attach | The daemon stopped and took its sessions with it | Run `spectre attach <pid>` again |
 | Re-attach fails with `did not bind UDS path` | An agent from an older Spectre release ignores a second attach | Restart the target JVM |
 | `Refusing typeText because no focused Spectre node was found` | `type` needs a focused node | `spectre click` the field first |
-| `Refusing typeText`/`pressKey` because the JVM lacks OS keyboard focus | Keyboard input over attach needs the foreground window | Bring the target window to the front |
+| `Refusing typeText`/`pressKey` because the JVM lacks OS keyboard focus | Real OS keyboard input needs the foreground window | Run `spectre focus-window <session-id> --window <index>` first |
 | `screenshot` fails without `--fullscreen` | Window screenshots fail closed on attach | Use `spectre capture` for one window |
 | `capture` PNG shows another app's window | No `spectre-recording` in the target; the capture crops the screen | Keep the target in front, or add `spectre-recording` |
 | Click lands on the edge of a scrolling column | Eager `verticalScroll` children have `0×0` window bounds off-screen | Scroll first, then read the node again |

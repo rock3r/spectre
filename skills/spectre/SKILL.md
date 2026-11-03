@@ -60,8 +60,9 @@ spectre detach "$SESSION"
 Key gotchas (`spectre guide traps` has the full list):
 
 - **Keys are per session and tree.** Run `tree` or `find` again after any UI change.
-- **`type` needs focus.** Click the field first. Over attach, `type` and `press-key`
-  also refuse while the target JVM lacks OS keyboard focus; bring its window to the front.
+- **`type` needs a focused node.** Click the field first. Synthetic input, the attach
+  default, needs no OS focus. With real OS input, `type` and `press-key` refuse while the
+  target lacks OS keyboard focus: run `spectre focus-window <session-id> --window <index>`.
 - **`screenshot` needs `--fullscreen` on attach.** Use `capture` for one window. Without
   `spectre-recording` in the target, `capture` crops the screen, so keep the target in front.
 - **Off-screen children of `Column(Modifier.verticalScroll(…))`** have `0×0` window bounds
