@@ -73,12 +73,7 @@ public object DaemonProtocol {
             is DaemonRequest.FindByContentDescription,
             is DaemonRequest.FindByRole -> versionFor(SELECTOR_PARITY_INTRODUCED_MINOR)
             is DaemonRequest.ListJvmProcesses -> versionFor(LIST_JVM_PROCESSES_INTRODUCED_MINOR)
-            is DaemonRequest.StartRecording ->
-                if (request.fullscreen) {
-                    versionFor(RECORDING_FULLSCREEN_INTRODUCED_MINOR)
-                } else {
-                    versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
-                }
+            is DaemonRequest.StartRecording -> startRecordingVersion(request)
             is DaemonRequest.StopRecording,
             is DaemonRequest.RecordingStatus -> versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
             // Each still op needs the minor that introduced it *and* the minor its pixels
@@ -92,6 +87,16 @@ public object DaemonProtocol {
                         SCREEN_PIXEL_STILLS_INTRODUCED_MINOR,
                     )
                 )
+        }
+
+    /** Full-desktop recording needs a newer daemon than window recording. */
+    private fun startRecordingVersion(
+        request: DaemonRequest.StartRecording
+    ): DaemonProtocolVersion =
+        if (request.fullscreen) {
+            versionFor(RECORDING_FULLSCREEN_INTRODUCED_MINOR)
+        } else {
+            versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
         }
 
     private fun versionFor(minor: Int): DaemonProtocolVersion =
