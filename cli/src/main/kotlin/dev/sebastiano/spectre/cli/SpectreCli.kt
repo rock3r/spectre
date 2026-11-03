@@ -241,6 +241,7 @@ private class RootCommand(
             SwipeCommand(request, output),
             ScrollWheelCommand(request, output),
             PressKeyCommand(request, output),
+            FocusWindowCommand(request, output),
             TypeCommand(request, output),
             ScreenshotCommand(request, output),
             CaptureCommand(request, output),
@@ -803,6 +804,35 @@ private class PressKeyCommand(
             }
         if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
         else output.append("Pressed key $keyCode (modifiers=$modifiers).")
+        output.appendLine()
+    }
+}
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private class FocusWindowCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+) : CliktCommand(name = "focus-window") {
+    private val sessionId: String by argument()
+    private val windowIndex: Int by
+        option("--window", help = "Window index from `spectre windows` (default 0).")
+            .int()
+            .default(0)
+    private val json: Boolean by option("--json").flag(default = false)
+
+    override fun help(context: Context): String =
+        "Raise and focus a window of an attached session. Only real OS input needs this " +
+            "before press-key or type."
+
+    override fun run() {
+        val completedSessionId =
+            when (val response = request(DaemonRequest.FocusWindow(sessionId, windowIndex))) {
+                is DaemonResponse.Completed -> response.sessionId
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to focus-window")
+            }
+        if (json) output.append(CLI_JSON.encodeToString(CompletionJson(id = completedSessionId)))
+        else output.append("Focused window $windowIndex.")
         output.appendLine()
     }
 }

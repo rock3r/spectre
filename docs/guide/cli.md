@@ -211,6 +211,7 @@ spectre long-click <session-id> <node-key> --hold-ms 500
 spectre type <session-id> "A short note"
 spectre press-key <session-id> Enter
 spectre press-key <session-id> Ctrl+S
+spectre focus-window <session-id> --window 0
 spectre scroll-wheel <session-id> <node-key> 3
 spectre swipe <session-id> --from <from-key> --to <to-key>
 spectre swipe <session-id> --start-x 100 --start-y 400 --end-x 100 --end-y 100
@@ -251,7 +252,7 @@ Run `spectre <command> --help` for the installed option list.
 
 | Command | Purpose | Important args / defaults |
 | --- | --- | --- |
-| `windows <session-id>` | Top-level windows and popup roots | Indices used by `--window` on capture/record |
+| `windows <session-id>` | Top-level windows and popup roots | Indices used by `--window` on capture/record/focus-window |
 | `tree <session-id>` | Current semantics nodes | Keys are ephemeral |
 | `find <session-id> <test-tag>` | Exact Compose test-tag match | Single snapshot; does not wait |
 | `find-text <session-id> <text>` | Find by visible/editable text | Exact match by default; `--substring` for contains |
@@ -290,9 +291,15 @@ Spectre daemon error: Agent reported timeout for waitUntilGone: IllegalStateExce
 
 ### Input
 
-Real OS input can change focus and application state. It reaches the current pointer
-or keyboard target. Focus the target app before keyboard operations when another process
-owns the foreground.
+Attach uses synthetic input by default. Spectre dispatches synthetic events inside the
+target JVM, so `type` and `press-key` work while another app is in the foreground,
+including after a `click`. `type` still needs a focused node, such as a text field you
+clicked first.
+
+A target that opted into real OS input receives events through the operating system.
+Those events can change focus and application state. They reach the current pointer or
+keyboard target. With real OS input, `type` and `press-key` fail while the target JVM does
+not own OS keyboard focus. Run `focus-window` first when another process owns the foreground.
 
 | Command | Purpose | Important args / defaults |
 | --- | --- | --- |
@@ -302,7 +309,8 @@ owns the foreground.
 | `swipe <session-id>` | Drag node→node **or** screen coords | See [Swipe modes](#swipe-modes) |
 | `scroll-wheel <session-id> <node-key> <wheel-clicks>` | Wheel at node centre | Positive = down; negative = up |
 | `press-key <session-id> <key>` | Press one key or chord | Key name, chord, or AWT code; `--modifiers` default none; see [Keys](#press-key-awt-codes) |
-| `type <session-id> <text>` | Type through OS input path | Target must accept keyboard focus |
+| `type <session-id> <text>` | Type into the focused node | Needs a focused node; real OS input also needs OS focus |
+| `focus-window <session-id>` | Raise and focus a window | `--window` default **0** (index from `windows`) |
 
 #### Swipe modes
 
@@ -359,9 +367,9 @@ spectre press-key <session-id> 83 --modifiers 128
 ```
 
 [Driving input](interactions.md#keyboard-typing-and-key-events) lists the
-same values for the library API. The target needs OS focus for keyboard input. An attach
-client can keep focus, so the app may need focus first. The agent API provides
-`focusWindow`. The CLI has no focus command; activate the window manually or click it.
+same values for the library API. With real OS input, the target needs OS focus for
+keyboard input. An attach client can keep focus, so run `focus-window` first. Synthetic
+input, the attach default, does not need OS focus.
 
 ### Capture and recording
 
@@ -530,6 +538,7 @@ serialised daemon JSON as text. Errors set MCP `isError` and include a message.
 | `scroll_wheel` | `session_id`, `node_key`, `wheel_clicks` | — | completed; positive = down |
 | `press_key` | `session_id`, `key_code` | `modifiers` (**0**) | completed; AWT codes as CLI |
 | `type_text` | `session_id`, `text` | — | completed |
+| `focus_window` | `session_id` | `window_index` (**0**) | completed; only real OS input needs it before keyboard tools |
 | `screenshot` | `session_id` | `window_index`, `surface_id`, `fullscreen` | **Inline PNG** `ImageContent`; no path is returned. Only `fullscreen=true` succeeds on attach; window/surface fail closed |
 | `capture` | `session_id` | `window_index` (**0**), `out_dir`, `include_image` (**false**) | Summary JSON with **daemon-local paths** (`directory`, `captureJsonPath`, `screenshotPngPath`, counts…). Optional second content part: inline PNG when `include_image=true` |
 | `record_start` | `session_id` | `output_path`, `window_index` (**0**), `fullscreen` (**false**) | `{ "sessionId", "outputPath" }` — path only |
