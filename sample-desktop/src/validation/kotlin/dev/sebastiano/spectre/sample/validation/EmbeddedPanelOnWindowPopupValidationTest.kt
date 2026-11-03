@@ -1,21 +1,18 @@
-@file:OptIn(InternalSpectreApi::class)
-
-package dev.sebastiano.spectre.core
+package dev.sebastiano.spectre.sample.validation
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.SemanticsNode
-import androidx.compose.ui.semantics.SemanticsOwner
-import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
+import dev.sebastiano.spectre.core.ComposeAutomator
+import dev.sebastiano.spectre.core.TrackedWindow
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.Frame
+import java.awt.GraphicsEnvironment
 import java.awt.Window
 import java.util.concurrent.TimeUnit
 import javax.swing.JDialog
@@ -28,20 +25,33 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeFalse
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Timeout
 
 /**
- * Live coverage for #563: an OnWindow popup (`compose.layers.type=WINDOW`, hosted by Compose's
+ * Validation for #563: an OnWindow popup (`compose.layers.type=WINDOW`, hosted by Compose's
  * internal `WindowComposeSceneLayer`) opened from a `ComposePanel` embedded in a plain Swing
- * `JFrame` / `JDialog` must surface as a popup surface in [WindowTracker], exactly once.
+ * `JFrame` / `JDialog` must surface as a popup surface, exactly once, with readable semantics.
  *
- * The layer type is normally fixed at JVM start through the `compose.layers.type` system property.
- * These tests flip it for the panels they create through [withOnWindowLayerType] instead, so the
- * rest of the `:core:test` JVM keeps the default `OnSameCanvas` mode.
+ * Unlike [PopupLayerVariantsValidationTest], this class does not need its own Gradle task with
+ * `-Dcompose.layers.type=WINDOW`: it forces the layer type for the panels it creates through
+ * [withOnWindowLayerType]. `validationTest` forks one JVM per class, so the override never leaks.
  */
-class WindowTrackerEmbeddedOverlayLayerTest {
+class EmbeddedPanelOnWindowPopupValidationTest {
 
     private val windowsToDispose = mutableListOf<Window>()
+
+    @BeforeEach
+    fun assumeDisplay() {
+        assumeFalse(GraphicsEnvironment.isHeadless(), "Needs a real AWT display")
+        // Same upstream skiko crash as PopupLayerVariantsValidationTest (SKIKO-1132 / spectre#56):
+        // the OnWindow layer kills the JVM on Windows + JBR.
+        assumeFalse(
+            System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true),
+            "compose.layers.type=WINDOW currently crashes skiko on Windows (SKIKO-1132 / #56)",
+        )
+    }
 
     @AfterTest
     fun tearDown() {
@@ -52,7 +62,6 @@ class WindowTrackerEmbeddedOverlayLayerTest {
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `tracks OnWindow popup opened from a ComposePanel embedded in a JFrame`() {
-        assumeLiveAwtAvailable()
         val frame = withOnWindowLayerType {
             onEdt {
                 JFrame("Spectre #563 embedded frame").apply {
@@ -64,13 +73,12 @@ class WindowTrackerEmbeddedOverlayLayerTest {
             }
         }
 
-        assertSinglePopupOverlaySurface(owner = frame)
+        assertSinglePopupSurface(owner = frame)
     }
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `tracks OnWindow popup opened from a wrapped ComposePanel embedded in a JDialog`() {
-        assumeLiveAwtAvailable()
         val dialog = withOnWindowLayerType {
             onEdt {
                 // A plain JPanel wrapping the ComposePanel mirrors hosts such as Jewel's
@@ -85,51 +93,42 @@ class WindowTrackerEmbeddedOverlayLayerTest {
             }
         }
 
-        assertSinglePopupOverlaySurface(owner = dialog)
+        assertSinglePopupSurface(owner = dialog)
     }
 
-    private fun assertSinglePopupOverlaySurface(owner: Window) {
-        val tracker = WindowTracker()
-        val popupSurface = awaitPopupSurface(tracker, owner)
+    private fun assertSinglePopupSurface(owner: Window) {
+        val automator = ComposeAutomator.inProcess()
+        val popupSurface = awaitPopupSurface(automator, owner)
         assertNotNull(
             popupSurface,
-            "Expected an overlay popup surface owned by ${owner.javaClass.simpleName}; tracked: " +
-                tracker.trackedWindows.value.map { it.surfaceId },
+            "Expected a popup surface owned by ${owner.javaClass.simpleName} holding " +
+                "'$POPUP_TAG'; tracked: ${automator.surfaceIds()}",
         )
-        assertTrue(popupSurface.isPopup, "Overlay layer surface must be reported as a popup")
+        assertTrue(popupSurface.isPopup, "The overlay layer surface must be reported as a popup")
         assertNull(popupSurface.composePanel, "Overlay layer windows have no ComposePanel")
-        val popupTags = popupSurface.overlayTags()
-        assertTrue(POPUP_TAG in popupTags, "Popup semantics must be readable, got $popupTags")
 
-        val surfacesForLayerWindow =
-            tracker.trackedWindows.value.filter { it.window === popupSurface.window }
+        val surfacesForLayerWindow = automator.windows.filter { it.window === popupSurface.window }
         assertEquals(
             1,
             surfacesForLayerWindow.size,
-            "The layer window must be tracked once, got " +
-                surfacesForLayerWindow.map { it.surfaceId },
+            "The layer window must be tracked once, got ${surfacesForLayerWindow.map { it.surfaceId }}",
+        )
+        assertNotNull(
+            automator.findOneByTestTag(HOST_TAG),
+            "The embedded host panel's own content must stay discoverable",
         )
     }
 
-    private fun awaitPopupSurface(tracker: WindowTracker, owner: Window): TrackedWindow? {
+    private fun awaitPopupSurface(automator: ComposeAutomator, owner: Window): TrackedWindow? {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(DISCOVERY_TIMEOUT_SECONDS)
         while (System.nanoTime() < deadline) {
-            tracker.refresh()
-            val match =
-                tracker.trackedWindows.value.firstOrNull { tracked ->
-                    tracked.window.owner === owner &&
-                        tracked.overlaySemanticsOwners != null &&
-                        POPUP_TAG in tracked.overlayTags()
-                }
-            if (match != null) return match
+            automator.refreshWindows()
+            val popupNode = automator.findOneByTestTag(POPUP_TAG)
+            val surface = automator.windows.firstOrNull { it.surfaceId == popupNode?.surfaceId }
+            if (surface != null && surface.window.owner === owner) return surface
             Thread.sleep(POLL_MILLIS)
         }
         return null
-    }
-
-    private fun TrackedWindow.overlayTags(): Set<String> {
-        val owners = overlaySemanticsOwners?.invoke().orEmpty()
-        return onEdt { owners.flatMap(SemanticsOwner::testTags).toSet() }
     }
 
     private fun composePanelWithPopup(): ComposePanel =
@@ -149,19 +148,9 @@ class WindowTrackerEmbeddedOverlayLayerTest {
         const val HOST_SIZE_PX = 320
         const val HOST_CONTENT_DP = 200
         const val POPUP_SIZE_DP = 80
-        const val HOST_TAG = "host"
+        const val HOST_TAG = "embedded-host"
         const val POPUP_TAG = "embedded-popup"
     }
-}
-
-private fun SemanticsOwner.testTags(): List<String> {
-    val tags = mutableListOf<String>()
-    fun visit(node: SemanticsNode) {
-        node.config.getOrNull(SemanticsProperties.TestTag)?.let(tags::add)
-        node.children.forEach(::visit)
-    }
-    visit(unmergedRootSemanticsNode)
-    return tags
 }
 
 private fun <T> onEdt(block: () -> T): T {
@@ -177,8 +166,8 @@ private fun <T> onEdt(block: () -> T): T {
  * container (on `addNotify`), so [block] must show the host window before returning.
  *
  * `ComposeFeatureFlags.layerType` is a Kotlin-internal `FeatureFlag` with a nullable `override`
- * slot (the same hook Compose's own tests use through `withOverride`), so it is set reflectively
- * here and always cleared afterwards.
+ * slot (the hook behind Compose's own `withOverride`), so it is set reflectively here and always
+ * cleared afterwards.
  */
 private fun <T> withOnWindowLayerType(block: () -> T): T {
     val flags = Class.forName("androidx.compose.ui.ComposeFeatureFlags")
