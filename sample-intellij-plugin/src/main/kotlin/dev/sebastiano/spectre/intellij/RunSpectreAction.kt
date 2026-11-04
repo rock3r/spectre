@@ -97,7 +97,11 @@ class RunSpectreAction : AnAction() {
             log.warn("[Spectre] popup toggle node not discoverable — popup discovery skipped")
             return
         }
-        runOnEdt { automator.performSemanticsClick(toggle) }
+        // The toggle flips the popup. An earlier run can leave the popup open, for example when
+        // a busy IDE showed it only after that run's poll budget ran out. Clicking again would
+        // close it, so click only when the popup is not already showing.
+        val popupAlreadyOpen = runOnEdt { automator.findOneByTestTag("ide.popup.body") != null }
+        if (!popupAlreadyOpen) runOnEdt { automator.performSemanticsClick(toggle) }
 
         val popupReady = pollOnEdt {
             automator.refreshWindows()

@@ -220,9 +220,11 @@ class LocalCoordinatorServerTest {
         val secondClient = client("second")
         val executor = Executors.newSingleThreadExecutor()
         resources += AutoCloseable { executor.shutdownNow() }
+        // The waiter must outlive the status polling and both revoke calls below. With a 2 s
+        // acquire timeout it could expire on a slow runner before the forced takeover (#593).
         val waiting =
             executor.submit<CoordinatedInputLease> {
-                secondClient.acquire(Duration.ofSeconds(2), "second click")
+                secondClient.acquire(SLOW_RUNNER_ACQUIRE_TIMEOUT, "second click")
             }
         awaitWaiterCount(1)
         assertFalse(waiting.isDone)
@@ -243,7 +245,7 @@ class LocalCoordinatorServerTest {
                     force = true,
                 )
         assertTrue(forced.unsafeTakeover)
-        resources.add(waiting.get(2, TimeUnit.SECONDS))
+        resources.add(waiting.get(SLOW_RUNNER_ACQUIRE_TIMEOUT.seconds, TimeUnit.SECONDS))
     }
 
     @Test
@@ -465,24 +467,27 @@ class LocalCoordinatorServerTest {
         return client
     }
 
+    // The server exposes its queue only through STATUS, so these helpers poll it. Each poll
+    // opens a new socket connection. A hot spin with a 2 s deadline was too tight on a busy
+    // Windows runner (#593), so poll every few milliseconds under a wider, bounded deadline.
     private fun awaitWaiterCount(expected: Int) {
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+        val deadline = System.nanoTime() + STATUS_POLL_TIMEOUT.toNanos()
         while (System.nanoTime() < deadline) {
             val status = LocalInputCoordinatorControl(endpoint).status(resource)
             val active = status as? CoordinatorControlResult.Active
             if (active?.status?.waiters?.size == expected) return
-            Thread.onSpinWait()
+            Thread.sleep(STATUS_POLL_INTERVAL_MILLIS)
         }
         assertTrue(false, "Timed out waiting for $expected queued lease request")
     }
 
     private fun awaitHolderState(expected: String) {
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+        val deadline = System.nanoTime() + STATUS_POLL_TIMEOUT.toNanos()
         while (System.nanoTime() < deadline) {
             val status = LocalInputCoordinatorControl(endpoint).status(resource)
             val active = status as? CoordinatorControlResult.Active
             if (active?.status?.holder?.state == expected) return
-            Thread.onSpinWait()
+            Thread.sleep(STATUS_POLL_INTERVAL_MILLIS)
         }
         assertTrue(false, "Timed out waiting for holder state $expected")
     }
@@ -494,5 +499,11 @@ class LocalCoordinatorServerTest {
             Thread.sleep(10)
         }
         assertFalse(lease.isValid(), "Timed out waiting for revoked lease heartbeat fencing")
+    }
+
+    private companion object {
+        val STATUS_POLL_TIMEOUT: Duration = Duration.ofSeconds(10)
+        const val STATUS_POLL_INTERVAL_MILLIS: Long = 10
+        val SLOW_RUNNER_ACQUIRE_TIMEOUT: Duration = Duration.ofSeconds(10)
     }
 }

@@ -137,7 +137,11 @@ abstract class VerifyCliShadowJar : DefaultTask() {
         private const val AGENT_RUNTIME_ENTRY = "spectre/agent-runtime.jar"
         private const val KTOR_SERVICE_ENTRY = "META-INF/services/io.ktor.server.config.ConfigLoader"
         private const val GUIDE_ENTRY = "spectre-guide/traps.md"
-        private const val PROCESS_TIMEOUT_SECONDS: Long = 10
+        // The first launch of a jar trains its AOT cache before running the real command: a
+        // record run plus a cache-assembly JVM, both synchronous (see SpectreBootstrap.java).
+        // That has taken more than 10 s on a slow GitHub-hosted macOS runner (#593), so give
+        // it a wider, still bounded, budget.
+        private const val PROCESS_TIMEOUT_SECONDS: Long = 60
         private const val PROCESS_KILL_TIMEOUT_SECONDS: Long = 1
         private const val INITIALIZE_REQUEST =
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"spectre-r8-smoke\",\"version\":\"1\"}}}"
