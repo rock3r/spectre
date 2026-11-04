@@ -51,6 +51,7 @@ from smoke_lib import (  # noqa: E402
     WAYLAND_PORTAL_WARMUP_TOKEN_KEYS,
     linux_portal_token_path,
     linux_private_wayland_helper_path,
+    stop_session_helpers,
     build_report,
     collect_preflight,
     ensure_macos_screencapture_helper,
@@ -64,8 +65,8 @@ from smoke_lib import (  # noqa: E402
     portal_token_warmup_skip_reason,
     portal_warmup_failure_hint,
     portal_warmup_operator_banner,
-    virtual_monitor_recording_failure,
     virtual_monitor_warmup_hint,
+    wayland_x11_fallback_failure,
     prepare_linux_portal_token_env,
     probe_macos_accessibility,
     probe_macos_screen_recording,
@@ -714,6 +715,16 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
             else:
                 scenario_env = prepare_linux_portal_token_env(ROOT, out_dir)
         if scenario_env is not None:
+            # A `--session` helper left by an earlier run would serve the warmup without a new
+            # portal Start, so the restore token is not rewritten and the freshness check fails.
+            # A fresh helper proves the stored token still restores without a dialog.
+            leftover = stop_session_helpers(linux_private_wayland_helper_path(out_dir))
+            if leftover:
+                print(
+                    "portal-token-warmup: stopped session helper(s) left by an earlier run: "
+                    + " ".join(str(pid) for pid in leftover),
+                    flush=True,
+                )
             before_mtime = {
                 key: (
                     linux_portal_token_path(scenario_env, key).stat().st_mtime_ns + 1
@@ -1308,14 +1319,18 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
                 log=str(out_dir / "seat-monitor.log"),
             )
         )
-    elif virtual_monitor is not None and scenario_env is None:
+    elif portal_skip is None and scenario_env is None:
+        # Wayland seat without a portal grant: the X11 fallback would wait for JDK Robot's own
+        # Share dialog until the cell timeout. Point at the warmup instead.
         add(
             scenario_result(
                 "host-native-recording",
                 name="Host native recording smoke",
                 result=RESULT_FAIL,
-                detail=virtual_monitor_recording_failure(virtual_monitor),
-                log=str(out_dir / "seat-monitor.log"),
+                detail=wayland_x11_fallback_failure(virtual_monitor),
+                log=next(
+                    (item.log for item in results if item.id == "portal-token-warmup"), ""
+                ),
             )
         )
     elif recording_task is None:

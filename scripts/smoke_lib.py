@@ -2464,18 +2464,23 @@ def virtual_monitor_warmup_hint(monitor: Mapping[str, str]) -> str:
     )
 
 
-def virtual_monitor_recording_failure(monitor: Mapping[str, str]) -> str:
-    """host-native-recording detail when the warmup got no grant on this run's virtual monitor.
+def wayland_x11_fallback_failure(virtual_monitor: Mapping[str, str] | None) -> str:
+    """host-native-recording detail on a Wayland seat when portal-token-warmup did not pass.
 
     Without a grant the cell would fall back to the X11 smoke on the Wayland seat. There JDK
     Robot captures the screen through its own portal ScreenCast request, which opens another
-    Share dialog and waits for it until the cell times out.
+    Share dialog and waits for it until the cell times out (or, with no monitor, returns
+    black frames). That result says nothing about Spectre's Wayland recording.
     """
+    where = (
+        f" on virtual monitor {describe_monitor(virtual_monitor)}"
+        if virtual_monitor is not None
+        else ""
+    )
     return (
-        "not run: portal-token-warmup got no grant on virtual monitor "
-        f"{describe_monitor(monitor)}, and the X11 fallback on this Wayland seat captures "
-        "through JDK Robot's own portal ScreenCast request, which waits for a Share dialog "
-        "that nobody can answer. Fix portal-token-warmup first"
+        f"not run: portal-token-warmup did not pass{where}, and the X11 fallback on this "
+        "Wayland seat captures through JDK Robot's own portal ScreenCast request, which waits "
+        "for a Share dialog that nobody may answer. Fix portal-token-warmup first"
     )
 
 

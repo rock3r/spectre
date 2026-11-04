@@ -486,6 +486,17 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   reuse that grant (`host-native-recording`). `check`, attach, corpus, inject, CLI, and MCP stay under
   `xvfb-run` even when `DISPLAY=:0` so Robot-heavy cells do not fight the seated session.
   Missing `xvfb-run` is a hard fail for those cells, not a fallback onto the seat.
+- **Wayland warmup starts a fresh session helper:** the warmup leaves a long-lived
+  `spectre-wayland-helper --session` running for later cells. Before the next warmup, the harness
+  stops that helper (only this checkout's copy under `build/smoke/wayland-session/bin/`). If the
+  warmup reused it, no new portal session would start, the restore token would not be rewritten,
+  and the warmup would fail with `restore token(s) not refreshed by this warmup` although the
+  recording worked. A fresh helper also proves that the stored token still restores without a
+  dialog.
+- **No X11 fallback on a Wayland seat:** when `portal-token-warmup` does not pass on a Wayland
+  seat, `host-native-recording` fails at once and points at the warmup. It does not run the X11
+  smoke on the seat: there JDK Robot captures the screen through its own portal ScreenCast
+  request, which opens another Share dialog and waits for it until the 300s cell timeout.
 - **Wayland portal over SSH (#501):** run `release-smoke.py` as the user who is logged in on the
   GNOME Wayland seat. When `/run/user/<uid>/` holds a `wayland-*` socket, the harness fills in
   whatever the SSH shell lacks and prints a `linux seat env:` line: `XDG_RUNTIME_DIR`,
@@ -541,9 +552,6 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   connections use the same counter. So a monitor that this run adds has a new serial, the stored
   token does not match it, and the portal shows the Share dialog again. On a seat with no display
   nobody can answer it, and the warmup times out after 60s. Its detail then explains the serial.
-  `host-native-recording` then fails at once instead of running the X11 fallback on the seat: on
-  Wayland, JDK Robot captures the screen through its own portal ScreenCast request, which opens
-  another Share dialog and waits for it until the 300s cell timeout.
   The token can match only by chance, for example on the first virtual monitor after a reboot
   when the token was saved on serial `0x000001`. For unattended runs, give the seat a monitor
   whose identity does not change: a dummy HDMI plug (its EDID serial is fixed), or a virtual

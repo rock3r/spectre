@@ -1537,19 +1537,53 @@ class SeatMonitorTest(unittest.TestCase):
         self.assertIn("dummy HDMI plug", message)
         self.assertIn("RDP", message)
 
-    def test_virtual_monitor_recording_failure_explains_the_skipped_x11_fallback(self):
-        # Measured on bepi: with no grant, :recording:runLinuxX11RecordingSmoke on the seat sat
-        # in JDK Robot's portal ScreenCast (ScreencastHelper.getRGBPixelsImpl) until the 300s
-        # cell timeout, waiting for a Share dialog nobody could answer.
-        detail = smoke_lib.virtual_monitor_recording_failure(_MONITOR_META_1)
+    def test_wayland_x11_fallback_failure_explains_the_skipped_cell(self):
+        # Measured on bepi (twice, once on a session-long virtual monitor): with no grant,
+        # :recording:runLinuxX11RecordingSmoke on the seat sat in JDK Robot's portal ScreenCast
+        # (ScreencastHelper.getRGBPixelsImpl) until the 300s cell timeout, waiting for a Share
+        # dialog nobody could answer.
+        detail = smoke_lib.wayland_x11_fallback_failure(None)
         self.assertIn("portal-token-warmup", detail)
         self.assertIn("Robot", detail)
         self.assertIn("Share", detail)
-        self.assertIn("Meta-1", detail)
+        self.assertNotIn("virtual monitor", detail)
+        added = smoke_lib.wayland_x11_fallback_failure(_MONITOR_META_1)
+        self.assertIn("Meta-1", added)
+        self.assertIn("virtual monitor", added)
 
-    def test_release_smoke_fails_recording_fast_without_a_grant_on_a_virtual_monitor(self):
+    def test_release_smoke_fails_recording_fast_on_a_wayland_seat_without_a_grant(self):
         source = RELEASE_SMOKE.read_text(encoding="utf-8")
-        self.assertIn("virtual_monitor_recording_failure(", source)
+        self.assertIn("elif portal_skip is None and scenario_env is None:", source)
+        self.assertIn("wayland_x11_fallback_failure(virtual_monitor)", source)
+
+    def test_release_smoke_stops_a_leftover_session_helper_before_the_warmup(self):
+        # Measured on bepi: a second run reused the first run's live `--session` helper, so no
+        # portal Start happened, the token file was not rewritten, and the freshness check
+        # failed the warmup although the recording worked.
+        source = RELEASE_SMOKE.read_text(encoding="utf-8")
+        stop = source.find("stop_session_helpers(linux_private_wayland_helper_path(out_dir))")
+        self.assertGreater(stop, 0)
+        self.assertLess(stop, source.find("wayland_portal_warmup_command(gradle)"))
+
+    @unittest.skipUnless(Path("/proc/self/cmdline").exists(), "needs Linux /proc")
+    def test_stop_session_helpers_terminates_a_live_helper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            helper = Path(tmp) / "bin" / "spectre-wayland-helper"
+            child = subprocess.Popen(
+                [str(helper), "-c", "import time; time.sleep(60)", "--session"],
+                executable=sys.executable,
+            )
+            try:
+                deadline = time.monotonic() + 5
+                while not smoke_lib.session_helper_pids(helper) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertEqual([child.pid], smoke_lib.stop_session_helpers(helper))
+                self.assertIsNotNone(child.wait(timeout=10))
+                self.assertEqual([], smoke_lib.session_helper_pids(helper))
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait()
 
     def test_virtual_monitor_warmup_hint_explains_the_serial(self):
         hint = smoke_lib.virtual_monitor_warmup_hint(_MONITOR_META_1)
