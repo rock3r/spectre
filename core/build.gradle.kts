@@ -38,6 +38,10 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    // Lets the synthetic driver read AWT's own modal-blocked state (package-private
+    // `Window.isModalBlocked`), as it does under the agent, which opens java.awt at attach. The
+    // live modal tests then do not depend on which window the OS activates (#589).
+    jvmArgs("--add-opens=java.desktop/java.awt=ALL-UNNAMED")
     // Forward live-AWT / physical typeText opt-ins into the test JVM (macOS AppKit is opt-in;
     // physical Robot Caps Lock tests must not run unguarded on hosted CI — see
     // RobotDriverTypeTextCapsPhysicalTest).
