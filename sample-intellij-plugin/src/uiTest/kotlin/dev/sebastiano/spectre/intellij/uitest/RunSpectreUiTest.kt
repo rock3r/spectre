@@ -119,6 +119,15 @@ class RunSpectreUiTest {
                 // to `idea.log` — it doesn't touch the indices, so skipping them shaves
                 // most of the project-open time without affecting the assertions.
                 .skipIndicesInitialization()
+                // Start from a non-empty config directory so the IDE does not treat this run
+                // as a new user's first start. On a first start an unlicensed IU starts a free
+                // trial automatically, about 40 s after launch. The trial enables the
+                // `com.intellij.modules.ultimate` module, which reloads dozens of plugins and
+                // turns indexes off and on again. In a failed macOS run (#593) that reload
+                // began less than a second after the action clicked the popup toggle and
+                // starved the popup's recomposition. ide-starter documents this helper as
+                // the way to disable first-start behaviour such as the auto-trial.
+                .removeMigrateConfigAndCreateStubFile()
 
         // ide-starter writes the IDE's `idea.log` to `IDERunContext.logsDir`, which is
         // `<testHome>/<launchName>/log` — a SIBLING of `<testHome>/system`, not a child of it.
@@ -181,7 +190,24 @@ class RunSpectreUiTest {
                 // Wait for the action's `[Spectre] (with popup)` lines to appear. Bounded so a
                 // regression doesn't hang CI; covers the action's full poll budget (~3s) plus a
                 // generous margin for IDE first-paint + ToolWindow activation.
-                val captured = waitForSpectreLog(ideLog, deadlineMs = LOG_POLL_DEADLINE_MS)
+                var captured = waitForSpectreLog(ideLog, deadlineMs = LOG_POLL_DEADLINE_MS)
+
+                // Retry the action once if its first run finished without seeing the popup. The
+                // action gives the popup only ~3 s to appear, and IDE background work that
+                // starts after the indicator wait above (a plugin reload, a late indexing
+                // burst) can hold the EDT for longer than that (#593). Retry only after the
+                // first run logged its "did not appear" warning: then it has finished, and the
+                // two runs cannot both click the popup toggle. The action does not click the
+                // toggle when the popup is already open. A real regression fails both runs,
+                // and the assertions below report the lines from both.
+                val firstRunTimedOut =
+                    captured.none { it.contains(WITH_POPUP_MARKER) } &&
+                        captured.any { it.contains(POPUP_TIMEOUT_MARKER) }
+                if (firstRunTimedOut) {
+                    waitForIndicators(timeout = INDICATOR_QUIESCENCE_TIMEOUT)
+                    invokeGlobalBackendAction(SPECTRE_ACTION_ID, singleProject(), now = false)
+                    captured = waitForSpectreLog(ideLog, deadlineMs = LOG_POLL_DEADLINE_MS)
+                }
 
                 assertTrue(captured.isNotEmpty()) {
                     "Expected `[Spectre]` log lines in $ideLog within ${LOG_POLL_DEADLINE_MS}ms; " +
@@ -247,7 +273,7 @@ class RunSpectreUiTest {
                 } else {
                     emptyList()
                 }
-            if (captured.any { it.contains("[Spectre] (with popup)") }) return captured
+            if (captured.any { it.contains(WITH_POPUP_MARKER) }) return captured
             Thread.sleep(POLL_INTERVAL_MS)
         }
         return captured
@@ -261,6 +287,9 @@ class RunSpectreUiTest {
         // https://data.services.jetbrains.com/products?code=IIU&release.type=release).
         const val IDE_BUILD_NUMBER = "262.10968.63"
         const val SPECTRE_ACTION_ID = "dev.sebastiano.spectre.sample.RunSpectre"
+        const val WITH_POPUP_MARKER = "[Spectre] (with popup)"
+        // Prefix of the warning RunSpectreAction logs when the popup misses its poll budget.
+        const val POPUP_TIMEOUT_MARKER = "[Spectre] popup body did not appear"
         // Matches every test-tagged node the manual smoke proved discoverable in PR #43.
         // Keep this list aligned with `SpectreSampleToolWindowContent`'s `Modifier.testTag`
         // values — drifting one without the other means the test silently passes against an

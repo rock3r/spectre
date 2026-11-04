@@ -504,7 +504,7 @@ internal class ProductionInputLeaseCoordinator(
                         .apply { initCause(failure) }
                 }
             } catch (failure: InputCoordinatorException) {
-                if (failure.errorCode != LeaseErrorCode.STALE_EPOCH.name) throw failure
+                if (!failure.meansSessionIsGone()) throw failure
                 activeClient?.let(::discard)
                 if (attempt == MAX_CONNECT_ATTEMPTS - 1) throw failure
             }
@@ -561,7 +561,15 @@ internal class ProductionInputLeaseCoordinator(
         val client: LocalInputCoordinatorClient,
     )
 
+    // CLIENT_DISCONNECTED means the coordinator that answered has no session for this client.
+    // After a coordinator restart, the cached client can send its request before its session
+    // watcher sees the old server's EOF: the new server then answers CLIENT_DISCONNECTED, not
+    // STALE_EPOCH (#593). Both mean "open a new session", so both reconnect.
+    private fun InputCoordinatorException.meansSessionIsGone(): Boolean =
+        errorCode == LeaseErrorCode.STALE_EPOCH.name || errorCode == CLIENT_DISCONNECTED
+
     private companion object {
         const val MAX_CONNECT_ATTEMPTS: Int = 2
+        const val CLIENT_DISCONNECTED: String = "CLIENT_DISCONNECTED"
     }
 }
