@@ -510,13 +510,12 @@ internal class ReflectiveAutomatorHandler(
         imageToPng(method.invoke(automator, null) as BufferedImage)
 
     /**
-     * Capture a node's on-screen bounds (#362).
+     * Capture a node's on-screen bounds (#362) through the target's native window still only.
      *
-     * Prefers in-process `screenshot(AutomatorNode)` (native window-scoped) when the recording
-     * bridge is present and returns a non-degenerate image. Otherwise uses region capture of live
-     * `boundsOnScreen` (node-key path only; window/surface attach screenshots fail closed — #359).
-     * Degenerate native crops (empty intersection / DPI mishap) also fall back to region so Windows
-     * desktops do not return 1×1 / ~90-byte PNGs for real nodes.
+     * Never takes a region crop of the screen (#597): a crop holds whatever is drawn at the node's
+     * bounds, including other windows that cover the target. When the target cannot take a native
+     * still (no `spectre-recording`, an old `spectre-core`, a helper failure, or a crop that misses
+     * the node), this fails with a message that says why and what to do instead.
      */
     private fun handleNodeScreenshot(request: AgentRequest.Screenshot): AgentResponse {
         val nodeKey =
@@ -565,53 +564,58 @@ internal class ReflectiveAutomatorHandler(
                         .wireName,
             )
         }
-        val image =
-            captureNodeScreenshotPreferNative(node, bounds)
-                ?: return AgentResponse.Error(
-                    message =
-                        "ComposeAutomator does not expose screenshot(AutomatorNode) or " +
-                            "screenshot(Rectangle?) for nodeKey capture on this build",
-                    category =
-                        dev.sebastiano.spectre.agent.transport.AgentErrorCategory
-                            .UnsupportedOperation
-                            .wireName,
-                )
-        return AgentResponse.Screenshot(imageToPng(image))
+        return nativeNodeScreenshot(node, java.awt.Rectangle(bounds))
     }
 
     /**
-     * Prefer native window-scoped node capture; fall back to region of [bounds] when the recording
-     * bridge is absent, the node overload is missing, or native returns a degenerate crop.
-     *
-     * Region capture uses a **defensive copy** of the AWT rectangle: live `boundsOnScreen` getters
-     * return snapshots that must not be mutated by `Robot.createScreenCapture` / AWT. It prefers
-     * the device-scale call so a fallback node still keeps the same screen-pixel scale the native
-     * path produces; a node rectangle is small enough that the frame budget is never in play.
+     * Native window-scoped capture of [node] through in-process `screenshot(AutomatorNode)`, or a
+     * fail-closed [AgentResponse.Error] that says why. There is no region fallback (#597).
      */
-    private fun captureNodeScreenshotPreferNative(
-        node: Any,
-        bounds: java.awt.Rectangle,
-    ): BufferedImage? {
-        val captureBounds = java.awt.Rectangle(bounds)
-        val nodeScreenshotMethod = nodeScreenshotMethodOrError()
-        if (nodeScreenshotMethod != null) {
+    private fun nativeNodeScreenshot(node: Any, bounds: java.awt.Rectangle): AgentResponse {
+        val nodeScreenshotMethod =
+            nodeScreenshotMethodOrError()
+                ?: return AgentResponse.Error(
+                    message = NODE_SCREENSHOT_CORE_TOO_OLD_MESSAGE,
+                    category = AgentErrorCategory.UnsupportedOperation.wireName,
+                )
+        val image =
             try {
-                val image = nodeScreenshotMethod.invoke(automator, node) as BufferedImage
-                if (isPlausibleNodeCapture(image, captureBounds)) return image
-                // Native crop can be empty after DPI / coordinate mismatch — use region.
+                nodeScreenshotMethod.invoke(automator, node) as BufferedImage
             } catch (ex: ReflectiveOperationException) {
-                if (!isNativeWindowCaptureUnavailable(ex)) throw ex
+                return nativeNodeScreenshotFailed(ex)
             }
+        if (!isPlausibleNodeCapture(image, bounds)) {
+            return AgentResponse.Error(
+                message =
+                    "The native window still for this node is ${image.width}x${image.height}, " +
+                        "which cannot show boundsOnScreen ${bounds.width}x${bounds.height} at " +
+                        "(${bounds.x},${bounds.y}). Make sure the node is visible in its window " +
+                        "and retry. $NO_DESKTOP_CROP_EXPLANATION",
+                category = AgentErrorCategory.InternalError.wireName,
+            )
         }
-        val regionScreenshotMethod =
-            deviceScaleScreenshotMethodOrError() ?: regionScreenshotMethodOrError() ?: return null
-        val image = regionScreenshotMethod.invoke(automator, captureBounds) as BufferedImage
-        check(isPlausibleNodeCapture(image, captureBounds)) {
-            "Region node screenshot ${image.width}x${image.height} is implausible for " +
-                "boundsOnScreen ${captureBounds.width}x${captureBounds.height} at " +
-                "(${captureBounds.x},${captureBounds.y})"
+        return AgentResponse.Screenshot(imageToPng(image))
+    }
+
+    private fun nativeNodeScreenshotFailed(ex: ReflectiveOperationException): AgentResponse.Error {
+        if (isNativeBridgeUnavailable(ex)) {
+            return AgentResponse.Error(
+                message = NODE_SCREENSHOT_BRIDGE_UNAVAILABLE_MESSAGE,
+                category = AgentErrorCategory.UnsupportedOperation.wireName,
+            )
         }
-        return image
+        val category =
+            if (reflectiveIsInputRejection(ex)) {
+                AgentErrorCategory.InputRejected
+            } else {
+                AgentErrorCategory.InternalError
+            }
+        return AgentResponse.Error(
+            message =
+                "Native node screenshot failed: ${ex.targetMessage()}. " +
+                    NO_DESKTOP_CROP_EXPLANATION,
+            category = category.wireName,
+        )
     }
 
     private fun extractBoundsOnScreen(node: Any): java.awt.Rectangle? {
@@ -633,27 +637,10 @@ internal class ReflectiveAutomatorHandler(
         return image.width >= minW && image.height >= minH
     }
 
-    /**
-     * Fall back to region capture when native window capture cannot produce a usable image: the
-     * recording bridge is absent, the helper fails (including argument rejection), or the native
-     * crop misses the node. Other failures, including a non-Frame host, must surface — a silent
-     * framebuffer fallback there would reintroduce occluded-pixel captures.
-     */
-    private fun isNativeWindowCaptureUnavailable(ex: ReflectiveOperationException): Boolean {
-        var current: Throwable? = ex
-        while (current != null) {
-            val message = current.message.orEmpty()
-            if (
-                message.contains(NATIVE_BRIDGE_UNAVAILABLE_SNIPPET) ||
-                    message.contains(NATIVE_HELPER_FAILURE_SNIPPET) ||
-                    message.contains(NATIVE_CROP_MISS_SNIPPET)
-            ) {
-                return true
-            }
-            current = current.cause
-        }
-        return false
-    }
+    /** Whether the target has no native window capture bridge (no `spectre-recording`). */
+    private fun isNativeBridgeUnavailable(ex: ReflectiveOperationException): Boolean =
+        generateSequence<Throwable>(ex) { it.cause }
+            .any { it.message.orEmpty().contains(NATIVE_BRIDGE_UNAVAILABLE_SNIPPET) }
 
     private fun regionScreenshotMethodOrError(): Method? =
         automatorClass.methods.firstOrNull {
@@ -1005,10 +992,27 @@ internal class ReflectiveAutomatorHandler(
         /** Matches core ScreenCaptureBackend when NativeWindowCaptureBridge is not loadable. */
         const val NATIVE_BRIDGE_UNAVAILABLE_SNIPPET: String =
             "Native window capture bridge is unavailable"
-        /** Matches `WindowsGraphicsCaptureHelperErrors` when the .NET helper fails. */
-        const val NATIVE_HELPER_FAILURE_SNIPPET: String = "spectre-window-capture"
-        /** Matches `cropImageToScreenRegion` when the native image misses the node rectangle. */
-        const val NATIVE_CROP_MISS_SNIPPET: String = "does not intersect the captured image"
+        /** Same wording as core's atomic-capture errors (#559). */
+        const val NO_DESKTOP_CROP_EXPLANATION: String =
+            "Spectre does not substitute a desktop crop, because a crop can include other " +
+                "windows that cover the target."
+        /** Node screenshot without `spectre-recording` in the target (#597). */
+        const val NODE_SCREENSHOT_BRIDGE_UNAVAILABLE_MESSAGE: String =
+            "Node screenshots on the attach path need a native window still, but " +
+                "spectre-recording is not on the target application's classpath. Add " +
+                "spectre-recording and the helper artifact for this OS (spectre-recording-macos, " +
+                "-windows, or -linux) to the target's runtime classpath. Or run " +
+                "'spectre capture <session> [--window <index>]' through the Spectre daemon: the " +
+                "daemon takes the window still itself, and capture.json gives each node's " +
+                "bounds in the PNG as boundsImage. " +
+                NO_DESKTOP_CROP_EXPLANATION
+        /** Node screenshot against a target `spectre-core` without `screenshot(AutomatorNode)`. */
+        const val NODE_SCREENSHOT_CORE_TOO_OLD_MESSAGE: String =
+            "The spectre-core in the target application is too old to take a native node " +
+                "screenshot (it has no screenshot(AutomatorNode)). Update the target's " +
+                "spectre-core dependency to the same version as Spectre, or run " +
+                "'spectre capture <session>' through the Spectre daemon. " +
+                NO_DESKTOP_CROP_EXPLANATION
         /**
          * Fail-closed message for attach/CLI window or surface screenshots (#359). Must mention
          * occlusion/privacy risk, point callers at window-scoped atomic capture (#560), and at

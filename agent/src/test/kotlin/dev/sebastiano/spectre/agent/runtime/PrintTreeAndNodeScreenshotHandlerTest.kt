@@ -48,118 +48,132 @@ class PrintTreeAndNodeScreenshotHandlerTest {
     }
 
     @Test
-    fun `Screenshot nodeKey falls back to region when native bridge unavailable`() {
-        val node =
-            DebugFakeNode(
-                keyValue = "window:0:0:5",
-                boundsOnScreenValue = Rectangle(10, 20, 40, 30),
-            )
+    fun `Screenshot nodeKey fails closed when native bridge unavailable`() {
         val fake =
-            DebugFakeAutomator(
-                allNodesValue = listOf(node),
+            fakeWithNode(
                 nodeScreenshotThrows =
-                    UnsupportedOperationException("Native window capture bridge is unavailable"),
+                    UnsupportedOperationException("Native window capture bridge is unavailable")
             )
         val handler = ReflectiveAutomatorHandler(fake)
 
         val response = handler.handle(AgentRequest.Screenshot(nodeKey = "window:0:0:5"))
-        check(response is AgentResponse.Screenshot) { "expected Screenshot, got $response" }
-        assertTrue(response.pngBytes.isNotEmpty())
+
+        check(response is AgentResponse.Error) { "expected Error, got $response" }
+        assertEquals(AgentErrorCategory.UnsupportedOperation.wireName, response.category)
+        assertNoDesktopCropMessage(response.message)
+        assertTrue("spectre-recording" in response.message, response.message)
+        assertTrue("spectre capture" in response.message, response.message)
         assertEquals(1, fake.nodeScreenshotCalls)
-        assertEquals(1, fake.regionScreenshotCalls)
-        assertEquals(Rectangle(10, 20, 40, 30), fake.lastRegion)
+        assertEquals(0, fake.regionScreenshotCalls)
     }
 
     @Test
-    fun `Screenshot nodeKey falls back when the native helper rejects its arguments`() {
-        val node =
-            DebugFakeNode(
-                keyValue = "window:0:0:5",
-                boundsOnScreenValue = Rectangle(10, 20, 40, 30),
-            )
+    fun `Screenshot nodeKey fails closed when the native helper rejects its arguments`() {
         val fake =
-            DebugFakeAutomator(
-                allNodesValue = listOf(node),
+            fakeWithNode(
                 nodeScreenshotThrows =
                     IllegalStateException(
                         "spectre-window-capture rejected its arguments (exit 2). Argv: [helper.exe]"
-                    ),
+                    )
             )
         val handler = ReflectiveAutomatorHandler(fake)
 
         val response = handler.handle(AgentRequest.Screenshot(nodeKey = "window:0:0:5"))
-        check(response is AgentResponse.Screenshot) { "expected Screenshot, got $response" }
-        assertEquals(1, fake.nodeScreenshotCalls)
-        assertEquals(1, fake.regionScreenshotCalls)
-        assertEquals(Rectangle(10, 20, 40, 30), fake.lastRegion)
+
+        check(response is AgentResponse.Error) { "expected Error, got $response" }
+        assertEquals(AgentErrorCategory.InternalError.wireName, response.category)
+        assertNoDesktopCropMessage(response.message)
+        assertTrue("spectre-window-capture rejected" in response.message, response.message)
+        assertEquals(0, fake.regionScreenshotCalls)
     }
 
     @Test
-    fun `Screenshot nodeKey falls back when the native crop misses the node`() {
-        val node =
-            DebugFakeNode(
-                keyValue = "window:0:0:5",
-                boundsOnScreenValue = Rectangle(10, 20, 40, 30),
-            )
+    fun `Screenshot nodeKey fails closed when the native crop misses the node`() {
         val fake =
-            DebugFakeAutomator(
-                allNodesValue = listOf(node),
+            fakeWithNode(
                 nodeScreenshotThrows =
                     IllegalArgumentException(
                         "Screenshot region does not intersect the captured image"
-                    ),
+                    )
             )
         val handler = ReflectiveAutomatorHandler(fake)
 
         val response = handler.handle(AgentRequest.Screenshot(nodeKey = "window:0:0:5"))
-        check(response is AgentResponse.Screenshot) { "expected Screenshot, got $response" }
-        assertEquals(1, fake.regionScreenshotCalls)
+
+        check(response is AgentResponse.Error) { "expected Error, got $response" }
+        assertNoDesktopCropMessage(response.message)
+        assertEquals(0, fake.regionScreenshotCalls)
     }
 
     @Test
     fun `Screenshot nodeKey does not fall back for a non frame host`() {
-        val node =
-            DebugFakeNode(
-                keyValue = "window:0:0:5",
-                boundsOnScreenValue = Rectangle(10, 20, 40, 30),
-            )
         val fake =
-            DebugFakeAutomator(
-                allNodesValue = listOf(node),
+            fakeWithNode(
                 nodeScreenshotThrows =
                     UnsupportedOperationException(
                         "Window-scoped screenshots require a native backend for a Frame or Dialog host."
-                    ),
+                    )
             )
         val handler = ReflectiveAutomatorHandler(fake)
 
         val response = handler.handle(AgentRequest.Screenshot(nodeKey = "window:0:0:5"))
+
         check(response is AgentResponse.Error) { "expected Error, got $response" }
         assertEquals(AgentErrorCategory.InternalError.wireName, response.category)
         assertEquals(0, fake.regionScreenshotCalls)
     }
 
     @Test
-    fun `Screenshot nodeKey falls back to region when native returns degenerate crop`() {
+    fun `Screenshot nodeKey fails closed when native returns degenerate crop`() {
+        // 1×1 native crop is implausible for 40×30 bounds. It used to trigger a desktop crop.
+        val fake =
+            fakeWithNode(nodeScreenshotImage = BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))
+        val handler = ReflectiveAutomatorHandler(fake)
+
+        val response = handler.handle(AgentRequest.Screenshot(nodeKey = "window:0:0:5"))
+
+        check(response is AgentResponse.Error) { "expected Error, got $response" }
+        assertNoDesktopCropMessage(response.message)
+        assertEquals(1, fake.nodeScreenshotCalls)
+        assertEquals(0, fake.regionScreenshotCalls)
+    }
+
+    @Test
+    fun `Screenshot nodeKey fails closed when the target core has no node overload`() {
         val node =
             DebugFakeNode(
                 keyValue = "window:0:0:5",
                 boundsOnScreenValue = Rectangle(10, 20, 40, 30),
             )
-        val fake =
-            DebugFakeAutomator(
-                allNodesValue = listOf(node),
-                // 1×1 native crop is implausible for 40×30 bounds → region fallback.
-                nodeScreenshotImage = BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB),
-            )
+        val fake = RegionOnlyFakeAutomator(allNodesValue = listOf(node))
         val handler = ReflectiveAutomatorHandler(fake)
 
         val response = handler.handle(AgentRequest.Screenshot(nodeKey = "window:0:0:5"))
-        check(response is AgentResponse.Screenshot) { "expected Screenshot, got $response" }
-        assertTrue(response.pngBytes.isNotEmpty())
-        assertEquals(1, fake.nodeScreenshotCalls)
-        assertEquals(1, fake.regionScreenshotCalls)
-        assertEquals(Rectangle(10, 20, 40, 30), fake.lastRegion)
+
+        check(response is AgentResponse.Error) { "expected Error, got $response" }
+        assertEquals(AgentErrorCategory.UnsupportedOperation.wireName, response.category)
+        assertNoDesktopCropMessage(response.message)
+        assertEquals(0, fake.regionScreenshotCalls)
+    }
+
+    private fun fakeWithNode(
+        nodeScreenshotThrows: RuntimeException? = null,
+        nodeScreenshotImage: BufferedImage? = null,
+    ): DebugFakeAutomator =
+        DebugFakeAutomator(
+            allNodesValue =
+                listOf(
+                    DebugFakeNode(
+                        keyValue = "window:0:0:5",
+                        boundsOnScreenValue = Rectangle(10, 20, 40, 30),
+                    )
+                ),
+            nodeScreenshotThrows = nodeScreenshotThrows,
+            nodeScreenshotImage = nodeScreenshotImage,
+        )
+
+    private fun assertNoDesktopCropMessage(message: String) {
+        assertTrue("desktop crop" in message, "error must say no desktop crop is taken: $message")
     }
 
     @Test
@@ -217,6 +231,9 @@ internal class DebugFakeAutomator(
     }
 
     @Suppress("unused")
+    fun screenshotAtDeviceScale(region: Rectangle?): BufferedImage = screenshot(region)
+
+    @Suppress("unused")
     fun screenshot(region: Rectangle?): BufferedImage {
         regionScreenshotCalls++
         lastRegion = region
@@ -238,6 +255,32 @@ internal class DebugFakeAutomator(
         return BufferedImage(
             bounds.width.coerceAtLeast(1),
             bounds.height.coerceAtLeast(1),
+            BufferedImage.TYPE_INT_RGB,
+        )
+    }
+}
+
+/** A target core with region capture only: no `screenshot(AutomatorNode)` overload. */
+internal class RegionOnlyFakeAutomator(private val allNodesValue: List<Any>) {
+    var regionScreenshotCalls = 0
+
+    @Suppress("unused") fun refreshWindows() = Unit
+
+    @Suppress("unused") fun getWindows(): List<Any> = emptyList()
+
+    @Suppress("unused") fun allNodes(): List<Any> = allNodesValue
+
+    @Suppress("unused") fun findByTestTag(tag: String): List<Any> = emptyList()
+
+    @Suppress("unused")
+    fun screenshotAtDeviceScale(region: Rectangle?): BufferedImage = screenshot(region)
+
+    @Suppress("unused")
+    fun screenshot(region: Rectangle?): BufferedImage {
+        regionScreenshotCalls++
+        return BufferedImage(
+            region?.width?.coerceAtLeast(1) ?: 1,
+            region?.height?.coerceAtLeast(1) ?: 1,
             BufferedImage.TYPE_INT_RGB,
         )
     }

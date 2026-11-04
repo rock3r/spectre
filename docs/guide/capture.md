@@ -99,6 +99,13 @@ On Linux the daemon has no way to take a still of another process's window. Ther
 application takes the still itself, so it needs `spectre-recording` and its Linux helper on its
 classpath. Without them the capture fails with a message that says what is missing.
 
+`AttachedAutomator.screenshot(node)` does not go through the daemon. The attached application
+takes the node's still itself, so it needs `spectre-recording` and the helper for its OS on its
+classpath. Without them, or when the native still fails, the call fails with a message that says
+why. It never returns a desktop crop of the node's bounds. To get node pixels without
+`spectre-recording` in the application, run `spectre capture` and crop the PNG to the node's
+`boundsImage` from `capture.json`.
+
 Library details live in `:core` under `dev.sebastiano.spectre.core.capture`.
 
 ## Pixel scale
