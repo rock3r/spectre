@@ -516,6 +516,37 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   60s. If nothing appears within about 10s, open the Activities overview (Super key). When the
   warmup fails with a portal timeout or an X authorization error, the cell detail names the likely
   cause.
+- **Wayland seat with no monitor:** a GNOME seat with no display connected, and no RDP client,
+  has zero monitors. Then the portal stream fails (`gst-launch exited with status 255`) and X11
+  captures are black. Before the warmup, the harness asks Mutter for its monitors
+  (`org.gnome.Mutter.DisplayConfig.GetCurrentState`) through
+  `scripts/mutter_virtual_monitor.py`. When there are none, it adds a 1920x1080 Mutter virtual
+  monitor (`org.gnome.Mutter.ScreenCast` `RecordVirtual`, the same API that gnome-remote-desktop
+  uses) and prints `seat has no monitor: added Mutter virtual monitor …`. The monitor lives for
+  the whole run. The harness removes it at the end, also after a failure or Ctrl-C. If the
+  harness dies, the keeper process sees its stdin close and removes the monitor too. With no
+  monitor, the session helper that an earlier run left behind streams from a monitor that is
+  gone, so the harness stops that helper (only this checkout's copy under
+  `build/smoke/wayland-session/bin/`) before the warmup, and again before it removes the
+  monitor. The log is `build/smoke/seat-monitor.log`. When a monitor already exists (a real
+  display or an RDP client), the harness changes nothing. When it cannot ask Mutter (not GNOME,
+  or no PyGObject), it prints `seat monitor check skipped` and changes nothing. When there is no
+  monitor and Mutter does not add one, `portal-token-warmup` and `host-native-recording` fail at
+  once and name the fix: connect a display or a dummy HDMI plug, or connect over RDP.
+- **Restore token on a virtual monitor:** the virtual monitor does not remove the Share dialog.
+  xdg-desktop-portal-gnome stores the shared monitor in the restore token as
+  `vendor:product:serial`, and it restores the token only when a monitor with exactly that string
+  exists. Mutter names every virtual monitor `MetaVendor:Virtual remote monitor:0x<n>`, where `n`
+  is a counter that grows by one for each virtual monitor since GNOME Shell started. RDP
+  connections use the same counter. So a monitor that this run adds has a new serial, the stored
+  token does not match it, and the portal shows the Share dialog again. On a seat with no display
+  nobody can answer it, and the warmup times out after 60s. Its detail then explains the serial.
+  The token can match only by chance, for example on the first virtual monitor after a reboot
+  when the token was saved on serial `0x000001`. For unattended runs, give the seat a monitor
+  whose identity does not change: a dummy HDMI plug (its EDID serial is fixed), or a virtual
+  monitor that lives for the whole login session, started before any RDP client, such as a user
+  service that runs `scripts/mutter_virtual_monitor.py hold --until-signal`. Approve the dialog
+  once on that monitor, and later runs reuse the token.
 - **Homebrew/Scoop/public archives:** after the draft artifacts exist, install through the real
   package manager and rerun launcher/MCP smoke. Local packaging does not prove channel metadata.
 - **Input focus/lock keys:** real Robot input uses global desktop state. Record focus failures and
