@@ -1537,6 +1537,20 @@ class SeatMonitorTest(unittest.TestCase):
         self.assertIn("dummy HDMI plug", message)
         self.assertIn("RDP", message)
 
+    def test_virtual_monitor_recording_failure_explains_the_skipped_x11_fallback(self):
+        # Measured on bepi: with no grant, :recording:runLinuxX11RecordingSmoke on the seat sat
+        # in JDK Robot's portal ScreenCast (ScreencastHelper.getRGBPixelsImpl) until the 300s
+        # cell timeout, waiting for a Share dialog nobody could answer.
+        detail = smoke_lib.virtual_monitor_recording_failure(_MONITOR_META_1)
+        self.assertIn("portal-token-warmup", detail)
+        self.assertIn("Robot", detail)
+        self.assertIn("Share", detail)
+        self.assertIn("Meta-1", detail)
+
+    def test_release_smoke_fails_recording_fast_without_a_grant_on_a_virtual_monitor(self):
+        source = RELEASE_SMOKE.read_text(encoding="utf-8")
+        self.assertIn("virtual_monitor_recording_failure(", source)
+
     def test_virtual_monitor_warmup_hint_explains_the_serial(self):
         hint = smoke_lib.virtual_monitor_warmup_hint(_MONITOR_META_1)
         self.assertIn("0x000003", hint)

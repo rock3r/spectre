@@ -64,6 +64,7 @@ from smoke_lib import (  # noqa: E402
     portal_token_warmup_skip_reason,
     portal_warmup_failure_hint,
     portal_warmup_operator_banner,
+    virtual_monitor_recording_failure,
     virtual_monitor_warmup_hint,
     prepare_linux_portal_token_env,
     probe_macos_accessibility,
@@ -1304,6 +1305,16 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
                 name="Host native recording smoke",
                 result=RESULT_FAIL,
                 detail=seat_monitor_error,
+                log=str(out_dir / "seat-monitor.log"),
+            )
+        )
+    elif virtual_monitor is not None and scenario_env is None:
+        add(
+            scenario_result(
+                "host-native-recording",
+                name="Host native recording smoke",
+                result=RESULT_FAIL,
+                detail=virtual_monitor_recording_failure(virtual_monitor),
                 log=str(out_dir / "seat-monitor.log"),
             )
         )

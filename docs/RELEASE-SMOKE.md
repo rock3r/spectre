@@ -541,6 +541,9 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   connections use the same counter. So a monitor that this run adds has a new serial, the stored
   token does not match it, and the portal shows the Share dialog again. On a seat with no display
   nobody can answer it, and the warmup times out after 60s. Its detail then explains the serial.
+  `host-native-recording` then fails at once instead of running the X11 fallback on the seat: on
+  Wayland, JDK Robot captures the screen through its own portal ScreenCast request, which opens
+  another Share dialog and waits for it until the 300s cell timeout.
   The token can match only by chance, for example on the first virtual monitor after a reboot
   when the token was saved on serial `0x000001`. For unattended runs, give the seat a monitor
   whose identity does not change: a dummy HDMI plug (its EDID serial is fixed), or a virtual

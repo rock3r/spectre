@@ -2457,8 +2457,25 @@ def virtual_monitor_warmup_hint(monitor: Mapping[str, str]) -> str:
         f"this run added virtual monitor {describe_monitor(monitor)}. The portal restore "
         "token names one monitor by vendor:product:serial, and Mutter gives every new virtual "
         "monitor a new serial, so a token saved on another monitor shows the Share dialog "
-        "again. Nobody can answer it on a seat with no display: connect over RDP once and "
-        f"approve it, or {SEAT_MONITOR_FIXES} (see docs/RELEASE-SMOKE.md)"
+        "again, and nobody can answer it on a seat with no display. For unattended runs, give "
+        "the seat a monitor whose identity stays the same (a display, a dummy HDMI plug, or a "
+        "virtual monitor kept for the whole login session) and approve the dialog once; see "
+        "docs/RELEASE-SMOKE.md"
+    )
+
+
+def virtual_monitor_recording_failure(monitor: Mapping[str, str]) -> str:
+    """host-native-recording detail when the warmup got no grant on this run's virtual monitor.
+
+    Without a grant the cell would fall back to the X11 smoke on the Wayland seat. There JDK
+    Robot captures the screen through its own portal ScreenCast request, which opens another
+    Share dialog and waits for it until the cell times out.
+    """
+    return (
+        "not run: portal-token-warmup got no grant on virtual monitor "
+        f"{describe_monitor(monitor)}, and the X11 fallback on this Wayland seat captures "
+        "through JDK Robot's own portal ScreenCast request, which waits for a Share dialog "
+        "that nobody can answer. Fix portal-token-warmup first"
     )
 
 
