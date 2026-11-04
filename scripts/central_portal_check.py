@@ -50,6 +50,10 @@ ARTIFACT_SUFFIXES = (
     ".module",
 )
 
+# Central requires an .md5 and a .sha1 for every payload file, and nothing else. Spectre's
+# bundles carried .sha256, .sha512 and signature checksums before 0.7.x but no longer do, so
+# those are optional: allowed in a deployment and verified when present, never required.
+REQUIRED_CHECKSUM_ALGORITHMS = ("md5", "sha1")
 CHECKSUM_ALGORITHMS = ("md5", "sha1", "sha256", "sha512")
 
 MIN_MAIN_JAR_SIZES = {
@@ -138,10 +142,61 @@ def expected_files_for_version(version: str) -> list[str]:
     for relative_path in expected_payload_files_for_version(version):
         files.append(relative_path)
         files.append(f"{relative_path}.asc")
-        for algorithm in CHECKSUM_ALGORITHMS:
+        for algorithm in REQUIRED_CHECKSUM_ALGORITHMS:
             files.append(f"{relative_path}.{algorithm}")
-            files.append(f"{relative_path}.asc.{algorithm}")
     return files
+
+
+def is_optional_checksum_file(relative_path: str, version: str) -> bool:
+    """True for a checksum Central does not require: a payload's .sha256 or .sha512, or any
+    checksum of a signature."""
+    payload_files = set(expected_payload_files_for_version(version))
+    for algorithm in CHECKSUM_ALGORITHMS:
+        suffix = f".{algorithm}"
+        if not relative_path.endswith(suffix):
+            continue
+        checked = relative_path[: -len(suffix)]
+        if checked.endswith(".asc"):
+            return checked[: -len(".asc")] in payload_files
+        return algorithm not in REQUIRED_CHECKSUM_ALGORITHMS and checked in payload_files
+    return False
+
+
+def compare_file_listing(remote_files: dict[str, int], version: str) -> tuple[list[str], list[str]]:
+    """Returns the required files missing from a deployment listing, and the listed files that
+    are neither required nor an optional checksum."""
+    expected_file_set = set(expected_files_for_version(version))
+    remote_file_set = set(remote_files)
+    missing_files = sorted(expected_file_set - remote_file_set)
+    unexpected_files = sorted(
+        path
+        for path in remote_file_set - expected_file_set
+        if not is_optional_checksum_file(path, version)
+    )
+    return missing_files, unexpected_files
+
+
+def checksum_errors(root: Path, relative_path: str) -> list[str]:
+    """Checks a downloaded payload and its signature against every checksum file present.
+    A missing required checksum of the payload is an error."""
+    errors: list[str] = []
+    payload = root / relative_path
+    signature = root / f"{relative_path}.asc"
+    for signed_path in (payload, signature):
+        for algorithm in CHECKSUM_ALGORITHMS:
+            checksum_path = root / f"{signed_path.relative_to(root)}.{algorithm}"
+            if not checksum_path.exists():
+                if signed_path == payload and algorithm in REQUIRED_CHECKSUM_ALGORITHMS:
+                    errors.append(f"{checksum_path.relative_to(root)} is missing")
+                continue
+            actual = digest_file(signed_path, algorithm)
+            expected = read_checksum(checksum_path)
+            if actual != expected:
+                errors.append(
+                    f"{checksum_path.relative_to(root)} is {expected}, "
+                    f"but {signed_path.relative_to(root)} hashes to {actual}"
+                )
+    return errors
 
 
 def expected_payload_files_for_version(version: str) -> list[str]:
@@ -448,17 +503,16 @@ def validate_deployment(base_url: str, token: str, deployment_id: str, version: 
     print()
 
     remote_files = browse_deployment_files(base_url, token, deployment_id)
-    expected_file_set = set(expected_files_for_version(version))
-    remote_file_set = set(remote_files)
-    missing_files = sorted(expected_file_set - remote_file_set)
-    unexpected_files = sorted(remote_file_set - expected_file_set)
+    missing_files, unexpected_files = compare_file_listing(remote_files, version)
     if missing_files:
         errors.append("missing expected files: " + ", ".join(missing_files))
     if unexpected_files:
         errors.append("unexpected files in deployment: " + ", ".join(unexpected_files))
 
     checked: list[FileCheck] = []
-    expected_files = expected_files_for_version(version)
+    expected_files = expected_files_for_version(version) + sorted(
+        path for path in remote_files if is_optional_checksum_file(path, version)
+    )
     total_files = len(expected_files)
     with tempfile.TemporaryDirectory(prefix="spectre-central-") as tmp:
         tmp_path = Path(tmp)
@@ -475,17 +529,7 @@ def validate_deployment(base_url: str, token: str, deployment_id: str, version: 
 
         for relative_path in expected_payload_files_for_version(version):
             payload = tmp_path / relative_path
-            signature = tmp_path / f"{relative_path}.asc"
-            for signed_path in (payload, signature):
-                for algorithm in CHECKSUM_ALGORITHMS:
-                    checksum_path = tmp_path / f"{signed_path.relative_to(tmp_path)}.{algorithm}"
-                    actual = digest_file(signed_path, algorithm)
-                    expected = read_checksum(checksum_path)
-                    if actual != expected:
-                        errors.append(
-                            f"{checksum_path.relative_to(tmp_path)} is {expected}, "
-                            f"but {signed_path.relative_to(tmp_path)} hashes to {actual}"
-                        )
+            errors.extend(checksum_errors(tmp_path, relative_path))
 
             if relative_path.endswith(".jar") and not relative_path.endswith(("-sources.jar", "-javadoc.jar")):
                 component = Path(relative_path).parent.parent.name
@@ -522,10 +566,7 @@ def print_files(base_url: str, token: str, deployment_id: str, version: str) -> 
     for relative_path, size in sorted(remote_files.items()):
         print(f"{size:>10}  {relative_path}")
 
-    expected_file_set = set(expected_files_for_version(version))
-    remote_file_set = set(remote_files)
-    missing_files = sorted(expected_file_set - remote_file_set)
-    unexpected_files = sorted(remote_file_set - expected_file_set)
+    missing_files, unexpected_files = compare_file_listing(remote_files, version)
     if missing_files or unexpected_files:
         print("\nFile listing differs from expected Spectre release shape:", file=sys.stderr)
         for relative_path in missing_files:
