@@ -34,8 +34,9 @@ internal val COMPOSE_HOST_MARKER_FQNS: List<String> =
  * rather than reaching directly into the bootstrap machinery.
  */
 /**
- * Result of [AgentBootstrap.findSpectre] so callers can release inject payload resources on detach
- * (close [SpectreInjectClassLoader], delete extracted jar).
+ * Result of [AgentBootstrap.findSpectre]. When Spectre was injected, it also carries the inject
+ * payload ([SpectreInjectClassLoader] and its extracted jar), which [AgentBootstrap] keeps for the
+ * rest of the JVM's life and releases only when the JVM shuts down.
  */
 internal data class SpectreBootstrapResult(
     val classLoader: ClassLoader,
@@ -50,6 +51,17 @@ internal data class SpectreBootstrapResult(
 
 internal object AgentBootstrap {
     /**
+     * The injected Spectre runtime, kept for the rest of the JVM's life once injection succeeds.
+     *
+     * A closed injected loader cannot be found again: the classes it already defined stay visible
+     * to the bootstrap scan, but it can no longer define the ones it has not used yet. So every
+     * later attach in this JVM reuses this runtime, whether the previous attacher sent Detach
+     * (#574) or vanished without it (#557). A shutdown hook closes the loader and deletes its jar
+     * when the JVM exits.
+     */
+    @Volatile private var injectedRuntime: SpectreBootstrapResult? = null
+
+    /**
      * Walks the target JVM's loaded classes via [Instrumentation.getAllLoadedClasses], filters to
      * those named [COMPOSE_AUTOMATOR_FQN], and applies the [selectClassLoader] rule.
      *
@@ -60,7 +72,8 @@ internal object AgentBootstrap {
      * the canonical example.
      *
      * If that also fails, attempts **injection**: extract the nested inject-runtime jar and load
-     * Spectre core via [SpectreInjectClassLoader] parented on a Compose host loader.
+     * Spectre core via [SpectreInjectClassLoader] parented on a Compose host loader. Once a JVM has
+     * an injected runtime, every later call returns that same runtime.
      *
      * @throws SpectreNotOnClasspathException when neither preinstalled core nor inject payload can
      *   supply `ComposeAutomator` (e.g. inject resource missing).
@@ -70,6 +83,9 @@ internal object AgentBootstrap {
      *   emerges from the selection rule.
      */
     fun findSpectre(instrumentation: Instrumentation): SpectreBootstrapResult {
+        injectedRuntime?.let {
+            return it
+        }
         val initialCandidates = collectCandidateClassLoaders(instrumentation, COMPOSE_AUTOMATOR_FQN)
         if (initialCandidates.isNotEmpty()) {
             return SpectreBootstrapResult(selectClassLoader(initialCandidates))
@@ -98,11 +114,19 @@ internal object AgentBootstrap {
     /**
      * Locates a Compose-capable host classloader for injection (D-14 when multiple).
      *
+     * Looks, in order, for a loaded Compose marker class, for Compose on [systemLoader], and for
+     * Compose behind an IntelliJ plugin classloader. The last case covers IntelliJ Platform IDEs,
+     * which keep Compose in a plugin module loader and load no Compose class until a Compose
+     * surface opens (#574).
+     *
      * @throws ComposeNotOnClasspathException when no Compose marker class is loadable.
      * @throws AmbiguousSpectreClasspathException when multiple hosts match and D-14 cannot pick
      *   one.
      */
-    fun findComposeHostClassLoader(instrumentation: Instrumentation): ClassLoader {
+    fun findComposeHostClassLoader(
+        instrumentation: Instrumentation,
+        systemLoader: ClassLoader = ClassLoader.getSystemClassLoader(),
+    ): ClassLoader {
         val candidates =
             COMPOSE_HOST_MARKER_FQNS.flatMap { fqn ->
                     collectCandidateClassLoaders(instrumentation, fqn)
@@ -111,39 +135,69 @@ internal object AgentBootstrap {
         if (candidates.isNotEmpty()) {
             return selectClassLoader(candidates) { throw ComposeNotOnClasspathException() }
         }
-        forceLoadComposeHostFromSystemLoader()?.let {
+        systemLoader.composeHostOrNull()?.let {
             return it
+        }
+        val pluginHosts = composeHostsBehindPluginLoaders(instrumentation)
+        if (pluginHosts.isNotEmpty()) {
+            return selectClassLoader(pluginHosts) { throw ComposeNotOnClasspathException() }
         }
         throw ComposeNotOnClasspathException()
     }
 
+    /**
+     * Whether an attach that finds no Compose may wait for Compose to load instead of failing
+     * (#574).
+     *
+     * True for IntelliJ Platform targets, which this recognises by IntelliJ's plugin classloader
+     * class being loaded. An IDE loads Compose only when the first Compose surface opens, so an
+     * attach made from the Welcome screen has to wait for it. Any other JVM without Compose keeps
+     * failing with [ComposeNotOnClasspathException], because that is far more often the wrong
+     * process than a process that will load Compose later.
+     */
+    fun canWaitForCompose(instrumentation: Instrumentation): Boolean =
+        instrumentation.allLoadedClasses.any { it.name == PLUGIN_CLASS_LOADER_FQN }
+
+    @Synchronized
     private fun injectSpectre(instrumentation: Instrumentation): SpectreBootstrapResult? {
+        injectedRuntime?.let {
+            return it
+        }
+        // Compose comes first: an IDE waiting for Compose retries this on every request, and
+        // must not extract a jar each time just to delete it again.
+        val composeHost = findComposeHostClassLoader(instrumentation)
         val injectJar = InjectRuntimeLocator.extractInjectJar() ?: return null
         System.err.println(
             "[spectre-agent] spectre-core not on target classpath; injecting from $injectJar"
         )
+        System.err.println("[spectre-agent] Compose host classloader: $composeHost")
         var injectLoader: SpectreInjectClassLoader? = null
-        return try {
-            val composeHost = findComposeHostClassLoader(instrumentation)
-            System.err.println("[spectre-agent] Compose host classloader: $composeHost")
-            injectLoader = openInjectClassLoader(injectJar, composeHost)
-            // Prove ComposeAutomator resolves from the inject jar before returning.
-            injectLoader.loadClass(COMPOSE_AUTOMATOR_FQN)
-            SpectreBootstrapResult(
-                classLoader = injectLoader,
-                injectJar = injectJar,
-                injectClassLoader = injectLoader,
-            )
-        } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
-            // Cleanup must run for any failure after extract (classloader open, Compose host
-            // selection, loadClass). Specific typed catches would miss LinkageError-derived
-            // RuntimeExceptions from the target Compose stack.
-            // Close loader before delete so Windows can unlink the jar file.
-            runCatching { injectLoader?.close() }
-            runCatching { java.nio.file.Files.deleteIfExists(injectJar) }
-            throw error
-        }
+        val runtime =
+            try {
+                injectLoader = openInjectClassLoader(injectJar, composeHost)
+                // Prove ComposeAutomator resolves from the inject jar before returning.
+                injectLoader.loadClass(COMPOSE_AUTOMATOR_FQN)
+                SpectreBootstrapResult(
+                    classLoader = injectLoader,
+                    injectJar = injectJar,
+                    injectClassLoader = injectLoader,
+                )
+            } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
+                // Cleanup must run for any failure after extract (classloader open, loadClass).
+                // Specific typed catches would miss LinkageError-derived RuntimeExceptions from
+                // the target Compose stack.
+                // Close loader before delete so Windows can unlink the jar file.
+                runCatching { injectLoader?.close() }
+                runCatching { java.nio.file.Files.deleteIfExists(injectJar) }
+                throw error
+            }
+        Runtime.getRuntime()
+            .addShutdownHook(Thread(runtime::releaseInjectResources, INJECT_CLEANUP_HOOK_NAME))
+        injectedRuntime = runtime
+        return runtime
     }
+
+    private const val INJECT_CLEANUP_HOOK_NAME = "spectre-agent-inject-cleanup"
 }
 
 /**
@@ -171,12 +225,15 @@ private fun forceLoadFromSystemLoader(): ClassLoader? =
         null
     }
 
-private fun forceLoadComposeHostFromSystemLoader(): ClassLoader? {
-    val system = ClassLoader.getSystemClassLoader()
+/**
+ * Returns the loader that defines a Compose marker class for this loader, or null when this loader
+ * cannot see Compose. Loads the marker without initialising it.
+ */
+private fun ClassLoader.composeHostOrNull(): ClassLoader? {
     for (fqn in COMPOSE_HOST_MARKER_FQNS) {
         try {
-            val loaded = Class.forName(fqn, false, system)
-            return loaded.classLoader ?: system
+            val loaded = Class.forName(fqn, false, this)
+            return loaded.classLoader ?: this
         } catch (_: ClassNotFoundException) {
             // try next marker
         } catch (_: NoClassDefFoundError) {
@@ -184,6 +241,30 @@ private fun forceLoadComposeHostFromSystemLoader(): ClassLoader? {
         }
     }
     return null
+}
+
+/**
+ * Asks every IntelliJ plugin classloader that has loaded a class whether it can see Compose, and
+ * returns the distinct loaders that define Compose for them.
+ *
+ * In IntelliJ Platform 2024.2+ Compose is a plugin module, so the system loader cannot see it. Its
+ * own loader may have loaded nothing yet, but a plugin that depends on it can see it through
+ * delegation, and the class it loads comes from the module's loader. A cheap resource lookup skips
+ * the plugins that cannot see Compose at all.
+ */
+private fun composeHostsBehindPluginLoaders(instrumentation: Instrumentation): List<ClassLoader> =
+    instrumentation.allLoadedClasses
+        .asSequence()
+        .mapNotNull { it.classLoader }
+        .distinct()
+        .filter { it.javaClass.name == PLUGIN_CLASS_LOADER_FQN }
+        .filter { loader -> COMPOSE_HOST_MARKER_RESOURCES.any { loader.getResource(it) != null } }
+        .mapNotNull { it.composeHostOrNull() }
+        .distinct()
+        .toList()
+
+private val COMPOSE_HOST_MARKER_RESOURCES: List<String> = COMPOSE_HOST_MARKER_FQNS.map {
+    it.replace('.', '/') + ".class"
 }
 
 /**

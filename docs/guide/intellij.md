@@ -252,6 +252,13 @@ If a plugin includes `spectre-core`, attach uses the instrumented path.
 Both attach paths expose the same API. Code inside the IDE can call
 `ComposeAutomator` in-process.
 
+You can attach before the IDE shows any Compose UI, for example on the Welcome screen.
+IntelliJ loads Compose only when the first Compose surface opens. Until then, attach
+succeeds and reports no Compose windows. Node, input, and screenshot operations fail
+with `nodeNotFound` or `inputRejected`. When a Compose surface opens, Spectre starts
+serving it without a new attach. `waitForNode` also waits for Compose to load, so you
+can wait for a node in a tool window that has not opened yet.
+
 Spectre maintainers check inject with the no-core sample through
 `./gradlew :sample-intellij-plugin:stockInjectUiTest`. This opt-in task needs a
 graphical host and does not run on every pull request. The spike recipe is at:

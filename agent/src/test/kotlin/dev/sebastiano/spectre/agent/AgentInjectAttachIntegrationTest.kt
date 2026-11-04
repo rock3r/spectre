@@ -97,6 +97,35 @@ class AgentInjectAttachIntegrationTest {
         }
     }
 
+    @Test
+    fun `inject re-attach after an explicit detach serves from a working injected runtime`() {
+        // #574: Detach used to close the injected loader, and the next attach found the closed
+        // loader again through ComposeAutomator. The first session only lists windows, so the
+        // tree dump and the wait after re-attach need classes that loader has not defined yet.
+        assumeWindowsAttachE2eAllowed()
+        assumeFalse(
+            GraphicsEnvironment.isHeadless(),
+            "Requires non-headless JVM for Compose Desktop",
+        )
+        val agentJar = locateAgentJarOrSkip()
+
+        spawnInjectFixture().use { fixture ->
+            AgentAttach.attach(pid = fixture.pid, options = AttachOptions(agentJarPath = agentJar))
+                .use { first ->
+                    assertTrue(first.windows().isNotEmpty(), "first attach should see the fixture")
+                }
+
+            AgentAttach.attach(pid = fixture.pid, options = AttachOptions(agentJarPath = agentJar))
+                .use { second ->
+                    assertTrue(
+                        second.allNodes().isNotEmpty(),
+                        "expected a tree dump after detach and re-attach",
+                    )
+                    second.waitForNode(tag = TAG_BUTTON)
+                }
+        }
+    }
+
     private fun spawnInjectFixture(): FixtureProcess {
         val javaExe =
             if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true))

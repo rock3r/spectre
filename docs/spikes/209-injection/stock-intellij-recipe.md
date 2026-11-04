@@ -161,7 +161,8 @@ Or rely on classpath discovery of `spectre-agent-runtime` and call
 | `ide.popup.*` after opening popup | Popup roots tracked (open via UI or later Robot) |
 | Agent log: `spectre-core not on target classpath; injecting` | Inject path used (not instrumented) |
 | JEP 451 stderr / attach reject | Missing `EnableDynamicAgentLoading` |
-| `ComposeNotOnClasspathException` | No Compose host in that process |
+| `ComposeNotOnClasspathException` | No Compose host in that process (not an IntelliJ Platform JVM) |
+| Empty `windows()` right after attach to an IDE | No Compose surface has opened yet; Spectre serves it once one opens (#574) |
 | `SpectreNotOnClasspathException` | Inject resource missing from agent-runtime jar |
 | Empty tags with sample plugin closed | Tool window not showing / not composed yet |
 
