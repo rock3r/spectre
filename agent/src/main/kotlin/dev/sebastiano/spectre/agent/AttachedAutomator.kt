@@ -245,10 +245,13 @@ internal constructor(
     /**
      * Capture a PNG of a resolved node's on-screen bounds (#362).
      *
-     * Preferentially uses in-process `screenshot(AutomatorNode)` (native window-scoped) when the
-     * target has the recording capture bridge. When that bridge is absent — typical inject attach
-     * without a preinstalled recording module — falls back to region capture of the node's
-     * on-screen bounds, matching attach window screenshot policy.
+     * The target takes a native window-scoped still through its own `screenshot(AutomatorNode)`,
+     * which needs `spectre-recording` and its platform helper on the target's classpath. Without
+     * them, with a target `spectre-core` that is too old, or when the native still fails, this
+     * throws [SpectreAgentException] with a message that says why. It never returns a crop of the
+     * desktop, because a crop can include other windows that cover the target (#597). For a
+     * window-scoped still of an attached application without `spectre-recording`, use `spectre
+     * capture` through the Spectre daemon; its `capture.json` gives each node's bounds in the PNG.
      */
     @Throws(IOException::class)
     public fun screenshot(node: NodeSnapshotDto): ByteArray {
