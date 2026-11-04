@@ -2047,8 +2047,14 @@ def prepare_linux_portal_token_env(root: Path, out_dir: Path) -> dict[str, str]:
     }
     helper = linux_wayland_helper_path(root)
     if helper is not None:
-        env["SPECTRE_WAYLAND_HELPER"] = str(_private_helper_copy(helper, session_dir / "bin"))
+        private = linux_private_wayland_helper_path(out_dir)
+        env["SPECTRE_WAYLAND_HELPER"] = str(_private_helper_copy(helper, private.parent))
     return env
+
+
+def linux_private_wayland_helper_path(out_dir: Path) -> Path:
+    """Where [prepare_linux_portal_token_env] puts this checkout's copy of the helper."""
+    return Path(out_dir) / "wayland-session" / "bin" / WAYLAND_HELPER_NAME
 
 
 def _private_helper_copy(helper: Path, dest_dir: Path) -> Path:
@@ -2384,6 +2390,315 @@ def portal_warmup_failure_hint(log_text: str) -> str | None:
             "the Spectre window; re-run and approve Share + Remember for the whole screen"
         )
     return None
+
+
+MUTTER_VIRTUAL_MONITOR_SCRIPT = Path(__file__).resolve().parent / "mutter_virtual_monitor.py"
+SEAT_MONITOR_QUERY_TIMEOUT_SECONDS = 15
+# The keeper waits up to 10s for Mutter to list the new monitor; leave room for D-Bus start-up.
+SEAT_MONITOR_HOLD_TIMEOUT_SECONDS = 30
+SEAT_MONITOR_CLOSE_TIMEOUT_SECONDS = 10
+SEAT_MONITOR_FIXES = (
+    "connect a display or a dummy HDMI plug to the machine, or connect to the seat over "
+    "RDP (gnome-remote-desktop adds a monitor), then re-run"
+)
+
+
+def _parse_json_line(text: str, what: str) -> dict[str, Any]:
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            return value
+    raise RuntimeError(f"{what}: no JSON in output {(text or '').strip()[:200]!r}")
+
+
+def parse_mutter_monitor_query(text: str) -> list[dict[str, str]]:
+    """Monitors from `mutter_virtual_monitor.py query`. Raises RuntimeError on any error."""
+    payload = _parse_json_line(text, "Mutter monitor query")
+    if "error" in payload:
+        raise RuntimeError(f"Mutter monitor query failed: {payload['error']}")
+    monitors = payload.get("monitors")
+    if not isinstance(monitors, list):
+        raise RuntimeError(f"Mutter monitor query: no monitors list in {payload!r}")
+    return [dict(monitor) for monitor in monitors]
+
+
+def parse_virtual_monitor_ready(text: str) -> dict[str, str]:
+    """The monitor from the first line of `mutter_virtual_monitor.py hold`, or RuntimeError."""
+    payload = _parse_json_line(text, "Mutter virtual monitor")
+    if payload.get("ready") is not True or not isinstance(payload.get("monitor"), dict):
+        raise RuntimeError(str(payload.get("error") or f"not ready: {payload!r}"))
+    return dict(payload["monitor"])
+
+
+def describe_monitor(monitor: Mapping[str, str]) -> str:
+    return (
+        f"{monitor.get('connector', '?')} ({monitor.get('vendor', '?')} "
+        f"{monitor.get('product', '?')} serial {monitor.get('serial', '?')})"
+    )
+
+
+def no_seat_monitor_failure(detail: str) -> str:
+    """Cell detail when GNOME has no monitor and the smoke could not add a virtual one."""
+    return (
+        "GNOME reports no monitor on this seat, so screen capture has nothing to record, and "
+        f"the smoke could not add a Mutter virtual monitor ({detail}). Fix: {SEAT_MONITOR_FIXES}"
+    )
+
+
+def virtual_monitor_warmup_hint(monitor: Mapping[str, str]) -> str:
+    """Why the warmup can prompt again when it runs on a virtual monitor this run created."""
+    return (
+        f"this run added virtual monitor {describe_monitor(monitor)}. The portal restore "
+        "token names one monitor by vendor:product:serial, and Mutter gives every new virtual "
+        "monitor a new serial, so a token saved on another monitor shows the Share dialog "
+        "again, and nobody can answer it on a seat with no display. For unattended runs, give "
+        "the seat a monitor whose identity stays the same (a display, a dummy HDMI plug, or a "
+        "virtual monitor kept for the whole login session) and approve the dialog once; see "
+        "docs/RELEASE-SMOKE.md"
+    )
+
+
+def wayland_x11_fallback_failure(virtual_monitor: Mapping[str, str] | None) -> str:
+    """host-native-recording detail on a Wayland seat when portal-token-warmup did not pass.
+
+    Without a grant the cell would fall back to the X11 smoke on the Wayland seat. There JDK
+    Robot captures the screen through its own portal ScreenCast request, which opens another
+    Share dialog and waits for it until the cell times out (or, with no monitor, returns
+    black frames). That result says nothing about Spectre's Wayland recording.
+    """
+    where = (
+        f" on virtual monitor {describe_monitor(virtual_monitor)}"
+        if virtual_monitor is not None
+        else ""
+    )
+    return (
+        f"not run: portal-token-warmup did not pass{where}, and the X11 fallback on this "
+        "Wayland seat captures through JDK Robot's own portal ScreenCast request, which waits "
+        "for a Share dialog that nobody may answer. Fix portal-token-warmup first"
+    )
+
+
+def session_helper_pids(
+    helper: Path, *, uid: int | None = None, proc_root: Path = Path("/proc")
+) -> list[int]:
+    """PIDs of `<helper> --session` processes of this user.
+
+    The helper path is this run's private copy under the smoke out dir, so a match was
+    started by an earlier smoke run in the same checkout, never by another tool.
+    """
+    if uid is None:
+        uid = os.getuid()
+    root = Path(proc_root)
+    try:
+        entries = [entry for entry in root.iterdir() if entry.name.isdigit()]
+    except OSError:
+        return []
+    found: list[int] = []
+    for entry in entries:
+        try:
+            if entry.stat().st_uid != uid:
+                continue
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        args = [arg.decode("utf-8", errors="replace") for arg in raw.split(b"\0") if arg]
+        if len(args) >= 2 and Path(args[0]) == Path(helper) and "--session" in args[1:]:
+            found.append(int(entry.name))
+    return sorted(found)
+
+
+def stop_session_helpers(helper: Path, *, timeout: float = 5.0) -> list[int]:
+    """SIGTERM this checkout's long-lived Wayland session helper; SIGKILL if it lingers.
+
+    The helper holds a portal stream on one monitor. When that monitor goes away the stream
+    is dead, but the helper keeps serving its socket, and the next warmup fails with
+    `gst-launch exited with status 255`. A new helper opens a fresh portal session.
+    """
+    pids = session_helper_pids(helper)
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    deadline = time.monotonic() + timeout
+    alive = list(pids)
+    while alive and time.monotonic() < deadline:
+        time.sleep(0.1)
+        alive = [pid for pid in alive if pid in session_helper_pids(helper)]
+    for pid in alive:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    return pids
+
+
+@dataclass
+class SeatMonitorStatus:
+    """Outcome of [SeatMonitorGuard.ensure].
+
+    monitors: Mutter's monitors before the guard acted, or None when Mutter could not be
+    asked (not GNOME, no PyGObject). Then the guard changes nothing.
+    created: the virtual monitor the guard added for this run.
+    error: set when there is no monitor and none could be added. Capture cells must fail.
+    """
+
+    monitors: list[dict[str, str]] | None
+    created: dict[str, str] | None = None
+    error: str | None = None
+    note: str = ""
+
+
+class SeatMonitorGuard:
+    """Keep a Mutter virtual monitor alive for the run when the GNOME seat has none.
+
+    The monitor lives as long as the `mutter_virtual_monitor.py hold` child. The child
+    reads its stdin pipe and stops at EOF, so the monitor also goes away when this process
+    dies without running [close].
+    """
+
+    def __init__(self, keeper_argv: Sequence[str] | None = None) -> None:
+        self._keeper = list(keeper_argv or [sys.executable, str(MUTTER_VIRTUAL_MONITOR_SCRIPT)])
+        self._proc: subprocess.Popen[bytes] | None = None
+        self._helper: Path | None = None
+        self._log_path: Path | None = None
+
+    def __enter__(self) -> SeatMonitorGuard:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+    def _log(self, text: str) -> None:
+        if self._log_path is None:
+            return
+        try:
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._log_path.open("a", encoding="utf-8") as handle:
+                handle.write(text.rstrip() + "\n")
+        except OSError:
+            pass
+
+    def ensure(
+        self,
+        *,
+        helper: Path,
+        log_path: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> SeatMonitorStatus:
+        self._helper = Path(helper)
+        self._log_path = log_path
+        child_env = dict(os.environ if env is None else env)
+        try:
+            query = subprocess.run(
+                [*self._keeper, "query"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=SEAT_MONITOR_QUERY_TIMEOUT_SECONDS,
+                env=child_env,
+                check=False,
+            )
+            output = query.stdout.decode("utf-8", errors="replace")
+            self._log(f"$ {' '.join(self._keeper)} query\n{output}")
+            monitors = parse_mutter_monitor_query(output)
+        except (OSError, subprocess.TimeoutExpired, RuntimeError) as error:
+            return SeatMonitorStatus(monitors=None, note=f"seat monitor check skipped: {error}")
+        if monitors:
+            return SeatMonitorStatus(
+                monitors=monitors,
+                note="seat monitors: " + ", ".join(describe_monitor(m) for m in monitors),
+            )
+
+        stale = stop_session_helpers(self._helper)
+        if stale:
+            self._log(f"stopped stale session helper(s) {stale}: their monitor is gone")
+        try:
+            created = self._start_hold(child_env)
+        except RuntimeError as error:
+            self._log(f"virtual monitor failed: {error}")
+            self.close()
+            return SeatMonitorStatus(monitors=[], error=no_seat_monitor_failure(str(error)))
+        return SeatMonitorStatus(
+            monitors=[],
+            created=created,
+            note=(
+                "seat has no monitor: added Mutter virtual monitor "
+                f"{describe_monitor(created)} for this run"
+            ),
+        )
+
+    def _start_hold(self, env: Mapping[str, str]) -> dict[str, str]:
+        import selectors  # noqa: PLC0415 - the guard only runs on Linux seats
+
+        stderr: Any = subprocess.DEVNULL
+        if self._log_path is not None:
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            stderr = self._log_path.open("ab")
+        try:
+            self._proc = subprocess.Popen(
+                [*self._keeper, "hold"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=stderr,
+                env=dict(env),
+            )
+        except OSError as error:
+            raise RuntimeError(f"cannot start {self._keeper}: {error}") from error
+        finally:
+            if stderr is not subprocess.DEVNULL:
+                stderr.close()
+        assert self._proc.stdout is not None
+        selector = selectors.DefaultSelector()
+        selector.register(self._proc.stdout, selectors.EVENT_READ)
+        line = b""
+        deadline = time.monotonic() + SEAT_MONITOR_HOLD_TIMEOUT_SECONDS
+        try:
+            while not line.endswith(b"\n"):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not selector.select(remaining):
+                    raise RuntimeError(
+                        "no answer from the virtual monitor keeper in "
+                        f"{SEAT_MONITOR_HOLD_TIMEOUT_SECONDS}s"
+                    )
+                chunk = os.read(self._proc.stdout.fileno(), 4096)
+                if not chunk:
+                    break
+                line += chunk
+        finally:
+            selector.close()
+        text = line.decode("utf-8", errors="replace")
+        self._log(f"$ {' '.join(self._keeper)} hold\n{text}")
+        return parse_virtual_monitor_ready(text)
+
+    def close(self) -> None:
+        """Stop the session helper that streams from the virtual monitor, then remove it."""
+        proc, self._proc = self._proc, None
+        if proc is None:
+            return
+        if self._helper is not None and proc.poll() is None:
+            stop_session_helpers(self._helper)
+        try:
+            if proc.stdin is not None:
+                proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=SEAT_MONITOR_CLOSE_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try:
+                proc.wait(timeout=SEAT_MONITOR_CLOSE_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        if proc.stdout is not None:
+            proc.stdout.close()
 
 
 def linux_toolchain_path(environ: Mapping[str, str] | None = None) -> str:

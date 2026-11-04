@@ -38,6 +38,7 @@ from smoke_lib import (  # noqa: E402
     RESULT_FAIL,
     RESULT_PASS,
     ScenarioResult,
+    SeatMonitorGuard,
     apply_linux_seat_env,
     apply_linux_toolchain_path,
     assert_junit_testcases_passed,
@@ -49,6 +50,8 @@ from smoke_lib import (  # noqa: E402
     headed_robot_missing_surface,
     WAYLAND_PORTAL_WARMUP_TOKEN_KEYS,
     linux_portal_token_path,
+    linux_private_wayland_helper_path,
+    stop_session_helpers,
     build_report,
     collect_preflight,
     ensure_macos_screencapture_helper,
@@ -62,6 +65,8 @@ from smoke_lib import (  # noqa: E402
     portal_token_warmup_skip_reason,
     portal_warmup_failure_hint,
     portal_warmup_operator_banner,
+    virtual_monitor_warmup_hint,
+    wayland_x11_fallback_failure,
     prepare_linux_portal_token_env,
     probe_macos_accessibility,
     probe_macos_screen_recording,
@@ -411,6 +416,16 @@ def _fresh_consumer_check(root: Path, version: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # On a GNOME seat with no display the run adds a Mutter virtual monitor. Remove it (and
+    # the session helper that streams from it) however the run ends.
+    seat_monitor = SeatMonitorGuard()
+    try:
+        return _main(argv, seat_monitor)
+    finally:
+        seat_monitor.close()
+
+
+def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--version",
@@ -648,6 +663,18 @@ def main(argv: list[str] | None = None) -> int:
 
     # --- Linux Wayland portal token warmup ---
     portal_skip = portal_token_warmup_skip_reason(system=system)
+    seat_monitor_error: str | None = None
+    virtual_monitor: dict[str, str] | None = None
+    if portal_skip is None:
+        # GNOME with no display connected (and no RDP client) has zero monitors: the portal
+        # stream fails and X11 captures are black. Add a virtual monitor for the run.
+        seat_status = seat_monitor.ensure(
+            helper=linux_private_wayland_helper_path(out_dir),
+            log_path=out_dir / "seat-monitor.log",
+        )
+        print(seat_status.note, flush=True)
+        seat_monitor_error = seat_status.error
+        virtual_monitor = seat_status.created
     if portal_skip is not None:
         add(
             scenario_result(
@@ -656,6 +683,16 @@ def main(argv: list[str] | None = None) -> int:
                 result="n/a",
                 reason=portal_skip,
                 hard=True,
+            )
+        )
+    elif seat_monitor_error is not None:
+        add(
+            scenario_result(
+                "portal-token-warmup",
+                name="Capture persistent ScreenCast restore token",
+                result=RESULT_FAIL,
+                detail=seat_monitor_error,
+                log=str(out_dir / "seat-monitor.log"),
             )
         )
     else:
@@ -678,6 +715,16 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 scenario_env = prepare_linux_portal_token_env(ROOT, out_dir)
         if scenario_env is not None:
+            # A `--session` helper left by an earlier run would serve the warmup without a new
+            # portal Start, so the restore token is not rewritten and the freshness check fails.
+            # A fresh helper proves the stored token still restores without a dialog.
+            leftover = stop_session_helpers(linux_private_wayland_helper_path(out_dir))
+            if leftover:
+                print(
+                    "portal-token-warmup: stopped session helper(s) left by an earlier run: "
+                    + " ".join(str(pid) for pid in leftover),
+                    flush=True,
+                )
             before_mtime = {
                 key: (
                     linux_portal_token_path(scenario_env, key).stat().st_mtime_ns + 1
@@ -715,6 +762,9 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 scenario_env = None
                 hint = portal_warmup_failure_hint(_read_log(warmup.log))
+                if virtual_monitor is not None:
+                    vm_hint = virtual_monitor_warmup_hint(virtual_monitor)
+                    hint = f"{hint}; {vm_hint}" if hint else vm_hint
                 if hint:
                     warmup = scenario_result(
                         "portal-token-warmup",
@@ -1257,6 +1307,30 @@ def main(argv: list[str] | None = None) -> int:
                 result="n/a",
                 reason="skipped via --skip-recording",
                 hard=True,
+            )
+        )
+    elif seat_monitor_error is not None:
+        add(
+            scenario_result(
+                "host-native-recording",
+                name="Host native recording smoke",
+                result=RESULT_FAIL,
+                detail=seat_monitor_error,
+                log=str(out_dir / "seat-monitor.log"),
+            )
+        )
+    elif portal_skip is None and scenario_env is None:
+        # Wayland seat without a portal grant: the X11 fallback would wait for JDK Robot's own
+        # Share dialog until the cell timeout. Point at the warmup instead.
+        add(
+            scenario_result(
+                "host-native-recording",
+                name="Host native recording smoke",
+                result=RESULT_FAIL,
+                detail=wayland_x11_fallback_failure(virtual_monitor),
+                log=next(
+                    (item.log for item in results if item.id == "portal-token-warmup"), ""
+                ),
             )
         )
     elif recording_task is None:

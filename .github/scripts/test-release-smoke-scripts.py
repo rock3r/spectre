@@ -1488,6 +1488,250 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
         self.assertIn("does not use", darwin or "")
 
 
+_MONITOR_META_1 = {
+    "connector": "Meta-1",
+    "vendor": "MetaVendor",
+    "product": "Virtual remote monitor",
+    "serial": "0x000003",
+}
+
+
+@unittest.skipIf(platform.system() == "Windows", "the seat monitor guard is POSIX-only")
+class SeatMonitorTest(unittest.TestCase):
+    """A GNOME Wayland seat with no monitor gets a Mutter virtual monitor for the run."""
+
+    def test_parse_mutter_monitor_query_lists_monitors(self):
+        monitors = smoke_lib.parse_mutter_monitor_query(
+            json.dumps({"monitors": [_MONITOR_META_1]}) + "\n"
+        )
+        self.assertEqual([_MONITOR_META_1], monitors)
+        self.assertEqual([], smoke_lib.parse_mutter_monitor_query('{"monitors": []}'))
+
+    def test_parse_mutter_monitor_query_reports_errors(self):
+        with self.assertRaisesRegex(RuntimeError, "ServiceUnknown"):
+            smoke_lib.parse_mutter_monitor_query(
+                '{"error": "GLib.Error: g-dbus-error-quark: ServiceUnknown"}'
+            )
+        with self.assertRaisesRegex(RuntimeError, "no JSON"):
+            smoke_lib.parse_mutter_monitor_query("Traceback (most recent call last):")
+        with self.assertRaisesRegex(RuntimeError, "monitors"):
+            smoke_lib.parse_mutter_monitor_query('{"something": 1}')
+
+    def test_parse_virtual_monitor_ready(self):
+        ready = smoke_lib.parse_virtual_monitor_ready(
+            json.dumps({"ready": True, "monitor": _MONITOR_META_1, "session": "/s/u3"})
+        )
+        self.assertEqual(_MONITOR_META_1, ready)
+        with self.assertRaisesRegex(RuntimeError, "Permission denied"):
+            smoke_lib.parse_virtual_monitor_ready(
+                '{"ready": false, "error": "AccessDenied: Permission denied"}'
+            )
+        with self.assertRaisesRegex(RuntimeError, "no JSON"):
+            smoke_lib.parse_virtual_monitor_ready("")
+
+    def test_no_seat_monitor_failure_names_the_fixes(self):
+        message = smoke_lib.no_seat_monitor_failure("Mutter refused RecordVirtual")
+        self.assertIn("no monitor", message)
+        self.assertIn("Mutter refused RecordVirtual", message)
+        self.assertIn("display", message)
+        self.assertIn("dummy HDMI plug", message)
+        self.assertIn("RDP", message)
+
+    def test_wayland_x11_fallback_failure_explains_the_skipped_cell(self):
+        # Measured on bepi (twice, once on a session-long virtual monitor): with no grant,
+        # :recording:runLinuxX11RecordingSmoke on the seat sat in JDK Robot's portal ScreenCast
+        # (ScreencastHelper.getRGBPixelsImpl) until the 300s cell timeout, waiting for a Share
+        # dialog nobody could answer.
+        detail = smoke_lib.wayland_x11_fallback_failure(None)
+        self.assertIn("portal-token-warmup", detail)
+        self.assertIn("Robot", detail)
+        self.assertIn("Share", detail)
+        self.assertNotIn("virtual monitor", detail)
+        added = smoke_lib.wayland_x11_fallback_failure(_MONITOR_META_1)
+        self.assertIn("Meta-1", added)
+        self.assertIn("virtual monitor", added)
+
+    def test_release_smoke_fails_recording_fast_on_a_wayland_seat_without_a_grant(self):
+        source = RELEASE_SMOKE.read_text(encoding="utf-8")
+        self.assertIn("elif portal_skip is None and scenario_env is None:", source)
+        self.assertIn("wayland_x11_fallback_failure(virtual_monitor)", source)
+
+    def test_release_smoke_stops_a_leftover_session_helper_before_the_warmup(self):
+        # Measured on bepi: a second run reused the first run's live `--session` helper, so no
+        # portal Start happened, the token file was not rewritten, and the freshness check
+        # failed the warmup although the recording worked.
+        source = RELEASE_SMOKE.read_text(encoding="utf-8")
+        stop = source.find("stop_session_helpers(linux_private_wayland_helper_path(out_dir))")
+        self.assertGreater(stop, 0)
+        self.assertLess(stop, source.find("wayland_portal_warmup_command(gradle)"))
+
+    @unittest.skipUnless(Path("/proc/self/cmdline").exists(), "needs Linux /proc")
+    def test_stop_session_helpers_terminates_a_live_helper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            helper = Path(tmp) / "bin" / "spectre-wayland-helper"
+            child = subprocess.Popen(
+                [str(helper), "-c", "import time; time.sleep(60)", "--session"],
+                executable=sys.executable,
+            )
+            try:
+                deadline = time.monotonic() + 5
+                while not smoke_lib.session_helper_pids(helper) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertEqual([child.pid], smoke_lib.stop_session_helpers(helper))
+                self.assertIsNotNone(child.wait(timeout=10))
+                self.assertEqual([], smoke_lib.session_helper_pids(helper))
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait()
+
+    def test_virtual_monitor_warmup_hint_explains_the_serial(self):
+        hint = smoke_lib.virtual_monitor_warmup_hint(_MONITOR_META_1)
+        self.assertIn("0x000003", hint)
+        self.assertIn("serial", hint)
+        self.assertIn("Share", hint)
+
+    def test_private_helper_path_is_where_the_warmup_runs_the_helper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            helper = smoke_lib.linux_wayland_helper_candidates(root)[0]
+            helper.parent.mkdir(parents=True)
+            helper.write_bytes(b"#!/bin/sh\n")
+            helper.chmod(0o755)
+            out_dir = Path(tmp) / "out"
+            env = smoke_lib.prepare_linux_portal_token_env(root, out_dir)
+            self.assertEqual(
+                str(smoke_lib.linux_private_wayland_helper_path(out_dir)),
+                env["SPECTRE_WAYLAND_HELPER"],
+            )
+
+    def test_session_helper_pids_matches_only_this_runs_helper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = Path(tmp) / "proc"
+            helper = Path(tmp) / "out" / "wayland-session" / "bin" / "spectre-wayland-helper"
+            self._fake_process(proc, 101, [str(helper), "--session"])
+            self._fake_process(proc, 102, [str(helper), "--record"])
+            self._fake_process(proc, 103, ["/other/spectre-wayland-helper", "--session"])
+            self._fake_process(proc, 104, ["/usr/bin/python3", str(helper), "--session"])
+            (proc / "self").mkdir()
+            uid = os.getuid()
+            self.assertEqual(
+                [101], smoke_lib.session_helper_pids(helper, uid=uid, proc_root=proc)
+            )
+            # Another user's processes are never ours to stop.
+            self.assertEqual(
+                [], smoke_lib.session_helper_pids(helper, uid=uid + 1, proc_root=proc)
+            )
+
+    @staticmethod
+    def _fake_process(proc_root: Path, pid: int, argv: list[str]) -> None:
+        entry = proc_root / str(pid)
+        entry.mkdir(parents=True)
+        (entry / "cmdline").write_bytes(b"\0".join(arg.encode() for arg in argv) + b"\0")
+
+    def _fake_keeper(self, tmp: str, *, monitors: list | None, hold: str) -> tuple[list[str], Path]:
+        """A stand-in for mutter_virtual_monitor.py. Records each call and stdin EOF."""
+        marker = Path(tmp) / "keeper.log"
+        script = Path(tmp) / "keeper.py"
+        query = (
+            json.dumps({"monitors": monitors})
+            if monitors is not None
+            else json.dumps({"error": "ServiceUnknown: org.gnome.Mutter.DisplayConfig"})
+        )
+        ready = '"ready": true' in hold
+        script.write_text(
+            "import sys\n"
+            f"marker = {str(marker)!r}\n"
+            "open(marker, 'a').write(sys.argv[1] + '\\n')\n"
+            "if sys.argv[1] == 'query':\n"
+            f"    print({query!r})\n"
+            f"    sys.exit({0 if monitors is not None else 1})\n"
+            f"print({hold!r}, flush=True)\n"
+            f"if not {ready!r}:\n"
+            "    sys.exit(1)\n"
+            "sys.stdin.read()\n"
+            "open(marker, 'a').write('eof\\n')\n",
+            encoding="utf-8",
+        )
+        return [sys.executable, str(script)], marker
+
+    def test_guard_does_nothing_when_a_monitor_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            keeper, marker = self._fake_keeper(tmp, monitors=[_MONITOR_META_1], hold="{}")
+            guard = smoke_lib.SeatMonitorGuard(keeper_argv=keeper)
+            status = guard.ensure(helper=Path(tmp) / "helper")
+            guard.close()
+            self.assertIsNone(status.error)
+            self.assertIsNone(status.created)
+            self.assertEqual([_MONITOR_META_1], status.monitors)
+            self.assertIn("Meta-1", status.note)
+            self.assertEqual(["query"], marker.read_text().split())
+
+    def test_guard_leaves_unknown_compositors_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            keeper, marker = self._fake_keeper(tmp, monitors=None, hold="{}")
+            guard = smoke_lib.SeatMonitorGuard(keeper_argv=keeper)
+            status = guard.ensure(helper=Path(tmp) / "helper")
+            guard.close()
+            self.assertIsNone(status.error)
+            self.assertIsNone(status.created)
+            self.assertIsNone(status.monitors)
+            self.assertIn("ServiceUnknown", status.note)
+            self.assertEqual(["query"], marker.read_text().split())
+
+    def test_guard_creates_a_virtual_monitor_and_removes_it_on_close(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ready = json.dumps({"ready": True, "monitor": _MONITOR_META_1})
+            keeper, marker = self._fake_keeper(tmp, monitors=[], hold=ready)
+            stopped: list[Path] = []
+            with unittest.mock.patch.object(
+                smoke_lib,
+                "stop_session_helpers",
+                side_effect=lambda helper, **_: stopped.append(helper) or [],
+            ):
+                guard = smoke_lib.SeatMonitorGuard(keeper_argv=keeper)
+                status = guard.ensure(helper=Path(tmp) / "helper")
+                self.assertIsNone(status.error)
+                self.assertEqual(_MONITOR_META_1, status.created)
+                self.assertIn("virtual monitor", status.note)
+                self.assertIn("Meta-1", status.note)
+                # A session helper left by an earlier run holds a stream on a monitor that is
+                # gone, so it cannot record any more: stop it before the warmup.
+                self.assertEqual([Path(tmp) / "helper"], stopped)
+                guard.close()
+                guard.close()  # idempotent
+            # The session helper streams from the virtual monitor: stop it before removing it.
+            self.assertEqual([Path(tmp) / "helper"] * 2, stopped)
+            self.assertEqual(["query", "hold", "eof"], marker.read_text().split())
+
+    def test_guard_fails_with_the_fix_when_mutter_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            refused = json.dumps({"ready": False, "error": "AccessDenied: Permission denied"})
+            keeper, _ = self._fake_keeper(tmp, monitors=[], hold=refused)
+            with unittest.mock.patch.object(smoke_lib, "stop_session_helpers", return_value=[]):
+                guard = smoke_lib.SeatMonitorGuard(keeper_argv=keeper)
+                status = guard.ensure(helper=Path(tmp) / "helper")
+                guard.close()
+            self.assertIsNone(status.created)
+            self.assertIsNotNone(status.error)
+            self.assertIn("Permission denied", status.error or "")
+            self.assertIn("dummy HDMI plug", status.error or "")
+
+    def test_release_smoke_wires_the_guard_around_capture_cells(self):
+        source = RELEASE_SMOKE.read_text(encoding="utf-8")
+        self.assertIn("SeatMonitorGuard()", source)
+        self.assertIn("seat_monitor.close()", source)
+        self.assertIn("virtual_monitor_warmup_hint(", source)
+        self.assertIn("seat_monitor_error", source)
+
+    def test_docs_describe_the_virtual_monitor(self):
+        docs = (ROOT / "docs" / "RELEASE-SMOKE.md").read_text(encoding="utf-8")
+        self.assertIn("virtual monitor", docs)
+        self.assertIn("mutter_virtual_monitor.py", docs)
+        self.assertIn("dummy HDMI plug", docs)
+        self.assertIn("serial", docs)
+
+
 class DocsAndSchemaPolicyTest(unittest.TestCase):
     """Docs must document extension + schemaVersion policy so operators need no chat history."""
 
