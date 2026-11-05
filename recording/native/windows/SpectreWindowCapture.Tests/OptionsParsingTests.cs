@@ -115,6 +115,126 @@ public sealed class OptionsParsingTests
         Assert.Contains("--crop-", ex.Message);
     }
 
+    [Fact]
+    public void ParseAcceptsWindowFrameFlagsWithoutTitle()
+    {
+        var options =
+            Options.Parse([
+                "--mode",
+                "screenshot",
+                "--source",
+                "window",
+                "--owner-pid",
+                "99",
+                "--frame-x",
+                "-1280",
+                "--frame-y",
+                "40",
+                "--frame-width",
+                "300",
+                "--frame-height",
+                "200",
+                "--output",
+                "out.png",
+            ]);
+
+        Assert.Null(options.Title);
+        Assert.Equal(new CaptureRect(-1280, 40, 300, 200), options.Frame);
+        Assert.Equal(99L, options.OwnerPid);
+    }
+
+    [Fact]
+    public void ParseRejectsFrameTogetherWithTitle()
+    {
+        var ex = Assert.Throws<ArgumentException>(() =>
+            Options.Parse([
+                "--mode",
+                "screenshot",
+                "--source",
+                "window",
+                "--title",
+                "Spectre",
+                "--owner-pid",
+                "99",
+                "--frame-x",
+                "0",
+                "--frame-y",
+                "0",
+                "--frame-width",
+                "300",
+                "--frame-height",
+                "200",
+                "--output",
+                "out.png",
+            ]));
+        Assert.Contains("mutually exclusive", ex.Message);
+    }
+
+    [Fact]
+    public void ParseRejectsPartialFrame()
+    {
+        var ex = Assert.Throws<ArgumentException>(() =>
+            Options.Parse([
+                "--mode",
+                "screenshot",
+                "--source",
+                "window",
+                "--owner-pid",
+                "99",
+                "--frame-x",
+                "0",
+                "--frame-y",
+                "0",
+                "--frame-width",
+                "300",
+                "--output",
+                "out.png",
+            ]));
+        Assert.Contains("--frame-height is required", ex.Message);
+    }
+
+    [Fact]
+    public void ParseRejectsWindowSourceWithoutTitleOrFrame()
+    {
+        var ex = Assert.Throws<ArgumentException>(() =>
+            Options.Parse([
+                "--mode",
+                "screenshot",
+                "--source",
+                "window",
+                "--owner-pid",
+                "99",
+                "--output",
+                "out.png",
+            ]));
+        Assert.Contains("--title or --frame-*", ex.Message);
+    }
+
+    [Fact]
+    public void ParseRejectsFrameOnRegionSource()
+    {
+        var ex = Assert.Throws<ArgumentException>(() =>
+            Options.Parse([
+                "--mode",
+                "recording",
+                "--source",
+                "region",
+                "--x",
+                "0",
+                "--y",
+                "0",
+                "--width",
+                "100",
+                "--height",
+                "100",
+                "--frame-x",
+                "0",
+                "--output",
+                "out.mp4",
+            ]));
+        Assert.Contains("--frame-", ex.Message);
+    }
+
     public static IEnumerable<object[]> InvalidArgumentCases()
     {
         yield return new object[] { "--output is required", Array.Empty<string>() };

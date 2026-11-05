@@ -26,6 +26,9 @@ internal sealed record Options(
     // Optional crop relative to the captured window top-left, in device pixels (WGC item space).
     // Only valid for window source. Fixed for the recording lifetime (issue #186).
     CaptureRect? Crop,
+    // Selects an untitled window (JWindow, plain AWT Window) by its GetWindowRect frame, in
+    // device pixels. Window source only; mutually exclusive with Title.
+    CaptureRect? Frame,
     int Fps,
     bool CaptureCursor,
     string Output)
@@ -67,6 +70,10 @@ internal sealed record Options(
         int? cropY = null;
         int? cropWidth = null;
         int? cropHeight = null;
+        int? frameX = null;
+        int? frameY = null;
+        int? frameWidth = null;
+        int? frameHeight = null;
         int? fps = null;
         bool? captureCursor = null;
         string? output = null;
@@ -110,6 +117,18 @@ internal sealed record Options(
                 case "--crop-height":
                     cropHeight = ParsePositiveInt(ReadValue(args, ref i, "--crop-height"), "--crop-height");
                     break;
+                case "--frame-x":
+                    frameX = ParseInt(ReadValue(args, ref i, "--frame-x"), "--frame-x");
+                    break;
+                case "--frame-y":
+                    frameY = ParseInt(ReadValue(args, ref i, "--frame-y"), "--frame-y");
+                    break;
+                case "--frame-width":
+                    frameWidth = ParsePositiveInt(ReadValue(args, ref i, "--frame-width"), "--frame-width");
+                    break;
+                case "--frame-height":
+                    frameHeight = ParsePositiveInt(ReadValue(args, ref i, "--frame-height"), "--frame-height");
+                    break;
                 case "--fps":
                     fps = ParsePositiveInt(ReadValue(args, ref i, "--fps"), "--fps");
                     break;
@@ -132,14 +151,30 @@ internal sealed record Options(
         var parsedSource = source ?? throw new ArgumentException("--source is required.");
         CaptureRect? region = null;
         CaptureRect? crop = null;
+        CaptureRect? frame = null;
         var cropPartsProvided =
             cropX is not null || cropY is not null || cropWidth is not null || cropHeight is not null;
+        var framePartsProvided =
+            frameX is not null || frameY is not null || frameWidth is not null || frameHeight is not null;
         switch (parsedSource)
         {
             case CaptureSource.Window:
-                if (string.IsNullOrWhiteSpace(title))
+                if (framePartsProvided)
                 {
-                    throw new ArgumentException("--title is required and must not be blank.");
+                    if (title is not null)
+                    {
+                        throw new ArgumentException("--title and --frame-* are mutually exclusive.");
+                    }
+
+                    frame = new CaptureRect(
+                        frameX ?? throw new ArgumentException("--frame-x is required when any --frame-* flag is set."),
+                        frameY ?? throw new ArgumentException("--frame-y is required when any --frame-* flag is set."),
+                        frameWidth ?? throw new ArgumentException("--frame-width is required when any --frame-* flag is set."),
+                        frameHeight ?? throw new ArgumentException("--frame-height is required when any --frame-* flag is set."));
+                }
+                else if (string.IsNullOrWhiteSpace(title))
+                {
+                    throw new ArgumentException("--title or --frame-* is required, and --title must not be blank.");
                 }
                 if (ownerPid is null)
                 {
@@ -159,6 +194,10 @@ internal sealed record Options(
                 {
                     throw new ArgumentException("--crop-* flags are only valid with --source window.");
                 }
+                if (framePartsProvided)
+                {
+                    throw new ArgumentException("--frame-* flags are only valid with --source window.");
+                }
                 region = new CaptureRect(
                     x ?? throw new ArgumentException("--x is required."),
                     y ?? throw new ArgumentException("--y is required."),
@@ -174,6 +213,7 @@ internal sealed record Options(
             ownerPid,
             region,
             crop,
+            frame,
             fps ?? 30,
             captureCursor ?? true,
             output);
