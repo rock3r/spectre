@@ -7,7 +7,9 @@ import dev.sebastiano.spectre.build.VerifyCliRuntimeImage
 import dev.sebastiano.spectre.build.VerifyCliShadowJar
 import dev.sebastiano.spectre.build.VerifyRoastCliDistribution
 import dev.sebastiano.spectre.build.VerifyRoastCliNativeLayout
+import dev.sebastiano.spectre.build.downloadWithRetries
 import io.github.fourlastor.construo.Target
+import io.github.fourlastor.construo.task.DownloadTask as ConstruoDownloadTask
 import io.github.fourlastor.construo.task.PackageTask
 import io.github.fourlastor.construo.task.jvm.CreateRuntimeImageTask as ConstruoCreateRuntimeImageTask
 import io.github.fourlastor.construo.task.jvm.RoastTask
@@ -144,6 +146,16 @@ tasks.named<ConstruoCreateRuntimeImageTask>("createRuntimeImageMacosArm64") {
 
 tasks.named<ConstruoCreateRuntimeImageTask>("createRuntimeImageWindowsX64") {
     targetJdkRoot.set(targetJdkHome("windowsX64"))
+}
+
+// Construo downloads the target JDKs and Roast from GitHub releases with a default HTTP client:
+// 10 s timeouts and no retry. Those large downloads stall past that on CI runners, so replace the
+// action with one that uses longer timeouts and retries.
+tasks.withType<ConstruoDownloadTask>().configureEach {
+    val source = src
+    val destination = dest
+    actions.clear()
+    doLast { downloadWithRetries(url = source.get(), dest = destination.get().asFile) }
 }
 
 // Construo strips native commands from its jlink image. Spectre must retain the `java` launcher:
