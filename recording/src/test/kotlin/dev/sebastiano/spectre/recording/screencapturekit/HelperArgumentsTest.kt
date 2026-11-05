@@ -31,6 +31,59 @@ class HelperArgumentsTest {
     }
 
     @Test
+    fun `toArgv emits a frame selector instead of a title for untitled windows`() {
+        val argv =
+            HelperArguments(
+                    mode = "screenshot",
+                    source = HelperSource.Window,
+                    pid = 4242,
+                    frame = Rectangle(-10, 20, 300, 200),
+                    output = Path.of("/tmp/shot.png"),
+                    fps = 30,
+                    captureCursor = false,
+                    discoveryTimeoutMs = 2000,
+                )
+                .toArgv(Path.of("/tmp/spectre-screencapture"))
+
+        assertEquals("-10,20,300,200", argv[argv.indexOf("--frame") + 1])
+        assertTrue(
+            "--title-contains" !in argv,
+            "a frame selector must not also send a title: $argv",
+        )
+    }
+
+    @Test
+    fun `window source rejects a title and a frame together`() {
+        assertFailsWith<IllegalArgumentException> {
+            HelperArguments(
+                source = HelperSource.Window,
+                pid = 4242,
+                titleContains = "Spectre/abc123",
+                frame = Rectangle(0, 0, 300, 200),
+                output = Path.of("/tmp/shot.png"),
+                fps = 30,
+                captureCursor = false,
+                discoveryTimeoutMs = 2000,
+            )
+        }
+    }
+
+    @Test
+    fun `window source rejects an empty frame`() {
+        assertFailsWith<IllegalArgumentException> {
+            HelperArguments(
+                source = HelperSource.Window,
+                pid = 4242,
+                frame = Rectangle(0, 0, 0, 200),
+                output = Path.of("/tmp/shot.png"),
+                fps = 30,
+                captureCursor = false,
+                discoveryTimeoutMs = 2000,
+            )
+        }
+    }
+
+    @Test
     fun `toArgv emits the documented flag set`() {
         val helper = Path.of("/tmp/spectre-screencapture")
         val args =

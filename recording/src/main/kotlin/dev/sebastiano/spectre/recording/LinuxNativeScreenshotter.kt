@@ -13,6 +13,7 @@ import dev.sebastiano.spectre.recording.portal.WaylandHelperBinaryExtractor
 import dev.sebastiano.spectre.recording.portal.awtDisplayBoundsContaining
 import dev.sebastiano.spectre.recording.portal.queryGtkFrameExtentsViaXprop
 import dev.sebastiano.spectre.recording.portal.toWire
+import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import java.awt.Insets
 import java.awt.Rectangle
@@ -54,6 +55,7 @@ internal constructor(
     private val json = Json { ignoreUnknownKeys = true }
 
     override fun captureWindow(window: TitledWindow, windowOwnerPid: Long): BufferedImage {
+        if (window is FramedWindow) return captureFramedWindow(window, windowOwnerPid)
         val title = window.title
         require(!title.isNullOrBlank()) {
             "LinuxNativeScreenshotter requires a non-blank window title; got \"$title\"."
@@ -85,6 +87,34 @@ internal constructor(
                 windowTitle = title,
                 cursorMode = CursorMode.HIDDEN,
                 region = region.toProtocolRegion(),
+                screenSize = null,
+                output = tempPng().toAbsolutePath().toString(),
+            )
+        )
+    }
+
+    /**
+     * Captures an untitled window (a `JWindow` or plain AWT `Window`) found by its device-pixel
+     * frame. X11 only: on Wayland the portal, not Spectre, picks the window, so a frame cannot
+     * select it.
+     */
+    private fun captureFramedWindow(window: FramedWindow, windowOwnerPid: Long): BufferedImage {
+        if (isWayland()) {
+            throw UnsupportedOperationException(
+                "Linux Wayland window screenshot of an untitled window (JWindow or plain AWT " +
+                    "Window) is not supported: the portal path finds windows by title only. " +
+                    "Run under X11/Xvfb, or capture an explicit region with screenshot(region)."
+            )
+        }
+        return capture(
+            Command.Screenshot(
+                backend = CaptureBackend.X11,
+                target = CaptureTarget.WINDOW,
+                displayName = displayNameProvider()?.takeIf { it.isNotBlank() },
+                windowFrame = window.deviceFrame.toProtocolRegion(),
+                windowOwnerPid = windowOwnerPid,
+                cursorMode = CursorMode.HIDDEN,
+                region = window.bounds.toProtocolRegion(),
                 screenSize = null,
                 output = tempPng().toAbsolutePath().toString(),
             )

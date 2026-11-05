@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.recording.windows
 
 import dev.sebastiano.spectre.recording.WindowScreenshotter
+import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import java.awt.image.BufferedImage
 import java.io.IOException
@@ -19,8 +20,9 @@ internal constructor(
         this(DefaultWindowsGraphicsCaptureHelperBinaryExtractor.instance, SystemProcessFactory)
 
     override fun captureWindow(window: TitledWindow, windowOwnerPid: Long): BufferedImage {
-        val title = window.title
-        require(!title.isNullOrBlank()) {
+        val framed = window as? FramedWindow
+        val title = if (framed == null) window.title else null
+        require(framed != null || !title.isNullOrBlank()) {
             "WindowsWindowScreenshotter requires a non-blank window title; got \"$title\"."
         }
         val helperPath = helperExtractor.extract()
@@ -32,6 +34,7 @@ internal constructor(
                     mode = WindowsGraphicsCaptureMode.Screenshot,
                     source = WindowsGraphicsCaptureSource.Window,
                     title = title,
+                    frame = framed?.deviceFrame,
                     ownerPid = windowOwnerPid,
                     output = output,
                     fps = 30,

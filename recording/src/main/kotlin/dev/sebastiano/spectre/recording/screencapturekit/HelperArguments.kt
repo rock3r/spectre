@@ -20,6 +20,11 @@ internal data class HelperArguments(
     val source: HelperSource,
     val pid: Long? = null,
     val titleContains: String? = null,
+    /**
+     * Untitled-window selector (`--frame`): the window's frame in global points, the same space as
+     * AWT bounds. Only valid for [HelperSource.Window]; mutually exclusive with [titleContains].
+     */
+    val frame: Rectangle? = null,
     val region: Rectangle? = null,
     /**
      * Optional window-relative crop in AWT / SCK point space (top-left origin). Only valid for
@@ -40,10 +45,21 @@ internal data class HelperArguments(
         when (source) {
             HelperSource.Window -> {
                 requireNotNull(pid) { "pid is required for window capture" }
-                val discriminator =
-                    requireNotNull(titleContains) { "titleContains is required for window capture" }
-                require(discriminator.isNotBlank()) {
-                    "titleContains must be a non-blank substring; the helper rejects empty discriminators"
+                if (frame != null) {
+                    require(titleContains == null) {
+                        "titleContains and frame are mutually exclusive window selectors"
+                    }
+                    require(frame.width > 0 && frame.height > 0) {
+                        "frame must have a positive size; got $frame"
+                    }
+                } else {
+                    val discriminator =
+                        requireNotNull(titleContains) {
+                            "titleContains or frame is required for window capture"
+                        }
+                    require(discriminator.isNotBlank()) {
+                        "titleContains must be a non-blank substring; the helper rejects empty discriminators"
+                    }
                 }
                 crop?.let { validateCrop(it) }
             }
@@ -62,6 +78,7 @@ internal data class HelperArguments(
                 require(crop == null) {
                     "crop is only valid for window source; region uses --region"
                 }
+                require(frame == null) { "frame is only valid for window source" }
             }
         }
         require(fps > 0) { "fps must be positive (got $fps)" }
@@ -85,8 +102,13 @@ internal data class HelperArguments(
             HelperSource.Window -> {
                 add("--pid")
                 add(pid.toString())
-                add("--title-contains")
-                add(titleContains.orEmpty())
+                if (frame != null) {
+                    add("--frame")
+                    add(listOf(frame.x, frame.y, frame.width, frame.height).joinToString(","))
+                } else {
+                    add("--title-contains")
+                    add(titleContains.orEmpty())
+                }
                 crop?.let { c ->
                     add("--crop")
                     add(listOf(c.x, c.y, c.width, c.height).joinToString(","))

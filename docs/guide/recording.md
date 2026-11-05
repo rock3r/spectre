@@ -65,11 +65,26 @@ ImageIO.write(image, "png", File("build/reports/window.png"))
 
 `AutoScreenshotter.captureWindow(...)` returns a `BufferedImage`.
 
+The native helpers find a `Frame` or `Dialog` by its title. A window that has no title, such as a
+Swing `JWindow` popup or a plain AWT `Window`, is found by its position and size on screen instead,
+among the windows of the same process. `screenshot(windowIndex)`, `screenshot(node)`, and
+`waitForVisualIdle()` use this for popups hosted in a `JWindow`, which is how heavyweight popups in
+IntelliJ and some Compose apps are built. Two limits apply:
+
+- **Two windows with the same position and size make the capture fail.** The helper cannot tell
+  which one to capture, so it reports an error instead of guessing.
+- **Linux Wayland cannot capture a window that has no title.** The portal path finds windows by
+  title only. `screenshot(windowIndex)` fails with an `UnsupportedOperationException` that says so,
+  and `waitForVisualIdle()` cannot sample that window. Use X11 or Xvfb, or `screenshot(region)`.
+
+Video recording still needs a titled window: there is no `TitledWindow` adapter for a `JWindow`.
+Record the owner window or a screen region instead.
+
 | Platform | Backend | Occlusion behaviour | Notes |
 | --- | --- | --- | --- |
 | macOS | ScreenCaptureKit helper (`spectre-screencapture --mode screenshot`) | Captures only the window source; overlapping apps are excluded | Requires `spectre-recording-macos` at runtime and Screen Recording permission |
-| Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | Captures the named top-level window | Requires `spectre-recording-windows`, Windows 10 version 1903 or newer, .NET 8 Desktop Runtime, Windows App Runtime 1.8, and a non-blank exact window title |
-| Linux Xorg/Xvfb | Linux helper + GStreamer `ximagesrc` | Captures visible screen pixels | The target window must be visible/frontmost, same limitation as `ComposeAutomator.screenshot(...)`; window mode needs a non-blank exact title |
+| Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | Captures the named top-level window | Requires `spectre-recording-windows`, Windows 10 version 1903 or newer, .NET 8 Desktop Runtime, Windows App Runtime 1.8, and a non-blank exact window title (or an untitled window found by its bounds) |
+| Linux Xorg/Xvfb | Linux helper + GStreamer `ximagesrc` | Captures visible screen pixels | The target window must be visible/frontmost, same limitation as `ComposeAutomator.screenshot(...)`; window mode needs a non-blank exact title (or an untitled window found by its bounds) |
 | Linux Wayland | Linux helper + portal/PipeWire one-frame capture | Portal-scoped; region mode captures the selected monitor stream, window mode captures the selected window stream | Requires the compositor portal dialog to be accepted. Window mode needs `xprop` and `_GTK_FRAME_EXTENTS`, same as `WaylandPortalWindowRecorder` |
 
 An embedded `ComposePanel` needs its **host** top-level window for window capture.

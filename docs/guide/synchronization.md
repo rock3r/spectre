@@ -249,7 +249,11 @@ Sampling follows these rules:
 - **`pollInterval` sets a minimum gap.** Each poll captures and hashes every tracked
   Compose surface. With a working `spectre-recording` helper, Spectre uses the same
   **window-scoped** native still path as `screenshot(windowIndex)`.
-  True window capture can exclude occluding windows. On Linux, the helper needs
+  True window capture can exclude occluding windows. Popups hosted in an untitled
+  `JWindow` are sampled the same way, except on Linux Wayland, where Spectre cannot
+  capture a window without a title. There, every sample that includes such a popup is
+  unusable and the wait times out; see
+  [Still window screenshots](recording.md#still-window-screenshots). On Linux, the helper needs
   `gst-launch-1.0`. If GStreamer is missing, Spectre uses `java.awt.Robot` region
   capture. It also uses region capture when no recording backend is present.
   A capture often takes tens or hundreds of milliseconds per surface.

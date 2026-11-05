@@ -3,7 +3,8 @@
 use crate::gst::{build_pipewire_png_argv, build_x11_png_argv, X11CaptureTarget};
 use crate::portal::{self, DEFAULT_RESPONSE_TIMEOUT, SOURCE_TYPE_WINDOW};
 use crate::protocol::{CaptureBackend, CaptureTarget, Event, ScreenshotCommand, SourceType};
-use anyhow::{anyhow, Context, Result};
+use crate::x11_window::X11WindowSelector;
+use anyhow::{Context, Result};
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::io::RawFd;
@@ -41,15 +42,19 @@ fn build_x11_screenshot_argv(command: &ScreenshotCommand, output: &PathBuf) -> R
             region: command.region,
         },
         CaptureTarget::Window => {
-            let title = command
-                .window_title
-                .clone()
-                .ok_or_else(|| anyhow!("X11 window screenshot requires window_title"))?;
-            let resolved =
-                crate::x11_window::find_window_by_title(command.display_name.as_deref(), &title)
-                    .with_context(|| format!("resolving X11 window title {title:?}"))?;
+            let display_name = command.display_name.as_deref();
+            let resolved = match crate::x11_window::x11_window_selector(command)? {
+                X11WindowSelector::Title(title) => {
+                    crate::x11_window::find_window_by_title(display_name, &title)
+                        .with_context(|| format!("resolving X11 window title {title:?}"))?
+                }
+                X11WindowSelector::Frame { frame, owner_pid } => {
+                    crate::x11_window::find_window_by_frame(display_name, frame, owner_pid)
+                        .context("resolving untitled X11 window by frame")?
+                }
+            };
             eprintln!(
-                "[helper] resolved X11 screenshot window title={title:?} xid=0x{:x} size={}x{}",
+                "[helper] resolved X11 screenshot window xid=0x{:x} size={}x{}",
                 resolved.xid, resolved.width, resolved.height
             );
             X11CaptureTarget::Window {
@@ -62,6 +67,7 @@ fn build_x11_screenshot_argv(command: &ScreenshotCommand, output: &PathBuf) -> R
 }
 
 fn run_wayland_screenshot(command: &ScreenshotCommand, output: &PathBuf) -> Result<()> {
+    reject_window_frame_on_wayland(command)?;
     let source_types = if command.source_types.is_empty() {
         match command.target {
             CaptureTarget::Region => vec![SourceType::Monitor],
@@ -88,6 +94,7 @@ pub(crate) fn capture_from_stream(
     command: &ScreenshotCommand,
     output: &PathBuf,
 ) -> Result<()> {
+    reject_window_frame_on_wayland(command)?;
     clear_cloexec(pipewire_fd).context("allowing PipeWire FD inheritance")?;
     let stream_relative_region = if command.target == CaptureTarget::Window {
         crate::stream_region::clamp_region_to_stream(command.region, stream.size)
@@ -105,6 +112,18 @@ pub(crate) fn capture_from_stream(
     };
     let argv = build_pipewire_png_argv(stream.node_id, pipewire_fd, stream_relative_region, stream.size, output)?;
     run_gst_oneshot(&argv).with_context(|| format!("running Wayland screenshot pipeline: {argv:?}"))?;
+    Ok(())
+}
+
+/// The portal picks the window, so a frame selector cannot be honoured there. Fail before any
+/// portal dialog instead of capturing whichever window the user picks.
+pub(crate) fn reject_window_frame_on_wayland(command: &ScreenshotCommand) -> Result<()> {
+    if command.window_frame.is_some() {
+        anyhow::bail!(
+            "Wayland portal screenshots cannot select an untitled window by its frame. \
+             Capturing a JWindow or plain AWT Window is supported on X11 only."
+        );
+    }
     Ok(())
 }
 

@@ -8,6 +8,7 @@ import java.awt.Insets
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import java.io.IOException
+import javax.swing.JWindow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -425,10 +426,55 @@ class VisualIdleSurfaceCaptureTest {
     }
 
     @Test
-    fun `native path does not region-fallback when host is not a Frame`() {
+    fun `samples a tracked JWindow popup through window-scoped capture`() {
         assumeLiveAwtAvailable()
-        // A bare Window (not Frame) cannot use native capture; when native is "available" we must
-        // not silently substitute region — callers see null (unsampleable) instead.
+        // #605: an untitled JWindow popup (a downstream Compose Desktop app, IntelliJ heavyweight
+        // popups) must be
+        // sampled natively. Before, every sample was unsampleable while the popup was open.
+        val owner = Frame()
+        val popup =
+            JWindow(owner).apply {
+                setBounds(80, 90, 120, 60)
+                addNotify()
+            }
+        var regionCalls = 0
+        var windowCaptureCalls = 0
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = {
+                    regionCalls += 1
+                    error("JWindow sampling must remain window-scoped")
+                },
+                nativeCapture = { window ->
+                    windowCaptureCalls += 1
+                    assertSame(popup, window)
+                    solidImage(120, 60, 0xFF334455.toInt())
+                },
+                nativeCaptureBounds = { _, _, bounds, _ -> bounds },
+            )
+        try {
+            val image =
+                captureSurfaceForVisualIdle(
+                    backend = backend,
+                    window = TrackedWindow("popup", popup, composePanel = null, isPopup = true),
+                    surfaceRegion = Rectangle(popup.bounds),
+                    windowBounds = Rectangle(popup.bounds),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    nativeWindowCaptureAvailable = true,
+                )
+
+            assertNotNull(image)
+            assertEquals(1, windowCaptureCalls)
+            assertEquals(0, regionCalls)
+        } finally {
+            popup.dispose()
+            owner.dispose()
+        }
+    }
+
+    @Test
+    fun `untitled host native failure stays unsampleable without a region fallback`() {
+        assumeLiveAwtAvailable()
         var regionCalls = 0
         val backend =
             PlatformScreenCaptureBackend(
@@ -436,12 +482,13 @@ class VisualIdleSurfaceCaptureTest {
                     regionCalls += 1
                     solidImage(1, 1, 0)
                 },
-                nativeCapture = { solidImage(10, 10, 0xFF0000FF.toInt()) },
+                nativeCapture = { error("2 windows match the frame") },
             )
         val window =
             object : java.awt.Window(null as java.awt.Frame?) {
                 init {
                     setBounds(0, 0, 10, 10)
+                    addNotify()
                 }
             }
         try {

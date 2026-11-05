@@ -99,12 +99,9 @@ internal class PlatformScreenCaptureBackend(
         windowBounds: Rectangle,
         frameInsets: Insets,
     ): WindowCapture {
-        val nativeWindow =
-            window.window.takeIf { it is Frame || it is Dialog }
-                ?: throw UnsupportedOperationException(
-                    "Window-scoped screenshots require a native backend for a Frame or Dialog host. " +
-                        "Use screenshot(region) only when a screen-region capture is explicitly intended."
-                )
+        // A Frame or Dialog is found by its title. Any other host (a Swing JWindow popup, a plain
+        // AWT Window) has no title, so the native helper finds it by its on-screen frame (#605).
+        val nativeWindow = window.window
         if (!nativeCaptureEnabled()) {
             throw UnsupportedOperationException(
                 "Native window capture is disabled for this RobotDriver. " +

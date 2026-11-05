@@ -33,6 +33,7 @@ spectre-window-capture.exe \
   --source window|region \
   --title <exact window title> \
   --owner-pid <pid> \
+  --frame-x <x> --frame-y <y> --frame-width <pixels> --frame-height <pixels> \
   --x <virtual-screen-x> \
   --y <virtual-screen-y> \
   --width <pixels> \
@@ -42,7 +43,12 @@ spectre-window-capture.exe \
   --output <png-or-mp4>
 ```
 
-Window capture requires `--title` and `--owner-pid`. Region capture requires `--x`, `--y`,
+Window capture requires `--owner-pid` and one window selector. The selector is either `--title`
+(an exact title match) or the four `--frame-*` flags. Spectre uses the frame flags for untitled
+windows, such as a Swing `JWindow`. The frame is the window's `GetWindowRect` in device pixels.
+The helper matches it against the visible top-level windows of `--owner-pid`, allowing 2 pixels
+of rounding on each edge. No match is exit 3. More than one match is exit 7, because capturing
+one of them would be a guess. Region capture requires `--x`, `--y`,
 `--width`, and `--height`. The rectangle should lie on one monitor; a region that only overshoots
 that monitor is clamped to the overlap. Fullscreen recording is represented as a region equal to
 the monitor bounds.

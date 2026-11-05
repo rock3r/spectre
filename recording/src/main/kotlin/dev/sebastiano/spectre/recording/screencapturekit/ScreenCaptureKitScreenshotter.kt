@@ -25,6 +25,7 @@ internal constructor(
         requireScreenCaptureAccess()
         val helperPath = helperExtractor.extract()
         val output = Files.createTempFile("spectre-sck-window-screenshot-", ".png")
+        val framed = window as? FramedWindow
         val discriminator =
             if ((window as? TitleDiscriminationAware)?.requiresTitleDiscriminator == false) {
                 null
@@ -39,7 +40,10 @@ internal constructor(
                         mode = "screenshot",
                         source = HelperSource.Window,
                         pid = windowOwnerPid,
-                        titleContains = discriminator?.value ?: checkNotNull(window.title),
+                        titleContains =
+                            if (framed != null) null
+                            else discriminator?.value ?: checkNotNull(window.title),
+                        frame = framed?.logicalFrame,
                         output = output,
                         fps = SCREENSHOT_FRAME_RATE,
                         captureCursor = false,
@@ -88,6 +92,7 @@ private const val EXIT_ARGUMENTS_REJECTED: Int = 2
 private const val EXIT_WINDOW_NOT_FOUND: Int = 3
 private const val EXIT_SCREEN_RECORDING_DENIED: Int = 4
 private const val EXIT_CAPTURE_FAILED: Int = 5
+private const val EXIT_WINDOW_AMBIGUOUS: Int = 7
 
 private fun messageForHelperExit(
     exit: Int,
@@ -106,6 +111,10 @@ private fun messageForHelperExit(
         EXIT_CAPTURE_FAILED ->
             "spectre-screencapture's screenshot pipeline failed (exit 5) — output at $output is " +
                 "in an undefined state. Argv: $argv"
+        EXIT_WINDOW_AMBIGUOUS ->
+            "spectre-screencapture found more than one window with the target frame (exit 7), " +
+                "so it cannot tell which one to capture. Move or resize one of the windows. " +
+                "Argv: $argv"
         else ->
             "spectre-screencapture exited with code $exit during screenshot capture. Argv: $argv"
     }

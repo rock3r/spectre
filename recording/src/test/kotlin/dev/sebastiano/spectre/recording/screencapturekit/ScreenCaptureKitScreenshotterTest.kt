@@ -48,6 +48,66 @@ class ScreenCaptureKitScreenshotterTest {
     }
 
     @Test
+    fun `captureWindow selects an untitled window by its frame in points`() {
+        val factory = ScreenshotHelperProcessFactory()
+        val screenshotter =
+            ScreenCaptureKitScreenshotter(
+                helperExtractor =
+                    HelperBinaryExtractor(
+                        envLookup = { null },
+                        sysPropLookup = { null },
+                        materialLocator = {
+                            helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf())
+                        },
+                        targetDirProvider = { Path.of("/tmp") },
+                    ),
+                processFactory = factory,
+                requireScreenCaptureAccess = {},
+            )
+        val window =
+            FramedWindow(
+                logicalFrame = Rectangle(-10, 20, 300, 200),
+                deviceFrame = Rectangle(-20, 40, 600, 400),
+            )
+
+        screenshotter.captureWindow(window, 4242L)
+
+        assertContainsSequence(factory.lastArgv, listOf("--frame", "-10,20,300,200"))
+        assertContainsSequence(factory.lastArgv, listOf("--pid", "4242"))
+        assertTrue("--title-contains" !in factory.lastArgv, "argv: ${factory.lastArgv}")
+    }
+
+    @Test
+    fun `captureWindow explains a frame that matches several windows`() {
+        val factory =
+            ScreenshotHelperProcessFactory(process = SuccessfulScreenshotHelperProcess(exit = 7))
+        val screenshotter =
+            ScreenCaptureKitScreenshotter(
+                helperExtractor =
+                    HelperBinaryExtractor(
+                        envLookup = { null },
+                        sysPropLookup = { null },
+                        materialLocator = {
+                            helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf())
+                        },
+                        targetDirProvider = { Path.of("/tmp") },
+                    ),
+                processFactory = factory,
+                requireScreenCaptureAccess = {},
+            )
+        val window =
+            FramedWindow(
+                logicalFrame = Rectangle(0, 0, 300, 200),
+                deviceFrame = Rectangle(0, 0, 600, 400),
+            )
+
+        val error =
+            assertFailsWith<IllegalStateException> { screenshotter.captureWindow(window, 4242L) }
+
+        assertTrue(error.message.orEmpty().contains("more than one window"), error.message)
+    }
+
+    @Test
     fun `captureWindow spawns helper in screenshot mode and restores title`() {
         val factory = ScreenshotHelperProcessFactory()
         val extractor =
@@ -173,18 +233,18 @@ private class ScreenshotHelperProcessFactory(
     }
 }
 
-private class SuccessfulScreenshotHelperProcess : Process() {
+private class SuccessfulScreenshotHelperProcess(private val exit: Int = 0) : Process() {
     override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
 
     override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
 
     override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
 
-    override fun waitFor(): Int = 0
+    override fun waitFor(): Int = exit
 
     override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = true
 
-    override fun exitValue(): Int = 0
+    override fun exitValue(): Int = exit
 
     override fun destroy() = Unit
 

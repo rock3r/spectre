@@ -50,6 +50,9 @@ internal sealed interface Command {
         @SerialName("source_types") val sourceTypes: List<SourceType> = emptyList(),
         @SerialName("display_name") val displayName: String? = null,
         @SerialName("window_title") val windowTitle: String? = null,
+        /** Untitled-window selector: root coordinates, device pixels. X11 only. */
+        @SerialName("window_frame") val windowFrame: Region? = null,
+        @SerialName("window_owner_pid") val windowOwnerPid: Long? = null,
         @SerialName("cursor_mode") val cursorMode: CursorMode,
         @SerialName("region") val region: Region,
         @SerialName("screen_size") val screenSize: List<Int>? = null,

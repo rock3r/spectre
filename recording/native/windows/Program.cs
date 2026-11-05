@@ -18,6 +18,7 @@ internal static class Program
     private const int ExitWindowNotFound = 3;
     private const int ExitCaptureUnsupported = 4;
     private const int ExitCaptureFailed = 5;
+    private const int ExitWindowAmbiguous = 7;
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(5);
 
     [STAThread]
@@ -61,15 +62,37 @@ internal static class Program
 
     private static async Task<int> RunWindowCaptureAsync(Options options)
     {
-        var title = options.Title ?? throw new ArgumentException("--title is required for window capture.");
         var ownerPid =
             options.OwnerPid ?? throw new ArgumentException("--owner-pid is required for window capture.");
-        var hwnd = FindWindowByTitleAndOwnerPid(title, ownerPid);
-        if (hwnd == IntPtr.Zero)
+        IntPtr hwnd;
+        if (options.Frame is { } frame)
         {
-            Console.Error.WriteLine(
-                $"Could not find a top-level window titled \"{title}\" owned by pid {ownerPid}.");
-            return ExitWindowNotFound;
+            var matches = FindWindowsByFrameAndOwnerPid(frame, ownerPid);
+            var described =
+                $"frame {frame.X},{frame.Y} {frame.Width}x{frame.Height} (device pixels) owned by pid {ownerPid}";
+            if (matches.Count == 0)
+            {
+                Console.Error.WriteLine($"Could not find a visible top-level window with {described}.");
+                return ExitWindowNotFound;
+            }
+            if (matches.Count > 1)
+            {
+                Console.Error.WriteLine(
+                    $"{matches.Count} visible top-level windows match {described}; cannot select one of them.");
+                return ExitWindowAmbiguous;
+            }
+            hwnd = matches[0].Handle;
+        }
+        else
+        {
+            var title = options.Title ?? throw new ArgumentException("--title is required for window capture.");
+            hwnd = FindWindowByTitleAndOwnerPid(title, ownerPid);
+            if (hwnd == IntPtr.Zero)
+            {
+                Console.Error.WriteLine(
+                    $"Could not find a top-level window titled \"{title}\" owned by pid {ownerPid}.");
+                return ExitWindowNotFound;
+            }
         }
 
         return options.Mode switch
@@ -266,6 +289,35 @@ internal static class Program
         return matchedWindow;
     }
 
+    private static IReadOnlyList<WindowFrameCandidate> FindWindowsByFrameAndOwnerPid(
+        CaptureRect frame,
+        long ownerPid)
+    {
+        var candidates = new List<WindowFrameCandidate>();
+        bool Callback(IntPtr hwnd, IntPtr data)
+        {
+            if (TryGetWindowThreadProcessId(hwnd, out var actualPid) &&
+                actualPid == ownerPid &&
+                IsWindowVisible(hwnd) &&
+                GetWindowRect(hwnd, out var rect))
+            {
+                candidates.Add(
+                    new WindowFrameCandidate(
+                        hwnd,
+                        new CaptureRect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top)));
+            }
+
+            return true;
+        }
+
+        if (!EnumWindows(Callback, IntPtr.Zero))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "EnumWindows failed.");
+        }
+
+        return WindowFrameMatch.Matching(candidates, frame);
+    }
+
     private static string GetWindowTitle(IntPtr hwnd)
     {
         var titleLength = GetWindowTextLength(hwnd);
@@ -299,6 +351,12 @@ internal static class Program
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hwnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
 
     [StructLayout(LayoutKind.Sequential)]
     private readonly struct Rect

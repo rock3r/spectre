@@ -1,4 +1,5 @@
-//! Resolve an X11 window XID from a caller-supplied title.
+//! Resolve an X11 window XID from a caller-supplied title, or from the frame of an untitled
+//! window.
 //!
 //! GStreamer's `ximagesrc xname=` only compares `XFetchName` (`WM_NAME`) and **falls back
 //! to the root window** when that lookup misses (`gstximagesrc.c` → "Using root window").
@@ -8,7 +9,13 @@
 //!
 //! This module walks the tree, matches `_NET_WM_NAME` and `WM_NAME`, and returns a real
 //! XID. Missing titles fail closed — callers must not spawn `ximagesrc` without an XID.
+//!
+//! Untitled windows (a Swing `JWindow`, a plain AWT `Window`) have no title to match. For
+//! those the JVM sends the window frame in root coordinates instead, and
+//! [`find_window_by_frame`] matches it against the top-level client windows. Zero or several
+//! matches fail closed, like a missing title.
 
+use crate::protocol::{Region, ScreenshotCommand};
 use anyhow::{anyhow, bail, Context, Result};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_long, c_ulong, c_void};
@@ -65,6 +72,16 @@ type XGetWindowPropertyFn = unsafe extern "C" fn(
 type XFetchNameFn = unsafe extern "C" fn(*mut c_void, c_ulong, *mut *mut c_char) -> c_int;
 type XGetWindowAttributesFn = unsafe extern "C" fn(*mut c_void, c_ulong, *mut u8) -> c_int;
 type XFreeFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type XTranslateCoordinatesFn = unsafe extern "C" fn(
+    *mut c_void,
+    c_ulong,
+    c_ulong,
+    c_int,
+    c_int,
+    *mut c_int,
+    *mut c_int,
+    *mut c_ulong,
+) -> c_int;
 
 struct X11Api {
     handle: *mut c_void,
@@ -77,6 +94,7 @@ struct X11Api {
     fetch_name: XFetchNameFn,
     get_window_attributes: XGetWindowAttributesFn,
     free: XFreeFn,
+    translate_coordinates: XTranslateCoordinatesFn,
 }
 
 impl Drop for X11Api {
@@ -92,6 +110,334 @@ pub struct ResolvedX11Window {
     pub xid: u64,
     pub width: u32,
     pub height: u32,
+}
+
+/// How the screenshot command identifies its target window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum X11WindowSelector {
+    Title(String),
+    Frame {
+        frame: Region,
+        owner_pid: Option<u32>,
+    },
+}
+
+/// Reads the window selector of an X11 window screenshot. Exactly one of `window_title` and
+/// `window_frame` must be set.
+pub fn x11_window_selector(command: &ScreenshotCommand) -> Result<X11WindowSelector> {
+    match (&command.window_title, command.window_frame) {
+        (Some(_), Some(_)) => {
+            bail!("X11 window screenshot: window_title and window_frame are mutually exclusive")
+        }
+        (Some(title), None) => Ok(X11WindowSelector::Title(title.clone())),
+        (None, Some(frame)) => Ok(X11WindowSelector::Frame {
+            frame,
+            owner_pid: command.window_owner_pid,
+        }),
+        (None, None) => bail!("X11 window screenshot requires window_title or window_frame"),
+    }
+}
+
+/// Rounding slack between the JVM's device-pixel frame and the X server geometry.
+pub const FRAME_TOLERANCE_PX: i32 = 1;
+
+/// A top-level client window, with its origin translated to root coordinates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameCandidate {
+    pub xid: u64,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    /// `_NET_WM_PID`, when the client sets it.
+    pub pid: Option<u32>,
+}
+
+/// Picks the one candidate whose geometry equals [frame] within [FRAME_TOLERANCE_PX].
+///
+/// Candidates whose `_NET_WM_PID` names a process other than [owner_pid] are skipped; a
+/// candidate without `_NET_WM_PID` is kept. No match, several matches, XID 0, or the root
+/// window all fail closed: `ximagesrc` would otherwise record the whole desktop.
+pub fn select_frame_match(
+    candidates: &[FrameCandidate],
+    frame: Region,
+    owner_pid: Option<u32>,
+    root: u64,
+) -> Result<ResolvedX11Window> {
+    let near = |actual: i64, expected: i64| (actual - expected).abs() <= FRAME_TOLERANCE_PX as i64;
+    let matches: Vec<&FrameCandidate> = candidates
+        .iter()
+        .filter(|c| match (owner_pid, c.pid) {
+            (Some(expected), Some(actual)) => expected == actual,
+            _ => true,
+        })
+        .filter(|c| {
+            near(c.x as i64, frame.x as i64)
+                && near(c.y as i64, frame.y as i64)
+                && near(c.width as i64, frame.width as i64)
+                && near(c.height as i64, frame.height as i64)
+        })
+        .collect();
+    let describe = || {
+        format!(
+            "frame {},{} {}x{} (device pixels){}",
+            frame.x,
+            frame.y,
+            frame.width,
+            frame.height,
+            owner_pid
+                .map(|pid| format!(" owned by pid {pid}"))
+                .unwrap_or_default()
+        )
+    };
+    let best = match matches.as_slice() {
+        [] => bail!(
+            "X11 window with {} was not found among the top-level windows. Spectre fails \
+             closed instead of recording the root/desktop.",
+            describe()
+        ),
+        [only] => **only,
+        many => bail!(
+            "{} windows match {}; Spectre cannot tell which one to capture",
+            many.len(),
+            describe()
+        ),
+    };
+    if best.xid == 0 || best.xid == root {
+        bail!(
+            "X11 window lookup for {} resolved to the root window; refusing silent desktop capture",
+            describe()
+        );
+    }
+    Ok(ResolvedX11Window {
+        xid: best.xid,
+        width: best.width,
+        height: best.height,
+    })
+}
+
+/// Resolves the top-level client window whose root-relative geometry equals [frame].
+pub fn find_window_by_frame(
+    display_name: Option<&str>,
+    frame: Region,
+    owner_pid: Option<u32>,
+) -> Result<ResolvedX11Window> {
+    if frame.width <= 0 || frame.height <= 0 {
+        bail!(
+            "X11 window capture by frame requires a positive width and height; got {}x{}",
+            frame.width,
+            frame.height
+        );
+    }
+    let api = X11Api::load().context("loading libX11.so.6 for window-frame lookup")?;
+    let what = format!(
+        "window frame {},{} {}x{}",
+        frame.x, frame.y, frame.width, frame.height
+    );
+    with_display(&api, display_name, &what, |display| unsafe {
+        let root = (api.default_root_window)(display);
+        let candidates = collect_frame_candidates(&api, display, root)?;
+        select_frame_match(&candidates, frame, owner_pid, root as u64)
+    })
+}
+
+fn with_display<T>(
+    api: &X11Api,
+    display_name: Option<&str>,
+    what: &str,
+    body: impl FnOnce(*mut c_void) -> Result<T>,
+) -> Result<T> {
+    let display_cstr = match display_name.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(name) => Some(CString::new(name).context("DISPLAY name contains an interior NUL")?),
+        None => None,
+    };
+    let display = unsafe {
+        (api.open_display)(
+            display_cstr
+                .as_ref()
+                .map(|s| s.as_ptr())
+                .unwrap_or(ptr::null()),
+        )
+    };
+    if display.is_null() {
+        let requested = display_name
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .or_else(|| std::env::var("DISPLAY").ok())
+            .unwrap_or_else(|| "<default>".into());
+        bail!(
+            "Could not open X display {requested:?} while resolving {what}. \
+             Named-window capture cannot fall back to the root/desktop."
+        );
+    }
+    let result = body(display);
+    unsafe {
+        (api.close_display)(display);
+    }
+    result
+}
+
+/// Top-level client windows: every window with `WM_STATE` (set by the window manager), plus
+/// each child of the root that has no `WM_STATE` window under it (no window manager, or an
+/// override-redirect window). Window-manager frames and toolkit child windows are skipped.
+unsafe fn collect_frame_candidates(
+    api: &X11Api,
+    display: *mut c_void,
+    root: c_ulong,
+) -> Result<Vec<FrameCandidate>> {
+    let wm_state = intern_atom(api, display, "WM_STATE");
+    let net_wm_pid = intern_atom(api, display, "_NET_WM_PID");
+    let mut out = Vec::new();
+    for child in query_children(api, display, root) {
+        let mut managed = Vec::new();
+        if let Some(atom) = wm_state {
+            collect_with_property(api, display, child, atom, &mut managed);
+        }
+        let clients = if managed.is_empty() {
+            vec![child]
+        } else {
+            managed
+        };
+        for window in clients {
+            if let Some(candidate) = frame_candidate(api, display, root, window, net_wm_pid)? {
+                out.push(candidate);
+            }
+        }
+    }
+    Ok(out)
+}
+
+unsafe fn collect_with_property(
+    api: &X11Api,
+    display: *mut c_void,
+    window: c_ulong,
+    atom: c_ulong,
+    out: &mut Vec<c_ulong>,
+) {
+    if has_property(api, display, window, atom) {
+        out.push(window);
+        return;
+    }
+    for child in query_children(api, display, window) {
+        collect_with_property(api, display, child, atom, out);
+    }
+}
+
+unsafe fn frame_candidate(
+    api: &X11Api,
+    display: *mut c_void,
+    root: c_ulong,
+    window: c_ulong,
+    net_wm_pid: Option<c_ulong>,
+) -> Result<Option<FrameCandidate>> {
+    let Some((width, height, map_state)) = window_geometry(api, display, window)? else {
+        return Ok(None);
+    };
+    if map_state != IS_VIEWABLE {
+        return Ok(None);
+    }
+    let mut x = 0;
+    let mut y = 0;
+    let mut child = 0;
+    if (api.translate_coordinates)(display, window, root, 0, 0, &mut x, &mut y, &mut child) == 0 {
+        return Ok(None);
+    }
+    let pid = net_wm_pid.and_then(|atom| read_cardinal(api, display, window, atom));
+    Ok(Some(FrameCandidate {
+        xid: window as u64,
+        x,
+        y,
+        width,
+        height,
+        pid,
+    }))
+}
+
+unsafe fn query_children(api: &X11Api, display: *mut c_void, window: c_ulong) -> Vec<c_ulong> {
+    let mut root_return = 0;
+    let mut parent_return = 0;
+    let mut children: *mut c_ulong = ptr::null_mut();
+    let mut nchildren = 0u32;
+    let status = (api.query_tree)(
+        display,
+        window,
+        &mut root_return,
+        &mut parent_return,
+        &mut children,
+        &mut nchildren,
+    );
+    let mut out = Vec::new();
+    if status != 0 && !children.is_null() && nchildren > 0 {
+        out.extend_from_slice(std::slice::from_raw_parts(children, nchildren as usize));
+    }
+    if !children.is_null() {
+        (api.free)(children.cast());
+    }
+    out
+}
+
+unsafe fn has_property(api: &X11Api, display: *mut c_void, window: c_ulong, atom: c_ulong) -> bool {
+    let mut actual_type = 0;
+    let mut actual_format = 0;
+    let mut nitems = 0;
+    let mut bytes_after = 0;
+    let mut prop: *mut u8 = ptr::null_mut();
+    let status = (api.get_window_property)(
+        display,
+        window,
+        atom,
+        0,
+        0,
+        0,
+        ANY_PROPERTY_TYPE,
+        &mut actual_type,
+        &mut actual_format,
+        &mut nitems,
+        &mut bytes_after,
+        &mut prop,
+    );
+    if !prop.is_null() {
+        (api.free)(prop.cast());
+    }
+    status == SUCCESS && actual_type != 0
+}
+
+/// Reads the first item of a 32-bit property. Xlib hands 32-bit items back as C longs.
+unsafe fn read_cardinal(
+    api: &X11Api,
+    display: *mut c_void,
+    window: c_ulong,
+    atom: c_ulong,
+) -> Option<u32> {
+    let mut actual_type = 0;
+    let mut actual_format = 0;
+    let mut nitems = 0;
+    let mut bytes_after = 0;
+    let mut prop: *mut u8 = ptr::null_mut();
+    let status = (api.get_window_property)(
+        display,
+        window,
+        atom,
+        0,
+        1,
+        0,
+        ANY_PROPERTY_TYPE,
+        &mut actual_type,
+        &mut actual_format,
+        &mut nitems,
+        &mut bytes_after,
+        &mut prop,
+    );
+    let value = if status == SUCCESS && !prop.is_null() && actual_format == 32 && nitems >= 1 {
+        Some(*(prop as *const c_ulong) as u32)
+    } else {
+        None
+    };
+    if !prop.is_null() {
+        (api.free)(prop.cast());
+    }
+    value
 }
 
 pub fn find_window_by_title(display_name: Option<&str>, title: &str) -> Result<ResolvedX11Window> {
@@ -389,6 +735,7 @@ impl X11Api {
                     fetch_name: load_sym(handle, "XFetchName")?,
                     get_window_attributes: load_sym(handle, "XGetWindowAttributes")?,
                     free: load_sym(handle, "XFree")?,
+                    translate_coordinates: load_sym(handle, "XTranslateCoordinates")?,
                 })
             })() {
                 Ok(api) => Ok(api),
@@ -461,6 +808,189 @@ mod tests {
         let err = find_window_by_title(None, "   ").unwrap_err();
         assert!(
             err.to_string().contains("non-blank"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    fn candidate(
+        xid: u64,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        pid: Option<u32>,
+    ) -> FrameCandidate {
+        FrameCandidate {
+            xid,
+            x,
+            y,
+            width,
+            height,
+            pid,
+        }
+    }
+
+    fn frame(x: i32, y: i32, width: i32, height: i32) -> Region {
+        Region {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn frame_selector_picks_the_only_window_with_that_geometry() {
+        let candidates = [
+            candidate(0x100, 0, 0, 800, 600, Some(42)),
+            candidate(0x200, 100, 120, 300, 200, Some(42)),
+        ];
+        let resolved =
+            select_frame_match(&candidates, frame(100, 120, 300, 200), Some(42), 1).unwrap();
+        assert_eq!(
+            resolved,
+            ResolvedX11Window {
+                xid: 0x200,
+                width: 300,
+                height: 200
+            }
+        );
+    }
+
+    #[test]
+    fn frame_selector_tolerates_one_device_pixel_of_rounding() {
+        let candidates = [candidate(0x200, 101, 119, 299, 201, None)];
+        let resolved =
+            select_frame_match(&candidates, frame(100, 120, 300, 200), Some(42), 1).unwrap();
+        assert_eq!(resolved.xid, 0x200);
+    }
+
+    #[test]
+    fn frame_selector_skips_windows_of_another_process() {
+        let candidates = [
+            candidate(0x200, 100, 120, 300, 200, Some(7)),
+            candidate(0x300, 100, 120, 300, 200, Some(42)),
+        ];
+        let resolved =
+            select_frame_match(&candidates, frame(100, 120, 300, 200), Some(42), 1).unwrap();
+        assert_eq!(resolved.xid, 0x300);
+    }
+
+    #[test]
+    fn frame_selector_fails_closed_when_nothing_matches() {
+        let candidates = [candidate(0x200, 102, 120, 300, 200, Some(42))];
+        let err =
+            select_frame_match(&candidates, frame(100, 120, 300, 200), Some(42), 1).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("was not found"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            message.contains("root") || message.contains("desktop"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn frame_selector_fails_when_two_windows_share_the_geometry() {
+        let candidates = [
+            candidate(0x200, 100, 120, 300, 200, Some(42)),
+            candidate(0x300, 100, 120, 300, 200, None),
+        ];
+        let err =
+            select_frame_match(&candidates, frame(100, 120, 300, 200), Some(42), 1).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("2 windows"), "unexpected error: {message}");
+    }
+
+    #[test]
+    fn frame_selector_refuses_the_root_window_and_xid_zero() {
+        let root = [candidate(1, 0, 0, 300, 200, None)];
+        let err = select_frame_match(&root, frame(0, 0, 300, 200), None, 1).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("root"),
+            "unexpected error: {err:#}"
+        );
+        let zero = [candidate(0, 0, 0, 300, 200, None)];
+        let err = select_frame_match(&zero, frame(0, 0, 300, 200), None, 1).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("root"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn empty_frame_fails_closed_without_opening_x() {
+        let err = find_window_by_frame(None, frame(0, 0, 0, 200), None).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("positive"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    fn window_command(json: &str) -> crate::protocol::ScreenshotCommand {
+        serde_json::from_str(json).expect("screenshot command")
+    }
+
+    #[test]
+    fn window_frame_selects_the_frame_selector() {
+        let command = window_command(
+            r#"{"backend":"x11","target":"window","cursor_mode":"hidden",
+                "region":{"x":0,"y":0,"width":300,"height":200},
+                "window_frame":{"x":-10,"y":20,"width":600,"height":400},
+                "window_owner_pid":4242,"output":"/tmp/out.png"}"#,
+        );
+        match x11_window_selector(&command).unwrap() {
+            X11WindowSelector::Frame { frame, owner_pid } => {
+                assert_eq!(
+                    (frame.x, frame.y, frame.width, frame.height),
+                    (-10, 20, 600, 400)
+                );
+                assert_eq!(owner_pid, Some(4242));
+            }
+            other => panic!("expected a frame selector, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn window_title_keeps_the_title_selector() {
+        let command = window_command(
+            r#"{"backend":"x11","target":"window","cursor_mode":"hidden",
+                "region":{"x":0,"y":0,"width":300,"height":200},
+                "window_title":"Spectre","output":"/tmp/out.png"}"#,
+        );
+        match x11_window_selector(&command).unwrap() {
+            X11WindowSelector::Title(title) => assert_eq!(title, "Spectre"),
+            other => panic!("expected a title selector, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn window_title_and_frame_are_mutually_exclusive() {
+        let command = window_command(
+            r#"{"backend":"x11","target":"window","cursor_mode":"hidden",
+                "region":{"x":0,"y":0,"width":300,"height":200},
+                "window_title":"Spectre",
+                "window_frame":{"x":0,"y":0,"width":300,"height":200},
+                "output":"/tmp/out.png"}"#,
+        );
+        let err = x11_window_selector(&command).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("mutually exclusive"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn window_target_needs_a_title_or_a_frame() {
+        let command = window_command(
+            r#"{"backend":"x11","target":"window","cursor_mode":"hidden",
+                "region":{"x":0,"y":0,"width":300,"height":200},"output":"/tmp/out.png"}"#,
+        );
+        let err = x11_window_selector(&command).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("window_title or window_frame"),
             "unexpected error: {err:#}"
         );
     }

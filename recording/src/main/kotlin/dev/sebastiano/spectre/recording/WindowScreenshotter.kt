@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording
 
+import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
 import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitScreenshotter
 import dev.sebastiano.spectre.recording.screencapturekit.TitleDiscriminationAware
@@ -119,6 +120,8 @@ internal constructor(
     }
 
     private fun <T> withTitleForCapture(window: TitledWindow, capture: () -> T): T {
+        // An untitled host is selected by its frame; it has no title to rewrite.
+        if (window is FramedWindow) return capture()
         if (!window.title.isNullOrBlank()) return capture()
         val discriminator = TitleDiscriminator(window)
         discriminator.apply()
