@@ -96,6 +96,7 @@ fun injectMain() {
 
 /** JVM entry point for ProcessBuilder (`…InjectComposeFixtureMainKt`). */
 fun main() {
+    exitWhenParentExits()
     injectMain()
 }
 
