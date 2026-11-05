@@ -78,18 +78,21 @@ across native still-helper latency.
 
 `spectre capture` and the MCP `capture` tool take the window still in the **daemon**, not in the
 attached application. The application does not need `spectre-recording` on its classpath. The
-daemon finds the window by its title among the windows of the attached process, takes the still
-with its own native helper, and then reads the semantics tree from the application.
+daemon finds the window among the windows of the attached process, takes the still with its own
+native helper, and then reads the semantics tree from the application.
 
-This has three consequences:
+This has these consequences:
 
-- **The window needs a unique, non-blank title.** The capture fails and names the problem when
-  the title is blank, or when another window of the same process has a matching title. On macOS a
-  title matches when it contains this window's title, and only visible windows count. On Windows
-  the title must be equal, and hidden windows count too. Plain Swing dialogs count as well as
-  Compose windows. A window with no title at all, such as a popup hosted in a Swing `JWindow`,
-  cannot be captured this way. In-process `screenshot(windowIndex)` and `capture()` can capture
-  it, because they find such a window by its position and size instead.
+- **A `Frame` or `Dialog` needs a unique, non-blank title.** The daemon finds these windows by
+  title. The capture fails and names the problem when the title is blank, or when another window
+  of the same process has a matching title. On macOS a title matches when it contains this
+  window's title, and only visible windows count. On Windows the title must be equal, and hidden
+  windows count too. Plain Swing dialogs count as well as Compose windows.
+- **A window with no title is found by its position and size.** This covers popups hosted in a
+  Swing `JWindow`, such as IntelliJ heavyweight popups. The capture fails when another window of
+  the process has the same position and size, or when the popup moves or resizes before the tree
+  is read. The target application needs a `spectre-core` of the same version as the CLI for this;
+  an older one fails with a message that asks you to update it.
 - **macOS Screen Recording permission belongs to the daemon's helper.** The same grant that
   `spectre record` uses covers `spectre capture`. The attached `java` process does not need its
   own grant. Check it with `spectre permissions check`.

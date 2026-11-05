@@ -89,6 +89,51 @@ class CaptureWithWindowStillHandlerTest {
         assertEquals(null, automator.lastCall)
     }
 
+    @Test
+    fun `an untitled window still is passed to captureWithUntitledWindowStill`() {
+        val automator = StillAwareAutomator()
+        val handler = ReflectiveAutomatorHandler(automator)
+
+        val response =
+            handler.handle(
+                AgentRequest.CaptureWithUntitledWindowStill(
+                    windowIndex = 2,
+                    surfaceId = "popup-2",
+                    windowStillPng = png(width = 6, height = 4),
+                    stillWindowBounds = RectDto(30, 40, 3, 2),
+                )
+            )
+
+        val capture = assertIs<AgentResponse.Capture>(response)
+        assertEquals(2, capture.windowIndex)
+        val call = assertNotNull(automator.lastUntitledCall)
+        assertEquals(2, call.windowIndex)
+        assertEquals("popup-2", call.surfaceId)
+        assertEquals(6, call.image.width)
+        assertEquals(Rectangle(30, 40, 3, 2), call.stillWindowBounds)
+        assertEquals(null, automator.lastCall)
+        assertEquals(0, automator.inProcessCaptureCalls)
+    }
+
+    @Test
+    fun `a target core without captureWithUntitledWindowStill reports an actionable error`() {
+        val handler = ReflectiveAutomatorHandler(InProcessOnlyAutomator())
+
+        val response =
+            handler.handle(
+                AgentRequest.CaptureWithUntitledWindowStill(
+                    windowIndex = 0,
+                    surfaceId = "popup-0",
+                    windowStillPng = png(width = 2, height = 2),
+                    stillWindowBounds = RectDto(0, 0, 2, 2),
+                )
+            )
+
+        val error = assertIs<AgentResponse.Error>(response)
+        assertEquals(AgentErrorCategory.UnsupportedOperation.wireName, error.category)
+        assertTrue(error.message.contains("spectre-core"), error.message)
+    }
+
     private fun png(width: Int, height: Int): ByteArray {
         val out = ByteArrayOutputStream()
         ImageIO.write(BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB), "png", out)
@@ -127,6 +172,20 @@ private open class InProcessOnlyAutomator {
 private class StillAwareAutomator : InProcessOnlyAutomator() {
     var lastCall: StillCall? = null
         private set
+
+    var lastUntitledCall: StillCall? = null
+        private set
+
+    @Suppress("unused")
+    fun captureWithUntitledWindowStill(
+        windowIndex: Int,
+        surfaceId: String,
+        windowStill: BufferedImage,
+        stillWindowBounds: Rectangle,
+    ): Any {
+        lastUntitledCall = StillCall(windowIndex, surfaceId, "", windowStill, stillWindowBounds)
+        return StillCapture()
+    }
 
     @Suppress("unused")
     fun captureWithWindowStill(

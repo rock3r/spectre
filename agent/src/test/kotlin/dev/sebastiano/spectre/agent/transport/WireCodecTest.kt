@@ -94,6 +94,24 @@ class WireCodecTest {
     }
 
     @Test
+    fun `untitled window still capture has its own discriminator and round-trips`() {
+        // An older runtime that only knows captureWithWindowStill must answer
+        // unsupportedOperation, not decode this as a titled capture (#605).
+        val req =
+            AgentRequest.CaptureWithUntitledWindowStill(
+                windowIndex = 1,
+                surfaceId = "popup-1",
+                windowStillPng = byteArrayOf(1, 2, 3),
+                stillWindowBounds = RectDto(10, 20, 240, 160),
+            )
+        val encoded = WireCodec.encode(req)
+
+        assertTrue(encoded.toString(Charsets.ISO_8859_1).contains("captureWithUntitledWindowStill"))
+        assertEquals(req, WireCodec.decodeRequest(encoded))
+        assertEquals("captureWithUntitledWindowStill", req.logLabel)
+    }
+
+    @Test
     fun `Detach request round-trips`() {
         val encoded = WireCodec.encode(AgentRequest.Detach)
         assertEquals(AgentRequest.Detach, WireCodec.decodeRequest(encoded))
@@ -228,6 +246,7 @@ class WireCodecTest {
                         scaleY = 1.0,
                         translateX = 0.0,
                         translateY = 0.0,
+                        screenBoundsOnScreen = RectDto(-1280, 0, 1280, 800),
                     ),
                 )
             )

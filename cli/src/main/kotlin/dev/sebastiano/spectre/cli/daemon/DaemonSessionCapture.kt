@@ -6,6 +6,8 @@ import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.agent.transport.WindowIdentityDto
 import dev.sebastiano.spectre.recording.AutoScreenshotter
+import dev.sebastiano.spectre.recording.ExperimentalSpectreRecordingApi
+import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -23,11 +25,15 @@ import javax.imageio.ImageIO
  * On macOS this also puts Screen Recording permission on the daemon's signed helper, the same one
  * `spectre record` uses, instead of on the target's `java` binary.
  *
+ * A window without a title, such as a Swing `JWindow` popup (IntelliJ heavyweight popups), cannot
+ * be found by title. The daemon finds it by its on-screen frame among the windows of the target
+ * process instead (#605), and the target checks that the window has not moved since.
+ *
  * Platforms without an out-of-process window still (Linux) use the target's own native capture,
  * which fails closed when the target has no `spectre-recording`. A failed daemon still is reported
  * as an error; it is never replaced by another kind of capture.
  */
-@OptIn(ExperimentalSpectreAgentApi::class)
+@OptIn(ExperimentalSpectreAgentApi::class, ExperimentalSpectreRecordingApi::class)
 internal class DaemonSessionCapture(
     private val targetPid: Long,
     private val windowIdentities: (windowIndex: Int?) -> List<WindowIdentityDto>,
@@ -40,9 +46,37 @@ internal class DaemonSessionCapture(
             stillWindowBounds: RectDto,
         ) -> AtomicCaptureResult,
     private val inProcessCapture: (windowIndex: Int) -> AtomicCaptureResult,
+    private val captureWithUntitledWindowStill:
+        (
+            windowIndex: Int,
+            surfaceId: String,
+            windowStillPng: ByteArray,
+            stillWindowBounds: RectDto,
+        ) -> AtomicCaptureResult =
+        { _, _, _, _ ->
+            throw IOException("this session cannot capture a window without a title")
+        },
     private val captureWindowByTitle: (title: String, windowOwnerPid: Long) -> BufferedImage =
         { title, windowOwnerPid ->
             AutoScreenshotter().captureWindowByTitle(title, windowOwnerPid)
+        },
+    private val captureWindowByFrame:
+        (
+            windowBounds: RectDto,
+            screenBounds: RectDto,
+            scaleX: Double,
+            scaleY: Double,
+            windowOwnerPid: Long,
+        ) -> BufferedImage =
+        { windowBounds, screenBounds, scaleX, scaleY, windowOwnerPid ->
+            AutoScreenshotter()
+                .captureWindowByFrame(
+                    windowBounds.toRectangle(),
+                    screenBounds.toRectangle(),
+                    scaleX,
+                    scaleY,
+                    windowOwnerPid,
+                )
         },
 ) {
     constructor(
@@ -54,10 +88,14 @@ internal class DaemonSessionCapture(
             delegate.captureWithWindowStill(index, surfaceId, title, png, bounds)
         },
         inProcessCapture = { index -> delegate.capture(index) },
+        captureWithUntitledWindowStill = { index, surfaceId, png, bounds ->
+            delegate.captureWithUntitledWindowStill(index, surfaceId, png, bounds)
+        },
     )
 
     fun capture(windowIndex: Int): AtomicCaptureResult {
         val identity = requireIdentity(windowIndex)
+        if (identity.title == null) return captureUntitled(windowIndex, identity)
         val title = requireTitle(identity)
         val still =
             try {
@@ -77,6 +115,48 @@ internal class DaemonSessionCapture(
             title,
             encodePng(still),
             identity.windowBoundsOnScreen,
+        )
+    }
+
+    /**
+     * Captures a window that has no title (`WindowIdentityDto.title` is null only for hosts that
+     * are not a `Frame` or `Dialog`) by its on-screen frame.
+     */
+    private fun captureUntitled(
+        windowIndex: Int,
+        identity: WindowIdentityDto,
+    ): AtomicCaptureResult {
+        val screenBounds =
+            identity.screenBoundsOnScreen
+                ?: throw IOException(
+                    "cannot capture window $windowIndex: it has no title, and the spectre-core " +
+                        "in the target application is too old to report the screen bounds " +
+                        "Spectre needs to find it by its frame. Update the target's spectre-core " +
+                        "dependency to the same version as the Spectre CLI."
+                )
+        val windowBounds = identity.windowBoundsOnScreen
+        val still =
+            try {
+                captureWindowByFrame(
+                    windowBounds,
+                    screenBounds,
+                    identity.scaleX,
+                    identity.scaleY,
+                    targetPid,
+                )
+            } catch (_: UnsupportedOperationException) {
+                // Same as titled windows: no out-of-process still on this platform (Linux).
+                return inProcessCapture(windowIndex)
+            } catch (exception: IllegalStateException) {
+                throw stillFailed(windowIndex, exception)
+            } catch (exception: IllegalArgumentException) {
+                throw stillFailed(windowIndex, exception)
+            }
+        return captureWithUntitledWindowStill(
+            windowIndex,
+            identity.surfaceId,
+            encodePng(still),
+            windowBounds,
         )
     }
 
@@ -113,3 +193,6 @@ internal class DaemonSessionCapture(
         return out.toByteArray()
     }
 }
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+private fun RectDto.toRectangle(): Rectangle = Rectangle(x, y, width, height)

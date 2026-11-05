@@ -323,6 +323,31 @@ internal constructor(
             )
         )
 
+    /**
+     * [captureWithWindowStill] for a tracked window that has no title, such as a Swing `JWindow`
+     * popup (#605). The caller found the window by its frame, so [stillWindowBounds] must be the
+     * frame it searched for. Fails when the target's `spectre-core` is too old to accept such a
+     * still, or when the window moved, resized, gained a title, or changed index after the still
+     * was taken.
+     */
+    @Throws(IOException::class)
+    public fun captureWithUntitledWindowStill(
+        windowIndex: Int,
+        surfaceId: String,
+        windowStillPng: ByteArray,
+        stillWindowBounds: RectDto,
+    ): AtomicCaptureResult =
+        atomicCaptureResult(
+            exchange(
+                AgentRequest.CaptureWithUntitledWindowStill(
+                    windowIndex = windowIndex,
+                    surfaceId = surfaceId,
+                    windowStillPng = windowStillPng,
+                    stillWindowBounds = stillWindowBounds,
+                )
+            )
+        )
+
     private fun atomicCaptureResult(resp: AgentResponse): AtomicCaptureResult {
         val capture = resp as? AgentResponse.Capture ?: throw wireMismatch("Capture", resp)
         return AtomicCaptureResult(

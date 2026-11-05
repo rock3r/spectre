@@ -604,6 +604,19 @@ class IpcRoundTripTest {
                     imageHeight = 0,
                     captureDurationMs = 0,
                 )
+            is AgentRequest.CaptureWithUntitledWindowStill ->
+                AgentResponse.Capture(
+                    windowIndex = request.windowIndex,
+                    schemaVersion = 1,
+                    captureJsonUtf8 = "{}".toByteArray(),
+                    pngBytes = request.windowStillPng,
+                    nodeCount = 0,
+                    taggedNodeCount = 0,
+                    textedNodeCount = 0,
+                    imageWidth = 0,
+                    imageHeight = 0,
+                    captureDurationMs = 0,
+                )
             is AgentRequest.CaptureWithWindowStill ->
                 AgentResponse.Capture(
                     windowIndex = request.windowIndex,

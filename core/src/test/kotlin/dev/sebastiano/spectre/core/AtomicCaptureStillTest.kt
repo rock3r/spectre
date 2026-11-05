@@ -188,6 +188,94 @@ class AtomicCaptureStillTest {
     }
 
     @Test
+    fun `an external untitled window still is cropped to the Compose surface`() {
+        val windowBounds = Rectangle(100, 200, 240, 160)
+        val still = BufferedImage(480, 320, BufferedImage.TYPE_INT_ARGB)
+
+        val capture =
+            externalUntitledWindowStill(
+                image = still,
+                stillWindowBounds = windowBounds,
+                liveWindowBounds = Rectangle(windowBounds),
+                frameInsets = Insets(0, 0, 0, 0),
+                captureRegion = Rectangle(windowBounds),
+                liveTitle = null,
+                expectedSurfaceId = "popup",
+                liveSurfaceId = "popup",
+                osName = "Mac OS X",
+                isWayland = false,
+            )
+
+        assertEquals(windowBounds, capture.boundsOnScreen)
+        assertEquals(480, capture.image.width)
+        assertEquals(320, capture.image.height)
+    }
+
+    @Test
+    fun `an external untitled window still is rejected when the window moved after it was taken`() {
+        // The daemon found the window by its frame, so a moved window may mean another window
+        // now sits at the frame the still shows.
+        val error =
+            assertFailsWith<IllegalStateException> {
+                externalUntitledWindowStill(
+                    image = BufferedImage(240, 160, BufferedImage.TYPE_INT_ARGB),
+                    stillWindowBounds = Rectangle(0, 0, 240, 160),
+                    liveWindowBounds = Rectangle(0, 10, 240, 160),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    captureRegion = Rectangle(0, 10, 240, 160),
+                    liveTitle = null,
+                    expectedSurfaceId = "popup",
+                    liveSurfaceId = "popup",
+                    osName = "Mac OS X",
+                    isWayland = false,
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("moved or resized"), error.message)
+    }
+
+    @Test
+    fun `an external untitled window still is rejected when the index now resolves elsewhere`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                externalUntitledWindowStill(
+                    image = BufferedImage(240, 160, BufferedImage.TYPE_INT_ARGB),
+                    stillWindowBounds = Rectangle(0, 0, 240, 160),
+                    liveWindowBounds = Rectangle(0, 0, 240, 160),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    captureRegion = Rectangle(0, 0, 240, 160),
+                    liveTitle = null,
+                    expectedSurfaceId = "popup-a",
+                    liveSurfaceId = "popup-b",
+                    osName = "Mac OS X",
+                    isWayland = false,
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("popup-a"), error.message)
+    }
+
+    @Test
+    fun `an external untitled window still is rejected for a titled window`() {
+        // A Frame or Dialog is found by its title; a still found by frame must not be paired
+        // with it.
+        val error =
+            assertFailsWith<IllegalStateException> {
+                externalUntitledWindowStill(
+                    image = BufferedImage(240, 160, BufferedImage.TYPE_INT_ARGB),
+                    stillWindowBounds = Rectangle(0, 0, 240, 160),
+                    liveWindowBounds = Rectangle(0, 0, 240, 160),
+                    frameInsets = Insets(0, 0, 0, 0),
+                    captureRegion = Rectangle(0, 0, 240, 160),
+                    liveTitle = "App",
+                    expectedSurfaceId = "s",
+                    liveSurfaceId = "s",
+                    osName = "Mac OS X",
+                    isWayland = false,
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("title"), error.message)
+    }
+
+    @Test
     fun `macOS title collisions use the helper's title-contains match`() {
         assertEquals(
             listOf("App Settings"),

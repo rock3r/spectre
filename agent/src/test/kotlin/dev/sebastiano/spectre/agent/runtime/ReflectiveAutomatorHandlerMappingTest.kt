@@ -5,6 +5,7 @@ package dev.sebastiano.spectre.agent.runtime
 import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentResponse
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
+import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.agent.transport.WindowIdentityDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import java.awt.Frame
@@ -116,6 +117,7 @@ class ReflectiveAutomatorHandlerMappingTest {
                 scaleYValue = 2.0,
                 translateXValue = 10.0,
                 translateYValue = 20.0,
+                screenBoundsOnScreenValue = Rectangle(-1280, 0, 1280, 800),
             )
         val automator = FakeAutomator(windowIdentitiesValue = listOf(snapshot))
         val handler = ReflectiveAutomatorHandler(automator)
@@ -143,6 +145,19 @@ class ReflectiveAutomatorHandlerMappingTest {
         assertEquals(2.0, dto.scaleY)
         assertEquals(10.0, dto.translateX)
         assertEquals(20.0, dto.translateY)
+        assertEquals(RectDto(-1280, 0, 1280, 800), dto.screenBoundsOnScreen)
+    }
+
+    @Test
+    fun `WindowIdentity op reports no screen bounds for a core that predates them`() {
+        val automator =
+            FakeAutomator(windowIdentitiesValue = listOf(LegacyWindowIdentitySnapshot()))
+        val handler = ReflectiveAutomatorHandler(automator)
+
+        val response = handler.handle(AgentRequest.WindowIdentity(windowIndex = null))
+
+        check(response is AgentResponse.WindowIdentities) { "unexpected response: $response" }
+        assertNull(response.windows.single().screenBoundsOnScreen)
     }
 
     @Test
@@ -782,6 +797,7 @@ private class FakeWindowIdentitySnapshot(
     private val scaleYValue: Double = 1.0,
     private val translateXValue: Double = 0.0,
     private val translateYValue: Double = 0.0,
+    private val screenBoundsOnScreenValue: Rectangle? = null,
 ) {
     @Suppress("unused") fun getIndex(): Int = indexValue
 
@@ -808,6 +824,43 @@ private class FakeWindowIdentitySnapshot(
     @Suppress("unused") fun getTranslateX(): Double = translateXValue
 
     @Suppress("unused") fun getTranslateY(): Double = translateYValue
+
+    @Suppress("unused") fun getScreenBoundsOnScreen(): Rectangle? = screenBoundsOnScreenValue
+}
+
+/** A `WindowIdentitySnapshot` from a core that predates `screenBoundsOnScreen` (#605). */
+@Suppress("LongParameterList")
+private class LegacyWindowIdentitySnapshot(
+    private val index: Int = 0,
+    private val surfaceId: String = "surface",
+    private val title: String? = null,
+    private val popup: Boolean = true,
+    private val nativeHandle: Long? = null,
+    private val cropRequired: Boolean = false,
+    private val bounds: Rectangle = Rectangle(0, 0, 10, 10),
+    private val scale: Double = 1.0,
+) {
+    @Suppress("unused") fun getIndex(): Int = index
+
+    @Suppress("unused") fun getSurfaceId(): String = surfaceId
+
+    @Suppress("unused") fun getTitle(): String? = title
+
+    @Suppress("unused") fun isPopup(): Boolean = popup
+
+    @Suppress("unused") fun getNativeHandle(): Long? = nativeHandle
+
+    @Suppress("unused") fun getCropRequired(): Boolean = cropRequired
+
+    @Suppress("unused") fun getWindowBoundsOnScreen(): Rectangle = bounds
+
+    @Suppress("unused") fun getSurfaceBoundsOnScreen(): Rectangle = bounds
+
+    @Suppress("unused") fun getSurfaceBoundsInWindow(): Rectangle = bounds
+
+    @Suppress("unused") fun getScaleX(): Double = scale
+
+    @Suppress("unused") fun getScaleY(): Double = scale
 }
 
 /** Mirrors `AtomicCapture` getters the reflective capture mapper reads. */

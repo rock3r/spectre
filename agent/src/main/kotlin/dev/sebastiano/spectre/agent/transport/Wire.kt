@@ -207,6 +207,40 @@ internal sealed interface AgentRequest {
     }
 
     /**
+     * [CaptureWithWindowStill] for a window that has no title: a Swing `JWindow` popup or a plain
+     * AWT `Window` (#605). The daemon found the window by its frame and owner process instead of by
+     * title, so [stillWindowBounds] is also the frame it searched for: the capture fails if the
+     * window moved or resized since, if [windowIndex] now resolves to another surface than
+     * [surfaceId], or if the window has a title.
+     *
+     * A separate discriminator, not new fields on [CaptureWithWindowStill], so an older runtime
+     * answers `unsupportedOperation` instead of treating this as a titled capture.
+     */
+    @Serializable
+    @SerialName("captureWithUntitledWindowStill")
+    data class CaptureWithUntitledWindowStill(
+        val windowIndex: Int,
+        val surfaceId: String,
+        @ByteString val windowStillPng: ByteArray,
+        val stillWindowBounds: RectDto,
+    ) : AgentRequest {
+        override fun equals(other: Any?): Boolean =
+            other is CaptureWithUntitledWindowStill &&
+                windowIndex == other.windowIndex &&
+                surfaceId == other.surfaceId &&
+                windowStillPng.contentEquals(other.windowStillPng) &&
+                stillWindowBounds == other.stillWindowBounds
+
+        override fun hashCode(): Int {
+            var result = windowIndex
+            result = 31 * result + surfaceId.hashCode()
+            result = 31 * result + windowStillPng.contentHashCode()
+            result = 31 * result + stillWindowBounds.hashCode()
+            return result
+        }
+    }
+
+    /**
      * Describe native window identity so an out-of-process (daemon) recorder can target capture.
      *
      * When [windowIndex] is null, every tracked window is described. When set, only that index is
@@ -335,6 +369,7 @@ internal val AgentRequest.logLabel: String
             is AgentRequest.Screenshot -> "screenshot"
             is AgentRequest.Capture -> "capture"
             is AgentRequest.CaptureWithWindowStill -> "captureWithWindowStill"
+            is AgentRequest.CaptureWithUntitledWindowStill -> "captureWithUntitledWindowStill"
             is AgentRequest.WindowIdentity -> "windowIdentity"
             AgentRequest.Detach -> "detach"
             is AgentRequest.Hello -> "hello"
@@ -368,6 +403,7 @@ internal val AgentRequest.requiresInputLane: Boolean
             is AgentRequest.Screenshot,
             is AgentRequest.Capture,
             is AgentRequest.CaptureWithWindowStill,
+            is AgentRequest.CaptureWithUntitledWindowStill,
             is AgentRequest.WindowIdentity,
             AgentRequest.Detach,
             is AgentRequest.Hello,
@@ -633,4 +669,11 @@ public data class WindowIdentityDto(
     public val scaleY: Double,
     public val translateX: Double = 0.0,
     public val translateY: Double = 0.0,
+    /**
+     * Bounds of the screen that holds the window (`GraphicsConfiguration.bounds`, AWT user space),
+     * or null when the target's `spectre-core` predates this field. On Windows, AWT scales from
+     * each screen's origin, so the daemon needs it to turn an untitled window's bounds into the
+     * device-pixel frame the capture helper matches (#605).
+     */
+    public val screenBoundsOnScreen: RectDto? = null,
 )

@@ -56,6 +56,9 @@ class WindowIdentityResolverTest {
                 identity.windowBoundsOnScreen.y + identity.surfaceBoundsInWindow.y,
                 identity.surfaceBoundsOnScreen.y,
             )
+            // The daemon needs the window's screen bounds to convert an untitled window's frame
+            // to device pixels (#605).
+            assertEquals(frame.graphicsConfiguration.bounds, identity.screenBoundsOnScreen)
             // Handle resolution is best-effort; on a realized frame we usually get a non-null peer.
             // Do not hard-fail if the JDK peer path is unavailable in this environment.
             if (identity.nativeHandle != null) {

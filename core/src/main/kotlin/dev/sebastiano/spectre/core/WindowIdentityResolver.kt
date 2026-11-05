@@ -43,6 +43,7 @@ public object WindowIdentityResolver {
             scaleY = transform.scaleY,
             translateX = transform.translateX,
             translateY = transform.translateY,
+            screenBoundsOnScreen = window.graphicsConfiguration?.bounds?.let(::Rectangle),
         )
     }
 
