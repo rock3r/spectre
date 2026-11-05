@@ -3,9 +3,13 @@
 package dev.sebastiano.spectre.cli.daemon
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.fixture.JWINDOW_POPUP_COLOR
+import dev.sebastiano.spectre.agent.fixture.JWINDOW_POPUP_HEIGHT_PX
+import dev.sebastiano.spectre.agent.fixture.JWINDOW_POPUP_WIDTH_PX
 import dev.sebastiano.spectre.agent.fixture.READY_SENTINEL
 import dev.sebastiano.spectre.agent.fixture.SPECTRE_FIXTURE_WINDOW_TITLE
 import dev.sebastiano.spectre.agent.fixture.TAG_BUTTON
+import dev.sebastiano.spectre.agent.fixture.TAG_JWINDOW_POPUP
 import dev.sebastiano.spectre.agent.fixture.TAG_LABEL
 import io.modelcontextprotocol.kotlin.sdk.client.Client
 import io.modelcontextprotocol.kotlin.sdk.client.StdioClientTransport
@@ -22,6 +26,7 @@ import java.nio.file.Paths
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -338,6 +343,72 @@ class DaemonFixtureIntegrationTest {
     }
 
     /**
+     * #605: `spectre capture` of an untitled `JWindow` popup in an attached application. The daemon
+     * cannot find the popup by title, so it takes the still with its own helper by the popup's
+     * frame, and the target pairs it with the popup's tree. On Linux the daemon has no
+     * out-of-process still, so the target's own native capture runs instead, as for titled windows.
+     */
+    @Test
+    fun `daemon capture of an untitled JWindow popup is a still of the popup`() {
+        assumeWindowsDaemonFixtureE2eAllowed()
+        assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a Compose Desktop display")
+        assumeMacOsScreenRecordingGranted()
+        val socketPath = temporaryDaemonFixtureSocketPath()
+        val outDir = Files.createTempDirectory("spectre-jwindow-capture-")
+        var daemon: Process? = null
+
+        try {
+            spawnComposeFixture(mapOf("SPECTRE_FIXTURE_JWINDOW_POPUP" to "true")).use { fixture ->
+                DaemonClient(socketPath).use { client ->
+                    val attached =
+                        attachWithRetry(client, fixture.pid) {
+                            daemon =
+                                DaemonProcessLauncher(
+                                        socketPath = socketPath,
+                                        classPath = daemonFixtureRuntimeClassPath(),
+                                    )
+                                    .start()
+                        }
+                    val windows =
+                        (client.request(DaemonRequest.Windows(attached.sessionId))
+                                as DaemonResponse.Windows)
+                            .windows
+                    val popup =
+                        checkNotNull(windows.firstOrNull { it.isPopup && it.title == null }) {
+                            "the JWindow popup is not tracked: $windows"
+                        }
+
+                    val response =
+                        client.request(
+                            DaemonRequest.Capture(
+                                attached.sessionId,
+                                windowIndex = popup.index,
+                                outDir = outDir.toString(),
+                            )
+                        )
+                    check(response is DaemonResponse.Capture) {
+                        "expected a capture of the JWindow popup, got $response"
+                    }
+                    assertJWindowPopupStill(Path.of(response.screenshotPngPath))
+                    assertTrue(
+                        Files.readString(Path.of(response.captureJsonPath))
+                            .contains(TAG_JWINDOW_POPUP),
+                        "capture.json must hold the popup tree",
+                    )
+                    assertEquals(
+                        DaemonResponse.ShuttingDown,
+                        client.request(DaemonRequest.Shutdown),
+                    )
+                }
+            }
+        } finally {
+            daemon?.destroyForcibly()?.waitFor()
+            deleteTemporaryDaemonFixtureSocketPath(socketPath)
+            outDir.toFile().deleteRecursively()
+        }
+    }
+
+    /**
      * #185 kill-target acceptance (real attach): daemon-owned record start → kill fixture mid-
      * record → stop still finalises a non-empty MP4. Skips on headless CI and when Screen Recording
      * is not granted (macOS TCC).
@@ -442,11 +513,11 @@ private fun waitForNonEmptyRecording(output: Path) {
     )
 }
 
-private fun spawnComposeFixture(): FixtureProcess {
+private fun spawnComposeFixture(environment: Map<String, String> = emptyMap()): FixtureProcess {
     var lastError: String? = null
     repeat(FIXTURE_SPAWN_ATTEMPTS) { attempt ->
         try {
-            return spawnComposeFixtureOnce()
+            return spawnComposeFixtureOnce(environment)
         } catch (ex: IllegalStateException) {
             lastError = ex.message
             if (attempt == FIXTURE_SPAWN_ATTEMPTS - 1) throw ex
@@ -456,7 +527,7 @@ private fun spawnComposeFixture(): FixtureProcess {
     error(lastError ?: "Compose fixture failed to start")
 }
 
-private fun spawnComposeFixtureOnce(): FixtureProcess {
+private fun spawnComposeFixtureOnce(environment: Map<String, String>): FixtureProcess {
     val javaExe =
         if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "java.exe"
         else "java"
@@ -473,6 +544,7 @@ private fun spawnComposeFixtureOnce(): FixtureProcess {
                 "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
             )
             .redirectErrorStream(true)
+            .apply { environment().putAll(environment) }
             .start()
     val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
     val ready = CountDownLatch(1)
@@ -858,6 +930,45 @@ private suspend fun assertMcpDetachReleasesSession(client: Client, sessionId: St
     )
 }
 
+/**
+ * The popup still must be the popup window: its size is the popup's at some display density, and
+ * its centre shows the popup colour, not the owner frame.
+ */
+private fun assertJWindowPopupStill(png: Path) {
+    val image = checkNotNull(ImageIO.read(png.toFile())) { "unreadable capture PNG at $png" }
+    val scale = image.width.toDouble() / JWINDOW_POPUP_WIDTH_PX
+    assertTrue(
+        scale >= 1.0 &&
+            kotlin.math.abs(image.height - JWINDOW_POPUP_HEIGHT_PX * scale) <= POPUP_SIZE_SLACK_PX,
+        "the still must have the popup's ${JWINDOW_POPUP_WIDTH_PX}x$JWINDOW_POPUP_HEIGHT_PX " +
+            "shape; got ${image.width}x${image.height}",
+    )
+    val centre = image.getRGB(image.width / 2, image.height / 2)
+    val expected = JWINDOW_POPUP_COLOR.toInt()
+    val distance =
+        listOf(16, 8, 0).maxOf { shift ->
+            kotlin.math.abs(((centre shr shift) and 0xFF) - ((expected shr shift) and 0xFF))
+        }
+    assertTrue(
+        distance <= POPUP_COLOUR_TOLERANCE,
+        "the still's centre must show the popup colour; got #${Integer.toHexString(centre and 0xFFFFFF)}",
+    )
+}
+
+/** On macOS the daemon's helper needs Screen Recording; without it no still can be taken. */
+private fun assumeMacOsScreenRecordingGranted() {
+    if (!System.getProperty("os.name").orEmpty().contains("mac", ignoreCase = true)) return
+    assumeTrue(
+        runCatching {
+                dev.sebastiano.spectre.recording.screencapturekit.MacOsScreenCaptureAccess
+                    .preflight()
+                    .granted
+            }
+            .getOrDefault(false),
+        "Screen Recording TCC not granted for this runner",
+    )
+}
+
 private data class CliBinaryResult(val exitCode: Int, val output: String, val errorOutput: String)
 
 private class FixtureProcess(
@@ -888,6 +999,9 @@ private const val RECORD_START_TIMEOUT_SECONDS: Long = 10
 private const val RECORD_START_POLL_MILLIS: Long = 100
 private const val RECORD_AFTER_KILL_SETTLE_MILLIS: Long = 1_500
 private const val MIN_PNG_BYTES: Int = 100
+private const val POPUP_SIZE_SLACK_PX: Int = 2
+// Display colour management can shift a solid colour a little in a native still.
+private const val POPUP_COLOUR_TOLERANCE: Int = 40
 /** Must match agent module `WindowsAttachE2eGate.ALLOW_PROP` / cli test JVM forwarding. */
 private const val WINDOWS_ATTACH_E2E_ALLOW_PROP: String =
     "dev.sebastiano.spectre.agent.attachE2e.allowWindows"

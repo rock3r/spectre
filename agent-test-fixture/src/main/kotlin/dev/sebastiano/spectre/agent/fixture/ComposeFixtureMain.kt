@@ -3,8 +3,11 @@
 
 package dev.sebastiano.spectre.agent.fixture
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -21,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -29,6 +33,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import java.awt.Dimension
 import javax.swing.JFrame
+import javax.swing.JWindow
 import javax.swing.SwingUtilities
 import javax.swing.WindowConstants
 
@@ -74,9 +79,15 @@ fun main() {
     // - SPECTRE_FIXTURE_UNDECORATED=true → undecorated JFrame (custom-chrome-like host)
     // - SPECTRE_FIXTURE_DELAYED_SHOW=true → pack/displayable first, compose, then show (onboarding-
     //   style delayed visibility). WindowTracker must still list the surface once semantics exist.
+    // - SPECTRE_FIXTURE_JWINDOW_POPUP=true → also open an untitled, non-focusable JWindow owned by
+    //   the frame and hosting a ComposePanel, like IntelliJ heavyweight popups (#605).
     val undecorated = System.getenv("SPECTRE_FIXTURE_UNDECORATED").toBoolean()
     val delayedShow = System.getenv("SPECTRE_FIXTURE_DELAYED_SHOW").toBoolean()
-    System.err.println("[fixture] chrome undecorated=$undecorated delayedShow=$delayedShow")
+    val jwindowPopup = System.getenv("SPECTRE_FIXTURE_JWINDOW_POPUP").toBoolean()
+    System.err.println(
+        "[fixture] chrome undecorated=$undecorated delayedShow=$delayedShow " +
+            "jwindowPopup=$jwindowPopup"
+    )
     System.err.flush()
 
     val panelRef = java.util.concurrent.atomic.AtomicReference<ComposePanel>()
@@ -177,13 +188,7 @@ fun main() {
     // We marshal each read to the EDT via `SwingUtilities.invokeAndWait` to match Spectre's
     // own `readOnEdt` convention.
     val panel = panelRef.get()
-    val deadline = System.currentTimeMillis() + READY_POLL_TIMEOUT_MS
-    while (semanticsOwnerCountOnEdt(panel) == 0) {
-        check(System.currentTimeMillis() < deadline) {
-            "Compose semantics tree did not populate within ${READY_POLL_TIMEOUT_MS}ms"
-        }
-        Thread.sleep(READY_POLL_INTERVAL_MS)
-    }
+    awaitSemantics(listOfNotNull(panel, if (jwindowPopup) openJWindowPopup() else null))
     System.err.println(
         "[fixture] semantics ready (${semanticsOwnerCountOnEdt(panel)} owners); emitting READY"
     )
@@ -235,6 +240,64 @@ private fun NodeStateRow() {
         )
     }
 }
+
+private fun awaitSemantics(panels: List<ComposePanel>) {
+    val deadline = System.currentTimeMillis() + READY_POLL_TIMEOUT_MS
+    while (panels.any { semanticsOwnerCountOnEdt(it) == 0 }) {
+        check(System.currentTimeMillis() < deadline) {
+            "Compose semantics tree did not populate within ${READY_POLL_TIMEOUT_MS}ms"
+        }
+        Thread.sleep(READY_POLL_INTERVAL_MS)
+    }
+}
+
+/**
+ * Opens an untitled, non-focusable `JWindow` owned by the fixture frame, hosting a [ComposePanel]
+ * with one solid [JWINDOW_POPUP_COLOR] box tagged [TAG_JWINDOW_POPUP]. Returns the panel.
+ */
+private fun openJWindowPopup(): ComposePanel {
+    val ref = java.util.concurrent.atomic.AtomicReference<ComposePanel>()
+    SwingUtilities.invokeAndWait {
+        val owner = java.awt.Frame.getFrames().first { it.title == SPECTRE_FIXTURE_WINDOW_TITLE }
+        val popupPanel =
+            ComposePanel().apply {
+                setContent {
+                    Box(
+                        Modifier.fillMaxSize()
+                            .background(Color(JWINDOW_POPUP_COLOR))
+                            .testTag(TAG_JWINDOW_POPUP)
+                    )
+                }
+            }
+        JWindow(owner).apply {
+            focusableWindowState = false
+            // Keep the popup above the always-on-top owner frame.
+            isAlwaysOnTop = true
+            contentPane.add(popupPanel)
+            setBounds(
+                owner.x + JWINDOW_POPUP_OFFSET_PX,
+                owner.y + JWINDOW_POPUP_OFFSET_PX,
+                JWINDOW_POPUP_WIDTH_PX,
+                JWINDOW_POPUP_HEIGHT_PX,
+            )
+            isVisible = true
+        }
+        ref.set(popupPanel)
+    }
+    return ref.get()
+}
+
+/** Test tag on the solid box inside the optional JWindow popup. */
+public const val TAG_JWINDOW_POPUP: String = "agent-fixture-jwindow-popup"
+
+/** ARGB colour of the JWindow popup box. */
+public const val JWINDOW_POPUP_COLOR: Long = 0xFFE07020
+
+/** JWindow popup size in AWT units. */
+public const val JWINDOW_POPUP_WIDTH_PX: Int = 240
+public const val JWINDOW_POPUP_HEIGHT_PX: Int = 160
+
+private const val JWINDOW_POPUP_OFFSET_PX: Int = 80
 
 /** The window title — assertable from the integration test via `WindowSummaryDto.title`. */
 public const val SPECTRE_FIXTURE_WINDOW_TITLE: String = "Spectre Agent Test Fixture"
