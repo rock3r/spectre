@@ -1,8 +1,14 @@
 package dev.sebastiano.spectre.build
 
+import com.sun.net.httpserver.HttpServer
 import java.io.File
 import java.io.IOException
+import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.nio.file.Path
+import java.time.Duration
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -86,6 +92,37 @@ class RetryingDownloadTest {
 
         assertFalse(dest.exists(), "a failed download must not leave a truncated file")
         assertFalse(File(dest.path + ".part").exists())
+    }
+
+    @Test
+    fun `a body that stalls after the headers fails the attempt at its deadline`() {
+        val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
+        val release = CountDownLatch(1)
+        server.createContext("/stall") { exchange ->
+            exchange.sendResponseHeaders(200, 1_000)
+            exchange.responseBody.write(ByteArray(10))
+            exchange.responseBody.flush()
+            release.await(30, TimeUnit.SECONDS)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val url = "http://127.0.0.1:${server.address.port}/stall"
+            val started = System.nanoTime()
+
+            assertThrows(IOException::class.java) {
+                fetchOverHttp(url, dir.resolve("stall.bin").toFile(), Duration.ofMillis(500))
+            }
+
+            val elapsed = Duration.ofNanos(System.nanoTime() - started)
+            assertTrue(
+                elapsed < Duration.ofSeconds(10),
+                "the attempt must end at its deadline: $elapsed",
+            )
+        } finally {
+            release.countDown()
+            server.stop(0)
+        }
     }
 
     private companion object {

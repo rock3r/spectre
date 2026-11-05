@@ -8,6 +8,9 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.StandardCopyOption
 import java.time.Duration
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * Downloads [url] to [dest], retrying failed attempts.
@@ -49,17 +52,31 @@ fun downloadWithRetries(
     throw IOException("Download of $url failed after $attempts attempts", lastError)
 }
 
-private fun fetchOverHttp(url: String, target: File) {
+/**
+ * One download attempt, bounded by [deadline] from start to the last body byte.
+ *
+ * `HttpRequest.timeout` alone is not enough: the JDK client stops that timer once the headers
+ * arrive, so a body that stalls would block forever and never reach the retry loop. The whole
+ * exchange runs asynchronously and is cancelled when [deadline] passes.
+ */
+internal fun fetchOverHttp(url: String, target: File, deadline: Duration = ATTEMPT_DEADLINE) {
     val client =
         HttpClient.newBuilder()
             .connectTimeout(CONNECT_TIMEOUT)
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build()
-    val request = HttpRequest.newBuilder(URI.create(url)).timeout(REQUEST_TIMEOUT).GET().build()
+    val request = HttpRequest.newBuilder(URI.create(url)).timeout(deadline).GET().build()
+    val exchange = client.sendAsync(request, HttpResponse.BodyHandlers.ofFile(target.toPath()))
     val response =
         try {
-            client.send(request, HttpResponse.BodyHandlers.ofFile(target.toPath()))
+            exchange.get(deadline.toMillis(), TimeUnit.MILLISECONDS)
+        } catch (error: TimeoutException) {
+            exchange.cancel(true)
+            throw IOException("Download of $url did not finish within $deadline", error)
+        } catch (error: ExecutionException) {
+            throw error.cause as? IOException ?: IOException("Download of $url failed", error.cause)
         } catch (error: InterruptedException) {
+            exchange.cancel(true)
             Thread.currentThread().interrupt()
             throw IOException("Interrupted while downloading $url", error)
         }
@@ -73,4 +90,5 @@ private fun fetchOverHttp(url: String, target: File) {
 private const val DEFAULT_ATTEMPTS = 5
 private const val INITIAL_BACKOFF_MILLIS = 10_000L
 private val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(30)
-private val REQUEST_TIMEOUT: Duration = Duration.ofMinutes(10)
+// About 140 MB per file; 5 minutes allows for a slow runner without letting a stall eat the job.
+private val ATTEMPT_DEADLINE: Duration = Duration.ofMinutes(5)
