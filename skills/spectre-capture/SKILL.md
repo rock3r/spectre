@@ -213,8 +213,10 @@ Return summary fields first. Read `capture.json` when the full tree is needed.
 because a crop can include other windows that cover the target. When the native still is not
 possible, capture fails with a message that says why. Common causes:
 
-- **Blank or ambiguous window title.** CLI and MCP capture find the window by its title among the
-  windows of the attached process. Give the window a unique, non-blank title.
+- **Blank or ambiguous window title.** CLI and MCP capture find a `Frame` or `Dialog` by its title
+  among the windows of the attached process. Give the window a unique, non-blank title. A window
+  with no title, such as a `JWindow` popup, is found by its position and size instead; it fails
+  when another window has the same bounds.
 - **macOS Screen Recording not granted.** Run `spectre permissions check`. Ask a human to grant it;
   do not retry in a loop.
 - **The window moved or resized during the capture.** Settle the UI and retry once.

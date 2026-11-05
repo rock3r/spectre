@@ -126,7 +126,7 @@ you need:
 `capture` writes `screenshot.png` and `capture.json` and prints their paths. See
 [CLI — Capture and recording](cli.md#capture-and-recording) and [Atomic capture](capture.md).
 
-### `capture` needs a unique window title and never crops the screen
+### `capture` needs a unique window title or a unique position, and never crops the screen
 
 <!-- aliases: capture fails, capture error, blank title, window title, ambiguous title, robot crop, capture fallback, screen recording permission, privacy, occluded -->
 
@@ -134,12 +134,15 @@ you need:
 the screen, because a crop can include other windows that cover the target. When no native
 still is possible, `capture` fails with a message that says why.
 
-On the attach path the daemon takes the still with its own helper. It finds the window by
-its title among the windows of the attached process, so the target needs no
-`spectre-recording`. That has consequences:
+On the attach path the daemon takes the still with its own helper. It finds the window
+among the windows of the attached process, so the target needs no `spectre-recording`.
+That has consequences:
 
-- **The window needs a unique, non-blank title.** A blank title, or another window of the
-  same process with a matching title, fails the capture. Give each window its own title.
+- **A `Frame` or `Dialog` needs a unique, non-blank title.** A blank title, or another
+  window of the same process with a matching title, fails the capture. Give each window its
+  own title.
+- **A window with no title, such as a `JWindow` popup, is found by its position and size.**
+  Another window of the same process with the same bounds fails the capture.
 - **macOS Screen Recording belongs to the daemon's helper.** Check it with
   `spectre permissions check`; the attached `java` process needs no grant of its own.
 - **A window that moves or resizes mid-capture fails it.** Settle the UI and retry once.
@@ -306,7 +309,7 @@ Unlock the session and retry. See [Troubleshooting](troubleshooting.md).
 | `Refusing typeText because no focused Spectre node was found` | `type` needs a focused node | `spectre click` the field first |
 | `Refusing typeText`/`pressKey` because the JVM lacks OS keyboard focus | Real OS keyboard input needs the foreground window | Run `spectre focus-window <session-id> --window <index>` first |
 | `screenshot` fails without `--fullscreen` | Window screenshots fail closed on attach | Use `spectre capture` for one window |
-| `capture` fails on a blank or ambiguous window title | The daemon finds the window by title in the attached process | Give the window a unique, non-blank title |
+| `capture` fails on a blank or ambiguous window title | The daemon finds a `Frame` or `Dialog` by title in the attached process | Give the window a unique, non-blank title |
 | `Cannot click … in-window bounds are empty` | The node is scrolled out of an eager `verticalScroll` column | Scroll the container, then look the node up again |
 | `find` or `tree` misses a node that appears later | Queries read once | Use `wait-for-node` or `waitForNode` |
 | A previous test's window shows up in the next test | `exitApplication()` is asynchronous | Wait for `!window.isDisplayable` in teardown |

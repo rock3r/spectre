@@ -323,6 +323,11 @@ Capture and event handling depend on the IDE host:
     See [Recording](recording.md) for the full routing logic.
 - **Spectre tracks IDE popups.** Compose gives them separate roots, which Spectre
   includes in its window tracking. Selectors can find nodes in a tool window or dropdown.
+- **Heavyweight popups have no title.** IntelliJ hosts them in a Swing `JWindow`.
+  `spectre capture` and in-process `screenshot(windowIndex)` find such a popup by its
+  position and size instead, on macOS and Windows. On Linux, `spectre capture` falls back to
+  the IDE's own native capture, which needs `spectre-recording` in the IDE and works on
+  X11 only. Window recording still needs a titled window.
 - **Waits must run outside the IDE's EDT.** `waitForNode`, `waitForIdle`, and
   `waitForVisualIdle` reject EDT callers. Move work started by a UI handler to a
   pooled thread before waiting.

@@ -445,7 +445,7 @@ The three capture commands return different outputs:
 | Surface | CLI | Output | Targeting notes |
 | --- | --- | --- | --- |
 | **Fullscreen screenshot** | `screenshot … --fullscreen` | Single PNG of the **full virtual desktop** | Attach/CLI supports whole-desktop mode only. Default / `--window` / `--surface` **fail closed** (occlusion/privacy risk). MCP returns inline PNG bytes; no path is returned. |
-| **Atomic capture** | `capture` | Window PNG + full semantics tree on **daemon disk** (`capture.json` + `screenshot.png`) | `--window` defaults to **0**. The daemon takes a native still of the window, found by its title, so the window needs a unique, non-blank title. It never falls back to a desktop crop. Stdout/MCP returns only a summary (paths + counts). See [Atomic capture](capture.md#attached-applications). |
+| **Atomic capture** | `capture` | Window PNG + full semantics tree on **daemon disk** (`capture.json` + `screenshot.png`) | `--window` defaults to **0**. The daemon takes a native still of the window. It finds a `Frame` or `Dialog` by its title, so such a window needs a unique, non-blank title, and an untitled `JWindow` popup by its position and size. It never falls back to a desktop crop. Stdout/MCP returns only a summary (paths + counts). See [Atomic capture](capture.md#attached-applications). |
 | **Recording** | `record start` / `stop` / `status` | MP4 path on **daemon filesystem** | The default is tracked **window index 0**. `--fullscreen` captures the **primary display only**; multi-monitor recording is unsupported. Returns **paths**, never video bytes. |
 
 ```shell

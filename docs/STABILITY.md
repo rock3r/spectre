@@ -43,7 +43,7 @@ Public declarations annotated with `@ExperimentalSpectreHttpApi` (or any future 
 the API baselines**, but they are explicitly **not covered** by compatibility guarantees and
 may change or be removed in any release, including patch releases.
 
-Four experimental markers exist today:
+Five experimental markers exist today:
 
 - **`@ExperimentalSpectreApi`** covers selected `core` APIs that are useful now but still
   settling, such as the recomposition-monitor surface exposed through
@@ -62,6 +62,9 @@ Four experimental markers exist today:
   inject-runtime packaging (attach when the target has no preinstalled `spectre-core`) is
   **experimental inspect only** for 1.0 — keep the marker; do not treat inject as a stable
   production attach mode.
+- **`@ExperimentalSpectreRecordingApi`** covers selected `recording` APIs that are still
+  settling. Today that is `AutoScreenshotter.captureWindowByFrame`, which the Spectre daemon
+  uses to capture an untitled window (a Swing `JWindow` popup) of an attached application.
 - **`@ExperimentalSpectreInputCoordinationApi`** covers the cooperative desktop coordinator,
   its low-level client/server modules, the explicit core policy/scope entry points, and JUnit
   whole-test isolation. It remains opt-in while desktop identity, recovery, and lifecycle
