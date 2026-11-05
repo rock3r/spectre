@@ -62,6 +62,15 @@ pub struct ScreenshotCommand {
     pub display_name: Option<String>,
     #[serde(default)]
     pub window_title: Option<String>,
+    /// Selector for an untitled window (a `JWindow` or plain AWT `Window`): its frame in X11
+    /// root coordinates, device pixels. X11 window target only; mutually exclusive with
+    /// [window_title].
+    #[serde(default)]
+    pub window_frame: Option<Region>,
+    /// Process that owns the target window. The frame selector skips windows whose
+    /// `_NET_WM_PID` names another process.
+    #[serde(default)]
+    pub window_owner_pid: Option<u32>,
     pub cursor_mode: CursorMode,
     pub region: Region,
     /// AWT bounds of the display that contains [region], when known (`x,y,w,h`).
@@ -116,7 +125,7 @@ pub enum CursorMode {
 /// non-negative even though the geometry rarely makes sense), so accepting them at the
 /// boundary and validating downstream gives a better error trail than mid-deserialisation
 /// rejection.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 pub struct Region {
     pub x: i32,
     pub y: i32,
