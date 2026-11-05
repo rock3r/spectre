@@ -72,13 +72,11 @@ class CentralPortalCheckTest(unittest.TestCase):
             files,
         )
         self.assertIn(
-            "dev/sebastiano/spectre/spectre-core/0.2.0/"
-            "spectre-core-0.2.0.jar.sha512",
+            "dev/sebastiano/spectre/spectre-core/0.2.0/spectre-core-0.2.0.jar.md5",
             files,
         )
         self.assertIn(
-            "dev/sebastiano/spectre/spectre-core/0.2.0/"
-            "spectre-core-0.2.0.jar.asc.sha512",
+            "dev/sebastiano/spectre/spectre-core/0.2.0/spectre-core-0.2.0.jar.sha1",
             files,
         )
         self.assertIn(
@@ -88,10 +86,65 @@ class CentralPortalCheckTest(unittest.TestCase):
         )
         self.assertIn(
             "dev/sebastiano/spectre/spectre-input-coordinator-server/0.2.0/"
-            "spectre-input-coordinator-server-0.2.0.pom.asc.sha512",
+            "spectre-input-coordinator-server-0.2.0.pom.sha1",
             files,
         )
-        self.assertEqual(len(files), 550)
+        self.assertEqual(len(files), 220)
+
+    def test_expected_files_require_only_the_checksums_central_requires(self):
+        # Central requires .md5 and .sha1 for each payload file. Since 0.7.x the published
+        # bundles carry nothing else, so .sha256, .sha512 and signature checksums are optional.
+        files = set(central.expected_files_for_version("0.2.0"))
+        jar = "dev/sebastiano/spectre/spectre-core/0.2.0/spectre-core-0.2.0.jar"
+
+        for optional in (f"{jar}.sha256", f"{jar}.sha512", f"{jar}.asc.md5", f"{jar}.asc.sha512"):
+            self.assertNotIn(optional, files)
+            self.assertTrue(central.is_optional_checksum_file(optional, "0.2.0"), optional)
+
+        self.assertFalse(central.is_optional_checksum_file(f"{jar}.md5", "0.2.0"))
+        self.assertFalse(central.is_optional_checksum_file(f"{jar}.bogus", "0.2.0"))
+        self.assertFalse(
+            central.is_optional_checksum_file(
+                "dev/sebastiano/spectre/spectre-core/0.2.0/stray.jar.sha256", "0.2.0"
+            )
+        )
+
+    def test_checksum_errors_verify_every_checksum_file_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relative_path = "dev/sebastiano/spectre/spectre-core/0.2.0/spectre-core-0.2.0.jar"
+            payload = root / relative_path
+            payload.parent.mkdir(parents=True)
+            payload.write_bytes(b"payload")
+            (root / f"{relative_path}.asc").write_bytes(b"signature")
+            for algorithm in ("md5", "sha1"):
+                digest = central.digest_file(payload, algorithm)
+                (root / f"{relative_path}.{algorithm}").write_text(digest)
+
+            self.assertEqual(central.checksum_errors(root, relative_path), [])
+
+            (root / f"{relative_path}.sha512").write_text("0" * 128)
+            (root / f"{relative_path}.asc.md5").write_text(
+                central.digest_file(root / f"{relative_path}.asc", "md5")
+            )
+            errors = central.checksum_errors(root, relative_path)
+
+            self.assertEqual(len(errors), 1)
+            self.assertIn("spectre-core-0.2.0.jar.sha512", errors[0])
+
+    def test_checksum_errors_report_missing_required_checksums(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relative_path = "dev/sebastiano/spectre/spectre-core/0.2.0/spectre-core-0.2.0.pom"
+            payload = root / relative_path
+            payload.parent.mkdir(parents=True)
+            payload.write_bytes(b"pom")
+            (root / f"{relative_path}.md5").write_text(central.digest_file(payload, "md5"))
+
+            errors = central.checksum_errors(root, relative_path)
+
+            self.assertEqual(len(errors), 1)
+            self.assertIn("spectre-core-0.2.0.pom.sha1", errors[0])
 
     def test_agent_runtime_manifest_validation(self):
         jar = self._jar(
