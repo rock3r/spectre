@@ -19,9 +19,14 @@ import UniformTypeIdentifiers
 //   --source <window|region>   Optional. Default window. Ignored for preflight/request.
 //   --pid <jvm pid>            Required for window source. Filters CGWindowList by owner PID so we never
 //                              capture another process's window matching the discriminator.
-//   --title-contains <suffix>  Required for window source. Substring match on the target window's kCGWindowName.
+//   --title-contains <suffix>  Window source selector. Substring match on the target window's kCGWindowName.
 //                              Spectre stamps a `Spectre/<uuid>` suffix on the ComposeWindow's
 //                              title for the recording's lifetime so this is unique.
+//   --frame <x,y,w,h>          Window source selector for untitled windows (JWindow, plain AWT
+//                              Window). Matches the on-screen window of --pid whose frame equals
+//                              this rect within 1 point. Global CG coordinates in points, top-left
+//                              origin (the same space as AWT bounds). x/y may be negative.
+//                              Exactly one of --title-contains and --frame is required.
 //   --region <x,y,w,h>         Required for region source. Coordinates use the selected
 //                              display's top-left ScreenCaptureKit sourceRect space.
 //   --crop <x,y,w,h>           Optional for window source. Crop rect relative to the window's
@@ -54,6 +59,7 @@ import UniformTypeIdentifiers
 //   4  permission denied mid-capture (Screen Recording TCC during SCStream)
 //   5  capture pipeline error after start
 //   6  preflight/request: Screen Recording not granted (structured JSON on stdout)
+//   7  --frame matched more than one window of --pid
 
 public enum SpectreScreenCaptureCommand {
     public static func main(_ argv: [String] = CommandLine.arguments) async -> Never {
@@ -174,6 +180,8 @@ struct Arguments {
     let source: CaptureSource
     let pid: pid_t?
     let titleContains: String?
+    /// Untitled-window selector (points, global CG space). Exclusive with [titleContains].
+    let frame: WindowFrame?
     let region: CaptureRegion?
     /// Optional window-relative crop (points). Only valid for window source.
     let crop: CaptureRegion?
@@ -191,6 +199,7 @@ struct Arguments {
         var source = CaptureSource.window
         var pid: pid_t?
         var titleContains: String?
+        var frame: WindowFrame?
         var region: CaptureRegion?
         var crop: CaptureRegion?
         var displayIndex = 0
@@ -251,6 +260,8 @@ struct Arguments {
                 pid = parsed
             case "--title-contains":
                 titleContains = value
+            case "--frame":
+                frame = try WindowFrame.parse(value)
             case "--region":
                 region = try CaptureRegion.parse(value, flag: "--region")
             case "--crop":
@@ -296,6 +307,7 @@ struct Arguments {
                 source: source,
                 pid: pid,
                 titleContains: titleContains,
+                frame: frame,
                 region: region,
                 crop: crop,
                 displayIndex: displayIndex,
@@ -311,8 +323,14 @@ struct Arguments {
         switch source {
         case .window:
             guard pid != nil else { throw CLIError(code: 2, message: "--pid is required") }
-            guard let titleContains, !titleContains.isEmpty else {
-                throw CLIError(code: 2, message: "--title-contains is required")
+            if titleContains != nil && frame != nil {
+                throw CLIError(
+                    code: 2, message: "--title-contains and --frame are mutually exclusive")
+            }
+            if frame == nil {
+                guard let titleContains, !titleContains.isEmpty else {
+                    throw CLIError(code: 2, message: "--title-contains or --frame is required")
+                }
             }
         case .region:
             guard region != nil else { throw CLIError(code: 2, message: "--region is required") }
@@ -323,6 +341,9 @@ struct Arguments {
                 throw CLIError(
                     code: 2,
                     message: "--crop is only valid with --source window (region uses --region)")
+            }
+            if frame != nil {
+                throw CLIError(code: 2, message: "--frame is only valid with --source window")
             }
         }
         guard let output, !output.isEmpty else {
@@ -335,6 +356,7 @@ struct Arguments {
             source: source,
             pid: pid,
             titleContains: titleContains,
+            frame: frame,
             region: region,
             crop: crop,
             displayIndex: displayIndex,
@@ -411,6 +433,90 @@ struct CaptureRegion {
             width: CGFloat(width),
             height: CGFloat(height)
         )
+    }
+}
+
+/// On-screen frame of an untitled target window, in global CG points (top-left origin).
+struct WindowFrame: Equatable {
+    let x: Int
+    let y: Int
+    let width: Int
+    let height: Int
+
+    /// Rounding slack between AWT's integer bounds and the window server's frame.
+    static let tolerance: CGFloat = 1
+
+    static func parse(_ value: String) throws -> WindowFrame {
+        let parts = value.split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count == 4, let x = Int(parts[0]), let y = Int(parts[1]),
+            let width = Int(parts[2]), let height = Int(parts[3])
+        else {
+            throw CLIError(code: 2, message: "--frame must be x,y,width,height")
+        }
+        guard width > 0, height > 0 else {
+            throw CLIError(code: 2, message: "--frame width/height must be positive")
+        }
+        return WindowFrame(x: x, y: y, width: width, height: height)
+    }
+
+    func matches(_ rect: CGRect) -> Bool {
+        abs(rect.minX - CGFloat(x)) <= WindowFrame.tolerance
+            && abs(rect.minY - CGFloat(y)) <= WindowFrame.tolerance
+            && abs(rect.width - CGFloat(width)) <= WindowFrame.tolerance
+            && abs(rect.height - CGFloat(height)) <= WindowFrame.tolerance
+    }
+
+    var description: String { "\(x),\(y),\(width),\(height)" }
+}
+
+/// How the helper picks the target among the windows of `--pid`.
+enum WindowSelector {
+    case titleContains(String)
+    case frame(WindowFrame)
+
+    var description: String {
+        switch self {
+        case .titleContains(let title): return "title containing '\(title)'"
+        case .frame(let frame): return "frame \(frame.description)"
+        }
+    }
+}
+
+/// The window-server facts the selector needs, detached from `SCWindow` so it can be tested.
+struct WindowCandidate<ID> {
+    let id: ID
+    let pid: pid_t
+    let title: String?
+    let frame: CGRect
+}
+
+/// Returns the selected window, or nil when no window matches yet (the caller keeps polling).
+///
+/// A title selector keeps the first window whose title contains the discriminator. A frame
+/// selector must match exactly one window: two windows with the same frame would make the
+/// capture a guess, so that fails with exit 7 instead.
+func selectWindow<ID>(
+    _ candidates: [WindowCandidate<ID>],
+    pid: pid_t,
+    selector: WindowSelector
+) throws -> ID? {
+    let owned = candidates.filter { $0.pid == pid }
+    switch selector {
+    case .titleContains(let titleContains):
+        return owned.first(where: { candidate in
+            guard let title = candidate.title, !title.isEmpty else { return false }
+            return title.contains(titleContains)
+        })?.id
+    case .frame(let frame):
+        let matches = owned.filter { frame.matches($0.frame) }
+        if matches.count > 1 {
+            throw CLIError(
+                code: 7,
+                message:
+                    "\(matches.count) windows with pid=\(pid) have frame \(frame.description); "
+                    + "cannot select one of them")
+        }
+        return matches.first?.id
     }
 }
 
@@ -548,11 +654,14 @@ final class Recorder {
         return pid
     }
 
-    private func requireTitleContains() throws -> String {
-        guard let titleContains = args.titleContains, !titleContains.isEmpty else {
-            throw CLIError(code: 2, message: "--title-contains is required")
+    private func requireWindowSelector() throws -> WindowSelector {
+        if let frame = args.frame {
+            return .frame(frame)
         }
-        return titleContains
+        guard let titleContains = args.titleContains, !titleContains.isEmpty else {
+            throw CLIError(code: 2, message: "--title-contains or --frame is required")
+        }
+        return .titleContains(titleContains)
     }
 
     private func requireRegion() throws -> CaptureRegion {
@@ -574,7 +683,7 @@ final class Recorder {
 
     private func discoverTargetWindow() async throws -> SCWindow {
         let pid = try requirePid()
-        let titleContains = try requireTitleContains()
+        let selector = try requireWindowSelector()
         let deadline = Date().addingTimeInterval(Double(args.discoveryTimeoutMs) / 1000.0)
         repeat {
             let content: SCShareableContent
@@ -586,11 +695,12 @@ final class Recorder {
                     code: 4, message: "screen recording permission denied: \(error)")
             }
 
-            if let match = content.windows.first(where: { window in
-                guard window.owningApplication?.processID == pid else { return false }
-                guard let title = window.title, !title.isEmpty else { return false }
-                return title.contains(titleContains)
-            }) {
+            let candidates = content.windows.compactMap { window -> WindowCandidate<SCWindow>? in
+                guard let owner = window.owningApplication?.processID else { return nil }
+                return WindowCandidate(
+                    id: window, pid: owner, title: window.title, frame: window.frame)
+            }
+            if let match = try selectWindow(candidates, pid: pid, selector: selector) {
                 return match
             }
 
@@ -600,7 +710,7 @@ final class Recorder {
         throw CLIError(
             code: 3,
             message:
-                "no window with pid=\(pid) and title containing '\(titleContains)' found within \(args.discoveryTimeoutMs) ms"
+                "no window with pid=\(pid) and \(selector.description) found within \(args.discoveryTimeoutMs) ms"
         )
     }
 
