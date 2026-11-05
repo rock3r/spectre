@@ -40,6 +40,7 @@ import org.junit.jupiter.api.TestInstance
  * AWT has no title for a JWindow, so the native helpers cannot find it by title. They find it by
  * its on-screen frame and owner process instead. This test drives the real helpers:
  * - `screenshot(windowIndex)` of the popup returns a native still of the popup, not of its owner.
+ * - `capture(windowIndex)` pairs that still with the popup's semantics tree.
  * - `waitForVisualIdle` settles while the popup is open, instead of reporting every sample as
  *   unsampleable.
  *
@@ -109,6 +110,32 @@ class JWindowPopupCaptureValidationTest {
         assertTrue(
             colourDistance(centre, POPUP_COLOR.toArgb()) <= COLOUR_TOLERANCE,
             "The popup centre must show the popup colour; got #${hex(centre)}",
+        )
+    }
+
+    @Test
+    fun `atomic capture of a JWindow popup pairs the popup still with its tree`() {
+        val index = popupWindowIndex()
+        if (isWaylandSession()) {
+            assertFailsWith<UnsupportedOperationException> {
+                fixture.automator.capture(windowIndex = index)
+            }
+            return
+        }
+        screenshotUntilPainted(index)
+
+        val capture = fixture.automator.capture(windowIndex = index)
+
+        assertTrue(
+            capture.document.nodes.any { it.testTag == POPUP_TAG },
+            "capture.json must hold the popup tree",
+        )
+        val scale = onEdt { checkNotNull(popup).graphicsConfiguration.defaultTransform.scaleX }
+        val expectedWidth = (POPUP_WIDTH_PX * scale).roundToInt()
+        assertTrue(
+            abs(capture.document.window.imageWidth - expectedWidth) <= SIZE_TOLERANCE_PX,
+            "The capture PNG must be the popup ($expectedWidth px wide), not its owner; got " +
+                "${capture.document.window.imageWidth}",
         )
     }
 
