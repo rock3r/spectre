@@ -87,7 +87,9 @@ This has three consequences:
   the title is blank, or when another window of the same process has a matching title. On macOS a
   title matches when it contains this window's title, and only visible windows count. On Windows
   the title must be equal, and hidden windows count too. Plain Swing dialogs count as well as
-  Compose windows.
+  Compose windows. A window with no title at all, such as a popup hosted in a Swing `JWindow`,
+  cannot be captured this way. In-process `screenshot(windowIndex)` and `capture()` can capture
+  it, because they find such a window by its position and size instead.
 - **macOS Screen Recording permission belongs to the daemon's helper.** The same grant that
   `spectre record` uses covers `spectre capture`. The attached `java` process does not need its
   own grant. Check it with `spectre permissions check`.

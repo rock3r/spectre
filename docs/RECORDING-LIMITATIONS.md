@@ -34,6 +34,11 @@ Backend → mode mapping:
 | `AutoRecorder`                | Routes to the right one based on `TitledWindow?`.   |
 | `AutoScreenshotter`           | Routes still screenshots by platform and window.    |
 
+Window recording needs a titled window. A window with no title, such as a Swing `JWindow` popup,
+has no `TitledWindow` adapter, so record its owner window or a screen region. Still screenshots
+are different: they find an untitled window by its position and size (except on Linux Wayland).
+See [Still window screenshots](guide/recording.md#still-window-screenshots).
+
 The following sections explain each platform's limits. See
 [Window-targeted capture](#window-targeted-capture) for movement and occlusion behaviour.
 

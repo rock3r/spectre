@@ -62,6 +62,10 @@ This README describes implementation and packaging.
 - `AutoScreenshotter` — high-level still-image router. Uses ScreenCaptureKit window capture
   on macOS, Windows Graphics Capture on Windows, and the Linux helper on Xorg/Xvfb and
   Wayland. Wayland still screenshots require the compositor portal dialog to be accepted.
+  A `Frame` or `Dialog` is found by its title. The in-process window-capture path also captures
+  untitled hosts (a Swing `JWindow` popup, a plain AWT `Window`): the helpers find them by owner
+  pid and on-screen frame, and fail when no window or several windows match. Linux Wayland cannot
+  select a window that way, so it rejects untitled hosts with `UnsupportedOperationException`.
   The explicit `FfmpegRegionScreenshotter` and `FfmpegWindowScreenshotter` classes are
   deprecated legacy escape hatches.
 - `./gradlew :recording:runWindowScreenshotSmoke` — manual cross-platform smoke for

@@ -11,7 +11,13 @@ Use `ComposeAutomator.screenshot(region)` for an explicit framebuffer rectangle.
 `ComposeAutomator.screenshot(node)` and `screenshot(windowIndex)` use the native
 window backend and fail clearly if it is unavailable or cannot identify the window.
 Use `AutoScreenshotter.captureWindow(frame.asTitledWindow())` for a direct top-level
-window still image:
+window still image.
+
+`screenshot(windowIndex)`, `screenshot(node)`, and `waitForVisualIdle()` also work for popups
+hosted in an untitled `JWindow`: the helper finds that window by its position and size. Two
+windows with the same bounds make the capture fail. On Linux Wayland an untitled window cannot be
+captured (`UnsupportedOperationException`), so visual idle cannot settle while such a popup is
+open; use X11/Xvfb or `screenshot(region)`. Recording still needs a titled window.
 
 | Platform | Backend | Runtime helper |
 |---|---|---|
