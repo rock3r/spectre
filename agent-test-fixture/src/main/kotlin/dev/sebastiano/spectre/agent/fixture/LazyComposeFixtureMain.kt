@@ -22,6 +22,7 @@ import javax.swing.SwingUtilities
  * This file must not reference Compose or `spectre-core`: they are not on this JVM's classpath.
  */
 fun main() {
+    exitWhenParentExits()
     val pluginClasspath =
         System.getProperty(LAZY_FIXTURE_PLUGIN_CLASSPATH_PROPERTY)
             ?.split(File.pathSeparator)

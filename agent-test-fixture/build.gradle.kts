@@ -21,7 +21,10 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.ui)
     detektPlugins(libs.compose.rules.detekt)
+    testImplementation(libs.kotlin.testJunit5)
 }
+
+tasks.withType<Test>().configureEach { useJUnitPlatform() }
 
 // `./gradlew :agent-test-fixture:run` is intended for manual verification and for the
 // launch-and-attach Gradle-path e2e (`LaunchAndAttachGradleIntegrationTest`). Direct

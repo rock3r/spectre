@@ -64,10 +64,7 @@ import javax.swing.WindowConstants
  */
 @OptIn(ExperimentalComposeUiApi::class)
 fun main() {
-    // Emit a diagnostic line *before* anything else so the parent's watchdog at least
-    // knows the fixture booted, even if AWT init or Compose blow up afterwards.
-    System.err.println("[fixture] entered main() pid=${ProcessHandle.current().pid()}")
-    System.err.flush()
+    announceBootAndWatchParent()
 
     // Touch ComposeAutomator at startup so the class is on the loaded-classes list when the
     // agent attaches — matches the realistic case where the target app uses Spectre directly.
@@ -196,8 +193,20 @@ fun main() {
     println("$READY_SENTINEL pid=$pid touchedClass=$automatorClassName")
     System.out.flush()
 
-    // Idle until the parent kills us. Swing's EDT keeps the JVM alive in the background.
+    // Idle until the parent kills us, or until it exits (see exitWhenParentExits). Swing's EDT
+    // keeps the JVM alive in the background.
     Thread.currentThread().join()
+}
+
+/**
+ * Emits a diagnostic line *before* anything else, so the parent's watchdog at least knows the
+ * fixture booted even if AWT init or Compose blow up afterwards. Then ties this JVM's lifetime to
+ * the process that launched it.
+ */
+private fun announceBootAndWatchParent() {
+    System.err.println("[fixture] entered main() pid=${ProcessHandle.current().pid()}")
+    System.err.flush()
+    exitWhenParentExits()
 }
 
 /**
