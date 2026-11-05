@@ -91,6 +91,53 @@ internal object AtomicCaptureReflectiveMapper {
         return map(result, request.windowIndex)
     }
 
+    /**
+     * Invokes `ComposeAutomator.captureWithUntitledWindowStill(windowIndex, surfaceId,
+     * BufferedImage, Rectangle)` with a still the daemon found by window frame (#605). A target
+     * whose `spectre-core` predates that method gets an unsupported-operation error.
+     */
+    fun invokeWithUntitledWindowStill(
+        automator: Any,
+        request: AgentRequest.CaptureWithUntitledWindowStill,
+    ): AgentResponse {
+        val method =
+            automator.javaClass.methods.firstOrNull {
+                it.name == "captureWithUntitledWindowStill" &&
+                    it.parameterTypes.contentEquals(
+                        arrayOf(
+                            Int::class.javaPrimitiveType,
+                            String::class.java,
+                            BufferedImage::class.java,
+                            Rectangle::class.java,
+                        )
+                    )
+            }
+                ?: return AgentResponse.Error(
+                    message =
+                        "The spectre-core in the target application is too old to accept a " +
+                            "still of a window without a title from the Spectre daemon. Update " +
+                            "the target's spectre-core dependency to the same version as the " +
+                            "Spectre CLI.",
+                    category = AgentErrorCategory.UnsupportedOperation.wireName,
+                )
+        val image =
+            ImageIO.read(ByteArrayInputStream(request.windowStillPng))
+                ?: return AgentResponse.Error(
+                    message = "The window still sent by the Spectre daemon is not a readable PNG",
+                    category = AgentErrorCategory.InternalError.wireName,
+                )
+        val bounds = request.stillWindowBounds
+        val result =
+            method.invoke(
+                automator,
+                request.windowIndex,
+                request.surfaceId,
+                image,
+                Rectangle(bounds.x, bounds.y, bounds.width, bounds.height),
+            ) ?: return AgentResponse.Error("captureWithUntitledWindowStill returned null")
+        return map(result, request.windowIndex)
+    }
+
     private fun map(result: Any, windowIndex: Int): AgentResponse {
         val resultClass = result.javaClass
         val document =

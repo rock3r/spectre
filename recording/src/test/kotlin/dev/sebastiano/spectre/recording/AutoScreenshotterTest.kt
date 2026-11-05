@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalSpectreRecordingApi::class)
+
 package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
@@ -9,6 +11,7 @@ import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -229,6 +232,86 @@ class AutoScreenshotterTest {
         assertEquals(1, windows.captureCallCount)
         assertEquals("Remote App", windows.lastWindow?.title)
         assertEquals(4242L, windows.lastWindowOwnerPid)
+    }
+
+    @Test
+    fun `captureWindowByFrame selects another process's untitled window by points on macOS`() {
+        val sck = StubWindowScreenshotter()
+        val screenshotter = autoScreenshotter(sckScreenshotter = sck, isMacOs = { true })
+
+        screenshotter.captureWindowByFrame(
+            windowBounds = Rectangle(100, 120, 240, 160),
+            screenBounds = Rectangle(0, 0, 1728, 1117),
+            scaleX = 2.0,
+            scaleY = 2.0,
+            windowOwnerPid = 4242L,
+        )
+
+        val framed = assertIs<FramedWindow>(sck.lastWindow)
+        assertEquals(Rectangle(100, 120, 240, 160), framed.logicalFrame)
+        assertEquals(4242L, sck.lastWindowOwnerPid)
+    }
+
+    @Test
+    fun `captureWindowByFrame selects another process's untitled window by device pixels on Windows`() {
+        val windows = StubWindowScreenshotter()
+        val screenshotter =
+            autoScreenshotter(
+                windowsWindowScreenshotter = windows,
+                isMacOs = { false },
+                isWindows = { true },
+            )
+
+        // A 1.5x monitor to the right of a 1920px primary.
+        screenshotter.captureWindowByFrame(
+            windowBounds = Rectangle(2000, 100, 300, 200),
+            screenBounds = Rectangle(1920, 0, 1707, 960),
+            scaleX = 1.5,
+            scaleY = 1.5,
+            windowOwnerPid = 4242L,
+        )
+
+        val framed = assertIs<FramedWindow>(windows.lastWindow)
+        assertEquals(Rectangle(2040, 150, 450, 300), framed.deviceFrame)
+        assertEquals(4242L, windows.lastWindowOwnerPid)
+        assertEquals(null, windows.titleDuringCapture)
+    }
+
+    @Test
+    fun `captureWindowByFrame is unsupported on Linux`() {
+        val linux = StubWindowScreenshotter()
+        val screenshotter =
+            autoScreenshotter(
+                linuxWindowScreenshotter = linux,
+                isMacOs = { false },
+                isLinux = { true },
+            )
+
+        assertFailsWith<UnsupportedOperationException> {
+            screenshotter.captureWindowByFrame(
+                windowBounds = Rectangle(0, 0, 240, 160),
+                screenBounds = Rectangle(0, 0, 1920, 1080),
+                scaleX = 1.0,
+                scaleY = 1.0,
+                windowOwnerPid = 4242L,
+            )
+        }
+        assertEquals(0, linux.captureCallCount)
+    }
+
+    @Test
+    fun `captureWindowByFrame rejects an empty frame`() {
+        val screenshotter = autoScreenshotter(isMacOs = { true })
+
+        assertFailsWith<IllegalArgumentException> {
+            screenshotter.captureWindowByFrame(
+                windowBounds = Rectangle(0, 0, 0, 160),
+                screenBounds = Rectangle(0, 0, 1920, 1080),
+                scaleX = 1.0,
+                scaleY = 1.0,
+                windowOwnerPid = 4242L,
+            )
+        }
     }
 
     @Test

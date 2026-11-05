@@ -543,25 +543,32 @@ private constructor(
         windowStill: BufferedImage,
         stillWindowBounds: Rectangle,
     ): AtomicCapture =
-        captureAtomically(windowIndex) { trackedWindow, pre ->
-            val window = trackedWindow.window
-            val (liveTitle, collisions) =
-                readOnEdt {
-                    window.nativeTitle() to remoteCaptureTitleCollisions(window, windowTitle)
-                }
-            externalWindowStill(
-                image = windowStill,
-                stillWindowBounds = stillWindowBounds,
-                liveWindowBounds = pre.windowBounds,
-                frameInsets = pre.frameInsets,
-                captureRegion = pre.captureRegion,
-                titleCollisions = collisions,
-                expectedTitle = windowTitle,
-                liveTitle = liveTitle,
-                expectedSurfaceId = surfaceId,
-                liveSurfaceId = trackedWindow.surfaceId,
-            )
-        }
+        captureAtomically(
+            windowIndex,
+            titledExternalStill(surfaceId, windowTitle, windowStill, stillWindowBounds),
+        )
+
+    /**
+     * [captureWithWindowStill] for a tracked window that has no title: a Swing `JWindow` popup or a
+     * plain AWT `Window` (#605).
+     *
+     * The caller cannot find such a window by title, so it finds it by its on-screen frame and
+     * owner process instead. [stillWindowBounds] is the frame it searched for. The capture fails
+     * when the window moved or resized after the still was taken, when the index now resolves to
+     * another surface, or when the window has a title, because then the still may show another
+     * window.
+     */
+    @InternalSpectreApi
+    public fun captureWithUntitledWindowStill(
+        windowIndex: Int,
+        surfaceId: String,
+        windowStill: BufferedImage,
+        stillWindowBounds: Rectangle,
+    ): AtomicCapture =
+        captureAtomically(
+            windowIndex,
+            untitledExternalStill(surfaceId, windowStill, stillWindowBounds),
+        )
 
     private fun captureAtomically(
         windowIndex: Int,

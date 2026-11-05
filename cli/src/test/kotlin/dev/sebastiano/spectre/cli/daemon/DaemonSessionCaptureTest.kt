@@ -90,6 +90,79 @@ class DaemonSessionCaptureTest {
         assertEquals(null, fake.sentStill)
     }
 
+    @Test
+    fun `an untitled window is captured by its frame in the daemon`() {
+        val fake =
+            FakeCaptureSeams(
+                identities = listOf(identity(index = 1, title = null, screenBounds = SCREEN_BOUNDS))
+            )
+
+        val result = fake.capture().capture(windowIndex = 1)
+
+        assertSame(fake.result, result)
+        assertEquals(
+            listOf(FrameRequest(WINDOW_BOUNDS, SCREEN_BOUNDS, 2.0, TARGET_PID)),
+            fake.frameRequests,
+        )
+        assertTrue(fake.stillRequests.isEmpty(), "an untitled window has no title to search for")
+        val sent = assertNotNull(fake.sentUntitledStill)
+        assertEquals(1, sent.windowIndex)
+        assertEquals("surface-1", sent.surfaceId)
+        assertEquals(WINDOW_BOUNDS, sent.stillWindowBounds)
+        assertEquals(null, fake.sentStill)
+        assertEquals(0, fake.inProcessCalls)
+    }
+
+    @Test
+    fun `an untitled window from a core without screen bounds fails with an update hint`() {
+        val fake = FakeCaptureSeams(identities = listOf(identity(index = 0, title = null)))
+
+        val error = assertFailsWith<IOException> { fake.capture().capture(windowIndex = 0) }
+
+        assertTrue(error.message.orEmpty().contains("spectre-core"), error.message)
+        assertTrue(fake.frameRequests.isEmpty())
+        assertEquals(0, fake.inProcessCalls)
+    }
+
+    @Test
+    fun `a failed untitled window still is reported, never replaced by an in-target capture`() {
+        val fake =
+            FakeCaptureSeams(
+                identities =
+                    listOf(identity(index = 0, title = null, screenBounds = SCREEN_BOUNDS)),
+                frameStill = { error("2 windows match the frame") },
+            )
+
+        val error = assertFailsWith<IOException> { fake.capture().capture(windowIndex = 0) }
+
+        assertTrue(error.message.orEmpty().contains("2 windows"), error.message)
+        assertEquals(0, fake.inProcessCalls)
+        assertEquals(null, fake.sentUntitledStill)
+    }
+
+    @Test
+    fun `an untitled window without an out-of-process still uses the target's own capture`() {
+        val fake =
+            FakeCaptureSeams(
+                identities =
+                    listOf(identity(index = 0, title = null, screenBounds = SCREEN_BOUNDS)),
+                frameStill = { throw UnsupportedOperationException("not on Linux") },
+            )
+
+        val result = fake.capture().capture(windowIndex = 0)
+
+        assertSame(fake.result, result)
+        assertEquals(1, fake.inProcessCalls)
+        assertEquals(null, fake.sentUntitledStill)
+    }
+
+    private data class FrameRequest(
+        val windowBounds: RectDto,
+        val screenBounds: RectDto,
+        val scale: Double,
+        val pid: Long,
+    )
+
     private class SentStill(
         val windowIndex: Int,
         val surfaceId: String,
@@ -101,6 +174,9 @@ class DaemonSessionCaptureTest {
     private class FakeCaptureSeams(
         private val identities: List<WindowIdentityDto>,
         private val still: (String, Long) -> BufferedImage = { _, _ ->
+            BufferedImage(6, 4, BufferedImage.TYPE_INT_ARGB)
+        },
+        private val frameStill: () -> BufferedImage = {
             BufferedImage(6, 4, BufferedImage.TYPE_INT_ARGB)
         },
     ) {
@@ -119,6 +195,8 @@ class DaemonSessionCaptureTest {
             )
         val stillRequests: MutableList<Pair<String, Long>> = mutableListOf()
         var sentStill: SentStill? = null
+        val frameRequests: MutableList<FrameRequest> = mutableListOf()
+        var sentUntitledStill: SentStill? = null
         var inProcessCalls: Int = 0
 
         fun capture(): DaemonSessionCapture =
@@ -135,6 +213,14 @@ class DaemonSessionCaptureTest {
                     sentStill = SentStill(index, surfaceId, title, png, bounds)
                     result
                 },
+                captureWithUntitledWindowStill = { index, surfaceId, png, bounds ->
+                    sentUntitledStill = SentStill(index, surfaceId, "", png, bounds)
+                    result
+                },
+                captureWindowByFrame = { windowBounds, screenBounds, scaleX, _, pid ->
+                    frameRequests += FrameRequest(windowBounds, screenBounds, scaleX, pid)
+                    frameStill()
+                },
                 inProcessCapture = {
                     inProcessCalls += 1
                     result
@@ -145,8 +231,13 @@ class DaemonSessionCaptureTest {
     private companion object {
         const val TARGET_PID: Long = 4242L
         val WINDOW_BOUNDS: RectDto = RectDto(10, 20, 300, 200)
+        val SCREEN_BOUNDS: RectDto = RectDto(0, 0, 1728, 1117)
 
-        fun identity(index: Int, title: String?): WindowIdentityDto =
+        fun identity(
+            index: Int,
+            title: String?,
+            screenBounds: RectDto? = null,
+        ): WindowIdentityDto =
             WindowIdentityDto(
                 index = index,
                 surfaceId = "surface-$index",
@@ -159,6 +250,7 @@ class DaemonSessionCaptureTest {
                 surfaceBoundsInWindow = RectDto(0, 28, 300, 172),
                 scaleX = 2.0,
                 scaleY = 2.0,
+                screenBoundsOnScreen = screenBounds,
             )
     }
 }

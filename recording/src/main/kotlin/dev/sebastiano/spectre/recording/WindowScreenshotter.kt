@@ -6,7 +6,9 @@ import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitScreens
 import dev.sebastiano.spectre.recording.screencapturekit.TitleDiscriminationAware
 import dev.sebastiano.spectre.recording.screencapturekit.TitleDiscriminator
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
+import dev.sebastiano.spectre.recording.screencapturekit.deviceFrameFor
 import dev.sebastiano.spectre.recording.windows.WindowsWindowScreenshotter
+import java.awt.Point
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import java.lang.ProcessHandle
@@ -108,6 +110,60 @@ internal constructor(
         }
         throw UnsupportedOperationException(
             "AutoScreenshotter.captureWindowByTitle is unsupported on this platform: the native " +
+                "window screenshot backend can only capture windows of this process."
+        )
+    }
+
+    /**
+     * Still screenshot of a window that belongs to another process and has no title, such as a
+     * Swing `JWindow` popup, found by its on-screen frame among the windows of [windowOwnerPid].
+     *
+     * The Spectre daemon uses this on the attach path (#605), where [captureWindowByTitle] cannot
+     * work because the window has no title. [windowBounds] and [screenBounds] are the window's
+     * bounds and its screen's `GraphicsConfiguration.bounds`, both in the target's AWT screen
+     * coordinates; [scaleX] and [scaleY] are that screen's `defaultTransform` scale. Spectre turns
+     * them into the frame each helper matches: points on macOS, device pixels on Windows. The
+     * capture fails when no window or more than one window of [windowOwnerPid] has that frame.
+     *
+     * Supported on macOS and Windows. On Linux this throws [UnsupportedOperationException]: the
+     * Linux helpers need the window in this process.
+     */
+    @ExperimentalSpectreRecordingApi
+    public fun captureWindowByFrame(
+        windowBounds: Rectangle,
+        screenBounds: Rectangle,
+        scaleX: Double,
+        scaleY: Double,
+        windowOwnerPid: Long,
+    ): BufferedImage {
+        require(windowBounds.width > 0 && windowBounds.height > 0) {
+            "captureWindowByFrame requires a non-empty window frame; got $windowBounds"
+        }
+        val window =
+            FramedWindow(
+                logicalFrame = Rectangle(windowBounds),
+                deviceFrame =
+                    deviceFrameFor(
+                        logical = windowBounds,
+                        scaleX = scaleX,
+                        scaleY = scaleY,
+                        screenOrigin = Point(screenBounds.x, screenBounds.y),
+                        scalesFromScreenOrigin = isWindows(),
+                    ),
+            )
+        if (isMacOs()) {
+            return try {
+                sckScreenshotter.captureWindow(window, windowOwnerPid)
+            } catch (e: HelperNotBundledException) {
+                throw unavailable("macOS window screenshot", e)
+            }
+        }
+        if (isWindows()) {
+            return windowsWindowScreenshotter?.captureWindow(window, windowOwnerPid)
+                ?: throw unavailable("Windows window screenshot", null)
+        }
+        throw UnsupportedOperationException(
+            "AutoScreenshotter.captureWindowByFrame is unsupported on this platform: the native " +
                 "window screenshot backend can only capture windows of this process."
         )
     }

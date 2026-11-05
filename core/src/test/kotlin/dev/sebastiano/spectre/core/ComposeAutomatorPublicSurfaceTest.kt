@@ -405,8 +405,15 @@ class ComposeAutomatorPublicSurfaceTest {
         //   server transport
         // - `windowIdentities` / `windowIdentity` for daemon-owned recording (#184)
         // - `captureWithWindowStill` for daemon-owned atomic capture stills (#559)
+        // - `captureWithUntitledWindowStill`, its frame-selected sibling for JWindow hosts (#605)
         val COMPOSE_AUTOMATOR_ESCAPE_HATCH_MEMBERS: Set<String> =
-            setOf("getWindows", "windowIdentities", "windowIdentity", "captureWithWindowStill")
+            setOf(
+                "getWindows",
+                "windowIdentities",
+                "windowIdentity",
+                "captureWithWindowStill",
+                "captureWithUntitledWindowStill",
+            )
 
         // Public factory methods on ComposeAutomator.Companion. R1 narrowed `inProcess(...)`
         // to a single `robotDriver` parameter; restoring `windowTracker` / `semanticsReader`

@@ -95,6 +95,117 @@ internal fun externalWindowStill(
             "by title, and other windows of this process have matching titles " +
             "(${titleCollisions.joinToString { "\"$it\"" }}). Give the window a unique title."
     }
+    return checkedExternalStill(
+        image,
+        stillWindowBounds,
+        liveWindowBounds,
+        frameInsets,
+        captureRegion,
+        osName,
+        isWayland,
+    )
+}
+
+/**
+ * Pairs a daemon still found by [windowTitle] with the tracked window, via [externalWindowStill].
+ */
+internal fun titledExternalStill(
+    surfaceId: String,
+    windowTitle: String,
+    windowStill: BufferedImage,
+    stillWindowBounds: Rectangle,
+): (TrackedWindow, PreCaptureSnapshot) -> WindowCapture = { trackedWindow, pre ->
+    val window = trackedWindow.window
+    val (liveTitle, collisions) =
+        readOnEdt { window.nativeTitle() to remoteCaptureTitleCollisions(window, windowTitle) }
+    externalWindowStill(
+        image = windowStill,
+        stillWindowBounds = stillWindowBounds,
+        liveWindowBounds = pre.windowBounds,
+        frameInsets = pre.frameInsets,
+        captureRegion = pre.captureRegion,
+        titleCollisions = collisions,
+        expectedTitle = windowTitle,
+        liveTitle = liveTitle,
+        expectedSurfaceId = surfaceId,
+        liveSurfaceId = trackedWindow.surfaceId,
+    )
+}
+
+/**
+ * Pairs a daemon still found by window frame with the tracked window, via
+ * [externalUntitledWindowStill].
+ */
+internal fun untitledExternalStill(
+    surfaceId: String,
+    windowStill: BufferedImage,
+    stillWindowBounds: Rectangle,
+): (TrackedWindow, PreCaptureSnapshot) -> WindowCapture = { trackedWindow, pre ->
+    externalUntitledWindowStill(
+        image = windowStill,
+        stillWindowBounds = stillWindowBounds,
+        liveWindowBounds = pre.windowBounds,
+        frameInsets = pre.frameInsets,
+        captureRegion = pre.captureRegion,
+        liveTitle = readOnEdt { trackedWindow.window.nativeTitle() },
+        expectedSurfaceId = surfaceId,
+        liveSurfaceId = trackedWindow.surfaceId,
+    )
+}
+
+/**
+ * [externalWindowStill] for a window that has no title: a Swing `JWindow` popup or a plain AWT
+ * `Window` (#605).
+ *
+ * The caller found the window by its on-screen frame instead of by title, so the bounds check
+ * carries the identity: if the window moved or resized after the still, another window may now sit
+ * at the frame the still shows, and this fails. It also fails when the index now resolves to
+ * another surface, or when the window now has a title ([liveTitle] is not null), because then the
+ * still was not selected the way the window must be selected.
+ */
+@Suppress("LongParameterList") // Every geometry input is a seam the tests substitute.
+internal fun externalUntitledWindowStill(
+    image: BufferedImage,
+    stillWindowBounds: Rectangle,
+    liveWindowBounds: Rectangle,
+    frameInsets: Insets,
+    captureRegion: Rectangle,
+    liveTitle: String?,
+    expectedSurfaceId: String,
+    liveSurfaceId: String,
+    osName: String = System.getProperty("os.name").orEmpty(),
+    isWayland: Boolean = isWaylandSession(),
+): WindowCapture {
+    check(expectedSurfaceId == liveSurfaceId) {
+        "The window list changed after the native window still was taken: the still shows " +
+            "surface $expectedSurfaceId, but the window index now resolves to $liveSurfaceId. " +
+            "Retry the capture."
+    }
+    check(liveTitle == null) {
+        "The native window still was selected by its frame, but this window has a title " +
+            "(\"$liveTitle\"). Capture a titled window by its title instead."
+    }
+    return checkedExternalStill(
+        image,
+        stillWindowBounds,
+        liveWindowBounds,
+        frameInsets,
+        captureRegion,
+        osName,
+        isWayland,
+    )
+}
+
+@Suppress("LongParameterList")
+private fun checkedExternalStill(
+    image: BufferedImage,
+    stillWindowBounds: Rectangle,
+    liveWindowBounds: Rectangle,
+    frameInsets: Insets,
+    captureRegion: Rectangle,
+    osName: String,
+    isWayland: Boolean,
+): WindowCapture {
     check(stillWindowBounds == liveWindowBounds) {
         "The window moved or resized between the native window still ($stillWindowBounds) and " +
             "the semantics snapshot ($liveWindowBounds). Retry the capture once the window is " +

@@ -56,7 +56,17 @@ internal object WindowIdentityReflectiveMapper {
             scaleY = invokeDouble(klass, snapshot, "getScaleY"),
             translateX = invokeDoubleOrDefault(klass, snapshot, "getTranslateX", 0.0),
             translateY = invokeDoubleOrDefault(klass, snapshot, "getTranslateY", 0.0),
+            screenBoundsOnScreen = screenBounds(klass, snapshot),
         )
+    }
+
+    /** Null for a core that predates `screenBoundsOnScreen`, or when the screen is unknown. */
+    private fun screenBounds(klass: Class<*>, snapshot: Any): RectDto? {
+        val getter =
+            klass.methods.firstOrNull {
+                it.name == "getScreenBoundsOnScreen" && it.parameterCount == 0
+            } ?: return null
+        return getter.invoke(snapshot)?.let(::boundsToRect)
     }
 
     private fun invokeDoubleOrDefault(

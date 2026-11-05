@@ -117,7 +117,8 @@ internal class DeferredAutomatorHandler(
             is AgentRequest.FocusWindow,
             is AgentRequest.Screenshot,
             is AgentRequest.Capture,
-            is AgentRequest.CaptureWithWindowStill ->
+            is AgentRequest.CaptureWithWindowStill,
+            is AgentRequest.CaptureWithUntitledWindowStill ->
                 errorResponse(AgentErrorCategory.NodeNotFound, NO_COMPOSE_YET)
             is AgentRequest.PressKey,
             is AgentRequest.TypeText ->

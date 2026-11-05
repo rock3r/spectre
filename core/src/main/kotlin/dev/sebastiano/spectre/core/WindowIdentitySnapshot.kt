@@ -59,4 +59,11 @@ public data class WindowIdentitySnapshot(
     public val translateX: Double = 0.0,
     /** `GraphicsConfiguration.defaultTransform.translateY` (device-pixel conversion). */
     public val translateY: Double = 0.0,
+    /**
+     * `GraphicsConfiguration.bounds` of the screen that holds the window, in screen AWT user space,
+     * or `null` when unknown. On Windows, AWT scales coordinates from each screen's origin, so a
+     * device-pixel frame needs this origin as well as [scaleX]/[scaleY]. The daemon uses it to find
+     * an untitled window by its frame (#605).
+     */
+    public val screenBoundsOnScreen: Rectangle? = null,
 )
