@@ -1,5 +1,7 @@
 package dev.sebastiano.spectre.recording
 
+import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
+import dev.sebastiano.spectre.recording.screencapturekit.asFramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.asTitledWindow
 import java.awt.Dialog
 import java.awt.EventQueue
@@ -81,17 +83,18 @@ internal object NativeWindowCaptureBridge {
     @JvmStatic
     @JvmName("captureWindow")
     internal fun captureWindow(window: Window): BufferedImage =
-        withCaptureLock(window) {
-            val titledWindow =
-                when (window) {
-                    is Frame -> window.asTitledWindow()
-                    is Dialog -> window.asTitledWindow()
-                    else ->
-                        throw UnsupportedOperationException(
-                            "Native window capture requires a Frame or Dialog host"
-                        )
-                }
-            screenshotter.captureWindow(titledWindow)
+        withCaptureLock(window) { screenshotter.captureWindow(captureTargetFor(window)) }
+
+    /**
+     * How the native helper finds [window]. A [Frame] or [Dialog] is found by its title. Any other
+     * host (a Swing `JWindow`, a plain AWT [Window]) has no title, so it is found by its on-screen
+     * frame instead (#605).
+     */
+    internal fun captureTargetFor(window: Window): TitledWindow =
+        when (window) {
+            is Frame -> window.asTitledWindow()
+            is Dialog -> window.asTitledWindow()
+            else -> window.asFramedWindow()
         }
 
     internal fun <T> withCaptureLock(window: Window, action: () -> T): T {

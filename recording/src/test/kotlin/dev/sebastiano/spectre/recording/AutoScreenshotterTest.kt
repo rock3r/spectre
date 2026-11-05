@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording
 
+import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
 import dev.sebastiano.spectre.recording.screencapturekit.TitleDiscriminationAware
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
@@ -100,6 +101,48 @@ class AutoScreenshotterTest {
         } finally {
             Thread.interrupted()
         }
+    }
+
+    @Test
+    fun `captureWindow never renames an untitled framed window on Windows`() {
+        val windows = StubWindowScreenshotter()
+        val screenshotter =
+            autoScreenshotter(
+                windowsWindowScreenshotter = windows,
+                isMacOs = { false },
+                isWindows = { true },
+            )
+        val window =
+            FramedWindow(
+                logicalFrame = Rectangle(10, 20, 300, 200),
+                deviceFrame = Rectangle(10, 20, 300, 200),
+            )
+
+        screenshotter.captureWindow(window)
+
+        assertSame(window, windows.lastWindow)
+        assertEquals(null, windows.titleDuringCapture)
+    }
+
+    @Test
+    fun `captureWindow never renames an untitled framed window on Linux X11`() {
+        val linux = StubWindowScreenshotter()
+        val screenshotter =
+            autoScreenshotter(
+                linuxWindowScreenshotter = linux,
+                isMacOs = { false },
+                isLinux = { true },
+            )
+        val window =
+            FramedWindow(
+                logicalFrame = Rectangle(10, 20, 300, 200),
+                deviceFrame = Rectangle(10, 20, 300, 200),
+            )
+
+        screenshotter.captureWindow(window)
+
+        assertSame(window, linux.lastWindow)
+        assertEquals(null, linux.titleDuringCapture)
     }
 
     @Test

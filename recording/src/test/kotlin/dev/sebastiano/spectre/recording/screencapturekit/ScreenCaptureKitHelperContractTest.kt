@@ -88,6 +88,31 @@ class ScreenCaptureKitHelperContractTest {
     }
 
     @Test
+    fun `helper exits 2 when frame and title-contains are both given`() {
+        val exit =
+            runHelper(
+                listOf(
+                    "--pid",
+                    "1",
+                    "--title-contains",
+                    "anything",
+                    "--frame",
+                    "0,0,300,200",
+                    "--output",
+                    output.toString(),
+                )
+            )
+        assertEquals(2, exit, "--frame and --title-contains are mutually exclusive")
+    }
+
+    @Test
+    fun `helper exits 2 on an empty frame`() {
+        val exit =
+            runHelper(listOf("--pid", "1", "--frame", "0,0,0,200", "--output", output.toString()))
+        assertEquals(2, exit, "A zero-width --frame must exit 2")
+    }
+
+    @Test
     fun `helper exits 2 on missing output`() {
         val exit = runHelper(listOf("--pid", "1", "--title-contains", "anything"))
         assertEquals(2, exit, "Missing --output must exit 2")

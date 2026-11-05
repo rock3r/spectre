@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.portal.WaylandHelperBinaryExtractor
+import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import java.awt.Rectangle
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -51,7 +52,83 @@ class LinuxNativeScreenshotterTest {
         }
     }
 
+    @Test
+    fun `X11 captureWindow selects an untitled window by its device-pixel frame`() {
+        val tempDir = Files.createTempDirectory("spectre-linux-screenshotter-test-")
+        val stdin = ByteArrayOutputStream()
+        val process =
+            FakeScreenshotHelperProcess(stdin = stdin, stdout = "not-json\n".byteInputStream())
+        val screenshotter = linuxScreenshotter(tempDir, process)
+        val window =
+            FramedWindow(
+                logicalFrame = Rectangle(10, 20, 300, 200),
+                deviceFrame = Rectangle(20, 40, 600, 400),
+            )
+
+        try {
+            assertFailsWith<RuntimeException> { screenshotter.captureWindow(window, 4242L) }
+
+            val command = stdin.toString(Charsets.UTF_8)
+            assertTrue(
+                command.contains(
+                    "\"window_frame\":{\"x\":20,\"y\":40,\"width\":600,\"height\":400}"
+                ),
+                command,
+            )
+            assertTrue(command.contains("\"window_owner_pid\":4242"), command)
+            assertTrue(command.contains("\"target\":\"window\""), command)
+            assertTrue(!command.contains("window_title"), command)
+        } finally {
+            tempDir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `Wayland captureWindow refuses an untitled window before starting the helper`() {
+        val tempDir = Files.createTempDirectory("spectre-linux-screenshotter-test-")
+        val screenshotter =
+            linuxScreenshotter(
+                tempDir,
+                processFactory =
+                    object : LinuxNativeScreenshotter.ProcessFactory {
+                        override fun start(helperPath: Path): Process =
+                            error("the helper must not start for an untitled Wayland window")
+                    },
+                isWayland = true,
+            )
+        val window =
+            FramedWindow(
+                logicalFrame = Rectangle(10, 20, 300, 200),
+                deviceFrame = Rectangle(20, 40, 600, 400),
+            )
+
+        try {
+            val error =
+                assertFailsWith<UnsupportedOperationException> {
+                    screenshotter.captureWindow(window, 4242L)
+                }
+
+            assertTrue(error.message.orEmpty().contains("Wayland"), error.message)
+            assertTrue(error.message.orEmpty().contains("untitled"), error.message)
+        } finally {
+            tempDir.toFile().deleteRecursively()
+        }
+    }
+
     private fun linuxScreenshotter(tempDir: Path, process: Process): LinuxNativeScreenshotter =
+        linuxScreenshotter(
+            tempDir,
+            processFactory =
+                object : LinuxNativeScreenshotter.ProcessFactory {
+                    override fun start(helperPath: Path): Process = process
+                },
+        )
+
+    private fun linuxScreenshotter(
+        tempDir: Path,
+        processFactory: LinuxNativeScreenshotter.ProcessFactory,
+        isWayland: Boolean = false,
+    ): LinuxNativeScreenshotter =
         LinuxNativeScreenshotter(
             helperExtractor =
                 WaylandHelperBinaryExtractor(
@@ -60,11 +137,8 @@ class LinuxNativeScreenshotterTest {
                     targetDirProvider = { tempDir },
                     archProvider = { "x86_64" },
                 ),
-            processFactory =
-                object : LinuxNativeScreenshotter.ProcessFactory {
-                    override fun start(helperPath: Path): Process = process
-                },
-            isWayland = { false },
+            processFactory = processFactory,
+            isWayland = { isWayland },
             displayNameProvider = { ":99" },
             frameExtentsLookup = { null },
         )

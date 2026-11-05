@@ -17,6 +17,11 @@ internal data class WindowsGraphicsCaptureArguments(
     val mode: WindowsGraphicsCaptureMode,
     val source: WindowsGraphicsCaptureSource,
     val title: String? = null,
+    /**
+     * Untitled-window selector in **device pixels** (the window's `GetWindowRect`). Only valid for
+     * [WindowsGraphicsCaptureSource.Window]; mutually exclusive with [title].
+     */
+    val frame: Rectangle? = null,
     val ownerPid: Long? = null,
     val region: Rectangle? = null,
     /**
@@ -32,7 +37,14 @@ internal data class WindowsGraphicsCaptureArguments(
     init {
         when (source) {
             WindowsGraphicsCaptureSource.Window -> {
-                require(!title.isNullOrBlank()) { "title must not be blank" }
+                if (frame != null) {
+                    require(title == null) { "title and frame are mutually exclusive" }
+                    require(frame.width > 0 && frame.height > 0) {
+                        "frame must have a positive size; got $frame"
+                    }
+                } else {
+                    require(!title.isNullOrBlank()) { "title must not be blank" }
+                }
                 require(ownerPid != null && ownerPid > 0) {
                     "ownerPid must be positive, was $ownerPid"
                 }
@@ -49,6 +61,7 @@ internal data class WindowsGraphicsCaptureArguments(
                     "region dimensions must be positive, was ${region.width}x${region.height}"
                 }
                 require(crop == null) { "crop is only valid for window source" }
+                require(frame == null) { "frame is only valid for window source" }
             }
         }
         require(fps > 0) { "fps must be positive, was $fps" }
@@ -62,8 +75,19 @@ internal data class WindowsGraphicsCaptureArguments(
         add(source.cliValue)
         when (source) {
             WindowsGraphicsCaptureSource.Window -> {
-                add("--title")
-                add(requireNotNull(title))
+                if (frame != null) {
+                    add("--frame-x")
+                    add(frame.x.toString())
+                    add("--frame-y")
+                    add(frame.y.toString())
+                    add("--frame-width")
+                    add(frame.width.toString())
+                    add("--frame-height")
+                    add(frame.height.toString())
+                } else {
+                    add("--title")
+                    add(requireNotNull(title))
+                }
                 add("--owner-pid")
                 add(requireNotNull(ownerPid).toString())
                 crop?.let { c ->

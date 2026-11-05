@@ -1,13 +1,18 @@
 package dev.sebastiano.spectre.recording
 
+import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import java.awt.EventQueue
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
+import java.awt.Rectangle
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import javax.swing.JWindow
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -29,6 +34,38 @@ class NativeWindowCaptureBridgeTest {
                     "the capture lock must not wait for AWT's Frame monitor",
                 )
             }
+        } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
+    fun `untitled JWindow host is captured by its frame`() {
+        assumeLiveAwtAvailable()
+        val owner = Frame("bridge owner")
+        val popup = JWindow(owner).apply { setBounds(40, 50, 300, 200) }
+
+        try {
+            val target = NativeWindowCaptureBridge.captureTargetFor(popup)
+
+            val framed = assertIs<FramedWindow>(target, "a JWindow has no title to select it by")
+            assertEquals(Rectangle(40, 50, 300, 200), framed.logicalFrame)
+        } finally {
+            popup.dispose()
+            owner.dispose()
+        }
+    }
+
+    @Test
+    fun `titled Frame host keeps the title selector`() {
+        assumeLiveAwtAvailable()
+        val frame = Frame("bridge titled frame")
+
+        try {
+            val target = NativeWindowCaptureBridge.captureTargetFor(frame)
+
+            assertFalse(target is FramedWindow, "a Frame keeps its title selector: $target")
+            assertEquals("bridge titled frame", target.title)
         } finally {
             frame.dispose()
         }

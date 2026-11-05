@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.recording.windows
 
 import dev.sebastiano.spectre.recording.HelperExtractionPaths
+import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
@@ -58,6 +59,46 @@ class WindowsWindowScreenshotterTest {
         )
         assertContains(factory.lastArgv, "--output")
         assertContainsSequence(factory.lastArgv, listOf("--cursor", "false"))
+    }
+
+    @Test
+    fun `captureWindow selects an untitled window by its device-pixel frame`() {
+        val helper = Files.createTempFile("spectre-helper", ".exe")
+        val factory = ScreenshotProcessFactory()
+        val screenshotter =
+            WindowsWindowScreenshotter(
+                helperExtractor =
+                    WindowsGraphicsCaptureHelperBinaryExtractor(
+                        resourceLocator = { null },
+                        targetDirProvider = { helper.parent },
+                        getenv = { helper.toString() },
+                        osArch = { "amd64" },
+                    ),
+                processFactory = factory,
+            )
+        val window =
+            FramedWindow(
+                logicalFrame = Rectangle(-1280, 40, 300, 200),
+                deviceFrame = Rectangle(-1280, 60, 450, 300),
+            )
+
+        screenshotter.captureWindow(window, 4242L)
+
+        assertContainsSequence(
+            factory.lastArgv,
+            listOf(
+                "--frame-x",
+                "-1280",
+                "--frame-y",
+                "60",
+                "--frame-width",
+                "450",
+                "--frame-height",
+                "300",
+            ),
+        )
+        assertContainsSequence(factory.lastArgv, listOf("--owner-pid", "4242"))
+        assertTrue("--title" !in factory.lastArgv, "argv: ${factory.lastArgv}")
     }
 
     @Test

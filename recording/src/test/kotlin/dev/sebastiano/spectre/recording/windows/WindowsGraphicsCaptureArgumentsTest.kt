@@ -130,6 +130,51 @@ class WindowsGraphicsCaptureArgumentsTest {
     }
 
     @Test
+    fun `window argv selects an untitled window by its device-pixel frame`() {
+        val argv =
+            WindowsGraphicsCaptureArguments(
+                    mode = WindowsGraphicsCaptureMode.Screenshot,
+                    source = WindowsGraphicsCaptureSource.Window,
+                    frame = Rectangle(-1280, 40, 450, 300),
+                    ownerPid = 9,
+                    output = Path.of("out.png"),
+                    fps = 30,
+                    captureCursor = false,
+                )
+                .toArgv(Path.of("helper.exe"))
+
+        assertEquals("-1280", argv[argv.indexOf("--frame-x") + 1])
+        assertEquals("40", argv[argv.indexOf("--frame-y") + 1])
+        assertEquals("450", argv[argv.indexOf("--frame-width") + 1])
+        assertEquals("300", argv[argv.indexOf("--frame-height") + 1])
+        assertEquals("9", argv[argv.indexOf("--owner-pid") + 1])
+        assertTrue("--title" !in argv, "a frame selector must not also send a title: $argv")
+    }
+
+    @Test
+    fun `window arguments reject a title and a frame together`() {
+        assertFailsWith<IllegalArgumentException> {
+            WindowsGraphicsCaptureArguments(
+                mode = WindowsGraphicsCaptureMode.Screenshot,
+                source = WindowsGraphicsCaptureSource.Window,
+                title = "Spectre",
+                frame = Rectangle(0, 0, 300, 200),
+                ownerPid = 9,
+                output = Path.of("out.png"),
+                fps = 30,
+                captureCursor = false,
+            )
+        }
+    }
+
+    @Test
+    fun `exit 7 explains that several windows share the frame`() {
+        val message = messageForWindowsGraphicsCaptureHelperExit(7, listOf("helper.exe"))
+
+        assertTrue(message.contains("more than one window"), message)
+    }
+
+    @Test
     fun `windows args file launch writes tokens and passes one response file`() {
         val helper = Path.of("C:/Program Files/spectre/spectre-window-capture.exe")
         val output =
