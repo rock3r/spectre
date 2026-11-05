@@ -34,8 +34,8 @@ import org.junit.jupiter.api.TestInstance
 
 /**
  * Live acceptance for #605: a Compose popup hosted in an untitled `javax.swing.JWindow` owned by a
- * `ComposeWindow`. Compose Pi hosts its non-focusable popups this way, and IntelliJ heavyweight
- * popups do too.
+ * `ComposeWindow`. A downstream Compose Desktop app hosts its non-focusable popups this way, and
+ * IntelliJ heavyweight popups do too.
  *
  * AWT has no title for a JWindow, so the native helpers cannot find it by title. They find it by
  * its on-screen frame and owner process instead. This test drives the real helpers:
@@ -204,7 +204,8 @@ class JWindowPopupCaptureValidationTest {
 
     private fun openPopup(owner: Frame): JWindow =
         JWindow(owner).apply {
-            // Compose Pi and IntelliJ heavyweight popups are non-focusable JWindows.
+            // Downstream Compose Desktop popups and IntelliJ heavyweight popups are non-focusable
+            // JWindows.
             focusableWindowState = false
             contentPane.add(
                 ComposePanel().apply {

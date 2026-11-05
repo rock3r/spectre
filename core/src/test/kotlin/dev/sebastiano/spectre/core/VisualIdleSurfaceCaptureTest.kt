@@ -428,7 +428,8 @@ class VisualIdleSurfaceCaptureTest {
     @Test
     fun `samples a tracked JWindow popup through window-scoped capture`() {
         assumeLiveAwtAvailable()
-        // #605: an untitled JWindow popup (Compose Pi, IntelliJ heavyweight popups) must be
+        // #605: an untitled JWindow popup (a downstream Compose Desktop app, IntelliJ heavyweight
+        // popups) must be
         // sampled natively. Before, every sample was unsampleable while the popup was open.
         val owner = Frame()
         val popup =
