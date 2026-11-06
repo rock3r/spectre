@@ -51,7 +51,8 @@ public class LaunchAndAttachRule(
     /** Starts the launch session (same as JUnit 4 `before`). Exposed for tests. */
     public fun startSession() {
         stopSession()
-        session = LaunchAndAttach.launch(spec, warningSink)
+        session =
+            LaunchAndAttach.launch(WaylandPortalPrecheck.forwardConsentPrompt(spec), warningSink)
     }
 
     /** Tears down the launch session (same as JUnit 4 `after`). Exposed for tests. */

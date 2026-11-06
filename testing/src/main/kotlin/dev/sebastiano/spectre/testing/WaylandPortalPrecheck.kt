@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.testing
 
+import dev.sebastiano.spectre.agent.launch.LaunchSpec
 import dev.sebastiano.spectre.recording.portal.WaylandPortalAccess
 import dev.sebastiano.spectre.recording.portal.WaylandPortalAccessResult
 import java.util.concurrent.atomic.AtomicBoolean
@@ -26,6 +27,20 @@ internal object WaylandPortalPrecheck {
             getenv = System::getenv,
             warn = System.err::println,
         )
+    }
+
+    /**
+     * [spec] with this JVM's consent prompt property forwarded as `SPECTRE_WAYLAND_CONSENT_PROMPT`.
+     * The launched JVM inherits this JVM's environment but not its system properties, so without
+     * this a launched app could still open the Share dialog. A value in [spec] wins.
+     */
+    fun forwardConsentPrompt(
+        spec: LaunchSpec,
+        getProperty: (String) -> String? = System::getProperty,
+    ): LaunchSpec {
+        if (CONSENT_PROMPT_ENV in spec.environment) return spec
+        val value = getProperty(CONSENT_PROMPT_PROPERTY)?.takeIf { it.isNotBlank() } ?: return spec
+        return spec.copy(environment = spec.environment + (CONSENT_PROMPT_ENV to value))
     }
 
     @Suppress("LongParameterList") // Every collaborator is a seam the precheck tests substitute.

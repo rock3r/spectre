@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.testing
 
+import dev.sebastiano.spectre.agent.launch.LaunchSpec
 import dev.sebastiano.spectre.recording.portal.WaylandPortalAccessResult
 import dev.sebastiano.spectre.recording.portal.WaylandPortalAccessStatus
 import kotlin.test.Test
@@ -51,6 +52,41 @@ class WaylandPortalPrecheckTest {
         val warning = warnings.single()
         assertTrue(warning.contains("spectre permissions request"), warning)
         assertTrue(warning.contains("fail"), warning)
+    }
+
+    @Test
+    fun `a launched app gets the never policy as an environment variable`() {
+        // The launched JVM does not see this JVM's system properties, only its environment.
+        val spec = LaunchSpec(command = listOf("app"))
+
+        val forwarded =
+            WaylandPortalPrecheck.forwardConsentPrompt(
+                spec,
+                mapOf(CONSENT_PROMPT_PROPERTY to "never")::get,
+            )
+
+        assertEquals("never", forwarded.environment[CONSENT_PROMPT_ENV])
+    }
+
+    @Test
+    fun `a launch spec that sets the policy keeps it`() {
+        val spec =
+            LaunchSpec(command = listOf("app"), environment = mapOf(CONSENT_PROMPT_ENV to "allow"))
+
+        val forwarded =
+            WaylandPortalPrecheck.forwardConsentPrompt(
+                spec,
+                mapOf(CONSENT_PROMPT_PROPERTY to "never")::get,
+            )
+
+        assertEquals("allow", forwarded.environment[CONSENT_PROMPT_ENV])
+    }
+
+    @Test
+    fun `without a property the launch spec is unchanged`() {
+        val spec = LaunchSpec(command = listOf("app"))
+
+        assertEquals(spec, WaylandPortalPrecheck.forwardConsentPrompt(spec) { null })
     }
 
     private fun run(applicable: Boolean, granted: Boolean, env: Map<String, String> = emptyMap()) {
