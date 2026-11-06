@@ -176,15 +176,11 @@ internal class WaylandPortalGrants(
 }
 
 /** Whether a Spectre run may open the Share dialog by itself. */
-internal enum class WaylandConsentPrompt {
+internal enum class WaylandConsentPrompt(val envValue: String) {
     /** Open the dialog when no grant is stored (the default outside test runs). */
-    ALLOW,
+    ALLOW("allow"),
     /** Never open it: fail at once and point at `spectre permissions request`. */
-    NEVER;
-
-    companion object {
-        const val NEVER_VALUE: String = "never"
-    }
+    NEVER("never"),
 }
 
 /** System property that sets [WaylandConsentPrompt]; the JUnit integration sets it to `never`. */

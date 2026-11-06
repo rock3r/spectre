@@ -118,6 +118,42 @@ class WaylandWindowStreamsTest {
     }
 
     @Test
+    fun `closing a window does not wait for another window's binding`() {
+        // windowClosed runs on the EDT, and binding waits on the EDT for focus. If closing took
+        // the bind lock, the two would deadlock.
+        val session = FakeSession(frameWindow = Rectangle(25, 25, 400, 300))
+        val closers = java.util.concurrent.ConcurrentHashMap<String, () -> Unit>()
+        val closedWhileBinding = java.util.concurrent.atomic.AtomicBoolean(false)
+        val focus =
+            object : WindowFocus<String> {
+                override fun size(window: String) = Dimension(400, 300)
+
+                override fun focus(window: String): FocusHandoff {
+                    if (window == "second") {
+                        val closer = Thread { closers.getValue("first")() }
+                        closer.start()
+                        closer.join(CLOSE_TIMEOUT_MS)
+                        closedWhileBinding.set(!closer.isAlive)
+                    }
+                    return FocusHandoff {}
+                }
+            }
+        val streams =
+            WaylandWindowStreams(
+                session = session,
+                binder = FocusWindowStreamBinder(session, focus),
+                windowSize = { Dimension(400, 300) },
+                onWindowClosed = { window, action -> closers[window] = action },
+                keyPrefix = "test",
+            )
+        streams.capture("first")
+
+        streams.capture("second")
+
+        assertTrue(closedWhileBinding.get(), "closing must not block on a binding in progress")
+    }
+
+    @Test
     fun `window recording crops inside the window's own stream`() {
         val session = FakeSession(frameWindow = Rectangle(25, 25, 400, 300))
         val streams = streams(session, focus = FakeFocus(size = Dimension(400, 300)))
@@ -201,6 +237,8 @@ class WaylandWindowStreamsTest {
             mutterFrame(frameWindow, shadow = 6, width = frameSize.width, height = frameSize.height)
     }
 }
+
+private const val CLOSE_TIMEOUT_MS = 2_000L
 
 private fun mutterFrame(
     window: Rectangle,

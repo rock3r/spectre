@@ -73,9 +73,9 @@ internal fun waylandHelperEnvironment(lookup: (String) -> String?): Map<String, 
         .toMap()
 
 /**
- * Adds [waylandHelperEnvironment] for [lookup] (the real process environment by default). When this
- * JVM may not open the Share dialog ([WaylandConsentPrompt.NEVER], set by the JUnit integration),
- * the one-shot helper gets `SPECTRE_WAYLAND_CONSENT_PROMPT=never` too, so it fails instead of
+ * Adds [waylandHelperEnvironment] for [lookup] (the real process environment by default), and this
+ * JVM's consent prompt policy as `SPECTRE_WAYLAND_CONSENT_PROMPT`: with
+ * [WaylandConsentPrompt.NEVER] (set by the JUnit integration) the one-shot helper fails instead of
  * prompting.
  */
 internal fun ProcessBuilder.withWaylandHelperEnvironment(
@@ -83,9 +83,8 @@ internal fun ProcessBuilder.withWaylandHelperEnvironment(
     consentPrompt: WaylandConsentPrompt = waylandConsentPrompt(System::getProperty, lookup),
 ): ProcessBuilder = apply {
     environment().putAll(waylandHelperEnvironment(lookup))
-    if (consentPrompt == WaylandConsentPrompt.NEVER) {
-        environment()[WAYLAND_CONSENT_PROMPT_ENV] = WaylandConsentPrompt.NEVER_VALUE
-    }
+    // Explicit either way: the system property can allow what an inherited variable forbids.
+    environment()[WAYLAND_CONSENT_PROMPT_ENV] = consentPrompt.envValue
 }
 
 /** Effective uid of this JVM on Linux (owner of `/proc/self`), or null where unavailable. */

@@ -94,6 +94,7 @@ class WaylandSessionClientTest {
             mapOf(
                 "XDG_RUNTIME_DIR" to runtimeDir.toString(),
                 "DBUS_SESSION_BUS_ADDRESS" to "unix:path=$runtimeDir/bus",
+                WAYLAND_CONSENT_PROMPT_ENV to "allow",
             ),
             factory.environments.single(),
         )
@@ -261,7 +262,8 @@ class WaylandSessionClientTest {
 
         val environment = factory.environments.single()
         assertEquals("300", environment[WAYLAND_CONSENT_TIMEOUT_ENV])
-        assertTrue(WAYLAND_CONSENT_PROMPT_ENV !in environment, environment.toString())
+        // Explicit, so an inherited SPECTRE_WAYLAND_CONSENT_PROMPT=never cannot block the request.
+        assertEquals("allow", environment[WAYLAND_CONSENT_PROMPT_ENV])
     }
 
     @Test

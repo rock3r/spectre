@@ -41,7 +41,12 @@ internal class WaylandWindowStreams<W : Any>(
     private val onWindowClosed: (W, () -> Unit) -> Unit,
     private val keyPrefix: String = "jvm-${ProcessHandle.current().pid()}",
 ) {
+    /**
+     * Serialises bindings: each one may move keyboard focus. Held while binding, never on close.
+     */
     private val bindLock = Any()
+    /** Guards [bound]; held only for map reads and writes, never while waiting on anything. */
+    private val mapLock = Any()
     private val bound = WeakHashMap<W, BoundWindowStream>()
     private val counter = AtomicLong()
 
@@ -80,23 +85,42 @@ internal class WaylandWindowStreams<W : Any>(
         } catch (error: WaylandHelperErrorException) {
             if (error.kind != HELPER_ERROR_WINDOW_NOT_BOUND) throw error
             // The session helper restarted, or dropped this JVM's connection and its streams.
-            synchronized(bindLock) { if (bound[window] == stream) bound.remove(window) }
+            synchronized(mapLock) { if (bound[window] == stream) bound.remove(window) }
             action(streamFor(window))
         }
     }
 
-    private fun streamFor(window: W): BoundWindowStream =
-        synchronized(bindLock) { bound[window] ?: bindNew(window) }
+    private fun streamFor(window: W): BoundWindowStream {
+        synchronized(mapLock) { bound[window] }
+            ?.let {
+                return it
+            }
+        synchronized(bindLock) {
+            synchronized(mapLock) { bound[window] }
+                ?.let {
+                    return it
+                }
+            return bindNew(window)
+        }
+    }
 
     private fun bindNew(window: W): BoundWindowStream {
         val key = "$keyPrefix-${counter.incrementAndGet()}"
         val stream = binder.bind(window, key)
-        bound[window] = stream
+        synchronized(mapLock) { bound[window] = stream }
+        // Runs on the EDT for AWT windows. A binding in progress waits on the EDT for focus, so
+        // this must take neither the bind lock nor the session client's lock on the EDT.
         onWindowClosed(window) {
-            synchronized(bindLock) { if (bound[window]?.key == key) bound.remove(window) }
-            runCatching { session.unbind(key) }
+            synchronized(mapLock) { if (bound[window]?.key == key) bound.remove(window) }
+            unbindInBackground(key)
         }
         return stream
+    }
+
+    private fun unbindInBackground(key: String) {
+        Thread.ofPlatform().daemon().name("spectre-wayland-window-unbind").start {
+            runCatching { session.unbind(key) }
+        }
     }
 }
 

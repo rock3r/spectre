@@ -196,9 +196,9 @@ internal constructor(
     ) {
         val extraEnvironment: Map<String, String>
             get() = buildMap {
-                if (prompt == WaylandConsentPrompt.NEVER) {
-                    put(WAYLAND_CONSENT_PROMPT_ENV, WaylandConsentPrompt.NEVER_VALUE)
-                }
+                // Always explicit: the helper inherits this JVM's environment, and an exported
+                // SPECTRE_WAYLAND_CONSENT_PROMPT=never must not block an attended request.
+                put(WAYLAND_CONSENT_PROMPT_ENV, prompt.envValue)
                 consentTimeoutSeconds?.let { put(WAYLAND_CONSENT_TIMEOUT_ENV, it.toString()) }
             }
 
