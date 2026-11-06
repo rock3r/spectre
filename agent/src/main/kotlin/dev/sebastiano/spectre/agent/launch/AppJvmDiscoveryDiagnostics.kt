@@ -71,6 +71,7 @@ internal object AppJvmDiscoveryDiagnostics {
     const val REASON_PREDATES_LAUNCH: String = "predates the launch"
     const val REASON_GRADLE_DAEMON: String = "gradle daemon"
     const val REASON_CLIENT_PID: String = "client pid"
+    const val REASON_TEST_EXECUTOR_CHILD: String = "spawned by a gradle test executor"
 
     fun enabled(
         property: String? = System.getProperty(PROPERTY),

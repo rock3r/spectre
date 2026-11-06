@@ -312,6 +312,61 @@ class LaunchDescendantDiscoveryTest {
     }
 
     @Test
+    fun `selectAppJvm ignores a fixture that a parallel test executor spawned`() {
+        // #603 / #614: `:cli:test` runs beside `:agent:test` and its test executor spawns a
+        // ComposeFixtureMainKt of its own. While this launch's app is still starting, that
+        // fixture must not be taken for it.
+        val scenario = ParallelTestExecutorScenario(includeThisLaunchApp = false)
+        assertNull(scenario.select())
+    }
+
+    @Test
+    fun `selectAppJvm picks this launch's app over a fixture a parallel test executor spawned`() {
+        // The other test's fixture has the higher pid, which used to win among daemon children.
+        val scenario = ParallelTestExecutorScenario(includeThisLaunchApp = true)
+        assertEquals(scenario.thisLaunchAppPid, scenario.select())
+    }
+
+    @Test
+    fun `opt-in diagnostics say a fixture was rejected because a test executor spawned it`() {
+        val captured = mutableListOf<AppJvmDiscoveryRecord>()
+        val scenario = ParallelTestExecutorScenario(includeThisLaunchApp = true)
+
+        scenario.select(onDiagnostics = { captured += it })
+
+        val rejection =
+            captured.single().candidates.single { it.pid == scenario.otherTestFixturePid }
+        assertEquals(
+            AppJvmDiscoveryDiagnostics.REASON_TEST_EXECUTOR_CHILD,
+            rejection.rejectionReason,
+        )
+    }
+
+    @Test
+    fun `GradleTestExecutors matches only Gradle test executors`() {
+        assertTrue(
+            GradleTestExecutors.isTestExecutorDisplayName(
+                "worker.org.gradle.process.internal.worker.GradleWorkerMain 'Gradle Test Executor 7'"
+            )
+        )
+        assertFalse(
+            GradleTestExecutors.isTestExecutorDisplayName(
+                "worker.org.gradle.process.internal.worker.GradleWorkerMain 'Gradle Worker Daemon 2'"
+            )
+        )
+        assertFalse(
+            GradleTestExecutors.isTestExecutorDisplayName(
+                "org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.7.1"
+            )
+        )
+        assertFalse(
+            GradleTestExecutors.isTestExecutorDisplayName(
+                "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt"
+            )
+        )
+    }
+
+    @Test
     fun `selectAppJvm never returns a Gradle worker pid as the app JVM`() {
         val launchedAt = Instant.parse("2026-08-23T10:00:00Z")
         val clientPid = 12_300L
@@ -598,6 +653,92 @@ class LaunchDescendantDiscoveryTest {
                     }
                 },
                 nativeFallback = nativeFallback,
+                onDiagnostics = onDiagnostics,
+            )
+    }
+
+    /**
+     * The #603 / #614 layout seen on macOS CI: the outer `./gradlew check` daemon runs
+     * `:agent:test` and `:cli:test` in parallel. The agent test launches `./gradlew
+     * :agent-test-fixture:run`, whose app is a child of a second daemon. Meanwhile a `:cli:test`
+     * executor spawns its own ComposeFixtureMainKt, after this launch began and with a higher pid.
+     */
+    private class ParallelTestExecutorScenario(includeThisLaunchApp: Boolean) {
+        private val clientPid: Long = 5_100
+        private val outerDaemonPid: Long = 4_000
+        private val cliTestExecutorPid: Long = 4_500
+        val otherTestFixturePid: Long = 5_207
+        private val thisLaunchDaemonPid: Long = 5_150
+        val thisLaunchAppPid: Long = 5_180
+
+        private val launchedAt: Instant = Instant.parse("2026-11-05T13:59:50Z")
+
+        private val listed: List<JvmProcessInfo> = buildList {
+            add(
+                JvmProcessInfo(
+                    outerDaemonPid,
+                    "org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.7.1",
+                )
+            )
+            add(
+                JvmProcessInfo(
+                    cliTestExecutorPid,
+                    "worker.org.gradle.process.internal.worker.GradleWorkerMain " +
+                        "'Gradle Test Executor 12'",
+                )
+            )
+            add(
+                JvmProcessInfo(
+                    otherTestFixturePid,
+                    "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
+                )
+            )
+            add(
+                JvmProcessInfo(
+                    thisLaunchDaemonPid,
+                    "org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.7.1",
+                )
+            )
+            if (includeThisLaunchApp) {
+                add(
+                    JvmProcessInfo(
+                        thisLaunchAppPid,
+                        "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
+                    )
+                )
+            }
+        }
+
+        private val parents: Map<Long, Long> =
+            mapOf(
+                cliTestExecutorPid to outerDaemonPid,
+                otherTestFixturePid to cliTestExecutorPid,
+                thisLaunchDaemonPid to clientPid,
+                thisLaunchAppPid to thisLaunchDaemonPid,
+            )
+
+        private val startInstants: Map<Long, Instant> =
+            mapOf(
+                outerDaemonPid to launchedAt.minusSeconds(300),
+                cliTestExecutorPid to launchedAt.plusSeconds(2),
+                otherTestFixturePid to launchedAt.plusSeconds(20),
+                clientPid to launchedAt,
+                thisLaunchDaemonPid to launchedAt.plusSeconds(1),
+                thisLaunchAppPid to launchedAt.plusSeconds(15),
+            )
+
+        fun select(
+            onDiagnostics: AppJvmDiscoveryDiagnosticSink = AppJvmDiscoveryDiagnosticSink.NoOp
+        ): Long? =
+            LaunchDescendantDiscovery.selectAppJvm(
+                clientPid = clientPid,
+                nameFilter = "ComposeFixtureMain",
+                clientStart = launchedAt,
+                listed = listed,
+                descendantsOf = { emptySet() },
+                parentOf = parents::get,
+                startInstantOf = startInstants::get,
+                nativeFallback = { _, _, _ -> null },
                 onDiagnostics = onDiagnostics,
             )
     }
