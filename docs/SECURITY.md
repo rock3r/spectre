@@ -199,10 +199,10 @@ Treat that socket like the agent UDS: trusted local / same-user only.
 
 `SPECTRE_CAPTURE_BACKEND` forces Linux still/video routing when auto-detection is wrong for a
 nested setup: `x11` / `xorg` / `xvfb` → X11 helper path; `wayland` / `portal` → portal path;
-unset or any other value → auto. With `DISPLAY` set, session type / `WAYLAND_DISPLAY` count only
-when an Xwayland process serves `DISPLAY`, or when no pure X11 server is found and the
-`WAYLAND_DISPLAY` socket exists (#575). Residual `wayland-*` sockets count only if `DISPLAY` is
-unset (#397).
+unset or any other value → auto. An Xwayland process serving `DISPLAY` means Wayland, with or
+without Wayland variables (#607). Otherwise, with `DISPLAY` set, session type / `WAYLAND_DISPLAY`
+count only when no pure X11 server is found and the `WAYLAND_DISPLAY` socket exists (#575).
+Residual `wayland-*` sockets count only if `DISPLAY` is unset (#397).
 Prefer fixing the environment (run under `xvfb-run` with a real Xvfb `DISPLAY`) over leaving
 the override set in CI.
 

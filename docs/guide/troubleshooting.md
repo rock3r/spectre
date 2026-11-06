@@ -420,11 +420,48 @@ the runtime classpath. To use Xorg, check the session with:
 echo "$XDG_SESSION_TYPE"               # should be "x11"
 echo "$WAYLAND_DISPLAY"                # should be empty
 ls "$XDG_RUNTIME_DIR" | grep wayland   # should be empty
+xdpyinfo | grep XWAYLAND               # should be empty: DISPLAY is not Xwayland
 ```
 
 (or pick "Ubuntu on Xorg" at the GDM login screen, or run under `Xvfb`).
 
 See [Recording limitations](../RECORDING-LIMITATIONS.md) for Wayland capture requirements.
+
+## "Linux over SSH: black screenshots and stalled clicks on a Wayland desktop"
+
+You connect over SSH to a machine that runs a GNOME Wayland session, and set
+`DISPLAY=:0` with the Mutter Xwayland cookie as `XAUTHORITY`. That display is Xwayland,
+not a real X server. X11 capture of it is black, and XTest input through it can stall
+for many seconds per event.
+
+Spectre detects this case (#607). It treats a `DISPLAY` served by an `Xwayland` process
+as a Wayland session, even when SSH sets `XDG_SESSION_TYPE=tty` and no `WAYLAND_DISPLAY`.
+`RobotDriver()`, `ComposeAutomator` screenshots, and `AutoRecorder` then use the portal
+path, the same as a terminal inside the desktop session. That path has these needs:
+
+- `spectre-recording-linux` on the runtime classpath, for `spectre-wayland-helper`.
+- The session bus of the desktop user. SSH logins with systemd usually reach it through
+  `$XDG_RUNTIME_DIR/bus`.
+- A working `xdg-desktop-portal`. Check it with:
+
+  ```shell
+  gdbus call --session --dest org.freedesktop.portal.Desktop \
+    --object-path /org/freedesktop/portal/desktop \
+    --method org.freedesktop.DBus.Properties.Get org.freedesktop.portal.ScreenCast version
+  ```
+
+  A timeout means the portal is not answering. Spectre calls then wait for the D-Bus
+  timeout and fail.
+- Consent on the seat. The first request shows the Share and Allow remote interaction
+  dialog on the physical screen, not in the SSH terminal. Someone must approve it once.
+  Spectre then reuses the stored restore token.
+
+`RobotDriver(Robot())` is different: it always uses the `java.awt.Robot` you pass in,
+so it still sends XTest input through Xwayland. Use `RobotDriver()` on Wayland.
+
+`SPECTRE_CAPTURE_BACKEND=x11` forces the X11 path back on. Use it only when `DISPLAY` is a
+real X server that the probes cannot identify. On an Xwayland display it brings back the
+black captures and stalled input.
 
 ## "Linux Wayland keeps asking to share the screen / remote interaction"
 

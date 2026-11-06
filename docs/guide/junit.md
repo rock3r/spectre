@@ -410,7 +410,8 @@ The default root is `src/test/resources/spectre-golds/` in the main JUnit source
 Linux path keys follow window-capture session detection: `SPECTRE_CAPTURE_BACKEND`,
 then an Xwayland or pure-X11 (such as Xvfb) `DISPLAY`, then `XDG_SESSION_TYPE` and
 `WAYLAND_DISPLAY`. With `DISPLAY` set, those two count only if the Wayland socket exists.
-A Wayland desktop with XWayland `DISPLAY` still uses `linux-wayland`.
+A Wayland desktop with XWayland `DISPLAY` still uses `linux-wayland`, also over SSH where
+no Wayland variable is set.
 Its golds stay separate from Xvfb `SOFTWARE_COMPAT` captures.
 Theme, Skiko render API, JDK, and font antialiasing add **no** path key.
 Pin the runner or adjust tolerance; see [Running on CI](ci.md).
