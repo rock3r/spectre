@@ -34,6 +34,19 @@ def load_smoke_lib():
 smoke_lib = load_smoke_lib()
 
 
+def load_mutter_virtual_monitor():
+    path = ROOT / "scripts" / "mutter_virtual_monitor.py"
+    spec = importlib.util.spec_from_file_location("mutter_virtual_monitor", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+mutter_virtual_monitor = load_mutter_virtual_monitor()
+
+
 class McpStdioSmokeTest(unittest.TestCase):
     def fake_server(
         self,
@@ -1730,6 +1743,102 @@ class SeatMonitorTest(unittest.TestCase):
         self.assertIn("mutter_virtual_monitor.py", docs)
         self.assertIn("dummy HDMI plug", docs)
         self.assertIn("serial", docs)
+        # The session-long service must not hide windows on a seat that has a real display.
+        self.assertIn("mutter_virtual_monitor.py follow", docs)
+        self.assertNotIn("mutter_virtual_monitor.py hold --until-signal`", docs)
+
+
+_PHYSICAL_DP_2 = {
+    "connector": "DP-2",
+    "vendor": "AZO",
+    "product": "ARZOPA",
+    "serial": "0x00000001",
+}
+
+
+class VirtualMonitorFollowTest(unittest.TestCase):
+    """`follow` keeps a virtual monitor only while the seat has no physical monitor."""
+
+    @staticmethod
+    def _run(snapshots: list[list[dict]], *, settle_polls: int = 2) -> list[str]:
+        events: list[str] = []
+        remaining = list(snapshots)
+        held = {"monitor": False}
+
+        def list_monitors() -> list[dict]:
+            current = list(remaining.pop(0))
+            if held["monitor"]:
+                current.append(_MONITOR_META_1)
+            return current
+
+        def create() -> dict:
+            held["monitor"] = True
+            events.append("create")
+            return _MONITOR_META_1
+
+        def remove() -> None:
+            held["monitor"] = False
+            events.append("remove")
+
+        mutter_virtual_monitor.run_follow(
+            list_monitors=list_monitors,
+            create=create,
+            remove=remove,
+            should_stop=lambda: not remaining,
+            sleep=lambda _seconds: None,
+            settle_polls=settle_polls,
+            emit=lambda payload: events.append(payload["event"]),
+        )
+        return events
+
+    def test_virtual_monitors_are_not_physical(self):
+        self.assertTrue(mutter_virtual_monitor.is_virtual_monitor(_MONITOR_META_1))
+        self.assertFalse(mutter_virtual_monitor.is_virtual_monitor(_PHYSICAL_DP_2))
+
+    def test_does_nothing_while_a_physical_monitor_is_connected(self):
+        self.assertEqual([], self._run([[_PHYSICAL_DP_2]] * 5))
+
+    def test_adds_a_monitor_only_after_the_seat_stays_empty(self):
+        # One empty poll (a display that is still coming up at login) is not enough.
+        self.assertEqual([], self._run([[], [_PHYSICAL_DP_2], [_PHYSICAL_DP_2]]))
+        events = self._run([[], [], []])
+        self.assertEqual(["create", "added", "remove"], events)
+
+    def test_removes_the_monitor_when_a_display_is_plugged_in_and_adds_it_back(self):
+        events = self._run(
+            [[], [], [_PHYSICAL_DP_2], [_PHYSICAL_DP_2], [], [], []],
+        )
+        self.assertEqual(
+            ["create", "added", "remove", "removed", "create", "added", "remove"],
+            events,
+        )
+
+    def test_a_refused_monitor_is_retried_after_the_next_settle(self):
+        events: list[str] = []
+        attempts = {"count": 0}
+        remaining = [[], [], [], []]
+
+        def create() -> dict:
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise RuntimeError("AccessDenied")
+            events.append("create")
+            return _MONITOR_META_1
+
+        mutter_virtual_monitor.run_follow(
+            list_monitors=lambda: remaining.pop(0),
+            create=create,
+            remove=lambda: events.append("remove"),
+            should_stop=lambda: not remaining,
+            sleep=lambda _seconds: None,
+            settle_polls=2,
+            emit=lambda payload: events.append(payload["event"]),
+        )
+        self.assertEqual(["error", "create", "added", "remove"], events)
+
+    def test_rdp_virtual_monitors_do_not_count_as_physical(self):
+        events = self._run([[_MONITOR_META_1], [_MONITOR_META_1], [_MONITOR_META_1]])
+        self.assertEqual(["create", "added", "remove"], events)
 
 
 class DocsAndSchemaPolicyTest(unittest.TestCase):

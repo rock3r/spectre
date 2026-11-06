@@ -555,9 +555,18 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   The token can match only by chance, for example on the first virtual monitor after a reboot
   when the token was saved on serial `0x000001`. For unattended runs, give the seat a monitor
   whose identity does not change: a dummy HDMI plug (its EDID serial is fixed), or a virtual
-  monitor that lives for the whole login session, started before any RDP client, such as a user
-  service that runs `scripts/mutter_virtual_monitor.py hold --until-signal`. Approve the dialog
-  once on that monitor, and later runs reuse the token.
+  monitor that lives for the whole login session, started before any RDP client. Approve the
+  dialog once on that monitor, and later runs reuse the token.
+- **Session-long virtual monitor service:** run `scripts/mutter_virtual_monitor.py follow` as a
+  systemd user service (`WantedBy=graphical-session.target`). It adds a virtual monitor only
+  while the seat has no physical monitor. It waits for about three polls (2s each) with no
+  physical monitor before it adds one, so a display that is still starting at login does not
+  get a virtual neighbour. When you plug in a physical monitor, the service removes the virtual
+  one, so windows and portal dialogs do not open on a screen nobody can see. When the last
+  physical monitor goes, the service adds a virtual monitor again. Each new virtual monitor has
+  a new serial, so approve the Share dialog once more after that. Do not use `hold
+  --until-signal` for this service: it keeps the virtual monitor even when a real display is
+  connected.
 - **Homebrew/Scoop/public archives:** after the draft artifacts exist, install through the real
   package manager and rerun launcher/MCP smoke. Local packaging does not prove channel metadata.
 - **Input focus/lock keys:** real Robot input uses global desktop state. Record focus failures and

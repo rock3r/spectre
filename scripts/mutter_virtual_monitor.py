@@ -16,6 +16,11 @@ Usage:
       or the process gets SIGTERM / SIGINT. The parent keeps stdin open as a pipe, so the
       monitor also goes away when the parent dies. With --until-signal, stdin is ignored
       (for a long-running user service whose stdin is /dev/null).
+  mutter_virtual_monitor.py follow [--width W] [--height H] [--timeout S] [--poll S]
+      For a session-long user service. Keep a virtual monitor only while the seat has no
+      physical monitor: add one after the seat has had none for a few polls, remove it as
+      soon as a physical monitor appears, and add it back when the last one goes. Prints
+      one JSON line per change. Runs until SIGTERM / SIGINT, then removes the monitor.
 
 Needs PyGObject (python3-gi) and DBUS_SESSION_BUS_ADDRESS for the seat's session bus.
 This file is a CLI only: smoke_lib.py runs it in a child process and parses its output.
@@ -29,7 +34,7 @@ import signal
 import sys
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 DISPLAY_CONFIG_BUS = "org.gnome.Mutter.DisplayConfig"
 DISPLAY_CONFIG_PATH = "/org/gnome/Mutter/DisplayConfig"
@@ -105,70 +110,70 @@ def cmd_query() -> int:
     return 0
 
 
+def is_virtual_monitor(monitor: dict[str, str]) -> bool:
+    """True for a Mutter virtual monitor: ours, or one gnome-remote-desktop adds for RDP."""
+    return monitor.get("vendor") == "MetaVendor" or monitor.get("connector", "").startswith("Meta-")
+
+
+def _start_virtual(bus: Any, width: int, height: int, timeout: float) -> tuple[str, dict[str, str]]:
+    """Add a virtual monitor. Returns (ScreenCast session, monitor) or raises RuntimeError."""
+    _, GLib = _gio()
+    before = {monitor["connector"] for monitor in current_monitors(bus)}
+    session = _call(
+        bus,
+        SCREEN_CAST_BUS,
+        SCREEN_CAST_PATH,
+        SCREEN_CAST_BUS,
+        "CreateSession",
+        GLib.Variant("(a{sv})", ({},)),
+        "(o)",
+    ).unpack()[0]
+    mode = {
+        "size": GLib.Variant("(uu)", (width, height)),
+        "refresh-rate": GLib.Variant("d", 60.0),
+        "is-preferred": GLib.Variant("b", True),
+    }
+    properties = {
+        "cursor-mode": GLib.Variant("u", CURSOR_MODE_HIDDEN),
+        # Treat it like a real monitor (not a shared screen), as headless
+        # gnome-remote-desktop does.
+        "is-platform": GLib.Variant("b", True),
+        # Fixed modes make Mutter create the monitor at once, with no PipeWire consumer.
+        "modes": GLib.Variant("aa{sv}", [mode]),
+    }
+    _call(
+        bus,
+        SCREEN_CAST_BUS,
+        session,
+        SESSION_IFACE,
+        "RecordVirtual",
+        GLib.Variant("(a{sv})", (properties,)),
+        "(o)",
+    )
+    _call(bus, SCREEN_CAST_BUS, session, SESSION_IFACE, "Start", None, None)
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        added = [m for m in current_monitors(bus) if m["connector"] not in before]
+        if added:
+            return session, added[0]
+        time.sleep(0.1)
+    _stop(bus, session)
+    raise RuntimeError(
+        f"Mutter accepted the virtual monitor but no new monitor appeared "
+        f"in GetCurrentState within {timeout:g}s"
+    )
+
+
 def cmd_hold(width: int, height: int, timeout: float, until_signal: bool) -> int:
     try:
-        Gio, GLib = _gio()
         bus = _session_bus()
-        before = {monitor["connector"] for monitor in current_monitors(bus)}
-        session = _call(
-            bus,
-            SCREEN_CAST_BUS,
-            SCREEN_CAST_PATH,
-            SCREEN_CAST_BUS,
-            "CreateSession",
-            GLib.Variant("(a{sv})", ({},)),
-            "(o)",
-        ).unpack()[0]
-        mode = {
-            "size": GLib.Variant("(uu)", (width, height)),
-            "refresh-rate": GLib.Variant("d", 60.0),
-            "is-preferred": GLib.Variant("b", True),
-        }
-        properties = {
-            "cursor-mode": GLib.Variant("u", CURSOR_MODE_HIDDEN),
-            # Treat it like a real monitor (not a shared screen), as headless
-            # gnome-remote-desktop does.
-            "is-platform": GLib.Variant("b", True),
-            # Fixed modes make Mutter create the monitor at once, with no PipeWire consumer.
-            "modes": GLib.Variant("aa{sv}", [mode]),
-        }
-        _call(
-            bus,
-            SCREEN_CAST_BUS,
-            session,
-            SESSION_IFACE,
-            "RecordVirtual",
-            GLib.Variant("(a{sv})", (properties,)),
-            "(o)",
-        )
-        _call(bus, SCREEN_CAST_BUS, session, SESSION_IFACE, "Start", None, None)
+        session, monitor = _start_virtual(bus, width, height, timeout)
     except Exception as error:  # noqa: BLE001
         _emit({"ready": False, "error": f"{type(error).__name__}: {error}"})
         return 1
 
-    added: list[dict[str, str]] = []
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            added = [m for m in current_monitors(bus) if m["connector"] not in before]
-        except Exception as error:  # noqa: BLE001
-            _emit({"ready": False, "error": f"{type(error).__name__}: {error}"})
-            return 1
-        if added:
-            break
-        time.sleep(0.1)
-    if not added:
-        _stop(bus, session)
-        _emit(
-            {
-                "ready": False,
-                "error": f"Mutter accepted the virtual monitor but no new monitor appeared "
-                f"in GetCurrentState within {timeout:g}s",
-            }
-        )
-        return 1
-
-    _emit({"ready": True, "monitor": added[0], "session": session})
+    _emit({"ready": True, "monitor": monitor, "session": session})
 
     done = threading.Event()
 
@@ -194,6 +199,96 @@ def cmd_hold(width: int, height: int, timeout: float, until_signal: bool) -> int
     return 0
 
 
+def run_follow(
+    *,
+    list_monitors: Callable[[], list[dict[str, str]]],
+    create: Callable[[], dict[str, str]],
+    remove: Callable[[], None],
+    should_stop: Callable[[], bool],
+    sleep: Callable[[float], None],
+    settle_polls: int,
+    poll_seconds: float = 2.0,
+    emit: Callable[[dict[str, Any]], None] = _emit,
+) -> None:
+    """The `follow` loop, with Mutter behind plain callables so tests can drive it.
+
+    A virtual monitor exists only while no physical monitor does. It is added after
+    `settle_polls` polls in a row with no physical monitor, so a display that is still
+    coming up at login does not get a virtual neighbour. It is removed on the first poll
+    that sees a physical monitor, and once more when the loop stops.
+    """
+    holding = False
+    empty_polls = 0
+    try:
+        while not should_stop():
+            physical = [m for m in list_monitors() if not is_virtual_monitor(m)]
+            if physical:
+                empty_polls = 0
+                if holding:
+                    remove()
+                    holding = False
+                    emit({"event": "removed", "physical": physical})
+            elif not holding:
+                empty_polls += 1
+                if empty_polls >= settle_polls:
+                    empty_polls = 0
+                    try:
+                        monitor = create()
+                    except Exception as error:  # noqa: BLE001 - retry after the next settle
+                        emit({"event": "error", "error": f"{type(error).__name__}: {error}"})
+                    else:
+                        holding = True
+                        emit({"event": "added", "monitor": monitor})
+            sleep(poll_seconds)
+    finally:
+        if holding:
+            remove()
+
+
+def cmd_follow(width: int, height: int, timeout: float, poll: float) -> int:
+    try:
+        bus = _session_bus()
+    except Exception as error:  # noqa: BLE001
+        _emit({"event": "error", "error": f"{type(error).__name__}: {error}"})
+        return 1
+
+    done = threading.Event()
+
+    def on_signal(_signum: int, _frame: Any) -> None:
+        done.set()
+
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+
+    state: dict[str, str | None] = {"session": None}
+
+    def create() -> dict[str, str]:
+        session, monitor = _start_virtual(bus, width, height, timeout)
+        state["session"] = session
+        return monitor
+
+    def remove() -> None:
+        session = state["session"]
+        if session is not None:
+            _stop(bus, session)
+            state["session"] = None
+
+    try:
+        run_follow(
+            list_monitors=lambda: current_monitors(bus),
+            create=create,
+            remove=remove,
+            should_stop=done.is_set,
+            sleep=done.wait,
+            settle_polls=3,
+            poll_seconds=poll,
+        )
+    except Exception as error:  # noqa: BLE001 - systemd restarts the service on failure
+        _emit({"event": "error", "error": f"{type(error).__name__}: {error}"})
+        return 1
+    return 0
+
+
 def _stop(bus: Any, session: str) -> None:
     try:
         _call(bus, SCREEN_CAST_BUS, session, SESSION_IFACE, "Stop", None, None)
@@ -210,12 +305,19 @@ def main(argv: list[str] | None = None) -> int:
     hold.add_argument("--height", type=int, default=1080)
     hold.add_argument("--timeout", type=float, default=10.0)
     hold.add_argument("--until-signal", action="store_true")
+    follow = sub.add_parser("follow")
+    follow.add_argument("--width", type=int, default=1920)
+    follow.add_argument("--height", type=int, default=1080)
+    follow.add_argument("--timeout", type=float, default=10.0)
+    follow.add_argument("--poll", type=float, default=2.0)
     args = parser.parse_args(argv)
     if not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
         _emit({"ready": False, "error": "DBUS_SESSION_BUS_ADDRESS is not set"})
         return 1
     if args.command == "query":
         return cmd_query()
+    if args.command == "follow":
+        return cmd_follow(args.width, args.height, args.timeout, args.poll)
     return cmd_hold(args.width, args.height, args.timeout, args.until_signal)
 
 
