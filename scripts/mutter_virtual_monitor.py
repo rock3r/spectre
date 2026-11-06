@@ -132,7 +132,8 @@ def _start_virtual(bus: Any, width: int, height: int, timeout: float) -> tuple[s
         return session, _record_virtual(bus, GLib, session, before, width, height, timeout)
     except BaseException:
         # `follow` retries on the same connection, so do not leave a half-made monitor behind.
-        _stop(bus, session)
+        # If Mutter will not stop it, StopFailed tells `follow` to exit instead of retrying.
+        _stop_or_raise(bus, session)
         raise
 
 
@@ -226,6 +227,9 @@ def run_follow(
     `settle_polls` polls in a row with no physical monitor, so a display that is still
     coming up at login does not get a virtual neighbour. It is removed on the first poll
     that sees a physical monitor, and once more when the loop stops.
+
+    StopFailed from `create` or `remove` is never retried: it ends the loop, and the caller
+    exits so that closing its D-Bus connection makes Mutter remove the monitor.
     """
     holding = False
     empty_polls = 0
@@ -235,7 +239,7 @@ def run_follow(
             if physical:
                 empty_polls = 0
                 if holding:
-                    remove()
+                    remove()  # StopFailed ends the loop: the monitor is still there
                     holding = False
                     emit({"event": "removed", "physical": physical})
             elif not holding:
@@ -244,6 +248,8 @@ def run_follow(
                     empty_polls = 0
                     try:
                         monitor = create()
+                    except StopFailed:
+                        raise
                     except Exception as error:  # noqa: BLE001 - retry after the next settle
                         emit({"event": "error", "error": f"{type(error).__name__}: {error}"})
                     else:
@@ -280,7 +286,7 @@ def cmd_follow(width: int, height: int, timeout: float, poll: float) -> int:
     def remove() -> None:
         session = state["session"]
         if session is not None:
-            _stop(bus, session)
+            _stop_or_raise(bus, session)
             state["session"] = None
 
     try:
@@ -297,6 +303,17 @@ def cmd_follow(width: int, height: int, timeout: float, poll: float) -> int:
         _emit({"event": "error", "error": f"{type(error).__name__}: {error}"})
         return 1
     return 0
+
+
+class StopFailed(RuntimeError):
+    """Mutter would not stop a virtual monitor session that this process still holds."""
+
+
+def _stop_or_raise(bus: Any, session: str) -> None:
+    try:
+        _call(bus, SCREEN_CAST_BUS, session, SESSION_IFACE, "Stop", None, None)
+    except Exception as error:  # noqa: BLE001
+        raise StopFailed(f"could not stop {session}: {type(error).__name__}: {error}") from error
 
 
 def _stop(bus: Any, session: str) -> None:

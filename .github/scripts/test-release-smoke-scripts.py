@@ -1848,6 +1848,24 @@ class VirtualMonitorFollowTest(unittest.TestCase):
         class FakeGLib:
             Variant = FakeVariant
 
+        self._assert_failed_start_stops_session(FakeGLib, FakeVariant)
+
+        # When that Stop fails too, the caller must learn it cannot retry on this connection.
+        def failing_call(_bus, _dest, _path, _iface, method, _args, _reply):
+            if method == "Stop":
+                raise RuntimeError("Stop failed")
+            if method == "RecordVirtual":
+                raise RuntimeError("RecordVirtual failed")
+            return FakeVariant()
+
+        module = mutter_virtual_monitor
+        with unittest.mock.patch.object(module, "_gio", return_value=(None, FakeGLib)), \
+                unittest.mock.patch.object(module, "_call", side_effect=failing_call), \
+                unittest.mock.patch.object(module, "current_monitors", return_value=[]):
+            with self.assertRaises(module.StopFailed):
+                module._start_virtual(object(), 1920, 1080, 1.0)
+
+    def _assert_failed_start_stops_session(self, FakeGLib, FakeVariant):
         stopped: list[str] = []
         listings = iter([[], RuntimeError("GetCurrentState failed")])
 
@@ -1862,11 +1880,46 @@ class VirtualMonitorFollowTest(unittest.TestCase):
                 unittest.mock.patch.object(module, "_call", return_value=FakeVariant()), \
                 unittest.mock.patch.object(module, "current_monitors", side_effect=fake_monitors), \
                 unittest.mock.patch.object(
-                    module, "_stop", side_effect=lambda _bus, session: stopped.append(session)
+                    module,
+                    "_stop_or_raise",
+                    side_effect=lambda _bus, session: stopped.append(session),
                 ):
             with self.assertRaises(RuntimeError):
                 module._start_virtual(object(), 1920, 1080, 1.0)
         self.assertEqual(["/org/gnome/Mutter/ScreenCast/Session/u9"], stopped)
+
+    def test_a_failed_stop_ends_follow_instead_of_forgetting_the_monitor(self):
+        # A monitor that Mutter would not stop must not be marked removed: ending the process
+        # closes the D-Bus connection, which makes Mutter remove it.
+        def failing_remove() -> None:
+            raise mutter_virtual_monitor.StopFailed("Stop failed")
+
+        remaining = [[], [], [_PHYSICAL_DP_2], [_PHYSICAL_DP_2]]
+        with self.assertRaises(mutter_virtual_monitor.StopFailed):
+            mutter_virtual_monitor.run_follow(
+                list_monitors=lambda: remaining.pop(0),
+                create=lambda: _MONITOR_META_1,
+                remove=failing_remove,
+                should_stop=lambda: not remaining,
+                sleep=lambda _seconds: None,
+                settle_polls=2,
+                emit=lambda _payload: None,
+            )
+
+        def create_that_cannot_clean_up() -> dict:
+            raise mutter_virtual_monitor.StopFailed("Stop failed after Start")
+
+        remaining = [[], [], [], []]
+        with self.assertRaises(mutter_virtual_monitor.StopFailed):
+            mutter_virtual_monitor.run_follow(
+                list_monitors=lambda: remaining.pop(0),
+                create=create_that_cannot_clean_up,
+                remove=lambda: None,
+                should_stop=lambda: not remaining,
+                sleep=lambda _seconds: None,
+                settle_polls=2,
+                emit=lambda _payload: None,
+            )
 
     def test_rdp_virtual_monitors_do_not_count_as_physical(self):
         events = self._run([[_MONITOR_META_1], [_MONITOR_META_1], [_MONITOR_META_1]])
