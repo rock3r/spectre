@@ -68,6 +68,11 @@ internal class PlatformScreenCaptureBackend(
     private val nativeCapture: (Window) -> BufferedImage,
     private val nativeCaptureEnabled: () -> Boolean = { true },
     private val nativeCaptureDisambiguatesTitles: () -> Boolean = { false },
+    /**
+     * True where the native helper can select a window by owner process and frame (#606): Windows
+     * and Linux X11. Then a title that another window shares falls back to that selector (#611).
+     */
+    private val nativeCaptureSelectsByFrame: () -> Boolean = { false },
     private val nativeCaptureBounds: (Window, BufferedImage, Rectangle, Insets) -> Rectangle =
         { _, _, windowBounds, frameInsets ->
             nativeWindowCaptureBounds(
@@ -86,6 +91,7 @@ internal class PlatformScreenCaptureBackend(
         nativeCapture = defaultNativeCapture(),
         nativeCaptureEnabled = { robotDriver.allowsPlatformCapture },
         nativeCaptureDisambiguatesTitles = ::defaultNativeCaptureDisambiguatesTitles,
+        nativeCaptureSelectsByFrame = { !isWaylandSession() },
         deviceScaleRegionCapture = robotDriver::screenshotAtDeviceScale,
     )
 
@@ -113,9 +119,12 @@ internal class PlatformScreenCaptureBackend(
                 "Refresh the window list before requesting a window screenshot."
         }
         if (!nativeCaptureDisambiguatesTitles()) {
-            ambiguousNativeIdentity(nativeWindow)?.let { candidates ->
-                throw IllegalStateException(
-                    "Native window capture cannot uniquely select title ${nativeWindow.title.quoteForMessage()}. " +
+            val selectsByFrame = nativeCaptureSelectsByFrame()
+            ambiguousNativeIdentity(nativeWindow, selectsByFrame)?.let { candidates ->
+                val shared = if (selectsByFrame) "title and frame" else "title"
+                error(
+                    "Native window capture cannot uniquely select title ${nativeWindow.title.quoteForMessage()}: " +
+                        "${candidates.size} windows share the same $shared. " +
                         "Matching windows: ${candidates.joinToString()}. " +
                         "Provide criteria that identify one window, or request screenshot(region) explicitly."
                 )
@@ -128,10 +137,17 @@ internal class PlatformScreenCaptureBackend(
         )
     }
 
-    private fun ambiguousNativeIdentity(window: Window): List<String>? {
+    /**
+     * The windows that make [window]'s native selector ambiguous, or null when it is unique. With
+     * [selectsByFrame], a shared title is fine as long as no other window with that title has the
+     * same frame: the recording bridge then selects the window by its frame instead.
+     */
+    private fun ambiguousNativeIdentity(window: Window, selectsByFrame: Boolean): List<String>? {
         val title = window.title
         if (title.isNullOrBlank()) return null
-        val matches = Window.getWindows().filter { it.isDisplayable && it.title == title }
+        val sameTitle = Window.getWindows().filter { it.isDisplayable && it.title == title }
+        val matches =
+            if (selectsByFrame) sameTitle.filter { it.bounds == window.bounds } else sameTitle
         return matches
             .takeIf { it.size > 1 }
             ?.map { "title=${it.title.quoteForMessage()}, bounds=${it.bounds}" }

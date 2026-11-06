@@ -72,6 +72,89 @@ class NativeWindowCaptureBridgeTest {
     }
 
     @Test
+    fun `a Frame whose title another window shares is captured by its frame`() {
+        // #611: Windows and Linux X11 select by owner pid and frame when the title is not unique.
+        assumeLiveAwtAvailable()
+        val frame = Frame("bridge shared title").apply { setBounds(40, 50, 300, 200) }
+        val twin = Frame("bridge shared title").apply { setBounds(400, 50, 300, 200) }
+        frame.addNotify()
+        twin.addNotify()
+
+        try {
+            val target =
+                NativeWindowCaptureBridge.captureTargetFor(
+                    frame,
+                    selectsSharedTitlesByFrame = true,
+                    selectsClientArea = false,
+                )
+
+            val framed = assertIs<FramedWindow>(target, "a shared title cannot select one window")
+            assertEquals(Rectangle(40, 50, 300, 200), framed.logicalFrame)
+        } finally {
+            frame.dispose()
+            twin.dispose()
+        }
+    }
+
+    @Test
+    fun `on Linux the frame selector of a decorated window is its client area`() {
+        // The Linux X11 helper matches client windows, which exclude the window-manager frame.
+        assumeLiveAwtAvailable()
+        val frame = Frame("bridge client area").apply { setBounds(40, 50, 300, 200) }
+        val twin = Frame("bridge client area").apply { setBounds(400, 50, 300, 200) }
+        frame.addNotify()
+        twin.addNotify()
+
+        try {
+            val insets = frame.insets
+            val target =
+                NativeWindowCaptureBridge.captureTargetFor(
+                    frame,
+                    selectsSharedTitlesByFrame = true,
+                    selectsClientArea = true,
+                )
+
+            val framed = assertIs<FramedWindow>(target)
+            assertEquals(
+                Rectangle(
+                    40 + insets.left,
+                    50 + insets.top,
+                    300 - insets.left - insets.right,
+                    200 - insets.top - insets.bottom,
+                ),
+                framed.logicalFrame,
+            )
+        } finally {
+            frame.dispose()
+            twin.dispose()
+        }
+    }
+
+    @Test
+    fun `a shared title keeps the title selector where the helper disambiguates titles`() {
+        assumeLiveAwtAvailable()
+        val frame = Frame("bridge macOS title")
+        val twin = Frame("bridge macOS title")
+        frame.addNotify()
+        twin.addNotify()
+
+        try {
+            val target =
+                NativeWindowCaptureBridge.captureTargetFor(
+                    frame,
+                    selectsSharedTitlesByFrame = false,
+                    selectsClientArea = false,
+                )
+
+            assertFalse(target is FramedWindow, "macOS keeps its title selector: $target")
+            assertEquals("bridge macOS title", target.title)
+        } finally {
+            frame.dispose()
+            twin.dispose()
+        }
+    }
+
+    @Test
     fun `EDT capture does not wait for another capture lock`() {
         assumeLiveAwtAvailable()
         val frame = Frame()

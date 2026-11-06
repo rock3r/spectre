@@ -69,13 +69,21 @@ The native helpers find a `Frame` or `Dialog` by its title. A window that has no
 Swing `JWindow` popup or a plain AWT `Window`, is found by its position and size on screen instead,
 among the windows of the same process. `screenshot(windowIndex)`, `screenshot(node)`, and
 `waitForVisualIdle()` use this for popups hosted in a `JWindow`, which is how heavyweight popups in
-IntelliJ and some Compose apps are built. Two limits apply:
+IntelliJ and some Compose apps are built.
+
+On Windows and Linux X11, a `Frame` or `Dialog` whose title another window of the process also has
+is found by its position and size too, because the title alone cannot tell the two apart. On Linux
+X11 the helper matches the window's client area, without the window-manager decorations. macOS
+tells windows with the same title apart without this.
+
+Two limits apply:
 
 - **Two windows with the same position and size make the capture fail.** The helper cannot tell
-  which one to capture, so it reports an error instead of guessing.
-- **Linux Wayland cannot capture a window that has no title.** The portal path finds windows by
-  title only. `screenshot(windowIndex)` fails with an `UnsupportedOperationException` that says so,
-  and `waitForVisualIdle()` cannot sample that window. Use X11 or Xvfb, or `screenshot(region)`.
+  which one to capture, so it reports an error instead of guessing. This also applies to two
+  windows that share a title on Windows or Linux X11.
+- **Linux Wayland cannot capture a window that has no title, or whose title is shared.** The
+  portal path finds windows by title only. `screenshot(windowIndex)` fails with an error that says
+  so, and `waitForVisualIdle()` cannot sample that window. Use X11 or Xvfb, or `screenshot(region)`.
 
 Video recording still needs a titled window: there is no `TitledWindow` adapter for a `JWindow`.
 Record the owner window or a screen region instead.
