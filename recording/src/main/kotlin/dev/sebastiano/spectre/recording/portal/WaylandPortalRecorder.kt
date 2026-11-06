@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.recording.portal
 import dev.sebastiano.spectre.recording.Recorder
 import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
+import dev.sebastiano.spectre.recording.withWaylandHelperEnvironment
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
 import java.io.BufferedReader
@@ -295,6 +296,7 @@ private constructor(
     internal object SystemProcessFactory : ProcessFactory {
         override fun start(helperPath: Path): Process =
             ProcessBuilder(helperPath.toString())
+                .withWaylandHelperEnvironment()
                 .redirectInput(ProcessBuilder.Redirect.PIPE)
                 .redirectOutput(ProcessBuilder.Redirect.PIPE)
                 // Helper's stderr (and gst-launch's via inherit-from-helper) goes to this

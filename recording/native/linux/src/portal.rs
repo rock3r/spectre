@@ -470,6 +470,39 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Portal `Response` code for a request the user cancelled, for example by closing the Share
+/// dialog.
+pub const RESPONSE_CODE_CANCELLED: u32 = 1;
+
+/// A portal request was not granted by a person: nobody answered its dialog before the timeout,
+/// or the user cancelled it. The `--session` helper maps this to a distinct exit status so the
+/// JVM can stop opening a new dialog for every capture (#634). Displays as the wrapped message.
+#[derive(Debug)]
+pub struct ConsentNotGranted(pub String);
+
+impl std::fmt::Display for ConsentNotGranted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ConsentNotGranted {}
+
+/// True when [`ConsentNotGranted`] is anywhere in the error chain, including under added context.
+pub fn is_consent_not_granted(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<ConsentNotGranted>().is_some()
+        || err.chain().any(|cause| cause.is::<ConsentNotGranted>())
+}
+
+/// The error for a request whose `Response` signal did not arrive within `timeout`.
+pub fn response_timeout_error(timeout: Duration, request_path: &str) -> anyhow::Error {
+    anyhow::Error::new(ConsentNotGranted(format!(
+        "Timed out after {timeout:?} waiting for Response signal on {request_path}. \
+         Common causes: user dismissed the dialog without responding; portal service \
+         crashed; D-Bus message bus stalled."
+    )))
+}
+
 /// One Response payload, captured by [`call_with_response`] from the matching `Request.Response`
 /// signal.
 pub struct ResponsePayload {
@@ -550,11 +583,7 @@ pub fn call_with_response<A: dbus::arg::AppendAll>(
         }
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
-            break Err(anyhow!(
-                "Timed out after {timeout:?} waiting for Response signal on {request_path}. \
-                 Common causes: user dismissed the dialog without responding; portal service \
-                 crashed; D-Bus message bus stalled."
-            ));
+            break Err(response_timeout_error(timeout, &request_path));
         }
         // process() drains pending messages, dispatches signals, returns when the bus is
         // quiet. We give it a slice of the remaining budget so the loop check happens
@@ -1011,5 +1040,29 @@ mod restore_token_tests {
 
         std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR");
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod consent_tests {
+    use super::*;
+
+    #[test]
+    fn a_response_timeout_is_a_consent_failure() {
+        let err = response_timeout_error(Duration::from_secs(60), "/request/path");
+        assert!(is_consent_not_granted(&err));
+        assert!(format!("{err:#}").contains("Timed out after 60s waiting for Response signal"));
+    }
+
+    #[test]
+    fn a_consent_failure_is_found_under_added_context() {
+        let err = response_timeout_error(Duration::from_secs(1), "/request/path")
+            .context("interactive RemoteDesktop retry after invalid restore_token also failed");
+        assert!(is_consent_not_granted(&err));
+    }
+
+    #[test]
+    fn other_errors_are_not_consent_failures() {
+        assert!(!is_consent_not_granted(&anyhow!("opening session bus")));
     }
 }

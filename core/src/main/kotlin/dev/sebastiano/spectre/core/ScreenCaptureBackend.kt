@@ -200,11 +200,14 @@ internal fun nativeWindowCaptureBounds(
  * Wayland, even without Wayland env vars: SSH into a Wayland seat sets only `DISPLAY` (#607).
  * Otherwise Wayland env vars count only when backed by evidence (#575): a pure X11 server (Xvfb,
  * Xvnc, Xtigervnc, Xephyr, Xorg) means X11; otherwise the `WAYLAND_DISPLAY` socket must exist.
+ *
+ * The default [getenv] fills a missing `XDG_RUNTIME_DIR` with the user's own `/run/user/<uid>`, as
+ * the capture helper does (#635).
  */
 @InternalSpectreApi
 @Suppress("ReturnCount")
 public fun isWaylandSession(
-    getenv: (String) -> String? = System::getenv,
+    getenv: (String) -> String? = defaultLinuxGetenv,
     runtimeDirHasWaylandSocket: (Path) -> Boolean = ::runtimeDirHasWaylandSocket,
     displayIsPureX11: (String) -> Boolean = ::defaultDisplayIsPureX11,
     displayIsXwayland: (String) -> Boolean = ::defaultDisplayIsXwayland,

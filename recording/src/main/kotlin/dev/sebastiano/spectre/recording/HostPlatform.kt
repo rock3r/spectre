@@ -7,7 +7,8 @@ internal object HostPlatform {
 
     fun isLinux(): Boolean = osName().contains("linux")
 
-    fun isWayland(): Boolean = isLinux() && FfmpegBackend.detectWaylandSession(System::getenv)
+    fun isWayland(): Boolean =
+        isLinux() && FfmpegBackend.detectWaylandSession(defaultLinuxSessionEnvLookup)
 
     private fun osName(): String = System.getProperty("os.name").orEmpty().lowercase()
 }

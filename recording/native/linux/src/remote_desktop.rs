@@ -1,7 +1,7 @@
 //! Combined RemoteDesktop + ScreenCast session for capture and input.
 
 use crate::portal::{
-    self, extract_restore_token, parse_first_stream, register_host_app, sender_token,
+    self, extract_restore_token, ConsentNotGranted, RESPONSE_CODE_CANCELLED, parse_first_stream, register_host_app, sender_token,
     variant, make_options, call_with_response, StreamMetadata,
     PORTAL_BUS, PORTAL_PATH, REMOTE_DESKTOP_INTERFACE, SCREEN_CAST_INTERFACE,
 };
@@ -223,15 +223,18 @@ fn open_remote_desktop_session_inner(
         timeout,
     )?;
     if devices_response.response_code != 0 {
-        bail!(
-            "SelectDevices rejected (response code {}){}.",
+        return Err(portal_rejection(
             devices_response.response_code,
-            if restore_token.is_some() {
-                " (or the stored restore_token was refused)"
-            } else {
-                ""
-            }
-        );
+            format!(
+                "SelectDevices rejected (response code {}){}.",
+                devices_response.response_code,
+                if restore_token.is_some() {
+                    " (or the stored restore_token was refused)"
+                } else {
+                    ""
+                }
+            ),
+        ));
     }
 
     let sources_token = next_token("rd_sources");
@@ -251,15 +254,18 @@ fn open_remote_desktop_session_inner(
         timeout,
     )?;
     if sources_response.response_code != 0 {
-        bail!(
-            "SelectSources rejected (response code {}){}.",
+        return Err(portal_rejection(
             sources_response.response_code,
-            if restore_token.is_some() {
-                " (or the stored restore_token was refused)"
-            } else {
-                ""
-            }
-        );
+            format!(
+                "SelectSources rejected (response code {}){}.",
+                sources_response.response_code,
+                if restore_token.is_some() {
+                    " (or the stored restore_token was refused)"
+                } else {
+                    ""
+                }
+            ),
+        ));
     }
 
     let start_token = next_token("rd_start");
@@ -274,16 +280,19 @@ fn open_remote_desktop_session_inner(
         timeout,
     )?;
     if start_response.response_code != 0 {
-        bail!(
-            "Start rejected (response code {}). User likely cancelled the Share / Allow \
-             remote interaction dialog{}.",
+        return Err(portal_rejection(
             start_response.response_code,
-            if restore_token.is_some() {
-                ", or the stored restore_token is no longer valid"
-            } else {
-                ""
-            }
-        );
+            format!(
+                "Start rejected (response code {}). User likely cancelled the Share / Allow \
+                 remote interaction dialog{}.",
+                start_response.response_code,
+                if restore_token.is_some() {
+                    ", or the stored restore_token is no longer valid"
+                } else {
+                    ""
+                }
+            ),
+        ));
     }
     if let Some(token) = extract_restore_token(&start_response.results) {
         if let Err(e) = portal::save_restore_token_named(RD_TOKEN_FILE_PREFIX, token_key, &token) {
@@ -319,6 +328,17 @@ fn open_remote_desktop_session_inner(
     })
 }
 
+/// Error for a non-zero portal `Response` code. A cancelled request (code 1) means the user
+/// declined the dialog, so it is marked as [`ConsentNotGranted`]. The message is unchanged either
+/// way, so [`is_rd_token_rejection`] still matches it.
+fn portal_rejection(response_code: u32, message: String) -> anyhow::Error {
+    if response_code == RESPONSE_CODE_CANCELLED {
+        anyhow::Error::new(ConsentNotGranted(message))
+    } else {
+        anyhow!(message)
+    }
+}
+
 fn cursor_mode_flag(mode: CursorMode) -> u32 {
     match mode {
         CursorMode::Hidden => 1,
@@ -344,6 +364,29 @@ mod tests {
             "SelectDevices rejected (response code 2): restore_token"
         )));
         assert!(!is_rd_token_rejection(&anyhow!("CreateSession rejected")));
+    }
+
+    #[test]
+    fn a_cancelled_dialog_is_a_consent_failure_and_keeps_its_message() {
+        let err = portal_rejection(1, "Start rejected (response code 1).".to_string());
+        assert!(portal::is_consent_not_granted(&err));
+        assert_eq!(format!("{err:#}"), "Start rejected (response code 1).");
+    }
+
+    #[test]
+    fn other_rejections_are_not_consent_failures() {
+        let err = portal_rejection(2, "Start rejected (response code 2).".to_string());
+        assert!(!portal::is_consent_not_granted(&err));
+    }
+
+    #[test]
+    fn a_cancelled_dialog_with_a_stored_token_still_retries_interactively() {
+        let err = portal_rejection(
+            1,
+            "SelectDevices rejected (response code 1) (or the stored restore_token was refused)."
+                .to_string(),
+        );
+        assert!(is_rd_token_rejection(&err));
     }
 
     #[test]

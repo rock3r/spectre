@@ -479,6 +479,16 @@ dialog for Spectre, then reuse the helper. If every JVM pops a new picker:
 - A rejected token is cleared and retried once. A second failure is fatal; delete the
   token file only when re-consent is intended.
 
+If nobody answers the dialog within 60 seconds, or someone cancels it, Spectre does not
+ask again in the same JVM. Every later capture fails at once with an error that tells you
+what to click. Rerun the tests while someone is at the seat. When the dialog appears,
+select the whole screen, tick Remember, and click Share.
+
+When `XDG_RUNTIME_DIR` is not set, for example in a Bazel test, Spectre falls back to
+`/run/user/<uid>` if the current user owns it. It also passes that directory and its D-Bus
+`bus` socket to the helper. If that directory does not exist, set `XDG_RUNTIME_DIR` or
+`SPECTRE_WAYLAND_SESSION_DIR`.
+
 SSH or headless sessions without a compositor seat cannot complete the dialog.
 See [Linux Wayland consent](recording.md#linux-wayland-consent).
 

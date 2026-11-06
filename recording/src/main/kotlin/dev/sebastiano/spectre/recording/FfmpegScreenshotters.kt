@@ -61,7 +61,7 @@ internal constructor(
         ffmpegPath,
         FfmpegRecorder.SystemProcessFactory,
         { System.getenv("DISPLAY") },
-        System::getenv,
+        defaultLinuxSessionEnvLookup,
     )
 
     init {

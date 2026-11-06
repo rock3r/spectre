@@ -211,7 +211,7 @@ private fun currentAwtDisplayBounds(): List<Rectangle> {
     }
 }
 
-internal fun waylandSessionSocketFromEnv(env: (String) -> String? = System::getenv): Path? {
+internal fun waylandSessionSocketFromEnv(env: (String) -> String? = defaultLinuxGetenv): Path? {
     val override = env("SPECTRE_WAYLAND_SESSION_DIR")?.takeIf { it.isNotBlank() }
     val dir =
         when {

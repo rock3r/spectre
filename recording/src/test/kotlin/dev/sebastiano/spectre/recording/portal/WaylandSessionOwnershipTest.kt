@@ -145,8 +145,7 @@ class WaylandSessionOwnershipTest {
                         polls >= 3
                     },
                     timeoutMs = 1_000,
-                    helperExited = { false },
-                    helperExitDetail = { "exited with 75" },
+                    helperExitCode = { WAYLAND_SESSION_OWNED_EXIT },
                 )
             assertEquals(paths.socket, resolved)
             assertTrue(polls >= 3)
@@ -168,11 +167,10 @@ class WaylandSessionOwnershipTest {
                         startHelper = {},
                         waitForSocket = { _, _ -> false },
                         timeoutMs = 250,
-                        helperExited = { true },
-                        helperExitDetail = { "exited with 1" },
+                        helperExitCode = { 1 },
                     )
                 }
-            assertTrue(error.message.orEmpty().contains("exited with 1"))
+            assertTrue(error.message.orEmpty().contains("(exit 1)"), error.message)
         } finally {
             dir.toFile().deleteRecursively()
         }

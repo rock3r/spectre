@@ -1,11 +1,64 @@
 package dev.sebastiano.spectre.core
 
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 
 // Linux display-server probes behind isWaylandSession. Mirrored in the recording module's
 // FfmpegBackend companion (recording cannot depend on core) — keep both in lockstep.
+
+/**
+ * Returns `XDG_RUNTIME_DIR` when it is set. Otherwise returns `/run/user/<uid>` when that directory
+ * exists and is owned by the current user, as systemd-logind creates it. Null when neither applies.
+ * Bazel test sandboxes scrub `XDG_RUNTIME_DIR` (#635). Mirrored in the recording module's
+ * `LinuxSessionEnvironment.kt` — keep both in lockstep.
+ */
+internal fun resolveXdgRuntimeDir(
+    getenv: (String) -> String?,
+    currentUid: () -> Long? = ::currentUnixUid,
+    isOwnedDirectory: (Path, Long) -> Boolean = ::isDirectoryOwnedBy,
+): Path? {
+    getenv(XDG_RUNTIME_DIR_ENV)
+        ?.takeIf { it.isNotBlank() }
+        ?.let {
+            return runCatching { Path.of(it) }.getOrNull()
+        }
+    val uid = currentUid() ?: return null
+    val candidate = Path.of(PER_USER_RUNTIME_ROOT, uid.toString())
+    return candidate.takeIf { isOwnedDirectory(it, uid) }
+}
+
+/** Wraps [getenv] so `XDG_RUNTIME_DIR` falls back to [resolveXdgRuntimeDir]. */
+internal fun xdgRuntimeDirAwareGetenv(
+    getenv: (String) -> String?,
+    currentUid: () -> Long? = ::currentUnixUid,
+    isOwnedDirectory: (Path, Long) -> Boolean = ::isDirectoryOwnedBy,
+): (String) -> String? = { key ->
+    if (key == XDG_RUNTIME_DIR_ENV) {
+        resolveXdgRuntimeDir(getenv, currentUid, isOwnedDirectory)?.toString()
+    } else {
+        getenv(key)
+    }
+}
+
+/** The process environment, with the runtime-dir fallback of [xdgRuntimeDirAwareGetenv]. */
+internal val defaultLinuxGetenv: (String) -> String? = xdgRuntimeDirAwareGetenv(System::getenv)
+
+/** Effective uid of this JVM on Linux (owner of `/proc/self`), or null where unavailable. */
+internal fun currentUnixUid(): Long? = runCatching {
+    (Files.getAttribute(Path.of("/proc/self"), "unix:uid") as Int).toUInt().toLong()
+}
+    .getOrNull()
+
+/** True when [path] is a real directory (not a symlink) owned by [uid]. */
+internal fun isDirectoryOwnedBy(path: Path, uid: Long): Boolean = runCatching {
+    Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS) &&
+        (Files.getAttribute(path, "unix:uid", LinkOption.NOFOLLOW_LINKS) as Int)
+            .toUInt()
+            .toLong() == uid
+}
+    .getOrDefault(false)
 
 /**
  * Resolves the compositor socket the way libwayland does: an absolute [waylandDisplay] is used as
@@ -92,6 +145,8 @@ internal fun displayServerForCmdline(args: List<String>, displayToken: String): 
 }
 
 private const val DEFAULT_WAYLAND_DISPLAY = "wayland-0"
+private const val XDG_RUNTIME_DIR_ENV = "XDG_RUNTIME_DIR"
+private const val PER_USER_RUNTIME_ROOT = "/run/user"
 private const val XWAYLAND_SERVER = "Xwayland"
 private val PURE_X11_SERVERS = setOf("Xvfb", "Xvnc", "Xtigervnc", "Xephyr", "Xorg")
 private val KNOWN_X_SERVERS = PURE_X11_SERVERS + XWAYLAND_SERVER

@@ -65,7 +65,7 @@ internal sealed interface FfmpegBackend {
             // model blocks framebuffer reads by clients that aren't the compositor. Detect and
             // throw a clear error here rather than spawn ffmpeg and watch it write a useless
             // mp4 of pure-black pixels (see #77 for measurement notes from the dev VM).
-            checkNotWayland(System::getenv)
+            checkNotWayland(defaultLinuxSessionEnvLookup)
             // X11's display name is conventionally read from the `DISPLAY` env var. Most desktop
             // sessions set it (`:0`, `:0.0`, `:1`, etc.); over SSH-without-X-forwarding it's
             // unset. Fall back to `:0.0` so a misconfigured environment produces a clear
@@ -127,6 +127,8 @@ internal sealed interface FfmpegBackend {
          * Do not treat "DISPLAY is set" alone as X11 — XWayland always has DISPLAY.
          *
          * Injectable [getenv] / probes keep the matrix unit-testable without process env mutation.
+         * Production callers pass [defaultLinuxSessionEnvLookup], which fills a missing
+         * `XDG_RUNTIME_DIR` with the user's own `/run/user/<uid>` (#635).
          */
         @Suppress("ReturnCount")
         internal fun detectWaylandSession(
