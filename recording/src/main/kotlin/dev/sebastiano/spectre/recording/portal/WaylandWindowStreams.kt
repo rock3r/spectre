@@ -267,30 +267,31 @@ internal class AwtWindowFocus(
             )
         }
         if (state.alreadyFocused) return FocusHandoff(confirmed = true) {}
-        onEdt {
-            if (!window.focusableWindowState) window.focusableWindowState = true
-            window.toFront()
-            window.requestFocus()
-        }
-        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
-        var focused = onEdt { window.isFocused }
-        while (System.nanoTime() < deadline && !focused) {
-            sleep(FOCUS_POLL_MS)
-            focused = onEdt { window.isFocused }
-        }
-        return FocusHandoff(confirmed = focused) {
-            onEdt {
-                if (window.focusableWindowState != state.focusable) {
-                    window.focusableWindowState = state.focusable
+        return acquireFocus(
+            takeFocus = {
+                onEdt {
+                    if (!window.focusableWindowState) window.focusableWindowState = true
+                    window.toFront()
+                    window.requestFocus()
                 }
-                state.previous
-                    ?.takeIf { it !== window && it.isShowing }
-                    ?.let {
-                        it.toFront()
-                        it.requestFocus()
+            },
+            isFocused = { onEdt { window.isFocused } },
+            restore = {
+                onEdt {
+                    if (window.focusableWindowState != state.focusable) {
+                        window.focusableWindowState = state.focusable
                     }
-            }
-        }
+                    state.previous
+                        ?.takeIf { it !== window && it.isShowing }
+                        ?.let {
+                            it.toFront()
+                            it.requestFocus()
+                        }
+                }
+            },
+            timeoutMs = timeoutMs,
+            sleep = sleep,
+        )
     }
 
     private data class FocusState(
@@ -301,7 +302,6 @@ internal class AwtWindowFocus(
 
     private companion object {
         const val DEFAULT_FOCUS_TIMEOUT_MS: Long = 1_500
-        const val FOCUS_POLL_MS: Long = 25
     }
 }
 
@@ -357,6 +357,38 @@ internal class HelperWindowStreamSession(private val client: WaylandSessionClien
             throw error
         }
 }
+
+/**
+ * Takes focus and polls [isFocused] until [timeoutMs]. If anything throws on the way (a capture
+ * whose budget ran out is interrupted here), [restore] runs before the error propagates, so a popup
+ * never stays focusable and focus goes back to the window that had it.
+ */
+internal fun acquireFocus(
+    takeFocus: () -> Unit,
+    isFocused: () -> Boolean,
+    restore: () -> Unit,
+    timeoutMs: Long,
+    sleep: (Long) -> Unit,
+): FocusHandoff {
+    var handedOff = false
+    try {
+        takeFocus()
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        var focused = isFocused()
+        while (System.nanoTime() < deadline && !focused) {
+            sleep(FOCUS_POLL_MS)
+            focused = isFocused()
+        }
+        val handoff = FocusHandoff(confirmed = focused, restoreFocus = restore)
+        handedOff = true
+        return handoff
+    } finally {
+        // On any error the caller never gets a handoff to restore, so restore here.
+        if (!handedOff) runCatching(restore)
+    }
+}
+
+private const val FOCUS_POLL_MS: Long = 25
 
 internal const val BIND_ON_EDT_MESSAGE: String =
     "Spectre cannot bind a GNOME Mutter window stream on the AWT event dispatch thread: binding " +

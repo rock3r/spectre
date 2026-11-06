@@ -108,6 +108,39 @@ class WaylandWindowStreamsTest {
     }
 
     @Test
+    fun `focus is given back when waiting for it is interrupted`() {
+        var restored = 0
+        val error =
+            assertFailsWith<InterruptedException> {
+                acquireFocus(
+                    takeFocus = {},
+                    isFocused = { false },
+                    restore = { restored += 1 },
+                    timeoutMs = 1_000,
+                    sleep = { throw InterruptedException("sample budget exceeded") },
+                )
+            }
+
+        assertEquals(1, restored, "an interrupted focus wait must restore the previous focus")
+        assertEquals("sample budget exceeded", error.message)
+    }
+
+    @Test
+    fun `focus acquisition reports whether the window got focus`() {
+        var polls = 0
+        val handoff =
+            acquireFocus(
+                takeFocus = {},
+                isFocused = { ++polls >= 3 },
+                restore = {},
+                timeoutMs = 1_000,
+                sleep = {},
+            )
+
+        assertTrue(handoff.confirmed)
+    }
+
+    @Test
     fun `captures reuse one binding and return only the window`() {
         val session = FakeSession(frameWindow = Rectangle(25, 25, 400, 300))
         val streams = streams(session, focus = FakeFocus(size = Dimension(400, 300)))

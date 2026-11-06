@@ -267,6 +267,34 @@ class WaylandSessionClientTest {
     }
 
     @Test
+    fun `an attended request starts a new dialog after a pending one timed out`() {
+        val pending = PendingProcess()
+        val processes = ArrayDeque<Process>(listOf(pending, ExitedProcess(0)))
+        val factory = SupplyingProcessFactory { processes.removeFirst() }
+        var interrupt = true
+        val client =
+            WaylandSessionClient(
+                helperExtractor = extractor(),
+                envLookup = sessionDirEnv(),
+                processFactory = factory,
+                waitForSocket = { _, _ ->
+                    if (interrupt) {
+                        interrupt = false
+                        throw InterruptedException("sample budget exceeded")
+                    }
+                    throw InterruptedException("stop waiting for the socket")
+                },
+                consentPrompt = { WaylandConsentPrompt.ALLOW },
+            )
+        assertFailsWith<InterruptedException> { client.send(PING) }
+        pending.finish(WAYLAND_SESSION_CONSENT_EXIT)
+
+        assertFailsWith<InterruptedException> { client.openSessionForRequest(300) }
+
+        assertEquals(2, factory.starts, "the attended request must open a new dialog")
+    }
+
+    @Test
     fun `an attended request ignores an earlier consent failure in this JVM`() {
         val factory = RecordingProcessFactory(exitCode = WAYLAND_SESSION_CONSENT_EXIT)
         val client = client(factory, sessionDirEnv())

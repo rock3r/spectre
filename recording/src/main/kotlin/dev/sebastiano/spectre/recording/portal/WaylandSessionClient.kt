@@ -113,7 +113,7 @@ internal constructor(
         synchronized(lock) {
             starter.startOrJoin(
                 waylandSessionPaths(sessionDir()),
-                SessionStart(WaylandConsentPrompt.ALLOW, consentTimeoutSeconds),
+                SessionStart(WaylandConsentPrompt.ALLOW, consentTimeoutSeconds, attended = true),
             )
         }
 
@@ -193,6 +193,8 @@ internal constructor(
     internal data class SessionStart(
         val prompt: WaylandConsentPrompt,
         val consentTimeoutSeconds: Long? = null,
+        /** A person asked for the dialog: an earlier dialog that timed out must not block it. */
+        val attended: Boolean = false,
     ) {
         val extraEnvironment: Map<String, String>
             get() = buildMap {
@@ -288,7 +290,7 @@ internal class WaylandSessionStarter(
     private fun startHelper(start: WaylandSessionClient.SessionStart): Process {
         pendingHelper?.let { finished ->
             pendingHelper = null
-            failIfHelperExitedFatally(finished.sessionExitCode())
+            if (!start.attended) failIfHelperExitedFatally(finished.sessionExitCode())
         }
         if (start.prompt == WaylandConsentPrompt.NEVER) {
             val token = waylandRemoteDesktopTokenPath(envLookup)
