@@ -5,15 +5,19 @@ import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import java.awt.image.BufferedImage
 import java.io.IOException
-import java.nio.file.Files
-import java.util.concurrent.TimeUnit
-import javax.imageio.ImageIO
 
-/** Windows still screenshot backend backed by the bundled .NET native helper. */
+/**
+ * Windows still screenshot backend backed by the bundled .NET native helper.
+ *
+ * The helper runs in `--mode stills` and keeps its capture session open between stills of the same
+ * window, so repeated stills (visual-idle sampling) do not pay helper startup each time (#612). See
+ * [WindowsStillSessions].
+ */
 public class WindowsWindowScreenshotter
 internal constructor(
     private val helperExtractor: WindowsGraphicsCaptureHelperBinaryExtractor,
     private val processFactory: ProcessFactory,
+    private val stillSessions: WindowsStillSessions = sharedStillSessions,
 ) : WindowScreenshotter {
 
     public constructor() :
@@ -26,60 +30,20 @@ internal constructor(
             "WindowsWindowScreenshotter requires a non-blank window title; got \"$title\"."
         }
         val helperPath = helperExtractor.extract()
-        val output = Files.createTempFile("spectre-windows-window-screenshot-", ".png")
-        var process: Process? = null
-        var preserveOutputForLiveHelper = false
         val argv =
             WindowsGraphicsCaptureArguments(
-                    mode = WindowsGraphicsCaptureMode.Screenshot,
+                    mode = WindowsGraphicsCaptureMode.Stills,
                     source = WindowsGraphicsCaptureSource.Window,
                     title = title,
                     frame = framed?.deviceFrame,
                     ownerPid = windowOwnerPid,
-                    output = output,
+                    output = null,
                     fps = 30,
                     captureCursor = false,
                 )
                 .toArgv(helperPath)
-        try {
-            process = processFactory.start(argv)
-            val completed = process.waitFor(SCREENSHOT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
-            if (!completed) {
-                process.destroyForcibly()
-                if (!process.waitFor(FORCE_KILL_WAIT_SECONDS, TimeUnit.SECONDS)) {
-                    // A Windows process can still hold the output PNG open briefly after a
-                    // forced kill. Do not let cleanup replace the useful timeout error.
-                    preserveOutputForLiveHelper = true
-                    output.toFile().deleteOnExit()
-                }
-                error(
-                    appendHelperStderr(
-                        "Timed out after ${SCREENSHOT_TIMEOUT_MILLIS}ms waiting for " +
-                            "spectre-window-capture to capture a window. " +
-                            "Argv: $argv",
-                        helperFailureDetail(process),
-                    )
-                )
-            }
-            val exit = process.exitValue()
-            check(exit == 0) {
-                val stderr = helperFailureDetail(process)
-                appendHelperStderr(
-                    messageForWindowsGraphicsCaptureHelperExit(
-                        exit,
-                        argv,
-                        helperLaunchArgv(process),
-                        stderr,
-                    ),
-                    stderr,
-                )
-            }
-            return ImageIO.read(output.toFile())
-                ?: error("spectre-window-capture did not produce a readable PNG at $output")
-        } catch (e: InterruptedException) {
-            process?.destroyForcibly()
-            Thread.currentThread().interrupt()
-            throw e
+        return try {
+            stillSessions.capture(argv, processFactory::start)
         } catch (e: IOException) {
             throw IllegalStateException(
                 "spectre-window-capture failed to start. Native Windows window capture " +
@@ -87,8 +51,6 @@ internal constructor(
                     "Graphics Capture support.",
                 e,
             )
-        } finally {
-            if (!preserveOutputForLiveHelper) Files.deleteIfExists(output)
         }
     }
 
@@ -98,13 +60,14 @@ internal constructor(
 
     private object SystemProcessFactory : ProcessFactory {
         override fun start(argv: List<String>): Process =
-            startPumpedHelperProcess(argv) { redirectOutput(ProcessBuilder.Redirect.DISCARD) }
+            startPumpedHelperProcess(argv) {
+                redirectOutput(ProcessBuilder.Redirect.PIPE)
+                redirectInput(ProcessBuilder.Redirect.PIPE)
+            }
     }
 
     private companion object {
-        // Window screenshots require WGC. This parent deadline covers helper startup and window
-        // lookup, the helper's 5s first-frame deadline, PNG output, and clean process exit.
-        private const val SCREENSHOT_TIMEOUT_MILLIS: Long = 10_000
-        private const val FORCE_KILL_WAIT_SECONDS: Long = 1
+        // One pool per JVM, so every screenshotter instance reuses the same open sessions.
+        val sharedStillSessions: WindowsStillSessions by lazy { WindowsStillSessions() }
     }
 }

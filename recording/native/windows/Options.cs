@@ -2,6 +2,8 @@ internal enum CaptureMode
 {
     Screenshot,
     Recording,
+    // Keeps one capture session open and writes a still to stdout for each request (#612).
+    Stills,
 }
 
 internal enum CaptureSource
@@ -143,12 +145,22 @@ internal sealed record Options(
             }
         }
 
+        if (mode == CaptureMode.Stills)
+        {
+            // Stills go to stdout; an --output path has no meaning.
+            output ??= "-";
+        }
+
         if (string.IsNullOrWhiteSpace(output))
         {
             throw new ArgumentException("--output is required and must not be blank.");
         }
 
         var parsedSource = source ?? throw new ArgumentException("--source is required.");
+        if (mode == CaptureMode.Stills && parsedSource != CaptureSource.Window)
+        {
+            throw new ArgumentException("--mode stills only supports --source window.");
+        }
         CaptureRect? region = null;
         CaptureRect? crop = null;
         CaptureRect? frame = null;
@@ -247,7 +259,8 @@ internal sealed record Options(
         {
             "screenshot" => CaptureMode.Screenshot,
             "recording" => CaptureMode.Recording,
-            _ => throw new ArgumentException("--mode must be screenshot or recording."),
+            "stills" => CaptureMode.Stills,
+            _ => throw new ArgumentException("--mode must be screenshot, recording, or stills."),
         };
 
     private static CaptureSource ParseSource(string value) =>

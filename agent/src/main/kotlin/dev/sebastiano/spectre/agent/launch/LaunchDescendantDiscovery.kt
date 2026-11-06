@@ -17,6 +17,10 @@ import kotlin.streams.asSequence
  * - Never returns an arbitrary machine-wide JVM.
  * - Never returns a JVM that was already running when the launch began — it belongs to something
  *   else, however well its main class matches (#446). See [predatesLaunch].
+ * - Never returns a JVM whose parent is a Gradle test executor. A test started it, not this launch:
+ *   a `./gradlew :app:run` client never parents its app to a test executor. When the caller is
+ *   itself a test in a parallel build, sibling test tasks spawn same-named fixtures (#603, #614).
+ *   See [GradleTestExecutors].
  * - Daemon-child candidates are only considered when [nameFilter] is set (shared daemons often host
  *   unrelated app JVMs).
  * - Without [nameFilter], only ProcessHandle descendants of the client are considered
@@ -73,7 +77,14 @@ public object LaunchDescendantDiscovery {
         parentOf: (Long) -> Long? = ::parentPid,
         startInstantOf: (Long) -> Instant? = ::processStartInstant,
         nativeFallback: (Long, Set<Long>, String?) -> Long? = { client, daemons, filter ->
-            discoverByNativeTree(client, daemons, filter, clientStart, startInstantOf)
+            discoverByNativeTree(
+                clientPid = client,
+                daemonPids = daemons,
+                nameFilter = filter,
+                clientStart = clientStart,
+                startInstantOf = startInstantOf,
+                testExecutorPids = GradleTestExecutors.pidsIn(listed),
+            )
         },
         onDiagnostics: AppJvmDiscoveryDiagnosticSink = AppJvmDiscoveryDiagnosticSink.NoOp,
     ): Long? {
@@ -99,6 +110,7 @@ public object LaunchDescendantDiscovery {
                 clientStart = clientStart,
                 listed = listed,
                 startInstantOf = startOf,
+                parentOf = parentOf,
                 selectedPid = selected,
             )
         }
@@ -124,12 +136,15 @@ public object LaunchDescendantDiscovery {
 
         val daemonPids =
             listed.filter { isGradleDaemonDisplayName(it.displayName) }.map { it.pid }.toSet()
+        val testExecutorPids = GradleTestExecutors.pidsIn(listed)
         val nonDaemon = listed.filter { info ->
             info.pid != clientPid &&
                 !isGradleDaemonDisplayName(info.displayName) &&
                 // A JVM that was already running when this launch started belongs to something
                 // else — a leftover fixture, or a sibling e2e sharing the daemon (#446).
-                !predatesLaunch(startInstantOf(info.pid), clientStart)
+                !predatesLaunch(startInstantOf(info.pid), clientStart) &&
+                // A test in a parallel test task started this one, not our launch (#603, #614).
+                parentOf(info.pid) !in testExecutorPids
         }
         if (nonDaemon.isEmpty()) {
             // Every Attach-visible JVM is a daemon or predates the launch. That does not mean
@@ -190,8 +205,10 @@ public object LaunchDescendantDiscovery {
         clientStart: Instant?,
         listed: List<JvmProcessInfo>,
         startInstantOf: (Long) -> Instant?,
+        parentOf: (Long) -> Long?,
         selectedPid: Long?,
     ) {
+        val testExecutorPids = GradleTestExecutors.pidsIn(listed)
         onDiagnostics.emit(
             AppJvmDiscoveryRecord(
                 clientPid = clientPid,
@@ -211,6 +228,7 @@ public object LaunchDescendantDiscovery {
                                     clientPid = clientPid,
                                     clientStart = clientStart,
                                     candidateStart = start,
+                                    spawnedByTestExecutor = parentOf(info.pid) in testExecutorPids,
                                 ),
                         )
                     },
@@ -225,6 +243,7 @@ public object LaunchDescendantDiscovery {
         clientPid: Long,
         clientStart: Instant?,
         candidateStart: Instant?,
+        spawnedByTestExecutor: Boolean,
     ): String? =
         when {
             pid == clientPid -> AppJvmDiscoveryDiagnostics.REASON_CLIENT_PID
@@ -232,6 +251,7 @@ public object LaunchDescendantDiscovery {
                 AppJvmDiscoveryDiagnostics.REASON_GRADLE_DAEMON
             predatesLaunch(candidateStart, clientStart) ->
                 AppJvmDiscoveryDiagnostics.REASON_PREDATES_LAUNCH
+            spawnedByTestExecutor -> AppJvmDiscoveryDiagnostics.REASON_TEST_EXECUTOR_CHILD
             else -> null
         }
 
@@ -262,6 +282,7 @@ public object LaunchDescendantDiscovery {
         nameFilter: String?,
         clientStart: Instant?,
         startInstantOf: (Long) -> Instant?,
+        testExecutorPids: Set<Long>,
     ): Long? {
         val roots = buildList {
             add(clientPid)
@@ -279,6 +300,8 @@ public object LaunchDescendantDiscovery {
                 // Same rule as the listed-JVM path: this launch cannot have started a JVM that was
                 // already running when it began (#446).
                 .filter { pid -> !predatesLaunch(startInstantOf(pid), clientStart) }
+                // The walk starts at every daemon, so it also reaches what tests spawned (#614).
+                .filter { pid -> parentPid(pid) !in testExecutorPids }
                 .filter { pid -> looksLikeJavaProcess(pid) }
                 .filter { pid -> !commandLineLooksLikeGradleDaemon(pid) }
                 .toList()

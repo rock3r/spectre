@@ -201,7 +201,9 @@ Because the extension needs a `LaunchSpec`, register it with `@RegisterExtension
 
 Prefer prod-like commands. For Gradle-ish launches, set `appJvmNameFilter` (main-class
 substring) so discovery can find the daemon-spawned app JVM without attaching an unrelated
-process. Direct `java` launches inject `-XX:+EnableDynamicAgentLoading` automatically.
+process. Discovery also skips any JVM whose parent is a Gradle test executor, so a JVM that
+another test task spawns in a parallel build is never taken for your app, even when its main
+class matches. Direct `java` launches inject `-XX:+EnableDynamicAgentLoading` automatically.
 
 The full API lives in `dev.sebastiano.spectre.agent.launch` (`LaunchAndAttach`,
 `LaunchSpec`, stage exceptions). See [Agent attach](agent.md) and
