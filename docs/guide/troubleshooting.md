@@ -379,6 +379,14 @@ takes about 0.15 s, so three stable samples fit inside one blink of a text caret
 versions started a new helper for each still and took about 0.6 s per sample, so a focused
 text field could stop `waitForVisualIdle()` from settling.
 
+macOS does the same for a window that the capture helper can find again by the same selector: an
+untitled window, such as a Swing `JWindow` popup, by its frame, and a window with a unique title by
+that title. A warm still then takes about 35 to 65 ms. Earlier versions started a new
+ScreenCaptureKit capture for each still, which took about 1.4 s. A sample with two windows, such as
+an app window and an open popup, then ran out of its 2 s budget, and `waitForVisualIdle()` timed
+out with most samples unsampleable. A window whose title another window also contains still takes
+one-shot stills, because Spectre adds a different title suffix for each still to find it.
+
 Check the node's interaction state when comparing colours from `screenshot()`.
 A focused, hovered, or pressed node can display a theme overlay, such as a
 state layer, focus halo, or ripple. The overlay blends with the underlying

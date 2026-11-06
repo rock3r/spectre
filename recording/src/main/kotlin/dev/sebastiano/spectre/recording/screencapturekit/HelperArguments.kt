@@ -32,15 +32,22 @@ internal data class HelperArguments(
      */
     val crop: Rectangle? = null,
     val displayIndex: Int = 0,
-    val output: Path,
+    /** Destination file. Stills mode writes pixels to stdout and takes no output. */
+    val output: Path?,
     val fps: Int,
     val captureCursor: Boolean,
     val discoveryTimeoutMs: Int,
 ) {
 
     init {
-        require(mode == "recording" || mode == "screenshot") {
-            "mode must be recording or screenshot (got $mode)"
+        require(mode == "recording" || mode == "screenshot" || mode == STILLS_MODE) {
+            "mode must be recording, screenshot, or stills (got $mode)"
+        }
+        require((mode == STILLS_MODE) == (output == null)) {
+            "stills mode takes no output; recording and screenshot need one (mode $mode)"
+        }
+        require(mode != STILLS_MODE || source == HelperSource.Window) {
+            "stills mode only supports window source"
         }
         when (source) {
             HelperSource.Window -> {
@@ -134,12 +141,16 @@ internal data class HelperArguments(
         add(fps.toString())
         add("--cursor")
         add(if (captureCursor) "true" else "false")
-        add("--file-type")
-        add(fileTypeFor(output).cliValue)
+        if (output != null) {
+            add("--file-type")
+            add(fileTypeFor(output).cliValue)
+        }
         add("--discovery-timeout-ms")
         add(discoveryTimeoutMs.toString())
-        add("--output")
-        add(output.toString())
+        if (output != null) {
+            add("--output")
+            add(output.toString())
+        }
     }
 
     private enum class RecordingFileType(val cliValue: String) {
@@ -147,8 +158,11 @@ internal data class HelperArguments(
         Mp4("mp4"),
     }
 
-    private companion object {
-        fun fileTypeFor(output: Path): RecordingFileType =
+    internal companion object {
+        /** Keeps one stream on the window and answers stills on stdin (#605). */
+        const val STILLS_MODE: String = "stills"
+
+        private fun fileTypeFor(output: Path): RecordingFileType =
             when (
                 output.fileName
                     ?.toString()
@@ -159,7 +173,7 @@ internal data class HelperArguments(
                 else -> RecordingFileType.Mov
             }
 
-        fun validateCrop(crop: Rectangle) {
+        private fun validateCrop(crop: Rectangle) {
             require(crop.x >= 0 && crop.y >= 0) { "crop origin must be non-negative; got $crop" }
             require(crop.width > 0 && crop.height > 0) {
                 "crop dimensions must be positive; got $crop"
