@@ -3,7 +3,6 @@
 package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.ExperimentalComposeUiApi
-import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsOwner
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -32,7 +31,7 @@ internal fun findComposeKeyEventTarget(windows: List<Window>): Component? {
 @OptIn(ExperimentalComposeUiApi::class)
 private fun findFocusedComposeSurface(window: Window): Component? {
     if (!window.isShowing) return null
-    if (window is ComposeWindow && window.semanticsOwners.hasFocusedNode()) {
+    if (window.composeHostSemanticsOwners()?.hasFocusedNode() == true) {
         return findComposeHostIn(window) ?: window
     }
     findComposePanels(window)
@@ -41,7 +40,7 @@ private fun findFocusedComposeSurface(window: Window): Component? {
             return it
         }
     // Compose's OnWindow popup layers live in their own owned dialog, outside any ComposePanel.
-    val owner = window.owner as? ComposeWindow ?: return null
+    val owner = window.owner?.takeIf { it.isComposeHostWindow() } ?: return null
     val layer =
         OverlayLayerInspector.findOverlayLayerWindows(owner).firstOrNull { it.window === window }
     return window.takeIf { layer != null && layer.semanticsOwnersAccessor().hasFocusedNode() }

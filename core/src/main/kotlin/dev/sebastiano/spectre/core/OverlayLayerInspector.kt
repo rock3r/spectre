@@ -1,6 +1,5 @@
 package dev.sebastiano.spectre.core
 
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.semantics.SemanticsOwner
@@ -31,23 +30,37 @@ internal object OverlayLayerInspector {
 
     /**
      * Returns one entry per overlay-layer popup (currently the OnWindow case) hosted by the given
-     * [composeWindow]. Each entry pairs the popup's host AWT [Window] with a snapshot accessor for
-     * the popup's semantics owners. The accessor is a function rather than a captured collection so
-     * callers always observe the live state at read time.
+     * Compose host window: a [ComposeWindow] or a `ComposeDialog` (see [isComposeHostWindow]). Each
+     * entry pairs the popup's host AWT [Window] with a snapshot accessor for the popup's semantics
+     * owners. The accessor is a function rather than a captured collection so callers always
+     * observe the live state at read time.
      *
      * Returns an empty list if Compose's internals don't match the expected shape (e.g. the
      * `composePanel` / `_composeContainer` / `layers` chain has been renamed) — degrade gracefully
      * rather than crash the whole automator.
      */
-    @OptIn(ExperimentalComposeUiApi::class)
-    fun findOverlayLayerWindows(composeWindow: ComposeWindow): List<OverlayLayerEntry> {
-        val composePanel = readField(composeWindow, "composePanel") ?: return emptyList()
+    fun findOverlayLayerWindows(composeHostWindow: Window): List<OverlayLayerEntry> {
+        if (!composeHostWindow.isComposeHostWindow()) return emptyList()
+        val composePanel = readField(composeHostWindow, "composePanel") ?: return emptyList()
         return findOverlayLayersInHostPanel(composePanel)
     }
 
     /**
-     * Same as the [ComposeWindow] overload, for a [ComposePanel] embedded in a Swing host (a
-     * `JFrame`, a `JDialog`, or a wrapper such as Jewel's `JewelComposePanelWrapper`). An embedded
+     * Reads the main-scene semantics owners of a Compose host window through its private
+     * `composePanel` (a `ComposeWindowPanel`). Only for Compose versions where the host has no
+     * public `semanticsOwners` (`ComposeDialog` before Compose Multiplatform 1.12.0). Returns an
+     * empty list when the internals don't match.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun readHostWindowSemanticsOwners(composeHostWindow: Window): Collection<SemanticsOwner> {
+        val composePanel = readField(composeHostWindow, "composePanel") ?: return emptyList()
+        return invokeGetter(composePanel, "getSemanticsOwners") as? Collection<SemanticsOwner>
+            ?: emptyList()
+    }
+
+    /**
+     * Same as the [Window] overload, for a [ComposePanel] embedded in a Swing host (a `JFrame`, a
+     * `JDialog`, or a wrapper such as Jewel's `JewelComposePanelWrapper`). An embedded
      * `ComposePanel` owns its `_composeContainer` directly, so the chain starts one hop later.
      */
     fun findOverlayLayerWindows(composePanel: ComposePanel): List<OverlayLayerEntry> =

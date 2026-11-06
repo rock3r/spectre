@@ -4,7 +4,6 @@ package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.awt.ComposePanel
-import androidx.compose.ui.awt.ComposeWindow
 import java.awt.Container
 import java.awt.Window
 import java.lang.ref.WeakReference
@@ -64,8 +63,8 @@ internal constructor(
                 // #362 delayed-show: admit never-yet-shown displayable Compose hosts with
                 // semantics. Once a window has been showing, only re-list while isShowing so
                 // HIDE_ON_CLOSE dismissals are not re-admitted with stale trees.
-                window is ComposeWindow && shouldTrackTopLevel(window) ->
-                    trackComposeWindow(pending, window)
+                window.isComposeHostWindow() && shouldTrackTopLevel(window) ->
+                    trackTopLevelComposeHost(pending, window)
                 shouldTrackTopLevel(window) -> trackEmbeddedPanels(pending, window)
                 // Not displayable / not trackable: still walk owned dialogs in case any show.
                 else -> trackOwnedPopups(pending, window)
@@ -99,20 +98,31 @@ internal constructor(
         everShownWindows.removeAll { it.get() == null }
     }
 
-    @OptIn(ExperimentalComposeUiApi::class)
-    private fun trackComposeWindow(pending: MutableList<TrackedWindow>, window: ComposeWindow) {
-        if (window.semanticsOwners.isNotEmpty()) {
+    private fun trackTopLevelComposeHost(pending: MutableList<TrackedWindow>, window: Window) {
+        val overlayWindows = trackComposeHost(pending, window, "window", isPopup = false)
+        trackOwnedPopups(pending, window, skip = overlayWindows)
+    }
+
+    /**
+     * Tracks a `ComposeWindow` or `ComposeDialog` (see [isComposeHostWindow]) and its overlay
+     * layers, and returns the overlay layers' windows so the owned-popup walk can skip them.
+     */
+    private fun trackComposeHost(
+        pending: MutableList<TrackedWindow>,
+        window: Window,
+        prefix: String,
+        isPopup: Boolean,
+    ): Set<Window> {
+        if (window.composeHostSemanticsOwners().orEmpty().isNotEmpty()) {
             val panel = findComposePanels(window).firstOrNull()
-            addTrackedWindow(pending, window, panel, "window", isPopup = false)
+            addTrackedWindow(pending, window, panel, prefix, isPopup)
         }
         // Compose Desktop's `OnWindow` popup layer hosts the popup inside an internal
         // `WindowComposeSceneLayer` whose `JDialog` won't be discovered as a `ComposePanel` host
         // (its content sits in a private `JLayeredPaneWithTransparencyHack`, not a ComposePanel).
         // Surface those layers through the reflective `OverlayLayerInspector` so each one becomes
         // its own tracked window with a semantics accessor that points at the layer's mediator.
-        val overlayWindows =
-            trackOverlayLayers(pending, OverlayLayerInspector.findOverlayLayerWindows(window))
-        trackOwnedPopups(pending, window, skip = overlayWindows)
+        return trackOverlayLayers(pending, OverlayLayerInspector.findOverlayLayerWindows(window))
     }
 
     /**
@@ -132,7 +142,6 @@ internal constructor(
         return overlayLayers.mapTo(HashSet()) { it.window }
     }
 
-    @OptIn(ExperimentalComposeUiApi::class)
     private fun trackOwnedPopups(
         pending: MutableList<TrackedWindow>,
         owner: Window,
@@ -144,16 +153,13 @@ internal constructor(
         // compared to top-level onboarding hosts (handled above via isDisplayable).
         val candidateOwned = owner.ownedWindows.filter { it.isShowing && it !in skip }
         for (owned in candidateOwned) {
+            // An owned `ComposeWindow` or `ComposeDialog` (a `DialogWindow`, #547) keeps its
+            // content in a private panel, not a ComposePanel, so it needs the Compose-host path.
             val ownedOverlayWindows =
-                when (owned) {
-                    is ComposeWindow -> {
-                        if (owned.semanticsOwners.isNotEmpty()) {
-                            val panel = findComposePanels(owned).firstOrNull()
-                            addTrackedWindow(pending, owned, panel, "popup", isPopup = true)
-                        }
-                        emptySet<Window>()
-                    }
-                    else -> trackActivePanels(pending, owned, "popup", isPopup = true)
+                if (owned.isComposeHostWindow()) {
+                    trackComposeHost(pending, owned, "popup", isPopup = true)
+                } else {
+                    trackActivePanels(pending, owned, "popup", isPopup = true)
                 }
             trackOwnedPopups(pending, owned, skip + ownedOverlayWindows)
         }

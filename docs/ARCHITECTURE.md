@@ -51,8 +51,9 @@ The modules follow these dependency rules:
 
 The implementation must account for these Compose Desktop constraints:
 
-1. Read semantics through the public `ComposeWindow.semanticsOwners` and
-   `ComposePanel.semanticsOwners` properties.
+1. Read semantics through the public `ComposeWindow.semanticsOwners`,
+   `ComposeDialog.semanticsOwners`, and `ComposePanel.semanticsOwners` properties.
+   `DialogWindow` creates a `ComposeDialog`.
 2. Scope public node identifiers to their `SemanticsOwner`, or use compound identifiers.
    `SemanticsNode.id` is unique only within one owner.
 3. Search for popup roots inside each window. Compose can keep popup layers on the same

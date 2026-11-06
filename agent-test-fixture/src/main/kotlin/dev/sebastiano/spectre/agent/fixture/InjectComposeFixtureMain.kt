@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogWindow
 import java.awt.Dimension
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
@@ -29,7 +30,12 @@ import javax.swing.SwingUtilities
  */
 @OptIn(ExperimentalComposeUiApi::class)
 fun injectMain() {
-    System.err.println("[inject-fixture] entered injectMain() pid=${ProcessHandle.current().pid()}")
+    // #547: with this set, the panel also opens a modal `DialogWindow` (a `ComposeDialog`).
+    val composeDialog = System.getenv("SPECTRE_FIXTURE_COMPOSE_DIALOG").toBoolean()
+    System.err.println(
+        "[inject-fixture] entered injectMain() pid=${ProcessHandle.current().pid()} " +
+            "composeDialog=$composeDialog"
+    )
     System.err.flush()
 
     val panelRef = java.util.concurrent.atomic.AtomicReference<ComposePanel>()
@@ -62,6 +68,14 @@ fun injectMain() {
                                 modifier = Modifier.testTag(TAG_BUTTON),
                             ) {
                                 Text(text = "Click me")
+                            }
+                        }
+                        if (composeDialog) {
+                            DialogWindow(onCloseRequest = {}, title = INJECT_DIALOG_TITLE) {
+                                Text(
+                                    text = INJECT_DIALOG_TEXT,
+                                    modifier = Modifier.testTag(TAG_INJECT_DIALOG_LABEL),
+                                )
                             }
                         }
                     }
@@ -99,6 +113,15 @@ fun main() {
     exitWhenParentExits()
     injectMain()
 }
+
+/** Title of the optional `DialogWindow` (`SPECTRE_FIXTURE_COMPOSE_DIALOG=true`, #547). */
+public const val INJECT_DIALOG_TITLE: String = "Spectre Inject Fixture Dialog"
+
+/** Text shown inside the optional `DialogWindow`. */
+public const val INJECT_DIALOG_TEXT: String = "Spectre dialog text"
+
+/** Test tag on the text inside the optional `DialogWindow`. */
+public const val TAG_INJECT_DIALOG_LABEL: String = "inject-fixture-dialog-label"
 
 private const val FIXTURE_PADDING_DP: Int = 16
 private const val FIXTURE_WIDTH_PX: Int = 320

@@ -64,8 +64,8 @@ in-process harness needs to match a surface to its Swing hierarchy:
 
 | Property                 | Meaning |
 | ------------------------ | ------- |
-| `surface.window`         | The AWT `Window` that hosts the surface (a `ComposeWindow`, `JFrame`, `JDialog`, or popup window). |
-| `surface.composePanel`   | The Swing `ComposePanel` that hosts the surface, or `null` when the surface is not in a `ComposePanel` (for example a `ComposeWindow` or a Compose popup layer). |
+| `surface.window`         | The AWT `Window` that hosts the surface (a `ComposeWindow`, a `ComposeDialog` from `DialogWindow`, a `JFrame`, a `JDialog`, or a popup window). |
+| `surface.composePanel`   | The Swing `ComposePanel` that hosts the surface, or `null` when the surface is not in a `ComposePanel` (for example a `ComposeWindow`, a `ComposeDialog`, or a Compose popup layer). |
 | `surface.hostComponent`  | `composePanel` when it is set, otherwise `window`. |
 
 ```kotlin

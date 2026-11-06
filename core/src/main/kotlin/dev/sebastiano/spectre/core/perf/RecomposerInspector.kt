@@ -3,9 +3,9 @@ package dev.sebastiano.spectre.core.perf
 import androidx.compose.runtime.Recomposer
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.awt.ComposePanel
-import androidx.compose.ui.awt.ComposeWindow
 import dev.sebastiano.spectre.core.InternalSpectreApi
 import dev.sebastiano.spectre.core.TrackedWindow
+import dev.sebastiano.spectre.core.isComposeHostWindow
 import java.awt.Window
 
 /**
@@ -18,7 +18,7 @@ import java.awt.Window
  * (`docs/spikes/209-injection/overlay-adapter-policy.md`). CMP 1.12 moved the live [Recomposer]
  * onto `ComposeSceneMediator.frameRecomposer`; the chain is:
  * ```
- * ComposeWindow.composePanel  (ComposeWindowPanel)
+ * ComposeWindow / ComposeDialog .composePanel  (ComposeWindowPanel)
  *   ._composeContainer         (ComposeContainer)
  *   .mediator                  (ComposeSceneMediator)
  *   .frameRecomposer           (FrameRecomposer; `getFrameRecomposer()` if the field is missing)
@@ -26,9 +26,9 @@ import java.awt.Window
  * ```
  *
  * `ComposePanel` enters the same chain at `_composeContainer`, so the inspector accepts either a
- * `ComposeWindow` or a `ComposePanel` as the starting host. Overlay-popup recomposers are not
- * resolved by this MVP; they live behind a separate chain inside `WindowComposeSceneLayer` and will
- * be wired in a follow-up.
+ * `ComposeWindow`, a `ComposeDialog` or a `ComposePanel` as the starting host. Overlay-popup
+ * recomposers are not resolved by this MVP; they live behind a separate chain inside
+ * `WindowComposeSceneLayer` and will be wired in a follow-up.
  */
 @InternalSpectreApi
 public object RecomposerInspector {
@@ -53,13 +53,14 @@ public object RecomposerInspector {
         if (trackedWindow.overlaySemanticsOwners != null) return null
 
         // Prefer the embedded ComposePanel when present (covers both ComposeWindow's internal panel
-        // and stand-alone embedded panels). Fall back to the window itself for ComposeWindow.
+        // and stand-alone embedded panels). Fall back to the window itself for a ComposeWindow or
+        // ComposeDialog, which both hold their content in a private `composePanel`.
         val composePanel: ComposePanel? = trackedWindow.composePanel
         if (composePanel != null) {
             return findRecomposerInHostChainBelowComposeContainer(composePanel)
         }
         val window: Window = trackedWindow.window
-        if (window is ComposeWindow) {
+        if (window.isComposeHostWindow()) {
             return findRecomposerInHostChain(window)
         }
         return null
@@ -67,9 +68,9 @@ public object RecomposerInspector {
 
     /**
      * Walks the full chain starting from a host that owns a `composePanel` field (i.e. a
-     * `ComposeWindow`). Internal so unit tests in the same module can drive it against a fake
-     * hierarchy without widening the JVM-public surface — production callers go through
-     * [findRecomposer], which encodes which host to start the walk from.
+     * `ComposeWindow` or `ComposeDialog`). Internal so unit tests in the same module can drive it
+     * against a fake hierarchy without widening the JVM-public surface — production callers go
+     * through [findRecomposer], which encodes which host to start the walk from.
      */
     internal fun findRecomposerInHostChain(host: Any?): Recomposer? {
         if (host == null) return null
