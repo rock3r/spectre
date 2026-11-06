@@ -181,6 +181,7 @@ class ScreenCaptureBackendTest {
                 },
                 runtimeDirHasWaylandSocket = { true },
                 displayIsPureX11 = { false },
+                displayIsXwayland = { false },
             )
         )
     }
@@ -200,6 +201,7 @@ class ScreenCaptureBackendTest {
                 },
                 runtimeDirHasWaylandSocket = { true },
                 displayIsPureX11 = { it == ":99" },
+                displayIsXwayland = { false },
             )
         )
     }
@@ -397,13 +399,36 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
-    fun `Wayland detection skips X server probes when there is no Wayland signal`() {
+    fun `Wayland detection without a Wayland signal probes only for Xwayland`() {
         assertFalse(
             isWaylandSession(
                 getenv = { if (it == "DISPLAY") ":99" else null },
                 displayIsPureX11 = { error("no Wayland signal to disprove") },
-                displayIsXwayland = { error("no Wayland signal to confirm") },
+                displayIsXwayland = { false },
                 waylandSocketExists = { error("no Wayland signal to confirm") },
+            )
+        )
+    }
+
+    @Test
+    fun `Wayland detection routes an Xwayland DISPLAY reached over SSH to Wayland`() {
+        // #607: SSH into a GNOME Wayland seat sets DISPLAY=:0 (Xwayland) and
+        // XDG_SESSION_TYPE=tty, with no WAYLAND_DISPLAY. Xwayland still means Wayland: X11
+        // capture is black and XTest input stalls there.
+        assertTrue(
+            isWaylandSession(
+                getenv = { key ->
+                    when (key) {
+                        "DISPLAY" -> ":0"
+                        "XDG_SESSION_TYPE" -> "tty"
+                        "XDG_RUNTIME_DIR" -> "/run/user/1000"
+                        else -> null
+                    }
+                },
+                runtimeDirHasWaylandSocket = { true },
+                displayIsPureX11 = { error("must not probe X server after Xwayland match") },
+                displayIsXwayland = { it == ":0" },
+                waylandSocketExists = { error("must not probe socket after Xwayland match") },
             )
         )
     }

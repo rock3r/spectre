@@ -141,10 +141,13 @@ X11, macOS, and Windows keep their input and capture paths.
   `xvfb-run` use the `ximagesrc` helper path. Validate portal consent, PipeWire capture,
   token reuse, and compositor behaviour on a real Wayland desktop.
 
-  Session detection (#397, #575) keeps an X11 `DISPLAY`, such as Xvfb, in X11 mode.
+  Session detection (#397, #575, #607) keeps an X11 `DISPLAY`, such as Xvfb, in X11 mode.
   Residual `wayland-*` sockets under `XDG_RUNTIME_DIR` never override it.
+  An `Xwayland` process serving `DISPLAY` always means Wayland, even when no Wayland
+  variable is set. This is the usual case for SSH into a GNOME Wayland seat with
+  `DISPLAY=:0`: SSH sets `XDG_SESSION_TYPE=tty` and no `WAYLAND_DISPLAY`.
   When `DISPLAY` is set, inherited `WAYLAND_DISPLAY` or `XDG_SESSION_TYPE=wayland`
-  count only with evidence. An `Xwayland` process serving `DISPLAY` means Wayland.
+  count only with evidence.
   An Xvfb, Xvnc, Xtigervnc, Xephyr, or Xorg process serving `DISPLAY` means X11,
   and so does `xdpyinfo` output without the `XWAYLAND` extension. Otherwise the
   session is Wayland only if the `WAYLAND_DISPLAY` socket exists: `wayland-0` by

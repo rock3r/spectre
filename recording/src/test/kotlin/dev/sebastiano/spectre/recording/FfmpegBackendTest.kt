@@ -61,7 +61,7 @@ class FfmpegBackendTest {
     @Test
     fun `detectWaylandSession returns false on Xorg session`() {
         val getenv = fakeEnv("XDG_SESSION_TYPE" to "x11", "DISPLAY" to ":0")
-        assertFalse(FfmpegBackend.detectWaylandSession(getenv))
+        assertFalse(FfmpegBackend.detectWaylandSession(getenv, displayIsXwayland = { false }))
     }
 
     @Test
@@ -109,6 +109,7 @@ class FfmpegBackendTest {
                 getenv = xvfbEnv,
                 runtimeDirHasWaylandSocket = socketPresent,
                 displayIsPureX11 = { false }, // even without pure-X11 confirmation
+                displayIsXwayland = { false },
             )
         )
     }
@@ -130,6 +131,7 @@ class FfmpegBackendTest {
                 getenv = nestedXvfb,
                 runtimeDirHasWaylandSocket = { true },
                 displayIsPureX11 = { display -> display == ":99" },
+                displayIsXwayland = { false },
             )
         )
     }
@@ -345,13 +347,34 @@ class FfmpegBackendTest {
     }
 
     @Test
-    fun `detectWaylandSession skips X server probes when there is no Wayland signal`() {
+    fun `detectWaylandSession without a Wayland signal probes only for Xwayland`() {
         assertFalse(
             FfmpegBackend.detectWaylandSession(
                 getenv = fakeEnv("DISPLAY" to ":99"),
                 displayIsPureX11 = { error("no Wayland signal to disprove") },
-                displayIsXwayland = { error("no Wayland signal to confirm") },
+                displayIsXwayland = { false },
                 waylandSocketExists = { error("no Wayland signal to confirm") },
+            )
+        )
+    }
+
+    @Test
+    fun `detectWaylandSession routes an Xwayland DISPLAY reached over SSH to Wayland`() {
+        // #607: SSH into a GNOME Wayland seat sets DISPLAY=:0 (Xwayland) and
+        // XDG_SESSION_TYPE=tty, with no WAYLAND_DISPLAY. x11grab of Xwayland is black.
+        val sshEnv =
+            fakeEnv(
+                "DISPLAY" to ":0",
+                "XDG_SESSION_TYPE" to "tty",
+                "XDG_RUNTIME_DIR" to "/run/user/1000",
+            )
+        assertTrue(
+            FfmpegBackend.detectWaylandSession(
+                getenv = sshEnv,
+                runtimeDirHasWaylandSocket = { true },
+                displayIsPureX11 = { error("must not probe X server after Xwayland match") },
+                displayIsXwayland = { it == ":0" },
+                waylandSocketExists = { error("must not probe socket after Xwayland match") },
             )
         )
     }
@@ -468,7 +491,7 @@ class FfmpegBackendTest {
     @Test
     fun `checkNotWayland is a no-op on Xorg`() {
         // Should not throw. The fakeEnv with no Wayland signals models a healthy Xorg session.
-        FfmpegBackend.checkNotWayland(fakeEnv("DISPLAY" to ":0"))
+        FfmpegBackend.checkNotWayland(fakeEnv("DISPLAY" to ":0"), displayIsXwayland = { false })
     }
 
     @Test

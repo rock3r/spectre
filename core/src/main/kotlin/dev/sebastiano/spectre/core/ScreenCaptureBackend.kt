@@ -180,8 +180,9 @@ internal fun nativeWindowCaptureBounds(
  * as window capture.
  *
  * Order: explicit `SPECTRE_CAPTURE_BACKEND`. Without `DISPLAY`: session type / `WAYLAND_DISPLAY`,
- * then a residual `wayland-*` socket. With `DISPLAY`, Wayland env vars count only when backed by
- * evidence (#575): an Xwayland process serving `DISPLAY` means Wayland; a pure X11 server (Xvfb,
+ * then a residual `wayland-*` socket. With `DISPLAY`, an Xwayland process serving it always means
+ * Wayland, even without Wayland env vars: SSH into a Wayland seat sets only `DISPLAY` (#607).
+ * Otherwise Wayland env vars count only when backed by evidence (#575): a pure X11 server (Xvfb,
  * Xvnc, Xtigervnc, Xephyr, Xorg) means X11; otherwise the `WAYLAND_DISPLAY` socket must exist.
  */
 @InternalSpectreApi
@@ -209,9 +210,10 @@ public fun isWaylandSession(
             runCatching { runtimeDirHasWaylandSocket(it) }.getOrDefault(false)
         } == true
     }
-    // DISPLAY is set. Residual sockets alone never override it (#397).
-    if (!sessionIsWayland && waylandDisplay == null) return false
+    // DISPLAY is set. Xwayland is a Wayland seat even when SSH carried no Wayland env (#607).
     if (displayIsXwayland(display)) return true
+    // Residual sockets alone never override DISPLAY (#397).
+    if (!sessionIsWayland && waylandDisplay == null) return false
     if (displayIsPureX11(display)) return false
     val socket = resolveWaylandSocket(waylandDisplay, getenv("XDG_RUNTIME_DIR")) ?: return false
     return runCatching { waylandSocketExists(socket) }.getOrDefault(false)

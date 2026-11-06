@@ -112,10 +112,12 @@ internal sealed interface FfmpegBackend {
          * 1. Without [DISPLAY]: `XDG_SESSION_TYPE=wayland` or a non-blank `WAYLAND_DISPLAY` means
          *    Wayland. Otherwise a `wayland-*` socket under `XDG_RUNTIME_DIR` does — SSH into a
          *    Wayland host without X11 forwarding.
-         * 2. With [DISPLAY] and no Wayland env var: X11. Residual sockets must not override an
+         * 2. With [DISPLAY] served by an Xwayland process: Wayland, with or without Wayland env
+         *    vars. SSH into a Wayland seat sets only `DISPLAY` and `XDG_SESSION_TYPE=tty`, and
+         *    x11grab of Xwayland is black (#607).
+         * 3. With [DISPLAY] and no Wayland env var: X11. Residual sockets must not override an
          *    active Xvfb/Xorg DISPLAY (that was the #397 misroute).
-         * 3. With [DISPLAY] and a Wayland env var, the env var needs evidence (#575):
-         *     - an Xwayland process serving [DISPLAY] → Wayland;
+         * 4. With [DISPLAY] and a Wayland env var, the env var needs evidence (#575):
          *     - a pure X11 server (Xvfb / Xvnc / Xtigervnc / Xephyr / Xorg process, or `xdpyinfo`
          *       without `XWAYLAND`) → X11;
          *     - otherwise Wayland only if the `WAYLAND_DISPLAY` socket (default `wayland-0`,
@@ -150,8 +152,8 @@ internal sealed interface FfmpegBackend {
                     getenv("XDG_RUNTIME_DIR")?.takeIf { it.isNotBlank() } ?: return false
                 return runtimeDirHasWaylandSocket(Path.of(runtimeDir))
             }
-            if (!sessionIsWayland && waylandDisplay == null) return false
             if (displayIsXwayland(display)) return true
+            if (!sessionIsWayland && waylandDisplay == null) return false
             if (displayIsPureX11(display)) return false
             val socket =
                 resolveWaylandSocket(waylandDisplay, getenv("XDG_RUNTIME_DIR")) ?: return false
@@ -350,13 +352,17 @@ internal sealed interface FfmpegBackend {
          * Internal so tests can drive it with a fake [getenv]. The real call site is
          * [LinuxX11Grab.buildRegionArgv].
          */
-        internal fun checkNotWayland(getenv: (String) -> String?) {
-            if (!detectWaylandSession(getenv)) return
+        internal fun checkNotWayland(
+            getenv: (String) -> String?,
+            displayIsXwayland: (String) -> Boolean = ::defaultDisplayIsXwayland,
+        ) {
+            if (!detectWaylandSession(getenv, displayIsXwayland = displayIsXwayland)) return
             throw UnsupportedOperationException(
                 "ffmpeg's x11grab silently captures black frames on Wayland sessions even with " +
                     "XWayland in the loop — Wayland's security model blocks framebuffer reads " +
-                    "by clients other than the compositor. Detected via XDG_SESSION_TYPE / " +
-                    "WAYLAND_DISPLAY / residual wayland-* socket (only when DISPLAY is unset). " +
+                    "by clients other than the compositor. Detected via an Xwayland DISPLAY, " +
+                    "XDG_SESSION_TYPE / WAYLAND_DISPLAY, or a residual wayland-* socket (only " +
+                    "when DISPLAY is unset). " +
                     "Use Wayland-native capture instead: construct " +
                     "`dev.sebastiano.spectre.recording.AutoRecorder` (which routes Wayland " +
                     "sessions through xdg-desktop-portal + PipeWire automatically), or " +
