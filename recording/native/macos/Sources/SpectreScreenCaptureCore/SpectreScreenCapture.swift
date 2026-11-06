@@ -356,8 +356,12 @@ struct Arguments {
                 throw CLIError(code: 2, message: "--frame is only valid with --source window")
             }
         }
-        // Stills go to stdout; a dummy output keeps the struct total.
-        let resolvedOutput = mode == .stills ? (output ?? "/dev/null") : output
+        // Stills go to stdout; a dummy output keeps the struct total. An explicit output is
+        // rejected so a stills session can never remove a file it does not write.
+        if mode == .stills && output != nil {
+            throw CLIError(code: 2, message: "--output is not valid with --mode stills")
+        }
+        let resolvedOutput = mode == .stills ? "/dev/null" : output
         guard let resolvedOutput, !resolvedOutput.isEmpty else {
             throw CLIError(code: 2, message: "--output is required")
         }
@@ -530,6 +534,59 @@ func selectWindow<ID>(
                     + "cannot select one of them")
         }
         return matches.first?.id
+    }
+}
+
+/// Why an open stills session no longer shows the window its selector picks, or nil (#605).
+///
+/// The JVM keys a session by its selector, so the session's window must still be the one the
+/// selector would pick: its title must still contain the title selector, and its frame must still
+/// be the only frame of `pid` that matches the frame selector.
+func staleSelectorReason<ID: Equatable>(
+    _ candidates: [WindowCandidate<ID>],
+    pid: pid_t,
+    selector: WindowSelector,
+    sessionWindow: ID
+) -> String? {
+    let owned = candidates.filter { $0.pid == pid }
+    guard let current = owned.first(where: { $0.id == sessionWindow }) else {
+        return "the window was closed or hidden"
+    }
+    switch selector {
+    case .titleContains(let titleContains):
+        guard let title = current.title, title.contains(titleContains) else {
+            return "the window title changed"
+        }
+        return nil
+    case .frame(let frame):
+        guard frame.matches(current.frame) else { return "the window frame changed" }
+        if owned.filter({ frame.matches($0.frame) }).count > 1 {
+            return "another window now has the same frame"
+        }
+        return nil
+    }
+}
+
+/// The on-screen windows as `WindowCandidate`s, from the window server's window list. Cheaper than
+/// `SCShareableContent`, so a stills session can check its window on every still.
+func onScreenWindowCandidates() -> [WindowCandidate<CGWindowID>] {
+    guard
+        let list = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+    else {
+        return []
+    }
+    return list.compactMap { info in
+        guard let number = info[kCGWindowNumber as String] as? NSNumber,
+            let owner = info[kCGWindowOwnerPID as String] as? NSNumber,
+            let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary,
+            let bounds = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary)
+        else {
+            return nil
+        }
+        return WindowCandidate(
+            id: CGWindowID(number.uint32Value), pid: owner.int32Value,
+            title: info[kCGWindowName as String] as? String, frame: bounds)
     }
 }
 
@@ -815,8 +872,10 @@ final class Recorder {
         // Without this re-check, the unconditional `removeItem` would silently `rm -rf`
         // that directory tree — the destructive failure mode the guard is supposed to
         // prevent. Cheap stat call; runs once per recording start.
-        try validateOutputPath(args.output)
-        try? FileManager.default.removeItem(at: args.output)
+        if args.mode != .stills {
+            try validateOutputPath(args.output)
+            try? FileManager.default.removeItem(at: args.output)
+        }
 
         if args.mode == .recording {
             let writer = try AVAssetWriter(
@@ -1064,6 +1123,11 @@ final class Recorder {
     func serveStills() async throws {
         // No SIGTERM handler here: stills have no file to finalise, so the default action is fine.
         let target = try await discoverTarget()
+        guard case .window(let window) = target else {
+            throw CLIError(code: 2, message: "--mode stills only supports --source window")
+        }
+        let selector = try requireWindowSelector()
+        let pid = try requirePid()
         try await startCapture(target: target)
         guard waitForStill(after: 0, timeout: .now() + 10) else {
             throw CLIError(code: 5, message: "timed out waiting for the first stills frame")
@@ -1078,7 +1142,14 @@ final class Recorder {
             case .unknown:
                 continue
             case .capture:
-                writeStdout(still(sessionGeometry: sessionGeometry))
+                writeStdout(
+                    still(
+                        sessionGeometry: sessionGeometry,
+                        currentSelectorProblem: {
+                            staleSelectorReason(
+                                onScreenWindowCandidates(), pid: pid, selector: selector,
+                                sessionWindow: window.windowID)
+                        }))
             }
         }
         if let stream {
@@ -1089,7 +1160,10 @@ final class Recorder {
     /// The reply to one still request. ScreenCaptureKit delivers a frame only when the window
     /// changes, so an unchanged window's newest frame is current. A request right after a change
     /// waits briefly for the frame that shows it.
-    private func still(sessionGeometry: StillGeometry?) -> Data {
+    private func still(
+        sessionGeometry: StillGeometry?,
+        currentSelectorProblem: () -> String?
+    ) -> Data {
         stillsCondition.lock()
         let requestedAt = stillFrameCount
         stillsCondition.unlock()
@@ -1097,6 +1171,11 @@ final class Recorder {
 
         if let error = currentPipelineError() {
             return staleReply("the capture stopped: \(error.localizedDescription)")
+        }
+        // Check the window after the wait: the frame that arrived may be the first one after a
+        // change.
+        if let problem = currentSelectorProblem() {
+            return staleReply(problem)
         }
         stillsCondition.lock()
         let frame = latestStill
