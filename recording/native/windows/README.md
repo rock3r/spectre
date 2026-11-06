@@ -120,6 +120,12 @@ wall clock, starting at the first captured frame. Each slot gets the latest fram
 unchanged window repeats its frame. When encoding falls behind, the recorder skips the slots
 that are already over. The MP4 duration therefore matches the recording time (#610).
 
+The recorder gives the encoder top-down BGRA rows. It sets `MF_MT_DEFAULT_STRIDE` to the positive
+row size on the uncompressed input type. Without that attribute, Media Foundation reads
+uncompressed RGB as bottom-up and every recording comes out upside down (#638).
+`CompressedWindowRecorderTests` encodes a red-over-blue frame and checks the decoded first frame,
+so the helper tests target `net8.0-windows10.0.19041.0` and run only on Windows.
+
 Build locally with:
 
 ```powershell
