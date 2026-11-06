@@ -1,5 +1,7 @@
 package dev.sebastiano.spectre.recording.portal
 
+import dev.sebastiano.spectre.recording.defaultLinuxSessionEnvLookup
+import dev.sebastiano.spectre.recording.waylandHelperEnvironment
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import java.io.IOException
@@ -20,6 +22,10 @@ import kotlinx.serialization.json.Json
  *
  * One helper owns the RemoteDesktop portal session for the user seat. Parallel JVMs connect to the
  * same unix socket instead of each opening `java.awt.Robot`'s portal.
+ *
+ * [envLookup] should include the runtime-dir and D-Bus fallbacks of
+ * [dev.sebastiano.spectre.recording.linuxSessionEnvLookup]: it picks the session directory and the
+ * variables passed to the helper process.
  */
 internal class WaylandSessionClient
 internal constructor(
@@ -31,13 +37,14 @@ internal constructor(
     constructor() :
         this(
             helperExtractor = DefaultWaylandHelperBinaryExtractor.instance,
-            envLookup = System::getenv,
+            envLookup = defaultLinuxSessionEnvLookup,
             processFactory = SystemSessionProcessFactory,
         )
 
     private val json = Json { ignoreUnknownKeys = true }
     private val lock = Any()
     private val inputConnection = WaylandSessionInputConnection(json)
+    private val consentMemo = WaylandSessionConsentMemo()
 
     fun mouseMove(x: Int, y: Int) {
         send(Command.PointerMove(x, y))
@@ -112,21 +119,23 @@ internal constructor(
 
     private fun ensureSocket(): Path {
         val paths = waylandSessionPaths(sessionDir())
+        return consentMemo.resolve(paths.socket, ::probeUnixSocket) { startOrJoinSession(paths) }
+    }
+
+    private fun startOrJoinSession(paths: WaylandSessionPaths): Path {
         val helperProcess = java.util.concurrent.atomic.AtomicReference<Process?>(null)
         return resolveWaylandSessionSocket(
             paths = paths,
             socketIsLive = ::probeUnixSocket,
             startHelper = {
                 val helper = helperExtractor.extract()
-                helperProcess.set(processFactory.startSession(helper))
+                helperProcess.set(
+                    processFactory.startSession(helper, waylandHelperEnvironment(envLookup))
+                )
             },
             waitForSocket = waitForSocket,
             timeoutMs = SESSION_SOCKET_TIMEOUT_MS,
-            helperExited = { helperProcess.get().isFatalSessionExit() },
-            helperExitDetail = {
-                val code = helperProcess.get()?.takeUnless { it.isAlive }?.exitValue()
-                "exited before binding the session socket (exit $code)"
-            },
+            helperExitCode = { helperProcess.get().sessionExitCode() },
         )
     }
 
@@ -151,16 +160,27 @@ internal constructor(
             ?.let {
                 return Path.of(it).resolve("spectre")
             }
-        error("XDG_RUNTIME_DIR or SPECTRE_WAYLAND_SESSION_DIR is required for the Wayland session")
+        error(
+            "The Wayland session needs a private runtime directory, but XDG_RUNTIME_DIR is not " +
+                "set and /run/user/<uid> is missing or not owned by this user. Set " +
+                "XDG_RUNTIME_DIR to the seat user's runtime directory (normally /run/user/<uid>), " +
+                "or set SPECTRE_WAYLAND_SESSION_DIR to a private directory for the Spectre session " +
+                "socket."
+        )
     }
 
     internal fun interface SessionProcessFactory {
-        fun startSession(helperPath: Path): Process
+        /** Starts the helper with [extraEnvironment] added to this JVM's environment. */
+        fun startSession(helperPath: Path, extraEnvironment: Map<String, String>): Process
     }
 
     internal object SystemSessionProcessFactory : SessionProcessFactory {
-        override fun startSession(helperPath: Path): Process =
+        override fun startSession(
+            helperPath: Path,
+            extraEnvironment: Map<String, String>,
+        ): Process =
             ProcessBuilder(helperPath.toString(), "--session")
+                .apply { environment().putAll(extraEnvironment) }
                 .redirectInput(ProcessBuilder.Redirect.INHERIT)
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .redirectError(ProcessBuilder.Redirect.INHERIT)
@@ -178,6 +198,39 @@ internal constructor(
                 if (Files.exists(path)) return true
             }
             return Files.exists(path)
+        }
+    }
+}
+
+/**
+ * Remembers, per session socket, that the helper could not get portal consent (#634).
+ *
+ * Without it, every capture started a new helper and a new 60 s consent dialog after the first one
+ * timed out. The memo lives as long as its [WaylandSessionClient]; the default client is a JVM
+ * singleton, so a failed consent is replayed for the rest of the JVM. It is keyed by socket path,
+ * so a different session directory still gets its own attempt. A live socket always wins: when
+ * another process brings the session up, the memo is cleared and the socket is used. Only
+ * [WaylandConsentNotGrantedException] is remembered; a crashed or missing helper is retried.
+ *
+ * Not thread-safe: [WaylandSessionClient] calls it under its own lock.
+ */
+internal class WaylandSessionConsentMemo {
+    private val failures = mutableMapOf<Path, WaylandConsentNotGrantedException>()
+
+    fun resolve(socket: Path, socketIsLive: (Path) -> Boolean, start: () -> Path): Path {
+        val failure = failures[socket]
+        if (failure != null) {
+            if (Files.exists(socket) && socketIsLive(socket)) {
+                failures.remove(socket)
+                return socket
+            }
+            throw WaylandConsentNotGrantedException(failure.message.orEmpty(), failure)
+        }
+        try {
+            return start()
+        } catch (error: WaylandConsentNotGrantedException) {
+            failures[socket] = error
+            throw error
         }
     }
 }

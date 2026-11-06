@@ -169,13 +169,35 @@ internal const val VERTICAL_POINTER_AXIS: Int = 0
 internal const val SESSION_SOCKET_POLL_MS: Long = 50
 internal const val WAYLAND_SESSION_OWNED_EXIT: Int = 75
 
+/**
+ * Exit status for a `--session` helper whose Share / Allow remote interaction dialog timed out or
+ * was denied. Mirrors `CONSENT_NOT_GRANTED_EXIT` in the helper's `session.rs`.
+ */
+internal const val WAYLAND_SESSION_CONSENT_EXIT: Int = 77
+
 internal fun isFatalWaylandHelperExit(exitCode: Int): Boolean =
     exitCode != 0 && exitCode != WAYLAND_SESSION_OWNED_EXIT
 
-internal fun Process?.isFatalSessionExit(): Boolean {
-    if (this == null || isAlive) return false
-    return isFatalWaylandHelperExit(exitValue())
-}
+/** Exit status of a session helper that has exited, or null while it runs or was never started. */
+internal fun Process?.sessionExitCode(): Int? = this?.takeUnless { it.isAlive }?.exitValue()
+
+/**
+ * The session helper could not open the portal session because nobody answered the consent dialog
+ * in time, or the user denied it. [WaylandSessionClient] remembers it so later captures in this JVM
+ * fail at once instead of opening a new dialog each time (#634).
+ */
+internal class WaylandConsentNotGrantedException(message: String, cause: Throwable? = null) :
+    IllegalStateException(message, cause)
+
+internal fun waylandConsentNotGrantedMessage(): String =
+    "Wayland screen capture needs consent, but the Share / Allow remote interaction dialog was " +
+        "not answered in time or was denied (spectre-wayland-helper --session exit " +
+        "$WAYLAND_SESSION_CONSENT_EXIT; its output above has the portal error). Spectre does not " +
+        "open the dialog again in this JVM, so later captures fail at once. To fix it, rerun in " +
+        "a new JVM while someone is at the seat. When the dialog appears, select the whole " +
+        "screen, tick Remember, and click Share. Spectre stores the grant, so later runs do not " +
+        "ask again. If no dialog is visible, open the Activities overview (Super key): GNOME can " +
+        "open it behind other windows."
 
 internal fun resolveWaylandSessionSocket(
     paths: WaylandSessionPaths,
@@ -183,8 +205,7 @@ internal fun resolveWaylandSessionSocket(
     startHelper: () -> Unit,
     waitForSocket: (java.nio.file.Path, Long) -> Boolean,
     timeoutMs: Long,
-    helperExited: () -> Boolean = { false },
-    helperExitDetail: () -> String = { "exited before binding the session socket" },
+    helperExitCode: () -> Int? = { null },
 ): java.nio.file.Path {
     if (java.nio.file.Files.exists(paths.socket) && socketIsLive(paths.socket)) {
         return paths.socket
@@ -201,15 +222,24 @@ internal fun resolveWaylandSessionSocket(
         if (waitForSocket(paths.socket, SESSION_SOCKET_POLL_MS) && socketIsLive(paths.socket)) {
             return paths.socket
         }
-        check(!helperExited()) { "spectre-wayland-helper --session ${helperExitDetail()}" }
+        failIfHelperExitedFatally(helperExitCode())
     }
-    check(!helperExited()) { "spectre-wayland-helper --session ${helperExitDetail()}" }
+    failIfHelperExitedFatally(helperExitCode())
     error(
         "spectre-wayland-helper --session did not create ${paths.socket} within ${timeoutMs}ms. " +
             "Accept the compositor Share / Allow remote interaction dialog if it is waiting, " +
             "and check that xdg-desktop-portal is running. If a previous helper died, delete a " +
             "stale ${paths.socket} and retry."
     )
+}
+
+private fun failIfHelperExitedFatally(exitCode: Int?) {
+    if (exitCode == WAYLAND_SESSION_CONSENT_EXIT) {
+        throw WaylandConsentNotGrantedException(waylandConsentNotGrantedMessage())
+    }
+    check(exitCode == null || !isFatalWaylandHelperExit(exitCode)) {
+        "spectre-wayland-helper --session exited before binding the session socket (exit $exitCode)"
+    }
 }
 
 internal fun isRestoreTokenRejection(error: Throwable): Boolean {

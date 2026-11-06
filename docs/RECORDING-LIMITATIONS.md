@@ -58,6 +58,10 @@ CI and hermetic tests can redirect token storage with:
   relocation.
 - `SPECTRE_WAYLAND_SESSION_DIR` — directory for the long-lived helper lock and unix socket
   (`wayland-session.lock` / `wayland-session.sock`). Defaults to `$XDG_RUNTIME_DIR/spectre`.
+  When `XDG_RUNTIME_DIR` is not set, as in Bazel test sandboxes, Spectre uses `/run/user/<uid>`
+  if that directory exists and the current user owns it. Spectre passes that directory to the
+  helper as `XDG_RUNTIME_DIR`. When `DBUS_SESSION_BUS_ADDRESS` is not set and `<dir>/bus`
+  exists, the helper also gets `DBUS_SESSION_BUS_ADDRESS=unix:path=<dir>/bus`.
 - `SPECTRE_WAYLAND_DESKTOP_DIR` — override for the installed
   `dev.sebastiano.spectre.desktop` (defaults to `$XDG_DATA_HOME/applications`).
 
@@ -81,6 +85,10 @@ Parallel JVMs connect to its socket, sharing one Robot portal session.
 
 - **First run:** If no token exists or the compositor rejects it, the portal shows a
   Share + Remember / Allow remote interaction dialog. A person must accept it.
+  If nobody answers within 60 seconds, or the user cancels it, the helper exits with status
+  77. The JVM then fails later captures at once with the same error, instead of opening a
+  new dialog for each one. Rerun in a new JVM to get a new dialog. A session socket that
+  another process brings up in the meantime is still used.
   Release smoke accepts it during `portal-token-warmup` and sets
   `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` and `SPECTRE_WAYLAND_HELPER`. It runs tests
   with heavy Robot use under `xvfb-run`, even on a seated Wayland display.

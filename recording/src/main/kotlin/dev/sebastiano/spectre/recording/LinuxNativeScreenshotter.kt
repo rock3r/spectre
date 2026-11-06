@@ -294,6 +294,7 @@ internal constructor(
     internal object SystemProcessFactory : ProcessFactory {
         override fun start(helperPath: Path): Process =
             ProcessBuilder(helperPath.toString())
+                .withWaylandHelperEnvironment()
                 .redirectInput(ProcessBuilder.Redirect.PIPE)
                 .redirectOutput(ProcessBuilder.Redirect.PIPE)
                 .redirectError(ProcessBuilder.Redirect.INHERIT)

@@ -19,6 +19,18 @@ use std::sync::{Arc, Mutex};
 
 static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Exit status when the portal session could not open because nobody answered the consent dialog
+/// in time or the user denied it (sysexits `EX_NOPERM`). The JVM remembers it and stops starting
+/// new helpers, and so new dialogs, for every capture (#634). Mirrors
+/// `WAYLAND_SESSION_CONSENT_EXIT` in the recording module's `WaylandHelperProtocol.kt`.
+pub const CONSENT_NOT_GRANTED_EXIT: i32 = 77;
+
+/// Exit status for a failed portal handshake: [`CONSENT_NOT_GRANTED_EXIT`] for a consent failure,
+/// `None` to keep the generic error exit.
+fn portal_failure_exit_code(err: &anyhow::Error) -> Option<i32> {
+    crate::portal::is_consent_not_granted(err).then_some(CONSENT_NOT_GRANTED_EXIT)
+}
+
 pub fn serve() -> Result<()> {
     let dir = session_lock::session_dir();
     let lock = match acquire_session_lock(&dir) {
@@ -35,10 +47,23 @@ pub fn serve() -> Result<()> {
     // Open the portal grant before advertising the socket. Binding first made waitForSocket
     // return while SelectDevices was still showing a dialog, and daemonizing first made the
     // JVM Process exit 0 even when the handshake later failed.
-    let session = open_remote_desktop_session(
+    let session = match open_remote_desktop_session(
         crate::protocol::CursorMode::Embedded,
         crate::portal::DEFAULT_RESPONSE_TIMEOUT,
-    )?;
+    ) {
+        Ok(session) => session,
+        Err(e) => {
+            if let Some(code) = portal_failure_exit_code(&e) {
+                eprintln!(
+                    "spectre-wayland-helper: no consent for the RemoteDesktop session: {e:#}\n\
+                     spectre-wayland-helper: exiting with status {code}; Spectre will not open \
+                     the dialog again in this JVM."
+                );
+                std::process::exit(code);
+            }
+            return Err(e);
+        }
+    };
     dup_keep_pipewire_fd(session.pipewire_fd)?;
     let listener = UnixListener::bind(&socket)
         .with_context(|| format!("binding Wayland session socket {}", socket.display()))?;
@@ -473,10 +498,24 @@ fn write_event(writer: &mut UnixStream, event: Event) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_held_input, disconnect_cleanup, recording_owner_should_reap, ClientInputHold,
-        HeldInput,
+        apply_held_input, disconnect_cleanup, portal_failure_exit_code, recording_owner_should_reap,
+        ClientInputHold, HeldInput, CONSENT_NOT_GRANTED_EXIT,
     };
+    use crate::portal::response_timeout_error;
     use std::collections::{BTreeSet, HashMap};
+    use std::time::Duration;
+
+    #[test]
+    fn consent_failures_exit_with_the_consent_status() {
+        let err = response_timeout_error(Duration::from_secs(60), "/request/path");
+        assert_eq!(portal_failure_exit_code(&err), Some(CONSENT_NOT_GRANTED_EXIT));
+        assert_eq!(CONSENT_NOT_GRANTED_EXIT, 77);
+    }
+
+    #[test]
+    fn other_portal_failures_keep_the_generic_error_exit() {
+        assert_eq!(portal_failure_exit_code(&anyhow::anyhow!("opening session bus")), None);
+    }
 
     #[test]
     fn owner_disconnect_reaps_that_clients_recording() {
