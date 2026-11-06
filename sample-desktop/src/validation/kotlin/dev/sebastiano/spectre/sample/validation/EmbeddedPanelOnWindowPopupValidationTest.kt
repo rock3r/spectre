@@ -184,7 +184,7 @@ private fun <T> onEdt(block: () -> T): T {
  * slot (the hook behind Compose's own `withOverride`), so it is set reflectively here and always
  * cleared afterwards.
  */
-private fun <T> withOnWindowLayerType(block: () -> T): T {
+internal fun <T> withOnWindowLayerType(block: () -> T): T {
     val flags = Class.forName("androidx.compose.ui.ComposeFeatureFlags")
     val featureFlag = flags.getMethod("getLayerType").invoke(flags.getField("INSTANCE").get(null))
     val overrideField = featureFlag.javaClass.getDeclaredField("override")

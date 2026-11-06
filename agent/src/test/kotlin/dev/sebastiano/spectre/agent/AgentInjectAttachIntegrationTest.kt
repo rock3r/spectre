@@ -2,9 +2,12 @@
 
 package dev.sebastiano.spectre.agent
 
+import dev.sebastiano.spectre.agent.fixture.INJECT_DIALOG_TEXT
+import dev.sebastiano.spectre.agent.fixture.INJECT_DIALOG_TITLE
 import dev.sebastiano.spectre.agent.fixture.READY_SENTINEL
 import dev.sebastiano.spectre.agent.fixture.SPECTRE_FIXTURE_WINDOW_TITLE
 import dev.sebastiano.spectre.agent.fixture.TAG_BUTTON
+import dev.sebastiano.spectre.agent.fixture.TAG_INJECT_DIALOG_LABEL
 import dev.sebastiano.spectre.agent.fixture.TAG_LABEL
 import dev.sebastiano.spectre.agent.fixture.TAG_TEXT_FIELD
 import java.awt.GraphicsEnvironment
@@ -126,7 +129,48 @@ class AgentInjectAttachIntegrationTest {
         }
     }
 
-    private fun spawnInjectFixture(): FixtureProcess {
+    @Test
+    fun `inject attach tracks a modal DialogWindow and serves text queries after re-attach`() {
+        // #547: a `DialogWindow` is a `ComposeDialog`, which is neither a `ComposeWindow` nor a
+        // `ComposePanel` host, so it used to be missing from windows() and the tree. The dialog is
+        // document-modal, so the target's EDT sits in `Dialog.show` while the agent reads it.
+        // After a detach, the text query and text wait need classes the first session never
+        // loaded (`TextQuery`, `WaitUtilitiesKt`), which is how the inject-path
+        // NoClassDefFoundError in #547 showed up.
+        assumeWindowsAttachE2eAllowed()
+        assumeFalse(
+            GraphicsEnvironment.isHeadless(),
+            "Requires non-headless JVM for Compose Desktop",
+        )
+        val agentJar = locateAgentJarOrSkip()
+
+        spawnInjectFixture(composeDialog = true).use { fixture ->
+            AgentAttach.attach(pid = fixture.pid, options = AttachOptions(agentJarPath = agentJar))
+                .use { first ->
+                    val dialogNode =
+                        first.waitForNode(tag = TAG_INJECT_DIALOG_LABEL, timeoutMs = 10_000)
+                    val windows = first.windows()
+                    val dialogWindow = windows.singleOrNull { it.title == INJECT_DIALOG_TITLE }
+                    assertTrue(dialogWindow != null, "expected the dialog in $windows")
+                    // Node keys are `surfaceId:ownerIndex:nodeId`, and surface ids hold a colon.
+                    assertTrue(
+                        dialogNode.key.startsWith("${dialogWindow.surfaceId}:"),
+                        "node ${dialogNode.key} must belong to surface ${dialogWindow.surfaceId}",
+                    )
+                }
+
+            AgentAttach.attach(pid = fixture.pid, options = AttachOptions(agentJarPath = agentJar))
+                .use { second ->
+                    assertTrue(
+                        second.findByText(INJECT_DIALOG_TEXT).isNotEmpty(),
+                        "expected findByText to reach the dialog after re-attach",
+                    )
+                    second.waitForNode(text = INJECT_DIALOG_TEXT)
+                }
+        }
+    }
+
+    private fun spawnInjectFixture(composeDialog: Boolean = false): FixtureProcess {
         val javaExe =
             if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true))
                 "java.exe"
@@ -146,6 +190,9 @@ class AgentInjectAttachIntegrationTest {
                     "dev.sebastiano.spectre.agent.fixture.InjectComposeFixtureMainKt",
                 )
                 .redirectErrorStream(true)
+                .apply {
+                    if (composeDialog) environment()["SPECTRE_FIXTURE_COMPOSE_DIALOG"] = "true"
+                }
                 .start()
 
         val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))

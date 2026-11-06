@@ -3,7 +3,6 @@
 package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.ExperimentalComposeUiApi
-import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsOwner
@@ -115,12 +114,13 @@ internal class SemanticsReader {
     private fun getOwnersForWindow(trackedWindow: TrackedWindow): Collection<SemanticsOwner> {
         // Reflective overlay-layer accessor wins when present — those tracked windows are the
         // OnWindow popup case (`compose.layers.type=WINDOW`) where neither the host JDialog is a
-        // ComposeWindow nor its content tree contains a ComposePanel.
+        // Compose host window nor its content tree contains a ComposePanel.
         trackedWindow.overlaySemanticsOwners?.let {
             return it()
         }
-        val window = trackedWindow.window
-        if (window is ComposeWindow) return window.semanticsOwners
+        trackedWindow.window.composeHostSemanticsOwners()?.let {
+            return it
+        }
 
         val panel = trackedWindow.composePanel ?: return emptyList()
         return panel.semanticsOwners
