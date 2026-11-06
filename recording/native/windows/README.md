@@ -29,7 +29,7 @@ Contributors and CI that build the helper from source need the .NET 8 SDK.
 
 ```text
 spectre-window-capture.exe \
-  --mode screenshot|recording \
+  --mode screenshot|recording|stills \
   --source window|region \
   --title <exact window title> \
   --owner-pid <pid> \
@@ -90,6 +90,24 @@ recording continues.
 Capture. It cannot run on a Linux host.
 
 Screenshot mode writes a PNG and exits. Screenshot mode currently supports `--source window`.
+
+Stills mode (`--mode stills`, window source only, no `--output`) keeps one capture session open
+and answers still requests on stdin (#612). Spectre uses it for every window screenshot, so
+repeated stills of a window, such as visual-idle samples, do not start a new helper and a new
+capture session each time. The protocol is:
+
+1. The helper writes `READY` to stdout after the first frame arrives. Lookup failures exit with
+   the same codes as screenshot mode before `READY`.
+2. Each `c` line on stdin asks for a still. The helper waits up to 50 ms for a frame newer than
+   the request, because Windows Graphics Capture delivers a frame only when the window changes.
+   It then writes `FRAME <width> <height>`, a newline, and `width * height * 4` bytes of
+   premultiplied BGRA pixels.
+3. If the window no longer matches the selector (closed, retitled, moved for `--frame-*`, or
+   resized), the helper writes `STALE <reason>` instead. The JVM then starts a new session.
+4. `q` or the end of stdin stops the helper with exit 0.
+
+The helper holds only the newest frame and copies its pixels when a still is requested. The JVM
+closes a session after 2 s without a still.
 
 Recording mode writes `READY` to stdout after the Windows Graphics Capture and MP4 encoder
 pipeline is prepared. The parent JVM stops the recording by writing `q` to stdin. The output

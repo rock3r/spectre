@@ -21,6 +21,10 @@ internal static class Program
     private const int ExitWindowAmbiguous = 7;
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(5);
 
+    // A window repaint reaches Windows Graphics Capture within one or two compositor frames. A
+    // still waits this long for a frame newer than the request; an unchanged window sends none.
+    private static readonly TimeSpan FreshFrameWait = TimeSpan.FromMilliseconds(50);
+
     [STAThread]
     private static async Task<int> Main(string[] args)
     {
@@ -100,8 +104,98 @@ internal static class Program
             CaptureMode.Screenshot =>
                 await CaptureScreenshotAsync(hwnd, options.Output, options.CaptureCursor, options.Crop),
             CaptureMode.Recording => await RecordWindowAsync(options, hwnd),
+            CaptureMode.Stills => ServeStills(hwnd, options),
             _ => ExitArgumentsRejected,
         };
+    }
+
+    /// <summary>
+    /// Keeps one capture session on <paramref name="hwnd" /> and answers each still request on
+    /// stdin with the latest frame (#612). Starting the helper and a capture session costs a few
+    /// hundred milliseconds; a still from an open session costs one frame copy.
+    /// </summary>
+    private static int ServeStills(IntPtr hwnd, Options options)
+    {
+        using var frameSource =
+            WgcFrameSource.StartWindow(hwnd, options.CaptureCursor, padToEven: false, copyOnRequest: true);
+        if (frameSource.Width <= 0 || frameSource.Height <= 0)
+        {
+            throw new InvalidOperationException(
+                $"Window has invalid dimensions: {frameSource.Width}x{frameSource.Height}.");
+        }
+
+        using (var firstFrame = new CancellationTokenSource(FrameTimeout))
+        {
+            if (!frameSource.WaitForFirstFrame(firstFrame.Token))
+            {
+                throw new TimeoutException("Timed out waiting for a Windows Graphics Capture frame.");
+            }
+        }
+
+        using var stdout = Console.OpenStandardOutput();
+        WriteProtocolLine(stdout, StillsProtocol.Ready);
+        while (true)
+        {
+            switch (StillsProtocol.ParseCommand(Console.In.ReadLine()))
+            {
+                case StillsCommand.Quit:
+                    return 0;
+                case StillsCommand.Unknown:
+                    continue;
+                case StillsCommand.Capture:
+                    var stale = StaleTargetReason(hwnd, options, frameSource);
+                    if (stale is not null)
+                    {
+                        WriteProtocolLine(stdout, StillsProtocol.StaleHeader(stale));
+                        continue;
+                    }
+
+                    var bytes = frameSource.CopyFreshFrame(FreshFrameWait);
+                    WriteProtocolLine(stdout, StillsProtocol.FrameHeader(frameSource.Width, frameSource.Height));
+                    stdout.Write(bytes);
+                    stdout.Flush();
+                    break;
+            }
+        }
+    }
+
+    private static void WriteProtocolLine(Stream stdout, string line)
+    {
+        var bytes = Encoding.ASCII.GetBytes(line + "\n");
+        stdout.Write(bytes);
+        stdout.Flush();
+    }
+
+    /// <summary>
+    /// Why the open session no longer shows the window the JVM asked for, or null. The JVM keys a
+    /// session by its selector, so the selector must still match the captured window.
+    /// </summary>
+    private static string? StaleTargetReason(IntPtr hwnd, Options options, WgcFrameSource frameSource)
+    {
+        if (!IsWindow(hwnd))
+        {
+            return "the window was closed";
+        }
+
+        if (options.Frame is { } frame)
+        {
+            if (!IsWindowVisible(hwnd) || !GetWindowRect(hwnd, out var rect))
+            {
+                return "the window is hidden";
+            }
+
+            var current = new CaptureRect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
+            if (WindowFrameMatch.Matching(new[] { new WindowFrameCandidate(hwnd, current) }, frame).Count == 0)
+            {
+                return "the window frame changed";
+            }
+        }
+        else if (GetWindowTitle(hwnd) != options.Title)
+        {
+            return "the window title changed";
+        }
+
+        return frameSource.HasSizeChanged ? "the window size changed" : null;
     }
 
     private static async Task<int> RunRegionCaptureAsync(Options options)
@@ -355,6 +449,9 @@ internal static class Program
     [DllImport("user32.dll")]
     private static extern bool IsWindowVisible(IntPtr hwnd);
 
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(IntPtr hwnd);
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
 
@@ -527,7 +624,13 @@ internal static class Program
         private readonly CaptureRect crop;
         private readonly AutoResetEvent frameAvailable = new(false);
         private readonly object frameLock = new();
+        private readonly bool copyOnRequest;
         private byte[]? latestFrame;
+        // copyOnRequest only: the newest frame, held until a newer one arrives. Its pixels are
+        // copied when a still is requested, not on every arrival.
+        private Direct3D11CaptureFrame? heldFrame;
+        private long frameCount;
+        private bool sizeChanged;
         private bool disposed;
 
         private WgcFrameSource(
@@ -536,13 +639,15 @@ internal static class Program
             Direct3D11CaptureFramePool framePool,
             GraphicsCaptureSession session,
             CaptureRect crop,
-            (int Width, int Height) outputSize)
+            (int Width, int Height) outputSize,
+            bool copyOnRequest)
         {
             this.canvasDevice = canvasDevice;
             this.item = item;
             this.framePool = framePool;
             this.session = session;
             this.crop = crop;
+            this.copyOnRequest = copyOnRequest;
             Width = outputSize.Width;
             Height = outputSize.Height;
         }
@@ -551,11 +656,24 @@ internal static class Program
 
         public int Height { get; }
 
+        /// <summary>True once a frame arrived whose content size differs from the capture size.</summary>
+        public bool HasSizeChanged
+        {
+            get
+            {
+                lock (frameLock)
+                {
+                    return sizeChanged;
+                }
+            }
+        }
+
         public static WgcFrameSource StartWindow(
             IntPtr hwnd,
             bool captureCursor,
             CaptureRect? cropInWindow = null,
-            bool padToEven = true)
+            bool padToEven = true,
+            bool copyOnRequest = false)
         {
             var canvasDevice = new CanvasDevice();
             var item = GraphicsCaptureItemInterop.CreateForWindow(hwnd);
@@ -566,7 +684,7 @@ internal static class Program
                 padToEven
                     ? (Even(crop.Width), Even(crop.Height))
                     : (crop.Width, crop.Height);
-            return Start(canvasDevice, item, captureCursor, crop, outputSize);
+            return Start(canvasDevice, item, captureCursor, crop, outputSize, copyOnRequest);
         }
 
         private static CaptureRect ClampCropToItem(CaptureRect crop, CaptureRect itemBounds)
@@ -823,7 +941,8 @@ internal static class Program
             GraphicsCaptureItem item,
             bool captureCursor,
             CaptureRect crop,
-            (int Width, int Height) outputSize)
+            (int Width, int Height) outputSize,
+            bool copyOnRequest = false)
         {
             if (item.Size.Width <= 0 || item.Size.Height <= 0)
             {
@@ -847,7 +966,8 @@ internal static class Program
             {
                 Console.Error.WriteLine($"Could not disable the capture border: {e.Message}");
             }
-            var source = new WgcFrameSource(canvasDevice, item, framePool, session, crop, outputSize);
+            var source =
+                new WgcFrameSource(canvasDevice, item, framePool, session, crop, outputSize, copyOnRequest);
             framePool.FrameArrived += source.OnFrameArrived;
             session.StartCapture();
             return source;
@@ -891,6 +1011,58 @@ internal static class Program
             }
         }
 
+        public bool WaitForFirstFrame(CancellationToken stopToken)
+        {
+            while (!stopToken.IsCancellationRequested)
+            {
+                lock (frameLock)
+                {
+                    if (frameCount > 0)
+                    {
+                        return true;
+                    }
+                }
+
+                try
+                {
+                    frameAvailable.WaitOne(TimeSpan.FromMilliseconds(50));
+                }
+                catch (ObjectDisposedException)
+                {
+                    return false;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Waits up to <paramref name="wait" /> for a frame newer than this call, then copies the
+        /// newest frame. An unchanged window delivers no new frame, so its held frame is current.
+        /// </summary>
+        public byte[] CopyFreshFrame(TimeSpan wait)
+        {
+            lock (frameLock)
+            {
+                var requestedAt = frameCount;
+                var deadline = DateTime.UtcNow + wait;
+                while (frameCount == requestedAt)
+                {
+                    var remaining = deadline - DateTime.UtcNow;
+                    if (remaining <= TimeSpan.Zero)
+                    {
+                        break;
+                    }
+
+                    Monitor.Wait(frameLock, remaining);
+                }
+
+                var frame = heldFrame ?? throw new InvalidOperationException("No frame has arrived yet.");
+                using var bitmap = CanvasBitmap.CreateFromDirect3D11Surface(canvasDevice, frame.Surface);
+                return CopyFrameBytes(bitmap, frame.ContentSize, crop, Width, Height);
+            }
+        }
+
         public void Dispose()
         {
             if (disposed)
@@ -901,6 +1073,8 @@ internal static class Program
             disposed = true;
             lock (frameLock)
             {
+                heldFrame?.Dispose();
+                heldFrame = null;
                 framePool.FrameArrived -= OnFrameArrived;
                 session.Dispose();
                 framePool.Dispose();
@@ -916,6 +1090,23 @@ internal static class Program
             {
                 if (disposed)
                 {
+                    return;
+                }
+
+                if (copyOnRequest)
+                {
+                    var next = sender.TryGetNextFrame();
+                    if (next is null)
+                    {
+                        return;
+                    }
+
+                    heldFrame?.Dispose();
+                    heldFrame = next;
+                    sizeChanged |= next.ContentSize.Width != Width || next.ContentSize.Height != Height;
+                    frameCount += 1;
+                    Monitor.PulseAll(frameLock);
+                    frameAvailable.Set();
                     return;
                 }
 
