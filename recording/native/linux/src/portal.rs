@@ -50,6 +50,54 @@ pub const HOST_REGISTRY_INTERFACE: &str = "org.freedesktop.host.portal.Registry"
 /// before clicking Share. Configurable via [`open_screen_cast_session`].
 pub const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Seconds each portal step of the long-lived session waits for a person to answer the dialog.
+/// `spectre permissions request` raises it so an attended operator has time to find the dialog.
+/// Unset, empty, unparsable, zero, or out-of-range values keep [`DEFAULT_RESPONSE_TIMEOUT`].
+pub const CONSENT_TIMEOUT_ENV: &str = "SPECTRE_WAYLAND_CONSENT_TIMEOUT_SECS";
+
+/// `never` (also `no`, `off`, `false`, `0`) forbids opening a Share dialog: without a stored
+/// restore token, or when the compositor rejects it, the helper fails with [`ConsentNotGranted`]
+/// instead of prompting. The JUnit integration sets it so test runs never prompt implicitly.
+pub const CONSENT_PROMPT_ENV: &str = "SPECTRE_WAYLAND_CONSENT_PROMPT";
+
+const MAX_CONSENT_TIMEOUT_SECS: u64 = 3600;
+
+/// The per-step portal timeout for `value`, the raw [`CONSENT_TIMEOUT_ENV`] value.
+pub fn consent_timeout_from(value: Option<&str>) -> Duration {
+    value
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|secs| (1..=MAX_CONSENT_TIMEOUT_SECS).contains(secs))
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_RESPONSE_TIMEOUT)
+}
+
+/// False when `value`, the raw [`CONSENT_PROMPT_ENV`] value, forbids opening a Share dialog.
+pub fn consent_prompt_allowed_from(value: Option<&str>) -> bool {
+    !matches!(
+        value.map(|raw| raw.trim().to_ascii_lowercase()).as_deref(),
+        Some("never" | "no" | "off" | "false" | "0")
+    )
+}
+
+/// [`consent_timeout_from`] for this process's environment.
+pub fn consent_timeout() -> Duration {
+    consent_timeout_from(std::env::var(CONSENT_TIMEOUT_ENV).ok().as_deref())
+}
+
+/// [`consent_prompt_allowed_from`] for this process's environment.
+pub fn consent_prompt_allowed() -> bool {
+    consent_prompt_allowed_from(std::env::var(CONSENT_PROMPT_ENV).ok().as_deref())
+}
+
+/// The error for a portal request Spectre may not open because [`CONSENT_PROMPT_ENV`] forbids a
+/// dialog. `what` names the grant, `why` says why a dialog would be needed.
+pub fn prompt_forbidden_error(what: &str, why: &str) -> anyhow::Error {
+    anyhow::Error::new(ConsentNotGranted(format!(
+        "{what}: {why}, and {CONSENT_PROMPT_ENV}=never forbids opening the Share dialog. \
+         Run `spectre permissions request` once while someone is at the seat."
+    )))
+}
+
 /// Install the `.desktop` and `Registry.Register` this connection before any portal method.
 pub fn register_host_app(conn: &Connection, timeout: Duration) -> Result<()> {
     crate::identity::install_desktop_file().context("installing Spectre .desktop for portal app_id")?;
@@ -122,6 +170,13 @@ pub fn open_screen_cast_session(
 ) -> Result<ScreenCastSession> {
     let token_key = restore_token_key(source_types, cursor_mode);
     let stored = load_restore_token(&token_key).ok().flatten();
+    let allow_prompt = consent_prompt_allowed();
+    if stored.is_none() && !allow_prompt {
+        return Err(prompt_forbidden_error(
+            "ScreenCast",
+            &format!("no stored restore_token for '{token_key}'"),
+        ));
+    }
     match open_screen_cast_session_inner(
         source_types,
         cursor_mode,
@@ -134,6 +189,12 @@ pub fn open_screen_cast_session(
             // Only clear when SelectSources/Start likely rejected the token — not on D-Bus
             // or CreateSession failures that leave a still-valid grant (#188 review).
             let _ = clear_restore_token(&token_key);
+            if !allow_prompt {
+                return Err(prompt_forbidden_error(
+                    "ScreenCast",
+                    &format!("the stored restore_token was rejected ({first:#})"),
+                ));
+            }
             eprintln!(
                 "spectre-wayland-helper: stored ScreenCast restore_token was rejected \
                  ({first:#}). Cleared token and retrying interactively — a human must \
@@ -1064,5 +1125,39 @@ mod consent_tests {
     #[test]
     fn other_errors_are_not_consent_failures() {
         assert!(!is_consent_not_granted(&anyhow!("opening session bus")));
+    }
+
+    #[test]
+    fn consent_timeout_defaults_to_sixty_seconds() {
+        assert_eq!(consent_timeout_from(None), DEFAULT_RESPONSE_TIMEOUT);
+        assert_eq!(consent_timeout_from(Some("")), DEFAULT_RESPONSE_TIMEOUT);
+        assert_eq!(consent_timeout_from(Some("soon")), DEFAULT_RESPONSE_TIMEOUT);
+        assert_eq!(consent_timeout_from(Some("0")), DEFAULT_RESPONSE_TIMEOUT);
+        assert_eq!(consent_timeout_from(Some("86400")), DEFAULT_RESPONSE_TIMEOUT);
+    }
+
+    #[test]
+    fn consent_timeout_accepts_an_attended_wait() {
+        assert_eq!(consent_timeout_from(Some("300")), Duration::from_secs(300));
+        assert_eq!(consent_timeout_from(Some(" 600 ")), Duration::from_secs(600));
+    }
+
+    #[test]
+    fn only_explicit_never_values_forbid_the_dialog() {
+        assert!(consent_prompt_allowed_from(None));
+        assert!(consent_prompt_allowed_from(Some("")));
+        assert!(consent_prompt_allowed_from(Some("allow")));
+        for value in ["never", "NEVER", " no ", "off", "false", "0"] {
+            assert!(!consent_prompt_allowed_from(Some(value)), "{value}");
+        }
+    }
+
+    #[test]
+    fn a_forbidden_prompt_is_a_consent_failure_that_names_the_fix() {
+        let err = prompt_forbidden_error("RemoteDesktop", "no stored restore_token");
+        assert!(is_consent_not_granted(&err));
+        let message = format!("{err:#}");
+        assert!(message.contains("spectre permissions request"), "{message}");
+        assert!(message.contains(CONSENT_PROMPT_ENV), "{message}");
     }
 }

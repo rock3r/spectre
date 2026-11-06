@@ -40,6 +40,7 @@ public class LaunchAndAttachRule(
         get() = launched.automator
 
     override fun before() {
+        WaylandPortalPrecheck.ensureOnce()
         startSession()
     }
 

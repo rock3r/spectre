@@ -18,6 +18,7 @@
 mod gst;
 mod identity;
 mod input_map;
+mod mutter_window;
 mod portal;
 mod protocol;
 mod rd_handshake;
@@ -65,10 +66,15 @@ fn main() -> Result<()> {
         Ok(Command::PointerMove { .. })
         | Ok(Command::PointerButton { .. })
         | Ok(Command::Key { .. })
-        | Ok(Command::PointerAxis { .. }) => {
+        | Ok(Command::PointerAxis { .. })
+        | Ok(Command::BindFocusedWindow { .. })
+        | Ok(Command::WindowScreenshot { .. })
+        | Ok(Command::StartWindowRecording(_))
+        | Ok(Command::UnbindWindow { .. }) => {
             let _ = event_tx.send(Event::Error {
                 kind: "Protocol".into(),
-                message: "input commands require spectre-wayland-helper --session".into(),
+                message: "input and window-stream commands require spectre-wayland-helper --session"
+                    .into(),
             });
             Ok(())
         }

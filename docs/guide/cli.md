@@ -492,23 +492,29 @@ Recording and atomic capture need the platform helper on the daemon host (`spect
 (macOS Screen Recording TCC, Linux portal/X11 display, Windows helper runtimes). See
 [Recording](recording.md) and [Recording limitations](../RECORDING-LIMITATIONS.md).
 
-### macOS permissions
+### OS permissions
 
-These commands run locally without the daemon. On other operating systems, they report
-“not applicable”.
+These commands run locally without the daemon. `check` never opens a dialog. `request` may,
+so run it only with a person at the machine.
 
-| Command | Behaviour |
-| --- | --- |
-| `permissions check` | Non-interactive TCC preflight; exit **1** if Screen Recording not granted |
-| `permissions request` | May open the system grant flow / helper guide — **run only with a human present** |
+| Platform | `permissions check` | `permissions request` |
+| --- | --- | --- |
+| macOS | Screen Recording TCC preflight; exit **1** if not granted | May open the system grant flow / helper guide |
+| Linux Wayland | Reports the RemoteDesktop portal grant: stored restore token, running session; exit **1** if missing | Opens the Share / Allow remote interaction dialog once if no grant is stored, stores it, and keeps the session running. `--timeout <seconds>` sets the wait for each dialog step (default 300) |
+| Other | Not needed; exit 0 | Not needed; exit 0 |
 
 ```shell
 spectre permissions check --json
 spectre permissions request
 ```
 
+On Linux Wayland, approve once with `spectre permissions request`; later runs, captures,
+recordings, and real input open no dialog. Window captures use GNOME Mutter window streams and
+need no grant of their own. See [Linux Wayland consent](recording.md#linux-wayland-consent).
+
 Capture and recording check permission and fail when it is missing.
-They do not open the grant UI automatically.
+On macOS they never open the grant UI. On Linux Wayland, JUnit test runs never open the dialog
+themselves.
 See [Recording — macOS TCC](recording.md).
 
 ### Unknown commands and options
@@ -711,5 +717,6 @@ The CLI table's capture-mode distinctions also apply to MCP tool names
   fails closed with `hotReloadUnavailable`. See [Compose Hot Reload awareness](hot-reload.md).
 - Platform capture/recording needs helpers and permissions on the host that runs the daemon
   (see [Recording](recording.md)). macOS: `permissions check` / `request` for Screen Recording.
+  Linux Wayland: `permissions request` once for the portal grant.
 
 For the underlying attach model and its security boundary, see [Agent attach](agent.md).

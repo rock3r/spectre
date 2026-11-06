@@ -20,8 +20,11 @@ import kotlin.math.roundToInt
  * [title] is always null and cannot be set. Callers must check for this type before they reach for
  * a title.
  */
-internal class FramedWindow(val logicalFrame: Rectangle, val deviceFrame: Rectangle) :
-    TitledWindow, TitleDiscriminationAware {
+internal class FramedWindow(
+    val logicalFrame: Rectangle,
+    val deviceFrame: Rectangle,
+    override val awtWindow: Window? = null,
+) : TitledWindow, TitleDiscriminationAware, AwtWindowBacked {
 
     override var title: String?
         get() = null
@@ -79,6 +82,7 @@ internal fun Window.asFramedWindow(
                         screenOrigin = Point(screen.x, screen.y),
                         scalesFromScreenOrigin = isWindows,
                     ),
+                awtWindow = this,
             )
         )
     }

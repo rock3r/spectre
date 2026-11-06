@@ -169,6 +169,7 @@ internal constructor(
     override fun apply(base: Statement, description: Description): Statement {
         return object : Statement() {
             override fun evaluate() {
+                WaylandPortalPrecheck.ensureOnce()
                 lastDescription = description
                 // One invocation id for this evaluate() so stills and video share a method dir
                 // when callers leave invocationId null on both configs.
@@ -226,6 +227,7 @@ internal constructor(
     }
 
     public override fun before() {
+        WaylandPortalPrecheck.ensureOnce()
         instance = factory()
         startFailureVideo(lastDescription)
     }

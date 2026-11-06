@@ -452,9 +452,10 @@ path, the same as a terminal inside the desktop session. That path has these nee
 
   A timeout means the portal is not answering. Spectre calls then wait for the D-Bus
   timeout and fail.
-- Consent on the seat. The first request shows the Share and Allow remote interaction
-  dialog on the physical screen, not in the SSH terminal. Someone must approve it once.
-  Spectre then reuses the stored restore token.
+- Consent on the seat, once. Run `spectre permissions request` (from the SSH shell is fine).
+  It shows the Share and Allow remote interaction dialog on the physical screen, not in the
+  SSH terminal, and waits 300 seconds for each step. Someone must approve it once. Spectre
+  then reuses the stored grant and its running session.
 
 `RobotDriver(Robot())` is different: it always uses the `java.awt.Robot` you pass in,
 so it still sends XTest input through Xwayland. Use `RobotDriver()` on Wayland.
@@ -465,8 +466,25 @@ black captures and stalled input.
 
 ## "Linux Wayland keeps asking to share the screen / remote interaction"
 
-A seated GNOME session should show **one** Share + Remember / Allow remote interaction
-dialog for Spectre, then reuse the helper. If every JVM pops a new picker:
+Spectre needs **one** Share + Remember / Allow remote interaction approval on a Linux
+Wayland seat. Give it up front, while someone is at the seat:
+
+```shell
+spectre permissions request
+spectre permissions check   # never opens a dialog; exit 1 when the grant is missing
+```
+
+After that, test runs, captures, recordings, and real input open no dialog. Window captures
+use GNOME Mutter window streams, which need no grant of their own. See
+[Linux Wayland consent](recording.md#linux-wayland-consent).
+
+Test runs that use the JUnit integration never open the dialog themselves. Without a grant,
+the first capture fails at once with an error that names `spectre permissions request`. Before
+0.9.0 each capture opened its own dialog, and a short capture budget (such as a 5-second
+`waitForVisualIdle`) gave up before anyone could click Share. A capture that gives up now
+leaves its dialog open for the next capture instead of starting a new one.
+
+If dialogs still appear:
 
 - Confirm `spectre-recording-linux` is on the runtime classpath and
   `spectre-wayland-helper` is the binary in use (`SPECTRE_WAYLAND_HELPER` only for local
@@ -479,10 +497,12 @@ dialog for Spectre, then reuse the helper. If every JVM pops a new picker:
 - A rejected token is cleared and retried once. A second failure is fatal; delete the
   token file only when re-consent is intended.
 
-If nobody answers the dialog within 60 seconds, or someone cancels it, Spectre does not
-ask again in the same JVM. Every later capture fails at once with an error that tells you
-what to click. Rerun the tests while someone is at the seat. When the dialog appears,
-select the whole screen, tick Remember, and click Share.
+- A "window picker" dialog (pick one window) comes from `WaylandPortalWindowRecorder`, which
+  you call directly. `AutoRecorder` and screenshots do not use it.
+
+If nobody answers a dialog that a capture opened within 60 seconds, or someone cancels it,
+Spectre does not ask again in the same JVM. Every later capture fails at once with an error
+that tells you to run `spectre permissions request`.
 
 When `XDG_RUNTIME_DIR` is not set, for example in a Bazel test, Spectre falls back to
 `/run/user/<uid>` if the current user owns it. It also passes that directory and its D-Bus
@@ -491,6 +511,21 @@ When `XDG_RUNTIME_DIR` is not set, for example in a Bazel test, Spectre falls ba
 
 SSH or headless sessions without a compositor seat cannot complete the dialog.
 See [Linux Wayland consent](recording.md#linux-wayland-consent).
+
+## "Linux Wayland window capture fails: could not bind a GNOME Mutter window stream"
+
+On Linux Wayland, Spectre captures a window through a GNOME Mutter window stream. Mutter
+records the window that has keyboard focus, so Spectre focuses the window for a moment the
+first time, and checks that the recorded window has the expected size. The error means
+another window had focus, for example a modal dialog, or the window is translucent.
+
+- Make sure the window can take focus, and that nothing else grabs focus at that moment.
+- Translucent windows cannot be bound yet. Capture a screen region instead.
+- On a desktop other than GNOME there is no Mutter API, and window capture fails with an
+  error. Use `screenshot(region)`, `startRegion`, or X11/Xvfb.
+
+Spectre does not fall back to a crop of a monitor capture, because that would show any window
+that covers the target.
 
 ## "macOS `sandbox-exec` blocks my Compose Desktop/Spectre test"
 

@@ -19,6 +19,28 @@ pub enum Command {
     PointerButton { button: i32, pressed: bool },
     Key { key_code: i32, pressed: bool },
     PointerAxis { axis: u32, steps: i32 },
+    /// Session only. Bind a GNOME Mutter window stream to the window that has keyboard focus now,
+    /// keep it under `key`, and write its first frame to `output` as an RGBA PNG. The JVM focuses
+    /// the window first and checks the frame before it trusts the binding.
+    BindFocusedWindow { key: String, output: String },
+    /// Session only. Write one RGBA PNG frame of the window bound under `key` to `output`.
+    WindowScreenshot { key: String, output: String },
+    /// Session only. Record the window bound under `key`, cropped to `region` in stream pixels.
+    StartWindowRecording(WindowRecordingCommand),
+    /// Session only. Stop the Mutter stream bound under `key`.
+    UnbindWindow { key: String },
+}
+
+/// Recording of a bound Mutter window stream. `region` and `stream_size` are in stream pixels:
+/// the JVM measures both on the frame it got when it bound the window.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WindowRecordingCommand {
+    pub key: String,
+    pub region: Region,
+    pub stream_size: [u32; 2],
+    pub frame_rate: u32,
+    pub output: String,
+    pub codec: String,
 }
 
 /// Initial parameters from the JVM. Mirrors `RecordingOptions` + the geometry needed for the
@@ -154,6 +176,15 @@ pub enum Event {
     ScreenshotSaved { output_size_bytes: u64 },
     /// Pointer/key command applied on the held RemoteDesktop session.
     InputAck,
+    /// A Mutter window stream is bound under `key`. `logical_size` is the stream's `size`
+    /// parameter: on GNOME 50 the size of the monitor, not of the window.
+    WindowBound {
+        key: String,
+        node_id: u32,
+        logical_size: [i32; 2],
+    },
+    /// The Mutter stream under `key` is stopped (`was_bound` false when nothing was bound).
+    WindowUnbound { key: String, was_bound: bool },
     /// Anything that didn't reach a Stopped state. `kind` is a coarse category the JVM can
     /// pattern-match for surfacing the right exception type; `message` is the human-readable
     /// detail.
