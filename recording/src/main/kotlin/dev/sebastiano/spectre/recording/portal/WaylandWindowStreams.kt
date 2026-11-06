@@ -42,6 +42,7 @@ internal class WaylandWindowStreams<W : Any>(
     private val keyPrefix: String = "jvm-${ProcessHandle.current().pid()}",
     /** Runs the helper unbind of a closed window off the EDT. */
     private val runInBackground: (() -> Unit) -> Unit = ::runOnDaemonThread,
+    private val isEventDispatchThread: () -> Boolean = EventQueue::isDispatchThread,
 ) {
     /**
      * Serialises bindings: each one may move keyboard focus. Held while binding, never on close.
@@ -107,6 +108,11 @@ internal class WaylandWindowStreams<W : Any>(
             ?.let {
                 return it
             }
+        // Binding waits on the EDT for focus. On the EDT it could never finish, and waiting for
+        // another thread's binding there would deadlock it.
+        if (isEventDispatchThread()) {
+            throw WaylandCaptureUnavailableException(BIND_ON_EDT_MESSAGE)
+        }
         synchronized(bindLock) {
             synchronized(mapLock) { bound[window]?.get(cursor) }
                 ?.let {
@@ -185,6 +191,16 @@ internal class FocusWindowStreamBinder<W : Any>(
         val expected = focus.size(window)
         val handoff = focus.focus(window)
         try {
+            if (!handoff.confirmed) {
+                // Mutter records the focused window; matching sizes cannot prove it is this one.
+                throw WaylandCaptureUnavailableException(
+                    "Spectre could not bind a GNOME Mutter window stream to the window " +
+                        "${focus.describe(window)}: it did not get keyboard focus, and Mutter " +
+                        "records the focused window. Make sure the window can take focus " +
+                        "(non-focusable popups cannot be bound yet) and that no modal dialog " +
+                        "holds it."
+                )
+            }
             val (event, frame) = session.bindFocused(key, cursor)
             val content = opaqueContentBounds(frame)
             val scale = content?.let { matchingScale(it, expected, streamScale(frame, event)) }
@@ -222,13 +238,17 @@ internal interface WindowFocus<W : Any> {
     fun describe(window: W): String = window.toString()
 }
 
-internal fun interface FocusHandoff {
-    fun restore()
+/** The result of [WindowFocus.focus]: whether [window focus][confirmed] was confirmed. */
+internal class FocusHandoff(val confirmed: Boolean, private val restoreFocus: () -> Unit) {
+    /** Gives focus back to the window that had it. */
+    fun restore() {
+        restoreFocus()
+    }
 }
 
 /**
- * [WindowFocus] through AWT. A window AWT does not report as focused within [timeoutMs] (a
- * non-focusable popup, for example) is still bound: the size check on the first frame decides.
+ * [WindowFocus] through AWT. Focus counts as confirmed only when AWT reports the window focused
+ * within [timeoutMs]; a non-focusable popup is made focusable for that moment.
  */
 internal class AwtWindowFocus(
     private val timeoutMs: Long = DEFAULT_FOCUS_TIMEOUT_MS,
@@ -246,17 +266,19 @@ internal class AwtWindowFocus(
                 focusable = window.focusableWindowState,
             )
         }
-        if (state.alreadyFocused) return FocusHandoff {}
+        if (state.alreadyFocused) return FocusHandoff(confirmed = true) {}
         onEdt {
             if (!window.focusableWindowState) window.focusableWindowState = true
             window.toFront()
             window.requestFocus()
         }
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
-        while (System.nanoTime() < deadline && !onEdt { window.isFocused }) {
+        var focused = onEdt { window.isFocused }
+        while (System.nanoTime() < deadline && !focused) {
             sleep(FOCUS_POLL_MS)
+            focused = onEdt { window.isFocused }
         }
-        return FocusHandoff {
+        return FocusHandoff(confirmed = focused) {
             onEdt {
                 if (window.focusableWindowState != state.focusable) {
                     window.focusableWindowState = state.focusable
@@ -335,6 +357,11 @@ internal class HelperWindowStreamSession(private val client: WaylandSessionClien
             throw error
         }
 }
+
+internal const val BIND_ON_EDT_MESSAGE: String =
+    "Spectre cannot bind a GNOME Mutter window stream on the AWT event dispatch thread: binding " +
+        "focuses the window and waits for the event dispatch thread. Capture the window once " +
+        "from another thread; later captures of it also work on the event dispatch thread."
 
 internal const val MUTTER_UNAVAILABLE_MESSAGE: String =
     "Linux Wayland window capture needs GNOME's Mutter ScreenCast API, which this desktop does " +

@@ -188,8 +188,11 @@ expected size, and gives focus back. The stream stays bound until the window clo
 
 - **GNOME only.** On another Wayland desktop, window capture fails with an error. Capture a screen
   region instead, or run under X11 or Xvfb.
-- **The window must take focus when asked,** and must not be fully covered by a modal dialog at
-  that moment. Otherwise the size check fails and the capture fails with an error.
+- **The window must take focus when asked.** Spectre makes a non-focusable window focusable for
+  that moment. If AWT does not report the window as focused, for example because a modal dialog
+  holds focus, the capture fails with an error instead of risking another window.
+- **The first capture of a window must not run on the AWT event dispatch thread,** because
+  binding waits for focus events there. Later captures of a bound window work on any thread.
 - **Translucent windows cannot be bound yet**, because Spectre finds the window by its opaque
   pixels.
 

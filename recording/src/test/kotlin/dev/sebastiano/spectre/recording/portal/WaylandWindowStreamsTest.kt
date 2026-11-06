@@ -74,6 +74,40 @@ class WaylandWindowStreamsTest {
     }
 
     @Test
+    fun `a window that did not get focus is not bound even when sizes match`() {
+        // Another window of the same size kept focus: Mutter would record that one.
+        val session = FakeSession(frameWindow = Rectangle(25, 25, 400, 300))
+        val focus = FakeFocus(size = Dimension(400, 300), confirmed = false)
+        val binder = FocusWindowStreamBinder(session, focus)
+
+        val error =
+            assertFailsWith<WaylandCaptureUnavailableException> {
+                binder.bind("popup", "k1", CursorMode.HIDDEN)
+            }
+
+        assertEquals(0, session.binds, "nothing may be bound without confirmed focus")
+        assertEquals(1, focus.restored)
+        assertTrue(error.message.orEmpty().contains("focus"), error.message)
+    }
+
+    @Test
+    fun `the event dispatch thread never binds or waits for a binding`() {
+        // Binding waits on the EDT for focus, so binding on the EDT could never finish.
+        var onEdt = false
+        val session = FakeSession(frameWindow = Rectangle(25, 25, 400, 300))
+        val streams =
+            streams(session, focus = FakeFocus(size = Dimension(400, 300)), onEdt = { onEdt })
+        streams.capture("bound")
+        onEdt = true
+
+        val error = assertFailsWith<WaylandCaptureUnavailableException> { streams.capture("new") }
+        streams.capture("bound")
+
+        assertEquals(1, session.binds)
+        assertTrue(error.message.orEmpty().contains("event dispatch thread"), error.message)
+    }
+
+    @Test
     fun `captures reuse one binding and return only the window`() {
         val session = FakeSession(frameWindow = Rectangle(25, 25, 400, 300))
         val streams = streams(session, focus = FakeFocus(size = Dimension(400, 300)))
@@ -138,7 +172,7 @@ class WaylandWindowStreamsTest {
                         closer.join(CLOSE_TIMEOUT_MS)
                         closedWhileBinding.set(!closer.isAlive)
                     }
-                    return FocusHandoff {}
+                    return FocusHandoff(confirmed = true) {}
                 }
             }
         val streams =
@@ -193,16 +227,18 @@ class WaylandWindowStreamsTest {
         assertEquals(24, command.frameRate)
     }
 
-    private fun streams(session: FakeSession, focus: FakeFocus) =
+    private fun streams(session: FakeSession, focus: FakeFocus, onEdt: () -> Boolean = { false }) =
         WaylandWindowStreams(
             session = session,
             binder = FocusWindowStreamBinder(session, focus),
             windowSize = { focus.size },
             onWindowClosed = { _, _ -> },
             keyPrefix = "test",
+            isEventDispatchThread = onEdt,
         )
 
-    private class FakeFocus(val size: Dimension) : WindowFocus<String> {
+    private class FakeFocus(val size: Dimension, private val confirmed: Boolean = true) :
+        WindowFocus<String> {
         val focused = mutableListOf<String>()
         var restored = 0
 
@@ -210,7 +246,7 @@ class WaylandWindowStreamsTest {
 
         override fun focus(window: String): FocusHandoff {
             focused += window
-            return FocusHandoff { restored += 1 }
+            return FocusHandoff(confirmed) { restored += 1 }
         }
     }
 

@@ -516,8 +516,9 @@ See [Linux Wayland consent](recording.md#linux-wayland-consent).
 
 On Linux Wayland, Spectre captures a window through a GNOME Mutter window stream. Mutter
 records the window that has keyboard focus, so Spectre focuses the window for a moment the
-first time, and checks that the recorded window has the expected size. The error means
-another window had focus, for example a modal dialog, or the window is translucent.
+first time, and checks that the recorded window has the expected size. The error means the
+window did not get focus (for example a modal dialog held it), another window was recorded,
+the window is translucent, or the first capture ran on the AWT event dispatch thread.
 
 - Make sure the window can take focus, and that nothing else grabs focus at that moment.
 - Translucent windows cannot be bound yet. Capture a screen region instead.
