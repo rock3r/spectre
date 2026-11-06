@@ -143,14 +143,18 @@ internal static class Program
                 case StillsCommand.Unknown:
                     continue;
                 case StillsCommand.Capture:
-                    var stale = StaleTargetReason(hwnd, options, frameSource);
-                    if (stale is not null)
+                    // Check the target after the fresh-frame wait: the frame that arrives during
+                    // the wait may be the first one after a resize.
+                    var bytes = frameSource.CopyFreshFrame(FreshFrameWait);
+                    var stale =
+                        StaleTargetReason(hwnd, options) ??
+                        (bytes is null ? "the window size changed" : null);
+                    if (stale is not null || bytes is null)
                     {
-                        WriteProtocolLine(stdout, StillsProtocol.StaleHeader(stale));
+                        WriteProtocolLine(stdout, StillsProtocol.StaleHeader(stale ?? "no frame"));
                         continue;
                     }
 
-                    var bytes = frameSource.CopyFreshFrame(FreshFrameWait);
                     WriteProtocolLine(stdout, StillsProtocol.FrameHeader(frameSource.Width, frameSource.Height));
                     stdout.Write(bytes);
                     stdout.Flush();
@@ -170,7 +174,7 @@ internal static class Program
     /// Why the open session no longer shows the window the JVM asked for, or null. The JVM keys a
     /// session by its selector, so the selector must still match the captured window.
     /// </summary>
-    private static string? StaleTargetReason(IntPtr hwnd, Options options, WgcFrameSource frameSource)
+    private static string? StaleTargetReason(IntPtr hwnd, Options options)
     {
         if (!IsWindow(hwnd))
         {
@@ -179,15 +183,14 @@ internal static class Program
 
         if (options.Frame is { } frame)
         {
-            if (!IsWindowVisible(hwnd) || !GetWindowRect(hwnd, out var rect))
+            // Same lookup as the first one, so a second window that now shares the frame makes
+            // the selector ambiguous instead of silently keeping the first window.
+            var matches = FindWindowsByFrameAndOwnerPid(frame, options.OwnerPid ?? 0);
+            if (matches.Count != 1 || matches[0].Handle != hwnd)
             {
-                return "the window is hidden";
-            }
-
-            var current = new CaptureRect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
-            if (WindowFrameMatch.Matching(new[] { new WindowFrameCandidate(hwnd, current) }, frame).Count == 0)
-            {
-                return "the window frame changed";
+                return matches.Count > 1
+                    ? "another window now has the same frame"
+                    : "the window frame changed";
             }
         }
         else if (GetWindowTitle(hwnd) != options.Title)
@@ -195,7 +198,7 @@ internal static class Program
             return "the window title changed";
         }
 
-        return frameSource.HasSizeChanged ? "the window size changed" : null;
+        return null;
     }
 
     private static async Task<int> RunRegionCaptureAsync(Options options)
@@ -630,7 +633,6 @@ internal static class Program
         // copied when a still is requested, not on every arrival.
         private Direct3D11CaptureFrame? heldFrame;
         private long frameCount;
-        private bool sizeChanged;
         private bool disposed;
 
         private WgcFrameSource(
@@ -655,18 +657,6 @@ internal static class Program
         public int Width { get; }
 
         public int Height { get; }
-
-        /// <summary>True once a frame arrived whose content size differs from the capture size.</summary>
-        public bool HasSizeChanged
-        {
-            get
-            {
-                lock (frameLock)
-                {
-                    return sizeChanged;
-                }
-            }
-        }
 
         public static WgcFrameSource StartWindow(
             IntPtr hwnd,
@@ -1039,8 +1029,10 @@ internal static class Program
         /// <summary>
         /// Waits up to <paramref name="wait" /> for a frame newer than this call, then copies the
         /// newest frame. An unchanged window delivers no new frame, so its held frame is current.
+        /// Returns null when the newest frame no longer has the session's size: the window was
+        /// resized, and a still cropped or padded to the old size would be wrong.
         /// </summary>
-        public byte[] CopyFreshFrame(TimeSpan wait)
+        public byte[]? CopyFreshFrame(TimeSpan wait)
         {
             lock (frameLock)
             {
@@ -1058,6 +1050,11 @@ internal static class Program
                 }
 
                 var frame = heldFrame ?? throw new InvalidOperationException("No frame has arrived yet.");
+                if (frame.ContentSize.Width != Width || frame.ContentSize.Height != Height)
+                {
+                    return null;
+                }
+
                 using var bitmap = CanvasBitmap.CreateFromDirect3D11Surface(canvasDevice, frame.Surface);
                 return CopyFrameBytes(bitmap, frame.ContentSize, crop, Width, Height);
             }
@@ -1103,7 +1100,6 @@ internal static class Program
 
                     heldFrame?.Dispose();
                     heldFrame = next;
-                    sizeChanged |= next.ContentSize.Width != Width || next.ContentSize.Height != Height;
                     frameCount += 1;
                     Monitor.PulseAll(frameLock);
                     frameAvailable.Set();

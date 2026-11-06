@@ -102,8 +102,9 @@ capture session each time. The protocol is:
    the request, because Windows Graphics Capture delivers a frame only when the window changes.
    It then writes `FRAME <width> <height>`, a newline, and `width * height * 4` bytes of
    premultiplied BGRA pixels.
-3. If the window no longer matches the selector (closed, retitled, moved for `--frame-*`, or
-   resized), the helper writes `STALE <reason>` instead. The JVM then starts a new session.
+3. After that wait, the helper checks the window again. If it no longer matches the selector
+   (closed, retitled, resized, or for `--frame-*` moved or no longer the only window with that
+   frame), the helper writes `STALE <reason>` instead. The JVM then starts a new session.
 4. `q` or the end of stdin stops the helper with exit 0.
 
 The helper holds only the newest frame and copies its pixels when a still is requested. The JVM
