@@ -89,12 +89,45 @@ internal object NativeWindowCaptureBridge {
      * How the native helper finds [window]. A [Frame] or [Dialog] is found by its title. Any other
      * host (a Swing `JWindow`, a plain AWT [Window]) has no title, so it is found by its on-screen
      * frame instead (#605).
+     *
+     * A [Frame] or [Dialog] whose title another window also has is found by its frame too, where
+     * [selectsSharedTitlesByFrame] (#611): the title alone would make the helper guess. The macOS
+     * helper tells shared titles apart itself, and the Wayland portal cannot select by frame. The
+     * Linux X11 helper matches client windows, which exclude the window-manager decorations, so
+     * there [selectsClientArea] narrows the frame to the window's client area.
      */
-    internal fun captureTargetFor(window: Window): TitledWindow =
-        when (window) {
+    internal fun captureTargetFor(
+        window: Window,
+        selectsSharedTitlesByFrame: Boolean = !HostPlatform.isMacOs() && !HostPlatform.isWayland(),
+        selectsClientArea: Boolean = HostPlatform.isLinux(),
+    ): TitledWindow {
+        val title =
+            when (window) {
+                is Frame -> window.title
+                is Dialog -> window.title
+                else -> return window.asFramedWindow()
+            }
+        if (selectsSharedTitlesByFrame && isSharedTitle(window, title)) {
+            return window.asFramedWindow(clientAreaOnly = selectsClientArea)
+        }
+        return when (window) {
             is Frame -> window.asTitledWindow()
-            is Dialog -> window.asTitledWindow()
-            else -> window.asFramedWindow()
+            else -> (window as Dialog).asTitledWindow()
+        }
+    }
+
+    private fun isSharedTitle(window: Window, title: String?): Boolean {
+        if (title.isNullOrBlank()) return false
+        return Window.getWindows().any { other ->
+            other !== window && other.isDisplayable && other.titleOrNull() == title
+        }
+    }
+
+    private fun Window.titleOrNull(): String? =
+        when (this) {
+            is Frame -> title
+            is Dialog -> title
+            else -> null
         }
 
     internal fun <T> withCaptureLock(window: Window, action: () -> T): T {

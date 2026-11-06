@@ -45,11 +45,26 @@ internal class FramedWindow(val logicalFrame: Rectangle, val deviceFrame: Rectan
  *
  * The frame is fixed at this moment. If the window moves before the helper looks for it, the helper
  * finds no match and the capture fails instead of returning another window.
+ *
+ * With [clientAreaOnly], the frame excludes the window's insets (its window-manager decorations).
+ * The Linux X11 helper matches client windows, so a decorated window needs this there.
  */
-internal fun Window.asFramedWindow(isWindows: Boolean = HostPlatform.isWindows()): FramedWindow {
+internal fun Window.asFramedWindow(
+    isWindows: Boolean = HostPlatform.isWindows(),
+    clientAreaOnly: Boolean = false,
+): FramedWindow {
     val result = AtomicReference<FramedWindow>()
     val read = {
         val logical = Rectangle(bounds)
+        if (clientAreaOnly) {
+            val insets = insets
+            logical.setBounds(
+                logical.x + insets.left,
+                logical.y + insets.top,
+                logical.width - insets.left - insets.right,
+                logical.height - insets.top - insets.bottom,
+            )
+        }
         val configuration = graphicsConfiguration
         val transform = configuration.defaultTransform
         val screen = configuration.bounds
