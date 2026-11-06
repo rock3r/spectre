@@ -19,5 +19,6 @@
     <Compile Include="../MonitorCaptureSelection.cs" Link="MonitorCaptureSelection.cs" />
     <Compile Include="../WindowFrameMatch.cs" Link="WindowFrameMatch.cs" />
     <Compile Include="../SampleClock.cs" Link="SampleClock.cs" />
+    <Compile Include="../StillsProtocol.cs" Link="StillsProtocol.cs" />
   </ItemGroup>
 </Project>

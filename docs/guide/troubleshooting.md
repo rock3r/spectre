@@ -373,6 +373,12 @@ target frontmost and unobscured in that fallback mode (Linux X11 region and some
 cases still need visibility). For native window stills on Linux, install GStreamer and
 include `spectre-recording` with the platform helper on the test runtime classpath.
 
+On Windows, Spectre keeps one capture helper open per window while it takes stills of that
+window. It closes the helper after 2 s without a still. A visual-idle sample of a warm window
+takes about 0.15 s, so three stable samples fit inside one blink of a text caret. Earlier
+versions started a new helper for each still and took about 0.6 s per sample, so a focused
+text field could stop `waitForVisualIdle()` from settling.
+
 Check the node's interaction state when comparing colours from `screenshot()`.
 A focused, hovered, or pressed node can display a theme overlay, such as a
 state layer, focus halo, or ripple. The overlay blends with the underlying

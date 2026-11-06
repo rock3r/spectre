@@ -3,9 +3,11 @@ package dev.sebastiano.spectre.sample.validation
 import java.awt.GraphicsEnvironment
 import kotlin.test.Test
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assumptions.assumeFalse
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.TestInstance
 
@@ -66,7 +68,45 @@ class WaitForVisualIdleValidationTest {
             }
         }
 
+    /**
+     * #612: a focused text field blinks its caret about every 500 ms. Three stable samples must fit
+     * inside one blink phase, so one window still must take well under 250 ms. Windows only: the
+     * one-shot Windows helper took about 400 ms per still, so the streak never completed there.
+     */
+    @Test
+    fun `visual idle settles while a focused text field caret blinks`() = runBlocking {
+        assumeTrue(isWindows(), "Measures the Windows Graphics Capture still latency")
+        with(fixture.automator) {
+            navigateToScenario("scenario.hidpi")
+            waitForTestTag("hidpi.target.40x0")
+            waitForIdle()
+            // Warm the native capture path once, so the measurement below is steady state.
+            waitForVisualIdle(timeout = 15.seconds, stableFrames = 1)
+
+            // Sample period on a static surface: every sample matches, so the wait takes about
+            // `samples` sample periods. Printed for the #612 before/after numbers.
+            val samples = 10
+            val staticStart = TimeSource.Monotonic.markNow()
+            waitForVisualIdle(timeout = 15.seconds, stableFrames = samples)
+            println(
+                "visual-idle sample period: " +
+                    "${staticStart.elapsedNow().inWholeMilliseconds / samples} ms"
+            )
+
+            navigateToScenario("scenario.focus")
+            click(waitForTestTag("focus.field.first"))
+            eventually(description = "first field focused after click") {
+                if (waitForTestTag("focus.field.first").isFocused) Unit else null
+            }
+            waitForIdle()
+            waitForVisualIdle(timeout = 5.seconds, stableFrames = 3)
+        }
+    }
+
     private companion object {
+        fun isWindows(): Boolean =
+            System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
+
         fun isHostedWindows(): Boolean =
             System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true) &&
                 System.getenv("GITHUB_ACTIONS") == "true"

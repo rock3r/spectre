@@ -6,6 +6,8 @@ import java.nio.file.Path
 internal enum class WindowsGraphicsCaptureMode(val cliValue: String) {
     Screenshot("screenshot"),
     Recording("recording"),
+    /** One capture session that writes a still to stdout per request (#612). No output file. */
+    Stills("stills"),
 }
 
 internal enum class WindowsGraphicsCaptureSource(val cliValue: String) {
@@ -29,12 +31,22 @@ internal data class WindowsGraphicsCaptureArguments(
      * [WindowsGraphicsCaptureSource.Window]. Fixed for the recording lifetime (#186).
      */
     val crop: Rectangle? = null,
-    val output: Path,
+    /** Output file. Null only for [WindowsGraphicsCaptureMode.Stills], which writes to stdout. */
+    val output: Path?,
     val fps: Int,
     val captureCursor: Boolean,
 ) {
 
     init {
+        require((output == null) == (mode == WindowsGraphicsCaptureMode.Stills)) {
+            "output is required for ${mode.cliValue} and not allowed for stills; got $output"
+        }
+        require(
+            mode != WindowsGraphicsCaptureMode.Stills ||
+                source == WindowsGraphicsCaptureSource.Window
+        ) {
+            "stills only supports window capture"
+        }
         when (source) {
             WindowsGraphicsCaptureSource.Window -> {
                 if (frame != null) {
@@ -117,8 +129,10 @@ internal data class WindowsGraphicsCaptureArguments(
         add(fps.toString())
         add("--cursor")
         add(captureCursor.toString())
-        add("--output")
-        add(output.toString())
+        if (output != null) {
+            add("--output")
+            add(output.toString())
+        }
     }
 }
 
