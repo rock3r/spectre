@@ -35,7 +35,7 @@ class WaylandWindowStreamsTest {
         val focus = FakeFocus(size = Dimension(400, 300))
         val binder = FocusWindowStreamBinder(session, focus)
 
-        val stream = binder.bind("main", "k1")
+        val stream = binder.bind("main", "k1", CursorMode.HIDDEN)
 
         assertEquals(Point(25, 25), stream.origin)
         assertEquals(1.0, stream.scale)
@@ -53,7 +53,7 @@ class WaylandWindowStreamsTest {
             )
         val binder = FocusWindowStreamBinder(session, FakeFocus(size = Dimension(400, 300)))
 
-        assertEquals(2.0, binder.bind("main", "k1").scale)
+        assertEquals(2.0, binder.bind("main", "k1", CursorMode.HIDDEN).scale)
     }
 
     @Test
@@ -64,7 +64,9 @@ class WaylandWindowStreamsTest {
         val binder = FocusWindowStreamBinder(session, focus)
 
         val error =
-            assertFailsWith<WaylandCaptureUnavailableException> { binder.bind("main", "k1") }
+            assertFailsWith<WaylandCaptureUnavailableException> {
+                binder.bind("main", "k1", CursorMode.HIDDEN)
+            }
 
         assertEquals(listOf("k1"), session.unbound)
         assertEquals(1, focus.restored)
@@ -109,6 +111,7 @@ class WaylandWindowStreamsTest {
                 windowSize = { Dimension(400, 300) },
                 onWindowClosed = { window, action -> closers[window] = action },
                 keyPrefix = "test",
+                runInBackground = { it() },
             )
         streams.capture("main")
 
@@ -151,6 +154,25 @@ class WaylandWindowStreamsTest {
         streams.capture("second")
 
         assertTrue(closedWhileBinding.get(), "closing must not block on a binding in progress")
+    }
+
+    @Test
+    fun `a recording with the cursor gets its own stream and stills stay cursor-free`() {
+        val session = FakeSession(frameWindow = Rectangle(25, 25, 400, 300))
+        val streams = streams(session, focus = FakeFocus(size = Dimension(400, 300)))
+
+        streams.capture("main")
+        streams.startRecording("main", null, Path.of("/tmp/a.mp4"), RecordingOptions())
+        streams.startRecording(
+            "main",
+            null,
+            Path.of("/tmp/b.mp4"),
+            RecordingOptions(captureCursor = false),
+        )
+        streams.capture("main")
+
+        assertEquals(listOf(CursorMode.HIDDEN, CursorMode.EMBEDDED), session.bindCursorModes)
+        assertEquals(listOf("test-2", "test-1"), session.recordings.map { it.key })
     }
 
     @Test
@@ -197,13 +219,18 @@ class WaylandWindowStreamsTest {
         private val frameSize: Dimension = Dimension(2560, 1440),
     ) : WaylandWindowStreamSession {
         var binds = 0
+        val bindCursorModes = mutableListOf<CursorMode>()
         var screenshots = 0
         var forgetNextScreenshot = false
         val unbound = mutableListOf<String>()
         val recordings = mutableListOf<Command.StartWindowRecording>()
 
-        override fun bindFocused(key: String): Pair<Event.WindowBound, BufferedImage> {
+        override fun bindFocused(
+            key: String,
+            cursorMode: CursorMode,
+        ): Pair<Event.WindowBound, BufferedImage> {
             binds += 1
+            bindCursorModes += cursorMode
             return Event.WindowBound(key, nodeId = 61, logicalSize = listOf(2560, 1440)) to frame()
         }
 

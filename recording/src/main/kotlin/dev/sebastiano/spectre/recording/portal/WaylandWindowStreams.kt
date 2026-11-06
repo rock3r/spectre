@@ -40,6 +40,8 @@ internal class WaylandWindowStreams<W : Any>(
     private val windowSize: (W) -> Dimension,
     private val onWindowClosed: (W, () -> Unit) -> Unit,
     private val keyPrefix: String = "jvm-${ProcessHandle.current().pid()}",
+    /** Runs the helper unbind of a closed window off the EDT. */
+    private val runInBackground: (() -> Unit) -> Unit = ::runOnDaemonThread,
 ) {
     /**
      * Serialises bindings: each one may move keyboard focus. Held while binding, never on close.
@@ -47,23 +49,28 @@ internal class WaylandWindowStreams<W : Any>(
     private val bindLock = Any()
     /** Guards [bound]; held only for map reads and writes, never while waiting on anything. */
     private val mapLock = Any()
-    private val bound = WeakHashMap<W, BoundWindowStream>()
+    private val bound = WeakHashMap<W, MutableMap<CursorMode, BoundWindowStream>>()
     private val counter = AtomicLong()
 
-    /** One frame of [window], cropped to the window's frame (title bar included). */
+    /** One frame of [window], cropped to the window's frame (title bar included), no cursor. */
     fun capture(window: W): BufferedImage =
-        withStream(window) { stream ->
+        withStream(window, CursorMode.HIDDEN) { stream ->
             cropWindowFrame(session.screenshot(stream.key), stream, windowSize(window), null)
         }
 
-    /** Records [window], or [cropInWindow] (AWT units from the window's top-left) inside it. */
+    /**
+     * Records [window], or [cropInWindow] (AWT units from the window's top-left) inside it. Mutter
+     * fixes the cursor mode when it binds a stream, so a recording that shows the pointer uses a
+     * second stream; stills keep the cursor-free one.
+     */
     fun startRecording(
         window: W,
         cropInWindow: Rectangle?,
         output: Path,
         options: RecordingOptions,
-    ): RecordingHandle =
-        withStream(window) { stream ->
+    ): RecordingHandle {
+        val cursor = if (options.captureCursor) CursorMode.EMBEDDED else CursorMode.HIDDEN
+        return withStream(window, cursor) { stream ->
             val region = windowRegionInStream(stream, windowSize(window), cropInWindow)
             session.startRecording(
                 Command.StartWindowRecording(
@@ -77,50 +84,60 @@ internal class WaylandWindowStreams<W : Any>(
                 output,
             )
         }
+    }
 
-    private fun <T> withStream(window: W, action: (BoundWindowStream) -> T): T {
-        val stream = streamFor(window)
+    private fun <T> withStream(
+        window: W,
+        cursor: CursorMode,
+        action: (BoundWindowStream) -> T,
+    ): T {
+        val stream = streamFor(window, cursor)
         return try {
             action(stream)
         } catch (error: WaylandHelperErrorException) {
             if (error.kind != HELPER_ERROR_WINDOW_NOT_BOUND) throw error
             // The session helper restarted, or dropped this JVM's connection and its streams.
-            synchronized(mapLock) { if (bound[window] == stream) bound.remove(window) }
-            action(streamFor(window))
+            synchronized(mapLock) { forget(window, stream.key) }
+            action(streamFor(window, cursor))
         }
     }
 
-    private fun streamFor(window: W): BoundWindowStream {
-        synchronized(mapLock) { bound[window] }
+    private fun streamFor(window: W, cursor: CursorMode): BoundWindowStream {
+        synchronized(mapLock) { bound[window]?.get(cursor) }
             ?.let {
                 return it
             }
         synchronized(bindLock) {
-            synchronized(mapLock) { bound[window] }
+            synchronized(mapLock) { bound[window]?.get(cursor) }
                 ?.let {
                     return it
                 }
-            return bindNew(window)
+            return bindNew(window, cursor)
         }
     }
 
-    private fun bindNew(window: W): BoundWindowStream {
+    private fun bindNew(window: W, cursor: CursorMode): BoundWindowStream {
         val key = "$keyPrefix-${counter.incrementAndGet()}"
-        val stream = binder.bind(window, key)
-        synchronized(mapLock) { bound[window] = stream }
+        val stream = binder.bind(window, key, cursor)
+        synchronized(mapLock) { bound.getOrPut(window) { mutableMapOf() }[cursor] = stream }
         // Runs on the EDT for AWT windows. A binding in progress waits on the EDT for focus, so
         // this must take neither the bind lock nor the session client's lock on the EDT.
         onWindowClosed(window) {
-            synchronized(mapLock) { if (bound[window]?.key == key) bound.remove(window) }
+            synchronized(mapLock) { forget(window, key) }
             unbindInBackground(key)
         }
         return stream
     }
 
+    /** Drops the binding [key] of [window]. Callers hold [mapLock]. */
+    private fun forget(window: W, key: String) {
+        val streams = bound[window] ?: return
+        streams.entries.removeIf { it.value.key == key }
+        if (streams.isEmpty()) bound.remove(window)
+    }
+
     private fun unbindInBackground(key: String) {
-        Thread.ofPlatform().daemon().name("spectre-wayland-window-unbind").start {
-            runCatching { session.unbind(key) }
-        }
+        runInBackground { runCatching { session.unbind(key) } }
     }
 }
 
@@ -140,13 +157,13 @@ internal data class BoundWindowStream(
  * window by keyboard focus; a lookup by Mutter window id can replace it without touching callers.
  */
 internal fun interface WaylandWindowStreamBinder<W : Any> {
-    fun bind(window: W, key: String): BoundWindowStream
+    fun bind(window: W, key: String, cursor: CursorMode): BoundWindowStream
 }
 
 /** The session-helper operations window capture uses. */
 internal interface WaylandWindowStreamSession {
     /** Binds the focused window under [key]; returns the bind event and the first frame. */
-    fun bindFocused(key: String): Pair<Event.WindowBound, BufferedImage>
+    fun bindFocused(key: String, cursorMode: CursorMode): Pair<Event.WindowBound, BufferedImage>
 
     fun screenshot(key: String): BufferedImage
 
@@ -164,11 +181,11 @@ internal class FocusWindowStreamBinder<W : Any>(
     private val session: WaylandWindowStreamSession,
     private val focus: WindowFocus<W>,
 ) : WaylandWindowStreamBinder<W> {
-    override fun bind(window: W, key: String): BoundWindowStream {
+    override fun bind(window: W, key: String, cursor: CursorMode): BoundWindowStream {
         val expected = focus.size(window)
         val handoff = focus.focus(window)
         try {
-            val (event, frame) = session.bindFocused(key)
+            val (event, frame) = session.bindFocused(key, cursor)
             val content = opaqueContentBounds(frame)
             val scale = content?.let { matchingScale(it, expected, streamScale(frame, event)) }
             if (content == null || scale == null) {
@@ -269,12 +286,14 @@ internal class AwtWindowFocus(
 /** [WaylandWindowStreamSession] over the session helper's unix socket. */
 internal class HelperWindowStreamSession(private val client: WaylandSessionClient) :
     WaylandWindowStreamSession {
-    override fun bindFocused(key: String): Pair<Event.WindowBound, BufferedImage> =
-        withFrameFile { output ->
-            val event = mutterCall { client.send(Command.BindFocusedWindow(key, output)) }
-            check(event is Event.WindowBound) { "unexpected reply to bind_focused_window: $event" }
-            event to readFrame(output)
-        }
+    override fun bindFocused(
+        key: String,
+        cursorMode: CursorMode,
+    ): Pair<Event.WindowBound, BufferedImage> = withFrameFile { output ->
+        val event = mutterCall { client.send(Command.BindFocusedWindow(key, output, cursorMode)) }
+        check(event is Event.WindowBound) { "unexpected reply to bind_focused_window: $event" }
+        event to readFrame(output)
+    }
 
     override fun screenshot(key: String): BufferedImage = withFrameFile { output ->
         mutterCall { client.send(Command.WindowScreenshot(key, output)) }
@@ -429,6 +448,10 @@ private const val OPAQUE_ALPHA = 255
 private const val SIZE_TOLERANCE_PX = 2.0
 
 private fun awtWindowSize(window: Window): Dimension = onEdt { window.size }
+
+private fun runOnDaemonThread(action: () -> Unit) {
+    Thread.ofPlatform().daemon().name("spectre-wayland-window-unbind").start(action)
+}
 
 private fun Window.describe(): String =
     when (this) {

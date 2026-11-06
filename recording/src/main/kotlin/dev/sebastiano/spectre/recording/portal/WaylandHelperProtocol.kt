@@ -93,6 +93,8 @@ internal sealed interface Command {
     data class BindFocusedWindow(
         @SerialName("key") val key: String,
         @SerialName("output") val output: String,
+        /** Mutter fixes the cursor mode when it binds the stream. */
+        @SerialName("cursor_mode") val cursorMode: CursorMode = CursorMode.HIDDEN,
     ) : Command
 
     /** Session only. Writes one RGBA PNG frame of the window bound under [key]. */

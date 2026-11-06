@@ -323,9 +323,17 @@ fn dispatch(
     client_id: u64,
 ) -> Event {
     match command {
-        Command::BindFocusedWindow { key, output } => {
-            window_event(bind_focused_window(windows, &key, &output, client_id))
-        }
+        Command::BindFocusedWindow {
+            key,
+            output,
+            cursor_mode,
+        } => window_event(bind_focused_window(
+            windows,
+            &key,
+            &output,
+            cursor_mode,
+            client_id,
+        )),
         Command::WindowScreenshot { key, output } => {
             window_event(window_screenshot(windows, &key, &output))
         }
@@ -533,13 +541,14 @@ fn bind_focused_window(
     windows: &Mutex<MutterWindowStreams>,
     key: &str,
     output: &str,
+    cursor_mode: crate::protocol::CursorMode,
     client_id: u64,
 ) -> Result<Event> {
     let bound = {
         let mut guard = windows
             .lock()
             .map_err(|e| anyhow::anyhow!("window stream mutex poisoned: {e}"))?;
-        guard.bind_focused(key, client_id)?
+        guard.bind_focused(key, client_id, cursor_mode)?
     };
     let output = PathBuf::from(output);
     if let Err(e) = write_window_frame(bound.node_id, &output) {

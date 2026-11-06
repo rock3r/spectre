@@ -13,6 +13,7 @@
 //! binding lasts as long as its Mutter session, so later frames need no focus change.
 
 use crate::portal::{make_options, variant};
+use crate::protocol::CursorMode;
 use anyhow::{anyhow, bail, Context, Result};
 use dbus::arg::{PropMap, RefArg};
 use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
@@ -28,8 +29,14 @@ const SESSION_INTERFACE: &str = "org.gnome.Mutter.ScreenCast.Session";
 const STREAM_INTERFACE: &str = "org.gnome.Mutter.ScreenCast.Stream";
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 const STREAM_ADDED_TIMEOUT: Duration = Duration::from_secs(10);
-/// `cursor-mode` 0: the cursor is not drawn into the window frames.
-const CURSOR_MODE_HIDDEN: u32 = 0;
+/// Mutter's `cursor-mode`: 0 hidden, 1 embedded in the frames, 2 as PipeWire metadata.
+fn mutter_cursor_mode(mode: CursorMode) -> u32 {
+    match mode {
+        CursorMode::Hidden => 0,
+        CursorMode::Embedded => 1,
+        CursorMode::Metadata => 2,
+    }
+}
 
 /// Error kind for a desktop without Mutter's ScreenCast API (KDE, wlroots, ...). The JVM turns it
 /// into a fail-fast error: Spectre does not fall back to the portal's per-window dialog.
@@ -120,10 +127,15 @@ impl MutterWindowStreams {
     }
 
     /// Bind a new Mutter window stream to the window that has keyboard focus now.
-    pub fn bind_focused(&mut self, key: &str, owner: u64) -> Result<BoundWindow> {
+    pub fn bind_focused(
+        &mut self,
+        key: &str,
+        owner: u64,
+        cursor_mode: CursorMode,
+    ) -> Result<BoundWindow> {
         self.unbind(key);
         let conn = self.connection()?;
-        let bound = bind_focused_window(conn, owner)?;
+        let bound = bind_focused_window(conn, owner, cursor_mode)?;
         self.windows.insert(key.to_string(), bound.clone());
         Ok(bound)
     }
@@ -163,7 +175,11 @@ fn stop_session(conn: &Connection, session_path: &str) {
     }
 }
 
-fn bind_focused_window(conn: &Connection, owner: u64) -> Result<BoundWindow> {
+fn bind_focused_window(
+    conn: &Connection,
+    owner: u64,
+    cursor_mode: CursorMode,
+) -> Result<BoundWindow> {
     let manager = conn.with_proxy(
         MUTTER_SCREEN_CAST_BUS,
         MUTTER_SCREEN_CAST_PATH,
@@ -188,7 +204,7 @@ fn bind_focused_window(conn: &Connection, owner: u64) -> Result<BoundWindow> {
             }
         })?;
     let session_path = session_path.to_string();
-    match record_and_start(conn, &session_path, owner) {
+    match record_and_start(conn, &session_path, owner, cursor_mode) {
         Ok(bound) => Ok(bound),
         Err(e) => {
             stop_session(conn, &session_path);
@@ -197,10 +213,15 @@ fn bind_focused_window(conn: &Connection, owner: u64) -> Result<BoundWindow> {
     }
 }
 
-fn record_and_start(conn: &Connection, session_path: &str, owner: u64) -> Result<BoundWindow> {
+fn record_and_start(
+    conn: &Connection,
+    session_path: &str,
+    owner: u64,
+    cursor_mode: CursorMode,
+) -> Result<BoundWindow> {
     let session = conn.with_proxy(MUTTER_SCREEN_CAST_BUS, session_path, CALL_TIMEOUT);
     // No "window-id": Mutter records the window that has keyboard focus.
-    let properties = make_options([("cursor-mode", variant(CURSOR_MODE_HIDDEN))]);
+    let properties = make_options([("cursor-mode", variant(mutter_cursor_mode(cursor_mode)))]);
     let (stream_path,): (DBusPath,) = session
         .method_call(SESSION_INTERFACE, "RecordWindow", (properties,))
         .map_err(|e| anyhow!("org.gnome.Mutter.ScreenCast.Session.RecordWindow: {e}"))?;
@@ -317,6 +338,13 @@ mod tests {
         let mut keys = keys_owned_by(&windows, 3);
         keys.sort();
         assert_eq!(keys, vec!["a".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn cursor_modes_map_to_mutter_values() {
+        assert_eq!(mutter_cursor_mode(CursorMode::Hidden), 0);
+        assert_eq!(mutter_cursor_mode(CursorMode::Embedded), 1);
+        assert_eq!(mutter_cursor_mode(CursorMode::Metadata), 2);
     }
 
     #[test]

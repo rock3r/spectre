@@ -22,7 +22,13 @@ pub enum Command {
     /// Session only. Bind a GNOME Mutter window stream to the window that has keyboard focus now,
     /// keep it under `key`, and write its first frame to `output` as an RGBA PNG. The JVM focuses
     /// the window first and checks the frame before it trusts the binding.
-    BindFocusedWindow { key: String, output: String },
+    BindFocusedWindow {
+        key: String,
+        output: String,
+        /// Mutter fixes the cursor mode when it binds the stream.
+        #[serde(default = "hidden_cursor")]
+        cursor_mode: CursorMode,
+    },
     /// Session only. Write one RGBA PNG frame of the window bound under `key` to `output`.
     WindowScreenshot { key: String, output: String },
     /// Session only. Record the window bound under `key`, cropped to `region` in stream pixels.
@@ -197,4 +203,8 @@ fn default_capture_backend() -> CaptureBackend {
 
 fn default_capture_target() -> CaptureTarget {
     CaptureTarget::Region
+}
+
+fn hidden_cursor() -> CursorMode {
+    CursorMode::Hidden
 }
