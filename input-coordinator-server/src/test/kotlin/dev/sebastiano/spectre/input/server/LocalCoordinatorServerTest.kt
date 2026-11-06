@@ -77,13 +77,13 @@ class LocalCoordinatorServerTest {
 
         val secondFuture =
             executor.submit<CoordinatedInputLease> {
-                secondClient.acquire(Duration.ofSeconds(2), "second click")
+                secondClient.acquire(QUEUED_ACQUIRE_TIMEOUT, "second click")
             }
         awaitWaiterCount(1)
         assertFalse(secondFuture.isDone)
 
         firstLease.close()
-        val secondLease = secondFuture.get(2, TimeUnit.SECONDS)
+        val secondLease = secondFuture.get(QUEUED_ACQUIRE_TIMEOUT.seconds, TimeUnit.SECONDS)
         resources.add(secondLease)
         assertNotEquals(firstLease.token.leaseId, secondLease.token.leaseId)
     }
@@ -106,7 +106,7 @@ class LocalCoordinatorServerTest {
         assertFalse(secondFuture.isDone)
 
         firstLease.close()
-        resources += secondFuture.get(2, TimeUnit.SECONDS)
+        resources += secondFuture.get(QUEUED_ACQUIRE_TIMEOUT.seconds, TimeUnit.SECONDS)
     }
 
     @Test
@@ -119,7 +119,7 @@ class LocalCoordinatorServerTest {
         resources += AutoCloseable { executor.shutdownNow() }
         val secondFuture =
             executor.submit<CoordinatedInputLease> {
-                secondClient.acquire(Duration.ofSeconds(2), "second click")
+                secondClient.acquire(QUEUED_ACQUIRE_TIMEOUT, "second click")
             }
         awaitWaiterCount(1)
 
@@ -128,7 +128,7 @@ class LocalCoordinatorServerTest {
         assertFalse(secondFuture.isDone)
         firstLease.close()
 
-        resources.add(secondFuture.get(2, TimeUnit.SECONDS))
+        resources.add(secondFuture.get(QUEUED_ACQUIRE_TIMEOUT.seconds, TimeUnit.SECONDS))
     }
 
     @Test
@@ -148,7 +148,7 @@ class LocalCoordinatorServerTest {
         awaitWaiterCount(1)
         val third =
             executor.submit<CoordinatedInputLease> {
-                thirdClient.acquire(Duration.ofSeconds(2), "third click")
+                thirdClient.acquire(QUEUED_ACQUIRE_TIMEOUT, "third click")
             }
         awaitWaiterCount(2)
 
@@ -156,7 +156,7 @@ class LocalCoordinatorServerTest {
         awaitWaiterCount(1)
         firstLease.close()
 
-        resources += third.get(2, TimeUnit.SECONDS)
+        resources += third.get(QUEUED_ACQUIRE_TIMEOUT.seconds, TimeUnit.SECONDS)
     }
 
     @Test
@@ -175,7 +175,7 @@ class LocalCoordinatorServerTest {
         awaitWaiterCount(1)
         val sibling =
             executor.submit<CoordinatedInputLease> {
-                waitingClient.acquire(Duration.ofSeconds(5), "sibling click")
+                waitingClient.acquire(QUEUED_ACQUIRE_TIMEOUT, "sibling click")
             }
         awaitWaiterCount(2)
 
@@ -183,7 +183,7 @@ class LocalCoordinatorServerTest {
         awaitWaiterCount(1)
         holder.close()
 
-        resources += sibling.get(2, TimeUnit.SECONDS)
+        resources += sibling.get(QUEUED_ACQUIRE_TIMEOUT.seconds, TimeUnit.SECONDS)
     }
 
     @Test
@@ -220,11 +220,9 @@ class LocalCoordinatorServerTest {
         val secondClient = client("second")
         val executor = Executors.newSingleThreadExecutor()
         resources += AutoCloseable { executor.shutdownNow() }
-        // The waiter must outlive the status polling and both revoke calls below. With a 2 s
-        // acquire timeout it could expire on a slow runner before the forced takeover (#593).
         val waiting =
             executor.submit<CoordinatedInputLease> {
-                secondClient.acquire(SLOW_RUNNER_ACQUIRE_TIMEOUT, "second click")
+                secondClient.acquire(QUEUED_ACQUIRE_TIMEOUT, "second click")
             }
         awaitWaiterCount(1)
         assertFalse(waiting.isDone)
@@ -245,7 +243,7 @@ class LocalCoordinatorServerTest {
                     force = true,
                 )
         assertTrue(forced.unsafeTakeover)
-        resources.add(waiting.get(SLOW_RUNNER_ACQUIRE_TIMEOUT.seconds, TimeUnit.SECONDS))
+        resources.add(waiting.get(QUEUED_ACQUIRE_TIMEOUT.seconds, TimeUnit.SECONDS))
     }
 
     @Test
@@ -260,7 +258,7 @@ class LocalCoordinatorServerTest {
         resources += AutoCloseable { executor.shutdownNow() }
         val waiting =
             executor.submit<CoordinatedInputLease> {
-                waitingClient.acquire(Duration.ofSeconds(2), "click")
+                waitingClient.acquire(QUEUED_ACQUIRE_TIMEOUT, "click")
             }
         awaitWaiterCount(1)
         assertFalse(waiting.isDone)
@@ -275,7 +273,7 @@ class LocalCoordinatorServerTest {
             )
 
         assertTrue(forced.unsafeTakeover)
-        resources += waiting.get(2, TimeUnit.SECONDS)
+        resources += waiting.get(QUEUED_ACQUIRE_TIMEOUT.seconds, TimeUnit.SECONDS)
     }
 
     @Test
@@ -372,7 +370,7 @@ class LocalCoordinatorServerTest {
         resources += AutoCloseable { executor.shutdownNow() }
         val waiting =
             executor.submit<CoordinatedInputLease> {
-                secondClient.acquire(Duration.ofSeconds(5), "second click")
+                secondClient.acquire(QUEUED_ACQUIRE_TIMEOUT, "second click")
             }
         awaitWaiterCount(1)
 
@@ -381,7 +379,7 @@ class LocalCoordinatorServerTest {
         awaitLeaseInvalid(firstLease)
         firstLease.close()
 
-        val secondLease = waiting.get(2, TimeUnit.SECONDS)
+        val secondLease = waiting.get(QUEUED_ACQUIRE_TIMEOUT.seconds, TimeUnit.SECONDS)
         resources += secondLease
         secondLease.close()
         resources += firstClient.acquire(Duration.ofSeconds(2), "client reused after revoke")
@@ -420,7 +418,7 @@ class LocalCoordinatorServerTest {
         resources += AutoCloseable { executor.shutdownNow() }
         val secondFuture =
             executor.submit<CoordinatedInputLease> {
-                secondClient.acquire(Duration.ofSeconds(2), "second click")
+                secondClient.acquire(QUEUED_ACQUIRE_TIMEOUT, "second click")
             }
         awaitWaiterCount(1)
 
@@ -435,7 +433,7 @@ class LocalCoordinatorServerTest {
                 )
 
         assertTrue(forced.unsafeTakeover)
-        resources.add(secondFuture.get(2, TimeUnit.SECONDS))
+        resources.add(secondFuture.get(QUEUED_ACQUIRE_TIMEOUT.seconds, TimeUnit.SECONDS))
     }
 
     private fun startServer(
@@ -504,6 +502,16 @@ class LocalCoordinatorServerTest {
     private companion object {
         val STATUS_POLL_TIMEOUT: Duration = Duration.ofSeconds(10)
         const val STATUS_POLL_INTERVAL_MILLIS: Long = 10
-        val SLOW_RUNNER_ACQUIRE_TIMEOUT: Duration = Duration.ofSeconds(10)
+
+        /**
+         * Acquire timeout for a request the test queues and only releases later.
+         *
+         * The timeout starts when the request is sent, and the request then waits while the test
+         * polls STATUS and revokes or releases the holder. Those polls may take up to
+         * [STATUS_POLL_TIMEOUT] each, so a waiter with a 2 s timeout gave up before its turn on a
+         * slow Windows runner (#593, #615). A passing test is not slower: the waiter returns as
+         * soon as it is granted the lease.
+         */
+        val QUEUED_ACQUIRE_TIMEOUT: Duration = STATUS_POLL_TIMEOUT.multipliedBy(3)
     }
 }
