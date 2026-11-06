@@ -18,66 +18,6 @@ import kotlin.test.assertTrue
 class ScreenCaptureKitScreenshotterTest {
 
     @Test
-    fun `captureWindow does not mutate a uniquely titled AWT window`() {
-        val factory = ScreenshotHelperProcessFactory()
-        val screenshotter =
-            ScreenCaptureKitScreenshotter(
-                helperExtractor =
-                    HelperBinaryExtractor(
-                        envLookup = { null },
-                        sysPropLookup = { null },
-                        materialLocator = {
-                            helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf())
-                        },
-                        targetDirProvider = { Path.of("/tmp") },
-                    ),
-                processFactory = factory,
-                requireScreenCaptureAccess = {},
-            )
-        val window =
-            object : TitledWindow, TitleDiscriminationAware {
-                override var title: String? = "Unique title"
-                override val bounds: Rectangle = Rectangle(0, 0, 100, 100)
-                override val requiresTitleDiscriminator: Boolean = false
-            }
-
-        screenshotter.captureWindow(window, 4242L)
-
-        assertEquals("Unique title", window.title)
-        assertContainsSequence(factory.lastArgv, listOf("--title-contains", "Unique title"))
-    }
-
-    @Test
-    fun `captureWindow selects an untitled window by its frame in points`() {
-        val factory = ScreenshotHelperProcessFactory()
-        val screenshotter =
-            ScreenCaptureKitScreenshotter(
-                helperExtractor =
-                    HelperBinaryExtractor(
-                        envLookup = { null },
-                        sysPropLookup = { null },
-                        materialLocator = {
-                            helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf())
-                        },
-                        targetDirProvider = { Path.of("/tmp") },
-                    ),
-                processFactory = factory,
-                requireScreenCaptureAccess = {},
-            )
-        val window =
-            FramedWindow(
-                logicalFrame = Rectangle(-10, 20, 300, 200),
-                deviceFrame = Rectangle(-20, 40, 600, 400),
-            )
-
-        screenshotter.captureWindow(window, 4242L)
-
-        assertContainsSequence(factory.lastArgv, listOf("--frame", "-10,20,300,200"))
-        assertContainsSequence(factory.lastArgv, listOf("--pid", "4242"))
-        assertTrue("--title-contains" !in factory.lastArgv, "argv: ${factory.lastArgv}")
-    }
-
-    @Test
     fun `captureWindow explains a frame that matches several windows`() {
         val factory =
             ScreenshotHelperProcessFactory(process = SuccessfulScreenshotHelperProcess(exit = 7))

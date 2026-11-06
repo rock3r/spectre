@@ -150,6 +150,22 @@ class JWindowPopupCaptureValidationTest {
         runBlocking { fixture.automator.waitForVisualIdle(timeout = 15.seconds, stableFrames = 2) }
     }
 
+    @Test
+    fun `waitForVisualIdle settles within the default timeout while a JWindow popup is open`() {
+        assumeFalse(
+            isWaylandSession(),
+            "Wayland cannot capture an untitled window natively; visual idle cannot sample it",
+        )
+        popupWindowIndex()
+        // Warm the native capture path first. A downstream Compose Desktop app hit this after its
+        // UI had already been captured, so a cold helper start is not what this test measures.
+        runBlocking { fixture.automator.waitForVisualIdle(timeout = 15.seconds, stableFrames = 1) }
+
+        // The default timeout and streak: every sample captures the owner and the popup, and
+        // three stable samples in a row must fit in 5 seconds.
+        runBlocking { fixture.automator.waitForVisualIdle(timeout = 5.seconds) }
+    }
+
     private fun popupWindowIndex(): Int {
         fixture.automator.refreshWindows()
         val target = checkNotNull(popup)

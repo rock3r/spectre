@@ -11,8 +11,10 @@ import UniformTypeIdentifiers
 // MARK: - CLI contract
 //
 // spectre-screencapture
-//   --mode <recording|screenshot|preflight|request|guide-permissions>
+//   --mode <recording|screenshot|stills|preflight|request|guide-permissions>
 //                              Optional. Default recording.
+//                              stills:    keeps one stream on the window and answers still
+//                                         requests on stdin (see StillsProtocol.swift).
 //                              preflight: CGPreflightScreenCaptureAccess only (never prompts).
 //                              request:   CGRequestScreenCaptureAccess (human-invoked only).
 //                              guide-permissions: SwiftUI guided Settings flow (#192).
@@ -34,6 +36,7 @@ import UniformTypeIdentifiers
 //                              space. Fixed for the recording lifetime (issue #186).
 //   --display-index <int>      Optional for region source. Default 0; primary display first.
 //   --output <path>            Required for recording/screenshot. Destination .mov/.mp4/.png.
+//                              Not used by stills, which write pixels to stdout.
 //   --fps <int>                Optional. Default 30.
 //   --cursor <true|false>      Optional. Default true.
 //   --file-type <mov|mp4>      Optional. AVAssetWriter container type. Defaults from output path.
@@ -86,6 +89,10 @@ public enum SpectreScreenCaptureCommand {
             case .recording, .screenshot:
                 let recorder = Recorder(arguments: args)
                 try await recorder.run()
+                exit(0)
+            case .stills:
+                let recorder = Recorder(arguments: args)
+                try await recorder.serveStills()
                 exit(0)
             }
         } catch let error as CLIError {
@@ -244,7 +251,7 @@ struct Arguments {
                     throw CLIError(
                         code: 2,
                         message:
-                            "--mode must be recording, screenshot, preflight, request, or guide-permissions"
+                            "--mode must be recording, screenshot, stills, preflight, request, or guide-permissions"
                     )
                 }
                 mode = parsed
@@ -333,6 +340,9 @@ struct Arguments {
                 }
             }
         case .region:
+            if mode == .stills {
+                throw CLIError(code: 2, message: "--mode stills only supports --source window")
+            }
             guard region != nil else { throw CLIError(code: 2, message: "--region is required") }
             guard mode == .recording else {
                 throw CLIError(code: 2, message: "region source only supports --mode recording")
@@ -346,10 +356,16 @@ struct Arguments {
                 throw CLIError(code: 2, message: "--frame is only valid with --source window")
             }
         }
-        guard let output, !output.isEmpty else {
+        // Stills go to stdout; a dummy output keeps the struct total. An explicit output is
+        // rejected so a stills session can never remove a file it does not write.
+        if mode == .stills && output != nil {
+            throw CLIError(code: 2, message: "--output is not valid with --mode stills")
+        }
+        let resolvedOutput = mode == .stills ? "/dev/null" : output
+        guard let resolvedOutput, !resolvedOutput.isEmpty else {
             throw CLIError(code: 2, message: "--output is required")
         }
-        let outputUrl = URL(fileURLWithPath: output)
+        let outputUrl = URL(fileURLWithPath: resolvedOutput)
 
         return Arguments(
             mode: mode,
@@ -373,6 +389,7 @@ struct Arguments {
 enum CaptureMode: String {
     case recording
     case screenshot
+    case stills
     case preflight
     case request
     case guidePermissions = "guide-permissions"
@@ -520,6 +537,59 @@ func selectWindow<ID>(
     }
 }
 
+/// Why an open stills session no longer shows the window its selector picks, or nil (#605).
+///
+/// The JVM keys a session by its selector, so the session's window must still be the one the
+/// selector would pick: its title must still contain the title selector, and its frame must still
+/// be the only frame of `pid` that matches the frame selector.
+func staleSelectorReason<ID: Equatable>(
+    _ candidates: [WindowCandidate<ID>],
+    pid: pid_t,
+    selector: WindowSelector,
+    sessionWindow: ID
+) -> String? {
+    let owned = candidates.filter { $0.pid == pid }
+    guard let current = owned.first(where: { $0.id == sessionWindow }) else {
+        return "the window was closed or hidden"
+    }
+    switch selector {
+    case .titleContains(let titleContains):
+        guard let title = current.title, title.contains(titleContains) else {
+            return "the window title changed"
+        }
+        return nil
+    case .frame(let frame):
+        guard frame.matches(current.frame) else { return "the window frame changed" }
+        if owned.filter({ frame.matches($0.frame) }).count > 1 {
+            return "another window now has the same frame"
+        }
+        return nil
+    }
+}
+
+/// The on-screen windows as `WindowCandidate`s, from the window server's window list. Cheaper than
+/// `SCShareableContent`, so a stills session can check its window on every still.
+func onScreenWindowCandidates() -> [WindowCandidate<CGWindowID>] {
+    guard
+        let list = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+    else {
+        return []
+    }
+    return list.compactMap { info in
+        guard let number = info[kCGWindowNumber as String] as? NSNumber,
+            let owner = info[kCGWindowOwnerPID as String] as? NSNumber,
+            let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary,
+            let bounds = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary)
+        else {
+            return nil
+        }
+        return WindowCandidate(
+            id: CGWindowID(number.uint32Value), pid: owner.int32Value,
+            title: info[kCGWindowName as String] as? String, frame: bounds)
+    }
+}
+
 // Frame handling lives in a final class with a NSLock rather than an actor. Two reasons:
 //
 // 1. SCStream invokes `stream(_:didOutputSampleBuffer:of:)` synchronously on the dispatch
@@ -546,6 +616,12 @@ final class Recorder {
     // error. The waiter inspects the protected state to distinguish the two outcomes.
     private let firstRecordingFrameResult = DispatchSemaphore(value: 0)
     private var framesDropped: Int = 0
+    // Stills mode: the newest complete frame, its geometry, and a counter that tells a still
+    // request whether a frame arrived after it. Guarded by `stillsCondition`, not `lock`.
+    private let stillsCondition = NSCondition()
+    private var latestStill: CVPixelBuffer?
+    private var latestStillGeometry: StillGeometry?
+    private var stillFrameCount: Int = 0
     private var streamDelegate: StreamLogger?
     private var frameOutput: FrameOutput?
     private let ciContext = CIContext()
@@ -796,8 +872,10 @@ final class Recorder {
         // Without this re-check, the unconditional `removeItem` would silently `rm -rf`
         // that directory tree — the destructive failure mode the guard is supposed to
         // prevent. Cheap stat call; runs once per recording start.
-        try validateOutputPath(args.output)
-        try? FileManager.default.removeItem(at: args.output)
+        if args.mode != .stills {
+            try validateOutputPath(args.output)
+            try? FileManager.default.removeItem(at: args.output)
+        }
 
         if args.mode == .recording {
             let writer = try AVAssetWriter(
@@ -868,7 +946,9 @@ final class Recorder {
         // synchronously rather than racing against the helper's window-discovery + SCK init.
         // Keep this line single-token + newline-terminated; the JVM matches via `trim() ==
         // "READY"`.
-        FileHandle.standardOutput.write(Data("READY\n".utf8))
+        if args.mode != .stills {
+            FileHandle.standardOutput.write(Data("READY\n".utf8))
+        }
     }
 
     // Called on the SCStream's frame queue. Holds a lock for the whole pixel append so writer
@@ -881,6 +961,24 @@ final class Recorder {
         framesSeen += 1
         guard sampleBuffer.isValid else {
             framesDropped += 1
+            return
+        }
+
+        if args.mode == .stills {
+            guard isAcceptableFrameStatus(sampleBuffer),
+                let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
+            else {
+                framesDropped += 1
+                return
+            }
+            framesAppended += 1
+            let geometry = stillGeometry(of: sampleBuffer)
+            stillsCondition.lock()
+            latestStill = imageBuffer
+            latestStillGeometry = geometry
+            stillFrameCount += 1
+            stillsCondition.broadcast()
+            stillsCondition.unlock()
             return
         }
 
@@ -1014,6 +1112,146 @@ final class Recorder {
         }
         source.resume()
         self.sigtermSource = source
+    }
+
+    /// `--mode stills` (#605): one stream on the window, one still per `c` line on stdin.
+    ///
+    /// Starting and stopping a ScreenCaptureKit capture costs about a second per still in steady
+    /// state, most of it in the stop: the next capture only starts once the last one has stopped.
+    /// Visual idle takes several stills per sample, so an open stream answers each still from the
+    /// newest frame instead.
+    func serveStills() async throws {
+        // No SIGTERM handler here: stills have no file to finalise, so the default action is fine.
+        let target = try await discoverTarget()
+        guard case .window(let window) = target else {
+            throw CLIError(code: 2, message: "--mode stills only supports --source window")
+        }
+        let selector = try requireWindowSelector()
+        let pid = try requirePid()
+        try await startCapture(target: target)
+        guard waitForStill(after: 0, timeout: .now() + 10) else {
+            throw CLIError(code: 5, message: "timed out waiting for the first stills frame")
+        }
+        let sessionGeometry = currentStillGeometry()
+        writeStdout(Data((StillsProtocol.ready + "\n").utf8))
+
+        loop: while true {
+            switch StillsProtocol.parseCommand(readLine()) {
+            case .quit:
+                break loop
+            case .unknown:
+                continue
+            case .capture:
+                writeStdout(
+                    still(
+                        sessionGeometry: sessionGeometry,
+                        currentSelectorProblem: {
+                            staleSelectorReason(
+                                onScreenWindowCandidates(), pid: pid, selector: selector,
+                                sessionWindow: window.windowID)
+                        }))
+            }
+        }
+        if let stream {
+            try? await stream.stopCapture()
+        }
+    }
+
+    /// The reply to one still request. ScreenCaptureKit delivers a frame only when the window
+    /// changes, so an unchanged window's newest frame is current. A request right after a change
+    /// waits briefly for the frame that shows it.
+    private func still(
+        sessionGeometry: StillGeometry?,
+        currentSelectorProblem: () -> String?
+    ) -> Data {
+        stillsCondition.lock()
+        let requestedAt = stillFrameCount
+        stillsCondition.unlock()
+        _ = waitForStill(after: requestedAt, timeout: .now() + .milliseconds(50))
+
+        if let error = currentPipelineError() {
+            return staleReply("the capture stopped: \(error.localizedDescription)")
+        }
+        // Check the window after the wait: the frame that arrived may be the first one after a
+        // change.
+        if let problem = currentSelectorProblem() {
+            return staleReply(problem)
+        }
+        stillsCondition.lock()
+        let frame = latestStill
+        let geometry = latestStillGeometry
+        stillsCondition.unlock()
+        guard let frame else { return staleReply("no frame") }
+        if let sessionGeometry, let geometry, !sessionGeometry.matches(geometry) {
+            return staleReply("the window size changed")
+        }
+        return frameReply(frame)
+    }
+
+    /// Waits until more than `count` stills frames have arrived, or until `timeout`.
+    private func waitForStill(after count: Int, timeout: DispatchTime) -> Bool {
+        let deadline = Date().addingTimeInterval(
+            Double(Int64(timeout.uptimeNanoseconds) - Int64(DispatchTime.now().uptimeNanoseconds))
+                / 1_000_000_000)
+        stillsCondition.lock()
+        defer { stillsCondition.unlock() }
+        while stillFrameCount <= count {
+            if !stillsCondition.wait(until: deadline) {
+                return stillFrameCount > count
+            }
+        }
+        return true
+    }
+
+    private func currentStillGeometry() -> StillGeometry? {
+        stillsCondition.lock()
+        defer { stillsCondition.unlock() }
+        return latestStillGeometry
+    }
+
+    private func staleReply(_ reason: String) -> Data {
+        Data((StillsProtocol.staleHeader(reason) + "\n").utf8)
+    }
+
+    /// `FRAME <width> <height>` and the BGRA rows, without the pixel buffer's row padding.
+    private func frameReply(_ frame: CVPixelBuffer) -> Data {
+        CVPixelBufferLockBaseAddress(frame, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(frame, .readOnly) }
+        let width = CVPixelBufferGetWidth(frame)
+        let height = CVPixelBufferGetHeight(frame)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(frame)
+        guard let base = CVPixelBufferGetBaseAddress(frame) else {
+            return staleReply("the frame has no pixels")
+        }
+        let rowBytes = width * 4
+        var reply = Data((StillsProtocol.frameHeader(width: width, height: height) + "\n").utf8)
+        reply.reserveCapacity(reply.count + rowBytes * height)
+        for row in 0..<height {
+            reply.append(base.advanced(by: row * bytesPerRow).assumingMemoryBound(to: UInt8.self),
+                count: rowBytes)
+        }
+        return reply
+    }
+
+    private func stillGeometry(of sampleBuffer: CMSampleBuffer) -> StillGeometry? {
+        guard
+            let attachments =
+                CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
+                as? [[SCStreamFrameInfo: Any]],
+            let info = attachments.first,
+            let rectDictionary = info[.contentRect] as? NSDictionary,
+            let contentRect = CGRect(dictionaryRepresentation: rectDictionary as CFDictionary)
+        else {
+            return nil
+        }
+        let contentScale = (info[.contentScale] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 1
+        let scaleFactor = (info[.scaleFactor] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 1
+        return StillGeometry(
+            contentRect: contentRect, contentScale: contentScale, scaleFactor: scaleFactor)
+    }
+
+    private func writeStdout(_ data: Data) {
+        FileHandle.standardOutput.write(data)
     }
 
     private func waitForStop() async {
