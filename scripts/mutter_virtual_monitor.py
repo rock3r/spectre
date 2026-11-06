@@ -128,6 +128,17 @@ def _start_virtual(bus: Any, width: int, height: int, timeout: float) -> tuple[s
         GLib.Variant("(a{sv})", ({},)),
         "(o)",
     ).unpack()[0]
+    try:
+        return session, _record_virtual(bus, GLib, session, before, width, height, timeout)
+    except BaseException:
+        # `follow` retries on the same connection, so do not leave a half-made monitor behind.
+        _stop(bus, session)
+        raise
+
+
+def _record_virtual(
+    bus: Any, GLib: Any, session: str, before: set[str], width: int, height: int, timeout: float
+) -> dict[str, str]:
     mode = {
         "size": GLib.Variant("(uu)", (width, height)),
         "refresh-rate": GLib.Variant("d", 60.0),
@@ -156,9 +167,8 @@ def _start_virtual(bus: Any, width: int, height: int, timeout: float) -> tuple[s
     while time.monotonic() < deadline:
         added = [m for m in current_monitors(bus) if m["connector"] not in before]
         if added:
-            return session, added[0]
+            return added[0]
         time.sleep(0.1)
-    _stop(bus, session)
     raise RuntimeError(
         f"Mutter accepted the virtual monitor but no new monitor appeared "
         f"in GetCurrentState within {timeout:g}s"

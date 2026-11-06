@@ -1836,6 +1836,38 @@ class VirtualMonitorFollowTest(unittest.TestCase):
         )
         self.assertEqual(["error", "create", "added", "remove"], events)
 
+    def test_a_failed_start_stops_the_session_it_created(self):
+        # `follow` retries on the same D-Bus connection, so a half-made monitor must not leak.
+        class FakeVariant:
+            def __init__(self, *args):
+                self.args = args
+
+            def unpack(self):
+                return ("/org/gnome/Mutter/ScreenCast/Session/u9",)
+
+        class FakeGLib:
+            Variant = FakeVariant
+
+        stopped: list[str] = []
+        listings = iter([[], RuntimeError("GetCurrentState failed")])
+
+        def fake_monitors(_bus):
+            item = next(listings)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        module = mutter_virtual_monitor
+        with unittest.mock.patch.object(module, "_gio", return_value=(None, FakeGLib)), \
+                unittest.mock.patch.object(module, "_call", return_value=FakeVariant()), \
+                unittest.mock.patch.object(module, "current_monitors", side_effect=fake_monitors), \
+                unittest.mock.patch.object(
+                    module, "_stop", side_effect=lambda _bus, session: stopped.append(session)
+                ):
+            with self.assertRaises(RuntimeError):
+                module._start_virtual(object(), 1920, 1080, 1.0)
+        self.assertEqual(["/org/gnome/Mutter/ScreenCast/Session/u9"], stopped)
+
     def test_rdp_virtual_monitors_do_not_count_as_physical(self):
         events = self._run([[_MONITOR_META_1], [_MONITOR_META_1], [_MONITOR_META_1]])
         self.assertEqual(["create", "added", "remove"], events)
