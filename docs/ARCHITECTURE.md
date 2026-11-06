@@ -221,3 +221,15 @@ These should remain true as the codebase grows:
 4. Platform-specific integrations should be isolated behind small interfaces at module boundaries.
 5. Research-only shortcuts are acceptable in the sample app. Move reusable behaviour
    into the proper module before it is treated as part of the product surface.
+6. Never substitute a different mechanism for the one the caller asked for. If the requested
+   mechanism is slow, needs consent, or fails, fix it within that mechanism, or fail with a clear
+   error. Do not quietly do something else that only looks similar. The only exception is a
+   substitution that the maintainer explicitly asks for or approves.
+   - A window capture is always a real window capture: the OS captures that window's own
+     pixels, through the platform's window-capture API. It is never replaced by a capture of the
+     screen or monitor cropped to the window's bounds (#355, #559). The two use different OS
+     APIs and give different results. A crop of the screen includes whatever covers the window,
+     and it breaks when the window moves or is hidden.
+   - Cropping a real window capture to a surface inside that window (for example a Compose
+     panel inside its host window) is still a window capture, so it is allowed.
+   - A screen or monitor capture is correct only when the caller asked for the screen.
