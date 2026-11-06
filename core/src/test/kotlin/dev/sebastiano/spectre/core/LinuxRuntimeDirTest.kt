@@ -8,9 +8,15 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.condition.DisabledOnOs
+import org.junit.jupiter.api.condition.OS
 import org.junit.jupiter.api.io.TempDir
 
 /** Mirror of recording's runtime-dir fallback for Bazel-style scrubbed environments (#635). */
+@DisabledOnOs(
+    OS.WINDOWS,
+    disabledReason = "Linux runtime-dir fallback: needs unix:uid ownership and Unix path strings",
+)
 class LinuxRuntimeDirTest {
 
     @Test
