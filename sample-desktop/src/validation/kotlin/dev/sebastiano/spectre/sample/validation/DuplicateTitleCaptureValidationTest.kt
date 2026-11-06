@@ -119,6 +119,10 @@ class DuplicateTitleCaptureValidationTest {
             System.getProperty("os.name").orEmpty().contains("mac", ignoreCase = true),
             "The macOS helper tells windows with the same title apart itself",
         )
+        assumeFalse(
+            isWaylandSession(),
+            "Wayland rejects a shared title before frames matter; the first test covers that error",
+        )
         val index = ownerWindowIndex()
         val twinWindow = checkNotNull(twin)
         val twinBounds = onEdt { Rectangle(twinWindow.bounds) }
