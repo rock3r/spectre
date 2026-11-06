@@ -52,6 +52,8 @@ private fun runRecordingSmoke() {
                     output = output,
                     options = RecordingOptions(frameRate = 30, captureCursor = true),
                 )
+        val recordingStartNanos = System.nanoTime()
+        var recordingStopNanos = recordingStartNanos
         try {
             Thread.sleep(RECORDING_WARMUP_MS)
             SwingUtilities.invokeAndWait {
@@ -67,6 +69,7 @@ private fun runRecordingSmoke() {
             }
             Thread.sleep(RECORDING_AFTER_INPUT_MS)
         } finally {
+            recordingStopNanos = System.nanoTime()
             handle.stop()
         }
 
@@ -74,6 +77,7 @@ private fun runRecordingSmoke() {
         check(bytes > MINIMUM_RECORDING_BYTES) {
             "Expected a non-empty MP4 larger than $MINIMUM_RECORDING_BYTES bytes, got $bytes at $output"
         }
+        checkMp4FollowsWallClock(output, recordingStopNanos - recordingStartNanos)
         println("Windows Graphics Capture recording smoke wrote $bytes bytes -> $output")
     } finally {
         SwingUtilities.invokeLater {
@@ -81,6 +85,44 @@ private fun runRecordingSmoke() {
             frame.dispose()
         }
     }
+}
+
+/**
+ * #610: Windows Graphics Capture delivers a frame only when the window changes. The MP4 must still
+ * last as long as the recording did, so idle stretches are not dropped from the timeline.
+ */
+private fun checkMp4FollowsWallClock(output: Path, wallClockNanos: Long) {
+    val wallClockMs = TimeUnit.NANOSECONDS.toMillis(wallClockNanos)
+    val mp4Ms = readMp4DurationMillis(output)
+    println("MP4 duration ${mp4Ms}ms for a ${wallClockMs}ms recording")
+    check(mp4Ms >= wallClockMs - DURATION_TOLERANCE_MS) {
+        "MP4 lasts ${mp4Ms}ms but the recording ran for ${wallClockMs}ms; idle time was dropped"
+    }
+    check(mp4Ms <= wallClockMs + DURATION_TOLERANCE_MS) {
+        "MP4 lasts ${mp4Ms}ms, longer than the ${wallClockMs}ms recording"
+    }
+}
+
+/** Reads the movie duration from the `mvhd` box (ISO/IEC 14496-12 §8.2.2). */
+private fun readMp4DurationMillis(path: Path): Long {
+    val bytes = Files.readAllBytes(path)
+    val marker = "mvhd".toByteArray(Charsets.US_ASCII)
+    val typeOffset =
+        (0..bytes.size - marker.size).firstOrNull { offset ->
+            marker.indices.all { bytes[offset + it] == marker[it] }
+        } ?: error("No mvhd box in $path")
+    val buffer = java.nio.ByteBuffer.wrap(bytes)
+    val version = bytes[typeOffset + 4].toInt()
+    val fieldsStart = typeOffset + 8
+    val (timescale, duration) =
+        if (version == 1) {
+            buffer.getInt(fieldsStart + 16).toUInt().toLong() to buffer.getLong(fieldsStart + 20)
+        } else {
+            buffer.getInt(fieldsStart + 8).toUInt().toLong() to
+                buffer.getInt(fieldsStart + 12).toUInt().toLong()
+        }
+    check(timescale > 0) { "mvhd timescale is $timescale in $path" }
+    return duration * MILLIS_PER_SECOND / timescale
 }
 
 private fun openRecordingSmokeWindow(): Triple<JFrame, JButton, JPanel> {
@@ -173,6 +215,8 @@ private const val WAIT_TIMEOUT_SECONDS: Long = 5
 private const val WAIT_POLL_MS: Long = 50
 private const val ROBOT_AUTO_DELAY_MS: Int = 40
 private const val MINIMUM_RECORDING_BYTES: Long = 8_192
+private const val DURATION_TOLERANCE_MS: Long = 400
+private const val MILLIS_PER_SECOND: Long = 1_000
 
 private val STARTING_COLOR = Color(0xF7, 0xF7, 0xF7)
 private val CAPTURED_COLOR = Color(0x20, 0xC9, 0x97)

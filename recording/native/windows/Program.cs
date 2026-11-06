@@ -397,8 +397,9 @@ internal static class Program
         private readonly Options options;
         private readonly WgcFrameSource frameSource;
         private readonly CancellationToken stopToken;
-        private readonly TimeSpan frameDuration;
-        private int frameIndex;
+        private readonly SampleClock clock;
+        private readonly System.Diagnostics.Stopwatch sinceFirstSample = new();
+        private byte[]? lastFrame;
 
         private CompressedWindowRecorder(
             Options options,
@@ -408,7 +409,7 @@ internal static class Program
             this.options = options;
             this.frameSource = frameSource;
             this.stopToken = stopToken;
-            frameDuration = TimeSpan.FromSeconds(1.0 / options.Fps);
+            clock = new SampleClock(options.Fps);
         }
 
         public static async Task EncodeAsync(
@@ -479,18 +480,41 @@ internal static class Program
                 return;
             }
 
-            var bytes = frameSource.WaitForFrameBytes(stopToken);
-            if (bytes is null)
+            byte[]? bytes;
+            SampleSlot slot;
+            if (lastFrame is null)
+            {
+                // The timeline starts at the first captured frame.
+                bytes = frameSource.WaitForFrameBytes(stopToken);
+                sinceFirstSample.Start();
+                slot = clock.NextSlot(TimeSpan.Zero);
+            }
+            else
+            {
+                // #610: Windows Graphics Capture delivers frames only when the window changes.
+                // Wait for this sample's slot on the wall clock, then repeat the latest frame,
+                // so idle time stays in the video instead of being dropped.
+                slot = clock.NextSlot(sinceFirstSample.Elapsed);
+                var delay = SampleClock.DelayUntil(slot, sinceFirstSample.Elapsed);
+                if (delay > TimeSpan.Zero && stopToken.WaitHandle.WaitOne(delay))
+                {
+                    args.Request.Sample = null;
+                    return;
+                }
+
+                bytes = frameSource.LatestFrameBytes() ?? lastFrame;
+            }
+
+            if (bytes is null || stopToken.IsCancellationRequested)
             {
                 args.Request.Sample = null;
                 return;
             }
 
-            var timestamp = TimeSpan.FromTicks(frameDuration.Ticks * frameIndex);
-            var sample = MediaStreamSample.CreateFromBuffer(bytes.AsBuffer(), timestamp);
-            sample.Duration = frameDuration;
+            lastFrame = bytes;
+            var sample = MediaStreamSample.CreateFromBuffer(bytes.AsBuffer(), slot.Timestamp);
+            sample.Duration = slot.Duration;
             args.Request.Sample = sample;
-            frameIndex += 1;
         }
     }
 
@@ -853,6 +877,18 @@ internal static class Program
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// The most recent frame, or null before the first one arrives. Frame arrays are never
+        /// changed after they are published, so callers may keep the reference.
+        /// </summary>
+        public byte[]? LatestFrameBytes()
+        {
+            lock (frameLock)
+            {
+                return latestFrame;
+            }
         }
 
         public void Dispose()

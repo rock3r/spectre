@@ -95,6 +95,12 @@ Recording mode writes `READY` to stdout after the Windows Graphics Capture and M
 pipeline is prepared. The parent JVM stops the recording by writing `q` to stdin. The output
 video dimensions are fixed from the target window or region size at capture start.
 
+Windows Graphics Capture delivers a frame only when the captured content changes. The recorder
+does not stamp samples by frame count. `SampleClock` gives each sample a `1 / fps` slot on the
+wall clock, starting at the first captured frame. Each slot gets the latest frame, so an
+unchanged window repeats its frame. When encoding falls behind, the recorder skips the slots
+that are already over. The MP4 duration therefore matches the recording time (#610).
+
 Build locally with:
 
 ```powershell
