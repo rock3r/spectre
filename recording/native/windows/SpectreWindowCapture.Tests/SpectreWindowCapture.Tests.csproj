@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <!-- Windows TFM: the recorder tests encode through Media Foundation (WinRT projections). -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -20,5 +21,6 @@
     <Compile Include="../WindowFrameMatch.cs" Link="WindowFrameMatch.cs" />
     <Compile Include="../SampleClock.cs" Link="SampleClock.cs" />
     <Compile Include="../StillsProtocol.cs" Link="StillsProtocol.cs" />
+    <Compile Include="../CompressedWindowRecorder.cs" Link="CompressedWindowRecorder.cs" />
   </ItemGroup>
 </Project>

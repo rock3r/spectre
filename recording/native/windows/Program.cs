@@ -1,15 +1,11 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using Microsoft.Graphics.Canvas;
 using Windows.Graphics;
 using Windows.Graphics.Capture;
 using Windows.Graphics.DirectX;
-using Windows.Media.Core;
-using Windows.Media.MediaProperties;
-using Windows.Media.Transcoding;
 using WinRT;
 
 internal static class Program
@@ -281,7 +277,8 @@ internal static class Program
         try
         {
             await CompressedWindowRecorder.EncodeAsync(
-                options,
+                options.Output,
+                options.Fps,
                 frameSource,
                 stopSignal.Token,
                 () =>
@@ -492,133 +489,7 @@ internal static class Program
         MonitorEnumProc callback,
         IntPtr data);
 
-    private sealed class CompressedWindowRecorder
-    {
-        private readonly Options options;
-        private readonly WgcFrameSource frameSource;
-        private readonly CancellationToken stopToken;
-        private readonly SampleClock clock;
-        private readonly System.Diagnostics.Stopwatch sinceFirstSample = new();
-        private byte[]? lastFrame;
-
-        private CompressedWindowRecorder(
-            Options options,
-            WgcFrameSource frameSource,
-            CancellationToken stopToken)
-        {
-            this.options = options;
-            this.frameSource = frameSource;
-            this.stopToken = stopToken;
-            clock = new SampleClock(options.Fps);
-        }
-
-        public static async Task EncodeAsync(
-            Options options,
-            WgcFrameSource frameSource,
-            CancellationToken stopToken,
-            Action onReady)
-        {
-            var recorder = new CompressedWindowRecorder(options, frameSource, stopToken);
-            var videoProperties =
-                VideoEncodingProperties.CreateUncompressed(
-                    MediaEncodingSubtypes.Bgra8,
-                    (uint)frameSource.Width,
-                    (uint)frameSource.Height);
-            videoProperties.FrameRate.Numerator = (uint)options.Fps;
-            videoProperties.FrameRate.Denominator = 1;
-
-            var descriptor = new VideoStreamDescriptor(videoProperties);
-            var source = new MediaStreamSource(descriptor)
-            {
-                BufferTime = TimeSpan.Zero,
-                Duration = TimeSpan.FromDays(1),
-            };
-            source.Starting += recorder.OnStarting;
-            source.SampleRequested += recorder.OnSampleRequested;
-
-            var profile = MediaEncodingProfile.CreateMp4(VideoEncodingQuality.HD720p);
-            profile.Video.Subtype = "H264";
-            profile.Video.Width = (uint)frameSource.Width;
-            profile.Video.Height = (uint)frameSource.Height;
-            profile.Video.FrameRate.Numerator = (uint)options.Fps;
-            profile.Video.FrameRate.Denominator = 1;
-            profile.Video.PixelAspectRatio.Numerator = 1;
-            profile.Video.PixelAspectRatio.Denominator = 1;
-
-            await using var output = File.Open(
-                options.Output,
-                FileMode.Create,
-                FileAccess.ReadWrite,
-                FileShare.Read);
-            using var randomAccessStream = output.AsRandomAccessStream();
-            var transcoder = new MediaTranscoder { HardwareAccelerationEnabled = true };
-            var prepared =
-                await transcoder.PrepareMediaStreamSourceTranscodeAsync(
-                    source,
-                    randomAccessStream,
-                    profile);
-            if (!prepared.CanTranscode)
-            {
-                throw new InvalidOperationException(
-                    $"MediaTranscoder rejected the MP4 stream: {prepared.FailureReason}.");
-            }
-
-            onReady();
-            await prepared.TranscodeAsync();
-        }
-
-        private void OnStarting(MediaStreamSource sender, MediaStreamSourceStartingEventArgs args)
-        {
-            args.Request.SetActualStartPosition(TimeSpan.Zero);
-        }
-
-        private void OnSampleRequested(MediaStreamSource sender, MediaStreamSourceSampleRequestedEventArgs args)
-        {
-            if (stopToken.IsCancellationRequested)
-            {
-                args.Request.Sample = null;
-                return;
-            }
-
-            byte[]? bytes;
-            SampleSlot slot;
-            if (lastFrame is null)
-            {
-                // The timeline starts at the first captured frame.
-                bytes = frameSource.WaitForFrameBytes(stopToken);
-                sinceFirstSample.Start();
-                slot = clock.NextSlot(TimeSpan.Zero);
-            }
-            else
-            {
-                // #610: Windows Graphics Capture delivers frames only when the window changes.
-                // Wait for this sample's slot on the wall clock, then repeat the latest frame,
-                // so idle time stays in the video instead of being dropped.
-                slot = clock.NextSlot(sinceFirstSample.Elapsed);
-                var delay = SampleClock.DelayUntil(slot, sinceFirstSample.Elapsed);
-                if (delay > TimeSpan.Zero && stopToken.WaitHandle.WaitOne(delay))
-                {
-                    args.Request.Sample = null;
-                    return;
-                }
-
-                bytes = frameSource.LatestFrameBytes() ?? lastFrame;
-            }
-
-            if (bytes is null || stopToken.IsCancellationRequested)
-            {
-                args.Request.Sample = null;
-                return;
-            }
-
-            lastFrame = bytes;
-            var sample = MediaStreamSample.CreateFromBuffer(bytes.AsBuffer(), slot.Timestamp);
-            sample.Duration = slot.Duration;
-            args.Request.Sample = sample;
-        }
-    }
-
-    private sealed class WgcFrameSource : IDisposable
+    private sealed class WgcFrameSource : IRecordingFrameSource, IDisposable
     {
         private readonly CanvasDevice canvasDevice;
         private readonly GraphicsCaptureItem item;
