@@ -122,7 +122,10 @@ X11, macOS, and Windows keep their input and capture paths.
   helper. `AutoRecorder.startRegion(...)` fails if the artefact is absent. It also
   fails when `RecordingOptions.codec` or `screenIndex` requests an unsupported
   Windows region option. The deprecated `FfmpegRecorder` remains available for
-  explicit legacy use.
+  explicit legacy use. Windows Graphics Capture delivers a frame only when the captured
+  content changes. The helper writes a constant-rate video: it repeats the latest frame
+  in each `1 / frameRate` slot until a new frame arrives. So the video lasts as long as
+  the recording, including idle time.
 - **Linux Xorg/Xvfb sessions** — The helper reads `DISPLAY` and captures through
   GStreamer `ximagesrc`. `LinuxX11Recorder` records fixed regions or a named X11
   window. `LinuxNativeScreenshotter` writes one-frame PNGs through the helper.
