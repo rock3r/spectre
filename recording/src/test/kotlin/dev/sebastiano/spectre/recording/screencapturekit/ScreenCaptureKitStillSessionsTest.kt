@@ -13,6 +13,7 @@ import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
 import javax.imageio.ImageIO
 import kotlin.io.path.deleteIfExists
@@ -185,6 +186,29 @@ class ScreenCaptureKitStillSessionsTest {
         assertTrue(stills.destroyed, "a stills helper still holding its stream must be killed")
     }
 
+    @Test
+    fun `an interrupt while stills sessions stop kills them and cancels the new capture`() {
+        val stills = StillsHelper(frames = listOf(frame()), exitsOnQuit = false)
+        val factory = StillsProcessFactory { stills }
+        val screenshotter = screenshotter(factory)
+        screenshotter.captureWindow(UniqueTitledWindow("Spectre"), 4242L)
+
+        Thread.currentThread().interrupt()
+        val stillInterrupted =
+            try {
+                assertFailsWith<InterruptedException> {
+                    screenshotter.captureWindow(SharedTitleWindow("Shared"), 4242L)
+                }
+                Thread.currentThread().isInterrupted
+            } finally {
+                Thread.interrupted()
+            }
+
+        assertTrue(stillInterrupted, "the caller must still see the interrupt")
+        assertTrue(stills.destroyed, "an interrupted stop must not leave the stills helper running")
+        assertEquals(1, factory.started.size, "a cancelled capture must not start its helper")
+    }
+
     private fun screenshotter(
         factory: StillsProcessFactory,
         idleCloseMillis: Long = 60_000,
@@ -348,10 +372,14 @@ private class StillsHelper(
 
     override fun waitFor(): Int = exited.get()
 
-    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = runCatching {
-        exited.get(timeout, unit)
-    }
-        .isSuccess
+    // Like Process.waitFor, this throws InterruptedException when the caller is interrupted.
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean =
+        try {
+            exited.get(timeout, unit)
+            true
+        } catch (_: TimeoutException) {
+            false
+        }
 
     override fun exitValue(): Int =
         if (exited.isDone) exited.get() else throw IllegalThreadStateException("running")

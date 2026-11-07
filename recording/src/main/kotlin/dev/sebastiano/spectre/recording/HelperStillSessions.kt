@@ -87,7 +87,25 @@ internal open class HelperStillSessions(
         if (open.isEmpty()) return
         open.forEach { it.close() }
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(stopWaitMillis)
-        open.forEach { it.awaitExit(deadline) }
+        var interrupted: InterruptedException? = null
+        for (session in open) {
+            if (interrupted != null) {
+                session.kill()
+                continue
+            }
+            try {
+                session.awaitExit(deadline)
+            } catch (e: InterruptedException) {
+                // Do not leave a helper holding its stream. The caller still sees the interrupt,
+                // so it does not start its capture.
+                session.kill()
+                interrupted = e
+            }
+        }
+        if (interrupted != null) {
+            Thread.currentThread().interrupt()
+            throw interrupted
+        }
     }
 
     private fun sessionFor(
@@ -228,13 +246,23 @@ private constructor(
 
     /**
      * Waits until the helper exits or [deadlineNanos] passes, then kills a helper still running.
+     * Throws [InterruptedException] if the wait is interrupted; the helper may still be running.
      */
     fun awaitExit(deadlineNanos: Long) {
         val remaining = (deadlineNanos - System.nanoTime()).coerceAtLeast(0)
-        val exited = runCatching { process.waitFor(remaining, TimeUnit.NANOSECONDS) }
-        if (exited.getOrDefault(false) != true) {
-            process.destroyForcibly()
-            runCatching { process.waitFor(KILL_WAIT_MILLIS, TimeUnit.MILLISECONDS) }
+        if (!process.waitFor(remaining, TimeUnit.NANOSECONDS)) kill()
+    }
+
+    /** Kills the helper and waits briefly for it to go, without reacting to an interrupt. */
+    fun kill() {
+        process.destroyForcibly()
+        val wasInterrupted = Thread.interrupted()
+        try {
+            process.waitFor(KILL_WAIT_MILLIS, TimeUnit.MILLISECONDS)
+        } catch (_: InterruptedException) {
+            // A second interrupt: the helper was already told to die, so stop waiting.
+        } finally {
+            if (wasInterrupted) Thread.currentThread().interrupt()
         }
     }
 
