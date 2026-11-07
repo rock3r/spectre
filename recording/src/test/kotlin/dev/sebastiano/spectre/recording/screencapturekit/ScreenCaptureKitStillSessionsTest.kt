@@ -194,15 +194,16 @@ class ScreenCaptureKitStillSessionsTest {
         screenshotter.captureWindow(UniqueTitledWindow("Spectre"), 4242L)
 
         Thread.currentThread().interrupt()
-        val stillInterrupted =
-            try {
-                assertFailsWith<InterruptedException> {
-                    screenshotter.captureWindow(SharedTitleWindow("Shared"), 4242L)
-                }
-                Thread.currentThread().isInterrupted
-            } finally {
-                Thread.interrupted()
+        var stillInterrupted = false
+        try {
+            assertFailsWith<InterruptedException> {
+                screenshotter.captureWindow(SharedTitleWindow("Shared"), 4242L)
             }
+            stillInterrupted = Thread.currentThread().isInterrupted
+        } finally {
+            // Clear the flag so it does not leak into other tests on this thread.
+            Thread.interrupted()
+        }
 
         assertTrue(stillInterrupted, "the caller must still see the interrupt")
         assertTrue(stills.destroyed, "an interrupted stop must not leave the stills helper running")
