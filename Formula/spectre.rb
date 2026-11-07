@@ -1,15 +1,15 @@
 class Spectre < Formula
   desc "Agent-facing CLI and MCP server for Spectre Compose Desktop automation"
   homepage "https://github.com/rock3r/spectre"
-  version "0.8.0"
+  version "0.9.0"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/rock3r/spectre/releases/download/v0.8.0/spectre-macosArm64.zip"
-      sha256 "0bae798aa44f49869aa41bbc1797f3dd2c318c0619b54eef7810cb10aa42b533"
+      url "https://github.com/rock3r/spectre/releases/download/v0.9.0/spectre-macosArm64.zip"
+      sha256 "7bee663dbf4e7b8b089bd989cf93c327a2dbc4afa894c997f4407e18ad73371b"
     else
-      url "https://github.com/rock3r/spectre/releases/download/v0.8.0/spectre-macosX64.zip"
-      sha256 "a92d0167e481a964121a6ade1af448a6a435be0e052bcb799fcc25627ee0d09e"
+      url "https://github.com/rock3r/spectre/releases/download/v0.9.0/spectre-macosX64.zip"
+      sha256 "b36c5816795c9ec43ff816ec012500490171709b015ac11baacbc2cf123559e0"
     end
   end
 
