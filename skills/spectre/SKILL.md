@@ -156,7 +156,10 @@ Choose a driver for the interactions the test needs:
   global focus and supports OS shortcuts and focus handoffs. The no-argument
   form remains uncoordinated while input coordination is experimental. If
   several processes need real input, use `RobotDriver(InputLeasePolicy.Required)`
-  and read `references/input-coordination.md`.
+  and read `references/input-coordination.md`. On Linux Wayland, use the no-argument
+  `RobotDriver()`: it sends input through Spectre's portal session. `RobotDriver(robot)`
+  always uses the `java.awt.Robot` you pass, which on Wayland goes through Xwayland and
+  needs its own consent, so the input may never arrive.
 - **`RobotDriver.headless()`** — refuses to send any input. Use it for tests that
   only read the semantics tree (e.g. asserting a screen layout) without
   driving it.
@@ -381,10 +384,11 @@ API. This is separate from video recording:
   Desktop Runtime, and Windows App Runtime 1.8. Source builds and CI also need
   .NET 8 SDK.
 - Linux X11: Linux helper (`ximagesrc`) for stills; the target must be visible/frontmost.
-- Linux Wayland: Linux portal helper for stills and window-targeted video. On a seated
-  session, monitor capture and real OS input share **one** long-lived
-  `spectre-wayland-helper` portal grant (later processes reuse the seat socket); see
-  `references/recording.md`.
+- Linux Wayland: one long-lived `spectre-wayland-helper` session, which needs one portal
+  grant that a person approves once with `spectre permissions request`. Monitor capture and
+  real OS input use that grant. Window stills, visual-idle samples, and window video use GNOME
+  Mutter window streams (GNOME only, no dialog of their own) through the same session, so they
+  need the grant too. JUnit runs never open the dialog. See `references/recording.md`.
 
 ## Recording, JUnit, IntelliJ-hosted Compose
 
@@ -428,7 +432,9 @@ Open the relevant reference for recording, JUnit, input coordination, IntelliJ, 
 | `pasteText` silently does not land on macOS with `apple.awt.UIElement=true` | UI-element/helper mode breaks clipboard-backed paste, even with synthetic input | Disable `apple.awt.UIElement=true` for the JVM hosting the test window, or use `typeText` for supported ASCII |
 | `pasteText` times out on macOS in CI | Clipboard manager rewriting `NSPasteboard` | Disable clipboard utilities in CI |
 | Recording misses popups that escape the host window | Popups live in their own AWT window outside both the region rectangle *and* a window-targeted capture | Choose an explicit region (or full-desktop crop) wide enough to include where the popup opens, or document the limitation — neither region nor window targeting follows cross-window popups |
-| Window-targeted Wayland recording throws `IllegalStateException` | `xprop` missing or non-GNOME compositor | Use `AutoRecorder.startRegion(...)` with an explicit rectangle |
+| Wayland capture or real input fails and names `spectre permissions request` | No stored portal grant on this seat | Ask a person at the machine to run `spectre permissions request` once. Do not retry in a loop |
+| Wayland window capture fails on a non-GNOME desktop | Window capture uses GNOME Mutter window streams | Use `AutoRecorder.startRegion(...)` or `screenshot(region)`, or run under X11 or Xvfb |
+| Wayland capture of a `JWindow` popup throws `UnsupportedOperationException` | Popups that are not a `Frame` or `Dialog` cannot be bound yet (#640) | Capture the owner window or a screen region |
 | Coordinates derived from `boundsInWindow` land off-target on HiDPI | `boundsInWindow` is Compose pixels (already density-scaled) and window-relative; AWT/Robot and recording regions use screen pixels | Use `boundsOnScreen`/`centerOnScreen` for input and region targeting. If converting yourself, divide by the display scale **and** add the surface/panel screen origin — do not multiply |
 
 ## API boundaries
