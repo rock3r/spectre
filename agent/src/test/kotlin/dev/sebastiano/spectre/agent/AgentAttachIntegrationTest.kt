@@ -848,7 +848,8 @@ class AgentAttachIntegrationTest {
         // retry.
         const val ATTACH_HANDSHAKE_RETRY_BUDGET_MS: Long = 10_000
         const val ATTACH_HANDSHAKE_RETRY_INTERVAL_MS: Long = 250
-        const val FIXTURE_READY_TIMEOUT_MS: Long = 30_000
+        // GitHub's macOS runners can take more than 30 s to start the Compose fixture.
+        const val FIXTURE_READY_TIMEOUT_MS: Long = 90_000
         const val FIXTURE_ATTACH_SETTLE_MS: Long = 750
         const val FOCUS_TIMEOUT_MS: Long = 2_000
         const val FOCUS_POLL_INTERVAL_MS: Long = 50

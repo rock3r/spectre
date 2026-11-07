@@ -292,6 +292,7 @@ class AgentInjectAttachIntegrationTest {
     }
 
     private companion object {
-        const val FIXTURE_READY_TIMEOUT_MS: Long = 30_000
+        // GitHub's macOS runners can take more than 30 s to start the Compose fixture.
+        const val FIXTURE_READY_TIMEOUT_MS: Long = 90_000
     }
 }
