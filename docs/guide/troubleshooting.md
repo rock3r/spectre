@@ -528,7 +528,10 @@ first time, and checks that the recorded window has the expected size. The error
 window did not get focus (for example a modal dialog held it), another window was recorded,
 the window is translucent, or the first capture ran on the AWT event dispatch thread.
 
-- Make sure the window can take focus, and that nothing else grabs focus at that moment.
+- Make sure the window can take focus, and that nothing else grabs focus at that moment. When
+  the window's own focus request is ignored, Spectre asks the window manager to activate the
+  window. If the message ends with "window-manager activation failed", that request could not be
+  sent; the text after it says why.
 - Translucent windows cannot be bound yet. Capture a screen region instead.
 - Popup windows (a `JWindow`, or any window that is not a `Frame` or `Dialog`) fail with an
   `UnsupportedOperationException` that names [#640](https://github.com/rock3r/spectre/issues/640):

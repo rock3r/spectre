@@ -57,6 +57,29 @@ class WaylandHelperProtocolTest {
     }
 
     @Test
+    fun `activate window command and its reply use the helper's wire names`() {
+        val encoded =
+            json.encodeToString(
+                Command.serializer(),
+                Command.ActivateWindow(
+                    displayName = ":0",
+                    frame = Region(200, 187, 420, 273),
+                    ownerPid = 42,
+                ),
+            )
+        assertTrue(encoded.contains("\"command\":\"activate_window\""), encoded)
+        assertTrue(encoded.contains("\"display_name\":\":0\""), encoded)
+        assertTrue(encoded.contains("\"owner_pid\":42"), encoded)
+        assertTrue(encoded.contains("\"frame\":{\"x\":200,\"y\":187"), encoded)
+
+        val reply = """{"event":"window_activated","xid":10485767}"""
+        assertEquals(
+            Event.WindowActivated(xid = 10_485_767),
+            json.decodeFromString(Event.serializer(), reply),
+        )
+    }
+
+    @Test
     fun `input ack event is distinct from capture events`() {
         val line = """{"event":"input_ack"}"""
         val event = json.decodeFromString(Event.serializer(), line)

@@ -340,6 +340,14 @@ fn dispatch(
         Command::StartWindowRecording(start) => {
             window_event(run_window_recording_start(state, windows, start, client_id))
         }
+        Command::ActivateWindow {
+            display_name,
+            frame,
+            owner_pid,
+        } => window_event(
+            crate::x11_window::activate_window_by_frame(display_name.as_deref(), frame, owner_pid)
+                .map(|window| Event::WindowActivated { xid: window.xid }),
+        ),
         Command::UnbindWindow { key } => match windows.lock() {
             Ok(mut guard) => Event::WindowUnbound {
                 was_bound: guard.unbind(&key),

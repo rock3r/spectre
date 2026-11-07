@@ -35,6 +35,17 @@ pub enum Command {
     StartWindowRecording(WindowRecordingCommand),
     /// Session only. Stop the Mutter stream bound under `key`.
     UnbindWindow { key: String },
+    /// Session only. Ask the window manager to activate the Xwayland client window whose
+    /// root-relative geometry is `frame` (device pixels, client area), owned by `owner_pid`.
+    /// GNOME ignores a Java window's own focus requests once another window holds focus; the
+    /// JVM sends this when `toFront`/`requestFocus` did not give the window focus.
+    ActivateWindow {
+        #[serde(default)]
+        display_name: Option<String>,
+        frame: Region,
+        #[serde(default)]
+        owner_pid: Option<u32>,
+    },
 }
 
 /// Recording of a bound Mutter window stream. `region` and `stream_size` are in stream pixels:
@@ -191,6 +202,9 @@ pub enum Event {
     },
     /// The Mutter stream under `key` is stopped (`was_bound` false when nothing was bound).
     WindowUnbound { key: String, was_bound: bool },
+    /// The window manager was asked to activate the X11 window `xid`. The JVM still confirms
+    /// focus itself: the request can be refused.
+    WindowActivated { xid: u64 },
     /// Anything that didn't reach a Stopped state. `kind` is a coarse category the JVM can
     /// pattern-match for surfacing the right exception type; `message` is the human-readable
     /// detail.

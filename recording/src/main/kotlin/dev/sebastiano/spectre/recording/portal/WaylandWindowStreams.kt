@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.recording.portal
 
 import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
+import dev.sebastiano.spectre.recording.screencapturekit.asFramedWindow
 import java.awt.Dimension
 import java.awt.EventQueue
 import java.awt.KeyboardFocusManager
@@ -180,12 +181,16 @@ internal interface WaylandWindowStreamSession {
 
 /**
  * Binds the window that has keyboard focus. When [window] does not have it, [focus] gives it focus
- * briefly and gives it back afterwards. The first frame must show a window of [window]'s size;
- * otherwise another window had focus, and the binding is dropped instead of capturing it.
+ * briefly and gives it back afterwards. The window must show at [window]'s size in the stream;
+ * otherwise another window had focus, and the binding is dropped instead of capturing it. Mutter
+ * can hand over frames before the window is drawn into its stream, so the binder polls frames for
+ * up to [paintWaitMs] before it decides.
  */
 internal class FocusWindowStreamBinder<W : Any>(
     private val session: WaylandWindowStreamSession,
     private val focus: WindowFocus<W>,
+    private val paintWaitMs: Long = DEFAULT_PAINT_WAIT_MS,
+    private val sleep: (Long) -> Unit = Thread::sleep,
 ) : WaylandWindowStreamBinder<W> {
     override fun bind(window: W, key: String, cursor: CursorMode): BoundWindowStream {
         focus.unbindableReason(window)?.let { throw WaylandWindowCaptureUnsupportedException(it) }
@@ -199,33 +204,64 @@ internal class FocusWindowStreamBinder<W : Any>(
                         "${focus.describe(window)}: it did not get keyboard focus, and Mutter " +
                         "records the focused window. Make sure the window can take focus " +
                         "(non-focusable popups cannot be bound yet) and that no modal dialog " +
-                        "holds it."
+                        "holds it." +
+                        handoff.detail?.let { " ($it)" }.orEmpty()
                 )
             }
-            val (event, frame) = session.bindFocused(key, cursor)
-            val content = opaqueContentBounds(frame)
-            val scale = content?.let { matchingScale(it, expected, streamScale(frame, event)) }
-            if (content == null || scale == null) {
-                runCatching { session.unbind(key) }
-                val recorded = content?.let { "${it.width}x${it.height}" } ?: "fully transparent"
-                throw WaylandCaptureUnavailableException(
-                    "Spectre could not bind a GNOME Mutter window stream to the window " +
-                        "${focus.describe(window)} (${expected.width}x${expected.height}): the " +
-                        "window Mutter recorded is $recorded, " +
-                        "so another window probably had keyboard focus. Spectre focuses a " +
-                        "window to bind it; make sure the window can take focus and is not " +
-                        "covered by a modal dialog. Translucent windows cannot be bound yet."
+            val (event, firstFrame) = session.bindFocused(key, cursor)
+            var bound = false
+            try {
+                val (frame, content, scale) = waitForWindow(key, event, firstFrame, expected)
+                if (content == null || scale == null) {
+                    val recorded =
+                        content?.let { "${it.width}x${it.height}" } ?: "fully transparent"
+                    throw WaylandCaptureUnavailableException(
+                        "Spectre could not bind a GNOME Mutter window stream to the window " +
+                            "${focus.describe(window)} (${expected.width}x${expected.height}): " +
+                            "the window Mutter recorded is $recorded, " +
+                            "so another window probably had keyboard focus. Spectre focuses a " +
+                            "window to bind it; make sure the window can take focus and is not " +
+                            "covered by a modal dialog. Translucent windows cannot be bound yet."
+                    )
+                }
+                bound = true
+                return BoundWindowStream(
+                    key = key,
+                    origin = Point(content.x, content.y),
+                    scale = scale,
+                    streamSize = Dimension(frame.width, frame.height),
                 )
+            } finally {
+                if (!bound) runCatching { session.unbind(key) }
             }
-            return BoundWindowStream(
-                key = key,
-                origin = Point(content.x, content.y),
-                scale = scale,
-                streamSize = Dimension(frame.width, frame.height),
-            )
         } finally {
             handoff.restore()
         }
+    }
+
+    /** Polls stream frames until the window shows at [expected] size, or [paintWaitMs] passes. */
+    private fun waitForWindow(
+        key: String,
+        event: Event.WindowBound,
+        firstFrame: BufferedImage,
+        expected: Dimension,
+    ): Triple<BufferedImage, Rectangle?, Double?> {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(paintWaitMs)
+        var frame = firstFrame
+        while (true) {
+            val content = opaqueContentBounds(frame)
+            val scale = content?.let { matchingScale(it, expected, streamScale(frame, event)) }
+            if (scale != null || System.nanoTime() >= deadline) {
+                return Triple(frame, content, scale)
+            }
+            sleep(PAINT_POLL_MS)
+            frame = session.screenshot(key)
+        }
+    }
+
+    private companion object {
+        const val DEFAULT_PAINT_WAIT_MS: Long = 1_000
+        const val PAINT_POLL_MS: Long = 50
     }
 }
 
@@ -242,8 +278,15 @@ internal interface WindowFocus<W : Any> {
     fun describe(window: W): String = window.toString()
 }
 
-/** The result of [WindowFocus.focus]: whether [window focus][confirmed] was confirmed. */
-internal class FocusHandoff(val confirmed: Boolean, private val restoreFocus: () -> Unit) {
+/**
+ * The result of [WindowFocus.focus]: whether [window focus][confirmed] was confirmed, and, when it
+ * was not, a [detail] that says why when one is known.
+ */
+internal class FocusHandoff(
+    val confirmed: Boolean,
+    val detail: String? = null,
+    private val restoreFocus: () -> Unit,
+) {
     /** Gives focus back to the window that had it. */
     fun restore() {
         restoreFocus()
@@ -253,10 +296,16 @@ internal class FocusHandoff(val confirmed: Boolean, private val restoreFocus: ()
 /**
  * [WindowFocus] through AWT. Focus counts as confirmed only when AWT reports the window focused
  * within [timeoutMs]; a non-focusable popup is made focusable for that moment.
+ *
+ * On GNOME's Xwayland, Mutter ignores a window's own `toFront`/`requestFocus` once another window,
+ * or no window, holds focus. When AWT does not confirm focus soon, [activate] asks the window
+ * manager to activate the window (an EWMH `_NET_ACTIVE_WINDOW` request with a current timestamp)
+ * and AWT must confirm focus again. Giving focus back uses the same path.
  */
 internal class AwtWindowFocus(
     private val timeoutMs: Long = DEFAULT_FOCUS_TIMEOUT_MS,
     private val sleep: (Long) -> Unit = Thread::sleep,
+    private val activate: ((Window) -> Unit)? = null,
 ) : WindowFocus<Window> {
     override fun size(window: Window): Dimension = awtWindowSize(window)
 
@@ -269,8 +318,7 @@ internal class AwtWindowFocus(
      * cannot be bound by focus.
      */
     override fun unbindableReason(window: Window): String? =
-        if (window is java.awt.Frame || window is java.awt.Dialog) null
-        else POPUP_UNSUPPORTED_MESSAGE
+        if (window.isFrameOrDialog()) null else POPUP_UNSUPPORTED_MESSAGE
 
     override fun focus(window: Window): FocusHandoff {
         val state = onEdt {
@@ -295,16 +343,38 @@ internal class AwtWindowFocus(
                     if (window.focusableWindowState != state.focusable) {
                         window.focusableWindowState = state.focusable
                     }
-                    state.previous
-                        ?.takeIf { it !== window && it.isShowing }
-                        ?.let {
-                            it.toFront()
-                            it.requestFocus()
-                        }
                 }
+                state.previous?.takeIf { it !== window }?.let(::giveFocusBack)
             },
             timeoutMs = timeoutMs,
             sleep = sleep,
+            activate = activate?.let { activate -> { activate(window) } },
+        )
+    }
+
+    /** Gives focus back to [previous], a window of this JVM that had it before the binding. */
+    private fun giveFocusBack(previous: Window) {
+        if (!onEdt { previous.isShowing }) return
+        // A popup's focus lives on its owner frame; only frames and dialogs are activated.
+        if (activate == null || !previous.isFrameOrDialog()) {
+            onEdt {
+                previous.toFront()
+                previous.requestFocus()
+            }
+            return
+        }
+        acquireFocus(
+            takeFocus = {
+                onEdt {
+                    previous.toFront()
+                    previous.requestFocus()
+                }
+            },
+            isFocused = { onEdt { previous.isFocused } },
+            restore = {},
+            timeoutMs = timeoutMs,
+            sleep = sleep,
+            activate = { activate(previous) },
         )
     }
 
@@ -316,6 +386,28 @@ internal class AwtWindowFocus(
 
     private companion object {
         const val DEFAULT_FOCUS_TIMEOUT_MS: Long = 1_500
+    }
+}
+
+/**
+ * Activates a window of this JVM through the session helper: an EWMH `_NET_ACTIVE_WINDOW` request
+ * for the Xwayland client window at the window's client-area frame, owned by this process.
+ */
+internal class HelperWindowActivator(
+    private val client: WaylandSessionClient,
+    private val displayName: () -> String? = { System.getenv("DISPLAY") },
+) {
+    fun activate(window: Window) {
+        val frame = window.asFramedWindow(isWindows = false, clientAreaOnly = true).deviceFrame
+        val event =
+            client.send(
+                Command.ActivateWindow(
+                    displayName = displayName()?.takeIf { it.isNotBlank() },
+                    frame = Region(frame.x, frame.y, frame.width, frame.height),
+                    ownerPid = ProcessHandle.current().pid(),
+                )
+            )
+        check(event is Event.WindowActivated) { "unexpected reply to activate_window: $event" }
     }
 }
 
@@ -373,9 +465,14 @@ internal class HelperWindowStreamSession(private val client: WaylandSessionClien
 }
 
 /**
- * Takes focus and polls [isFocused] until [timeoutMs]. If anything throws on the way (a capture
- * whose budget ran out is interrupted here), [restore] runs before the error propagates, so a popup
- * never stays focusable and focus goes back to the window that had it.
+ * Takes focus and polls [isFocused] until [timeoutMs]. When [activate] is given and the window's
+ * own request does not take focus within [OWN_REQUEST_WAIT_MS], [activate] asks the window manager
+ * instead, and [isFocused] is polled again for up to [timeoutMs]. A failed activation leaves focus
+ * unconfirmed, with the reason in [FocusHandoff.detail].
+ *
+ * If anything throws on the way (a capture whose budget ran out is interrupted here), [restore]
+ * runs before the error propagates, so a popup never stays focusable and focus goes back to the
+ * window that had it.
  */
 internal fun acquireFocus(
     takeFocus: () -> Unit,
@@ -383,17 +480,19 @@ internal fun acquireFocus(
     restore: () -> Unit,
     timeoutMs: Long,
     sleep: (Long) -> Unit,
+    activate: (() -> Unit)? = null,
 ): FocusHandoff {
     var handedOff = false
     try {
         takeFocus()
-        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
-        var focused = isFocused()
-        while (System.nanoTime() < deadline && !focused) {
-            sleep(FOCUS_POLL_MS)
-            focused = isFocused()
+        val ownWaitMs = if (activate == null) timeoutMs else minOf(timeoutMs, OWN_REQUEST_WAIT_MS)
+        var focused = pollFocus(isFocused, ownWaitMs, sleep)
+        var detail: String? = null
+        if (!focused && activate != null) {
+            detail = runActivation(activate)
+            if (detail == null) focused = pollFocus(isFocused, timeoutMs, sleep)
         }
-        val handoff = FocusHandoff(confirmed = focused, restoreFocus = restore)
+        val handoff = FocusHandoff(confirmed = focused, detail = detail, restoreFocus = restore)
         handedOff = true
         return handoff
     } finally {
@@ -401,6 +500,40 @@ internal fun acquireFocus(
         if (!handedOff) runCatching(restore)
     }
 }
+
+private fun pollFocus(isFocused: () -> Boolean, timeoutMs: Long, sleep: (Long) -> Unit): Boolean {
+    val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+    var focused = isFocused()
+    while (System.nanoTime() < deadline && !focused) {
+        sleep(FOCUS_POLL_MS)
+        focused = isFocused()
+    }
+    return focused
+}
+
+/**
+ * Runs [activate]; returns why it failed, or null. An interrupt still propagates, and so does a
+ * [WaylandCaptureUnavailableException] (a missing portal grant, no Mutter): those already say
+ * clearly why capture cannot work, so they must not read as "the window did not get focus".
+ */
+@Suppress("TooGenericExceptionCaught") // Any other helper or X11 failure only means "no focus".
+private fun runActivation(activate: () -> Unit): String? =
+    try {
+        activate()
+        null
+    } catch (error: InterruptedException) {
+        throw error
+    } catch (error: WaylandCaptureUnavailableException) {
+        throw error
+    } catch (error: Exception) {
+        if (Thread.currentThread().isInterrupted) {
+            throw InterruptedException(error.message).apply { initCause(error) }
+        }
+        "window-manager activation failed: $error"
+    }
+
+/** How long a window's own focus request gets before Spectre asks the window manager. */
+private const val OWN_REQUEST_WAIT_MS: Long = 300
 
 private const val FOCUS_POLL_MS: Long = 25
 
@@ -429,7 +562,14 @@ internal object DefaultWaylandWindowStreams {
         val session = HelperWindowStreamSession(DefaultWaylandSessionClient.instance)
         WaylandWindowStreams(
             session = session,
-            binder = FocusWindowStreamBinder(session, AwtWindowFocus()),
+            binder =
+                FocusWindowStreamBinder(
+                    session,
+                    AwtWindowFocus(
+                        activate =
+                            HelperWindowActivator(DefaultWaylandSessionClient.instance)::activate
+                    ),
+                ),
             windowSize = ::awtWindowSize,
             onWindowClosed = ::runWhenWindowCloses,
         )
@@ -533,6 +673,8 @@ private fun awtWindowSize(window: Window): Dimension = onEdt { window.size }
 private fun runOnDaemonThread(action: () -> Unit) {
     Thread.ofPlatform().daemon().name("spectre-wayland-window-unbind").start(action)
 }
+
+private fun Window.isFrameOrDialog(): Boolean = this is java.awt.Frame || this is java.awt.Dialog
 
 private fun Window.describe(): String =
     when (this) {

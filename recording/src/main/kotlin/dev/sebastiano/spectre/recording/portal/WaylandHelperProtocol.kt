@@ -121,6 +121,20 @@ internal sealed interface Command {
     @Serializable
     @SerialName("unbind_window")
     data class UnbindWindow(@SerialName("key") val key: String) : Command
+
+    /**
+     * Session only. Asks the window manager to activate the Xwayland client window at [frame] (root
+     * coordinates, device pixels, client area without decorations) owned by [ownerPid], through an
+     * EWMH `_NET_ACTIVE_WINDOW` request with the current X server time. GNOME ignores a Java
+     * window's own focus requests once another window, or no window, holds focus.
+     */
+    @Serializable
+    @SerialName("activate_window")
+    data class ActivateWindow(
+        @SerialName("display_name") val displayName: String?,
+        @SerialName("frame") val frame: Region,
+        @SerialName("owner_pid") val ownerPid: Long,
+    ) : Command
 }
 
 @Serializable
@@ -173,6 +187,11 @@ internal sealed interface Event {
         @SerialName("key") val key: String,
         @SerialName("was_bound") val wasBound: Boolean,
     ) : Event
+
+    /** The window manager was asked to activate X11 window [xid]; focus is still unconfirmed. */
+    @Serializable
+    @SerialName("window_activated")
+    data class WindowActivated(@SerialName("xid") val xid: Long) : Event
 }
 
 /** Helper error kind for a desktop without GNOME Mutter's ScreenCast API. */
