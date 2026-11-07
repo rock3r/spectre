@@ -29,9 +29,15 @@ public interface WaylandWindowSourceRecorder {
 }
 
 /**
- * Window-targeted variant of [WaylandPortalRecorder] for Linux Wayland sessions. Routed to by
- * [dev.sebastiano.spectre.recording.AutoRecorder] when the caller passes a non-null `TitledWindow`
- * on a Wayland host (#85).
+ * Window-targeted variant of [WaylandPortalRecorder] for Linux Wayland sessions, through the
+ * portal's window source (#85).
+ *
+ * **Explicit opt-in only.** The portal asks the user to pick the window every time: GNOME cannot
+ * restore its grant onto a new window, so each new window shows a new dialog. Since 0.9.0
+ * [dev.sebastiano.spectre.recording.AutoRecorder] records windows through GNOME Mutter window
+ * streams instead, which need no dialog. When `SPECTRE_WAYLAND_CONSENT_PROMPT` or
+ * `spectre.wayland.consentPrompt` is `never` (the JUnit integration sets it), this recorder fails
+ * instead of showing the window picker.
  *
  * Internally just a [WaylandPortalRecorder] configured with `sourceTypes = [SourceType.WINDOW]`.
  * The portal dialog asks the user to pick a specific window (vs a monitor for the region path), and

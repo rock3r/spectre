@@ -1,5 +1,8 @@
 package dev.sebastiano.spectre.recording
 
+import dev.sebastiano.spectre.recording.portal.WAYLAND_CONSENT_PROMPT_ENV
+import dev.sebastiano.spectre.recording.portal.WaylandConsentPrompt
+import dev.sebastiano.spectre.recording.portal.waylandConsentPrompt
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -69,10 +72,20 @@ internal fun waylandHelperEnvironment(lookup: (String) -> String?): Map<String, 
         .mapNotNull { key -> lookup(key)?.takeIf { it.isNotBlank() }?.let { key to it } }
         .toMap()
 
-/** Adds [waylandHelperEnvironment] for [lookup] (the real process environment by default). */
+/**
+ * Adds [waylandHelperEnvironment] for [lookup] (the real process environment by default), and this
+ * JVM's consent prompt policy as `SPECTRE_WAYLAND_CONSENT_PROMPT`: with
+ * [WaylandConsentPrompt.NEVER] (set by the JUnit integration) the one-shot helper fails instead of
+ * prompting.
+ */
 internal fun ProcessBuilder.withWaylandHelperEnvironment(
-    lookup: (String) -> String? = defaultLinuxSessionEnvLookup
-): ProcessBuilder = apply { environment().putAll(waylandHelperEnvironment(lookup)) }
+    lookup: (String) -> String? = defaultLinuxSessionEnvLookup,
+    consentPrompt: WaylandConsentPrompt = waylandConsentPrompt(System::getProperty, lookup),
+): ProcessBuilder = apply {
+    environment().putAll(waylandHelperEnvironment(lookup))
+    // Explicit either way: the system property can allow what an inherited variable forbids.
+    environment()[WAYLAND_CONSENT_PROMPT_ENV] = consentPrompt.envValue
+}
 
 /** Effective uid of this JVM on Linux (owner of `/proc/self`), or null where unavailable. */
 internal fun currentUnixUid(): Long? = runCatching {

@@ -32,6 +32,7 @@ class WaylandSessionClientTest {
         assertTrue(message.contains("Remember"), message)
         assertTrue(message.contains("Share"), message)
         assertTrue(message.contains("new JVM"), message)
+        assertTrue(message.contains("spectre permissions request"), message)
     }
 
     @Test
@@ -93,6 +94,7 @@ class WaylandSessionClientTest {
             mapOf(
                 "XDG_RUNTIME_DIR" to runtimeDir.toString(),
                 "DBUS_SESSION_BUS_ADDRESS" to "unix:path=$runtimeDir/bus",
+                WAYLAND_CONSENT_PROMPT_ENV to "allow",
             ),
             factory.environments.single(),
         )
@@ -160,27 +162,211 @@ class WaylandSessionClientTest {
         assertEquals(2, starts)
     }
 
-    private fun sessionDirEnv(): (String) -> String? {
-        val dir = tempDir.resolve("session").toString()
-        return { if (it == "SPECTRE_WAYLAND_SESSION_DIR") dir else null }
+    @Test
+    fun `a capture whose own budget runs out leaves the open dialog to the next capture`() {
+        val helper = PendingProcess()
+        val factory = SupplyingProcessFactory { helper }
+        val client =
+            WaylandSessionClient(
+                helperExtractor = extractor(),
+                envLookup = sessionDirEnv(),
+                processFactory = factory,
+                // A visual-idle sample's bounded worker is interrupted while it waits.
+                waitForSocket = { _, _ -> throw InterruptedException("sample budget exceeded") },
+                consentPrompt = { WaylandConsentPrompt.ALLOW },
+            )
+
+        assertFailsWith<InterruptedException> { client.send(PING) }
+        assertFailsWith<InterruptedException> { client.send(PING) }
+
+        assertEquals(1, factory.starts, "the next capture must wait on the same dialog")
+        assertTrue(helper.isAlive, "the pending helper and its dialog must stay up")
     }
 
+    @Test
+    fun `a dialog that times out after its capture gave up is still remembered`() {
+        val helper = PendingProcess()
+        val factory = SupplyingProcessFactory { helper }
+        var interrupt = true
+        val client =
+            WaylandSessionClient(
+                helperExtractor = extractor(),
+                envLookup = sessionDirEnv(),
+                processFactory = factory,
+                waitForSocket = { _, _ ->
+                    if (interrupt) {
+                        interrupt = false
+                        throw InterruptedException("sample budget exceeded")
+                    }
+                    false
+                },
+                consentPrompt = { WaylandConsentPrompt.ALLOW },
+            )
+
+        assertFailsWith<InterruptedException> { client.send(PING) }
+        helper.finish(WAYLAND_SESSION_CONSENT_EXIT)
+
+        val first = assertFailsWith<WaylandConsentNotGrantedException> { client.send(PING) }
+        assertFailsWith<WaylandConsentNotGrantedException> { client.send(PING) }
+        assertEquals(1, factory.starts, "no new helper, so no new dialog")
+        assertTrue(first.message.orEmpty().contains("spectre permissions request"), first.message)
+    }
+
+    @Test
+    fun `a run that may not prompt fails before starting a helper when no grant is stored`() {
+        val factory = RecordingProcessFactory(exitCode = 0)
+        val tokens = Files.createDirectories(tempDir.resolve("tokens"))
+        val client =
+            client(
+                factory,
+                env =
+                    sessionDirEnv(extra = mapOf("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR" to "$tokens")),
+                prompt = WaylandConsentPrompt.NEVER,
+            )
+
+        val error = assertFailsWith<WaylandConsentNotGrantedException> { client.send(PING) }
+
+        assertEquals(0, factory.starts)
+        val message = error.message.orEmpty()
+        assertTrue(message.contains("spectre permissions request"), message)
+        assertTrue(message.contains(tokens.toString()), message)
+    }
+
+    @Test
+    fun `a run that may not prompt tells the helper not to prompt either`() {
+        val factory = RecordingProcessFactory(exitCode = WAYLAND_SESSION_CONSENT_EXIT)
+        val tokens = Files.createDirectories(tempDir.resolve("tokens"))
+        Files.writeString(tokens.resolve(remoteDesktopTokenFileName(RD_SESSION_TOKEN_KEY)), "tok")
+        val client =
+            client(
+                factory,
+                env =
+                    sessionDirEnv(extra = mapOf("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR" to "$tokens")),
+                prompt = WaylandConsentPrompt.NEVER,
+            )
+
+        val error = assertFailsWith<WaylandConsentNotGrantedException> { client.send(PING) }
+
+        assertEquals("never", factory.environments.single()[WAYLAND_CONSENT_PROMPT_ENV])
+        assertTrue(error.message.orEmpty().contains("spectre permissions request"), error.message)
+    }
+
+    @Test
+    fun `an attended request may prompt and waits longer for each dialog step`() {
+        val factory = RecordingProcessFactory(exitCode = WAYLAND_SESSION_CONSENT_EXIT)
+        val client = client(factory, sessionDirEnv(), prompt = WaylandConsentPrompt.NEVER)
+
+        assertFailsWith<WaylandConsentNotGrantedException> {
+            client.openSessionForRequest(consentTimeoutSeconds = 300)
+        }
+
+        val environment = factory.environments.single()
+        assertEquals("300", environment[WAYLAND_CONSENT_TIMEOUT_ENV])
+        // Explicit, so an inherited SPECTRE_WAYLAND_CONSENT_PROMPT=never cannot block the request.
+        assertEquals("allow", environment[WAYLAND_CONSENT_PROMPT_ENV])
+    }
+
+    @Test
+    fun `an attended request starts a new dialog after a pending one timed out`() {
+        val pending = PendingProcess()
+        val processes = ArrayDeque<Process>(listOf(pending, ExitedProcess(0)))
+        val factory = SupplyingProcessFactory { processes.removeFirst() }
+        var interrupt = true
+        val client =
+            WaylandSessionClient(
+                helperExtractor = extractor(),
+                envLookup = sessionDirEnv(),
+                processFactory = factory,
+                waitForSocket = { _, _ ->
+                    if (interrupt) {
+                        interrupt = false
+                        throw InterruptedException("sample budget exceeded")
+                    }
+                    throw InterruptedException("stop waiting for the socket")
+                },
+                consentPrompt = { WaylandConsentPrompt.ALLOW },
+            )
+        assertFailsWith<InterruptedException> { client.send(PING) }
+        pending.finish(WAYLAND_SESSION_CONSENT_EXIT)
+
+        assertFailsWith<InterruptedException> { client.openSessionForRequest(300) }
+
+        assertEquals(2, factory.starts, "the attended request must open a new dialog")
+    }
+
+    @Test
+    fun `an attended request ignores an earlier consent failure in this JVM`() {
+        val factory = RecordingProcessFactory(exitCode = WAYLAND_SESSION_CONSENT_EXIT)
+        val client = client(factory, sessionDirEnv())
+
+        assertFailsWith<WaylandConsentNotGrantedException> { client.send(PING) }
+        assertFailsWith<WaylandConsentNotGrantedException> { client.openSessionForRequest(300) }
+
+        assertEquals(2, factory.starts)
+    }
+
+    private fun sessionDirEnv(extra: Map<String, String> = emptyMap()): (String) -> String? {
+        val values =
+            extra + ("SPECTRE_WAYLAND_SESSION_DIR" to tempDir.resolve("session").toString())
+        return values::get
+    }
+
+    private fun extractor(): WaylandHelperBinaryExtractor =
+        WaylandHelperBinaryExtractor(
+            envLookup = { null },
+            resourceLocator = { ByteArrayInputStream(ByteArray(0)) },
+            targetDirProvider = { tempDir.resolve("helper") },
+            archProvider = { "x86_64" },
+        )
+
     private fun client(
-        factory: RecordingProcessFactory,
+        factory: WaylandSessionClient.SessionProcessFactory,
         env: (String) -> String?,
+        prompt: WaylandConsentPrompt = WaylandConsentPrompt.ALLOW,
     ): WaylandSessionClient =
         WaylandSessionClient(
-            helperExtractor =
-                WaylandHelperBinaryExtractor(
-                    envLookup = { null },
-                    resourceLocator = { ByteArrayInputStream(ByteArray(0)) },
-                    targetDirProvider = { tempDir.resolve("helper") },
-                    archProvider = { "x86_64" },
-                ),
+            helperExtractor = extractor(),
             envLookup = env,
             processFactory = factory,
             waitForSocket = { _, _ -> false },
+            consentPrompt = { prompt },
         )
+
+    private class SupplyingProcessFactory(private val supply: () -> Process) :
+        WaylandSessionClient.SessionProcessFactory {
+        var starts = 0
+
+        override fun startSession(
+            helperPath: Path,
+            extraEnvironment: Map<String, String>,
+        ): Process {
+            starts += 1
+            return supply()
+        }
+    }
+
+    /** A helper still showing its dialog until [finish]. */
+    private class PendingProcess : Process() {
+        @Volatile private var code: Int? = null
+
+        fun finish(exitCode: Int) {
+            code = exitCode
+        }
+
+        override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
+
+        override fun getInputStream(): InputStream = InputStream.nullInputStream()
+
+        override fun getErrorStream(): InputStream = InputStream.nullInputStream()
+
+        override fun waitFor(): Int = code ?: error("still running")
+
+        override fun exitValue(): Int = code ?: throw IllegalThreadStateException("running")
+
+        override fun isAlive(): Boolean = code == null
+
+        override fun destroy() = Unit
+    }
 
     private class RecordingProcessFactory(private val exitCode: Int) :
         WaylandSessionClient.SessionProcessFactory {

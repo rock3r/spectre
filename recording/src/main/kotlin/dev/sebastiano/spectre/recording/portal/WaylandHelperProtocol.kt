@@ -83,6 +83,44 @@ internal sealed interface Command {
     @SerialName("pointer_axis")
     data class PointerAxis(@SerialName("axis") val axis: Int, @SerialName("steps") val steps: Int) :
         Command
+
+    /**
+     * Session only. Binds a GNOME Mutter window stream to the window that has keyboard focus and
+     * writes its first frame to [output] as an RGBA PNG.
+     */
+    @Serializable
+    @SerialName("bind_focused_window")
+    data class BindFocusedWindow(
+        @SerialName("key") val key: String,
+        @SerialName("output") val output: String,
+        /** Mutter fixes the cursor mode when it binds the stream. */
+        @SerialName("cursor_mode") val cursorMode: CursorMode = CursorMode.HIDDEN,
+    ) : Command
+
+    /** Session only. Writes one RGBA PNG frame of the window bound under [key]. */
+    @Serializable
+    @SerialName("window_screenshot")
+    data class WindowScreenshot(
+        @SerialName("key") val key: String,
+        @SerialName("output") val output: String,
+    ) : Command
+
+    /** Session only. Records the window bound under [key], cropped to [region] (stream pixels). */
+    @Serializable
+    @SerialName("start_window_recording")
+    data class StartWindowRecording(
+        @SerialName("key") val key: String,
+        @SerialName("region") val region: Region,
+        @SerialName("stream_size") val streamSize: List<Int>,
+        @SerialName("frame_rate") val frameRate: Int,
+        @SerialName("output") val output: String,
+        @SerialName("codec") val codec: String,
+    ) : Command
+
+    /** Session only. Stops the Mutter stream bound under [key]. */
+    @Serializable
+    @SerialName("unbind_window")
+    data class UnbindWindow(@SerialName("key") val key: String) : Command
 }
 
 @Serializable
@@ -119,7 +157,33 @@ internal sealed interface Event {
     ) : Event
 
     @Serializable @SerialName("input_ack") data object InputAck : Event
+
+    @Serializable
+    @SerialName("window_bound")
+    data class WindowBound(
+        @SerialName("key") val key: String,
+        @SerialName("node_id") val nodeId: Long,
+        /** Mutter's stream `size`: on GNOME 50 the monitor's logical size, not the window's. */
+        @SerialName("logical_size") val logicalSize: List<Int>,
+    ) : Event
+
+    @Serializable
+    @SerialName("window_unbound")
+    data class WindowUnbound(
+        @SerialName("key") val key: String,
+        @SerialName("was_bound") val wasBound: Boolean,
+    ) : Event
 }
+
+/** Helper error kind for a desktop without GNOME Mutter's ScreenCast API. */
+internal const val HELPER_ERROR_MUTTER_UNAVAILABLE: String = "MutterUnavailable"
+
+/** Helper error kind for a window key the session helper has no stream for. */
+internal const val HELPER_ERROR_WINDOW_NOT_BOUND: String = "WindowNotBound"
+
+/** An `Event.Error` from the session helper, with its [kind] kept for callers that branch on it. */
+internal class WaylandHelperErrorException(val kind: String, helperMessage: String) :
+    IllegalStateException("spectre-wayland-helper session error: kind=$kind message=$helperMessage")
 
 @Serializable
 internal enum class CaptureBackend {
@@ -182,22 +246,55 @@ internal fun isFatalWaylandHelperExit(exitCode: Int): Boolean =
 internal fun Process?.sessionExitCode(): Int? = this?.takeUnless { it.isAlive }?.exitValue()
 
 /**
+ * Linux Wayland capture or input cannot run, and waiting will not help: the caller must fail at
+ * once with this message instead of retrying or substituting another capture mechanism.
+ *
+ * Core matches this class by name (it cannot link `:recording`), so visual-idle sampling rethrows
+ * it instead of counting an unsampleable frame. Keep the name in sync with
+ * `WAYLAND_CAPTURE_FAIL_FAST_EXCEPTIONS` in core's `VisualIdleSurfaceCapture.kt`.
+ */
+internal open class WaylandCaptureUnavailableException(message: String, cause: Throwable? = null) :
+    IllegalStateException(message, cause)
+
+/**
+ * Linux Wayland cannot capture this window yet, such as a popup that Mutter cannot bind (#640). An
+ * [UnsupportedOperationException], as Wayland popup capture was before 0.9.0, so callers that
+ * handle that keep working. Core matches it by class name so visual idle fails at once instead of
+ * timing out; keep the name in `WAYLAND_CAPTURE_FAIL_FAST_EXCEPTIONS`.
+ */
+internal class WaylandWindowCaptureUnsupportedException(message: String) :
+    UnsupportedOperationException(message)
+
+/**
  * The session helper could not open the portal session because nobody answered the consent dialog
- * in time, or the user denied it. [WaylandSessionClient] remembers it so later captures in this JVM
- * fail at once instead of opening a new dialog each time (#634).
+ * in time, the user denied it, or Spectre may not open the dialog in this run (see
+ * [WaylandConsentPrompt]). [WaylandSessionClient] remembers it so later captures in this JVM fail
+ * at once instead of opening a new dialog each time (#634).
  */
 internal class WaylandConsentNotGrantedException(message: String, cause: Throwable? = null) :
-    IllegalStateException(message, cause)
+    WaylandCaptureUnavailableException(message, cause)
+
+/** The one-time fix for a missing Wayland grant. Core's fail-fast check also looks for it. */
+internal const val WAYLAND_PERMISSIONS_REQUEST_HINT: String =
+    "Run `spectre permissions request` once while someone is at the seat: select the whole " +
+        "screen, tick Remember, and click Share. Spectre stores the grant and keeps the session " +
+        "running, so later runs do not ask again."
 
 internal fun waylandConsentNotGrantedMessage(): String =
     "Wayland screen capture needs consent, but the Share / Allow remote interaction dialog was " +
         "not answered in time or was denied (spectre-wayland-helper --session exit " +
         "$WAYLAND_SESSION_CONSENT_EXIT; its output above has the portal error). Spectre does not " +
-        "open the dialog again in this JVM, so later captures fail at once. To fix it, rerun in " +
-        "a new JVM while someone is at the seat. When the dialog appears, select the whole " +
-        "screen, tick Remember, and click Share. Spectre stores the grant, so later runs do not " +
-        "ask again. If no dialog is visible, open the Activities overview (Super key): GNOME can " +
-        "open it behind other windows."
+        "open the dialog again in this JVM, so later captures fail at once. " +
+        "$WAYLAND_PERMISSIONS_REQUEST_HINT Then rerun in a new JVM. If no dialog is visible, " +
+        "open the Activities overview (Super key): GNOME can open it behind other windows."
+
+/** The message for a run that may not open the Share dialog and has no stored grant. */
+internal fun waylandNoStoredGrantMessage(tokenPath: java.nio.file.Path?): String =
+    "Wayland screen capture and input need the RemoteDesktop portal grant, but no grant is " +
+        "stored (${tokenPath ?: "no restore-token directory: HOME and XDG_STATE_HOME are unset"}) " +
+        "and no Spectre session is running. This run does not open the Share dialog itself " +
+        "($WAYLAND_CONSENT_PROMPT_PROPERTY / $WAYLAND_CONSENT_PROMPT_ENV is never). " +
+        WAYLAND_PERMISSIONS_REQUEST_HINT
 
 internal fun resolveWaylandSessionSocket(
     paths: WaylandSessionPaths,
@@ -233,7 +330,7 @@ internal fun resolveWaylandSessionSocket(
     )
 }
 
-private fun failIfHelperExitedFatally(exitCode: Int?) {
+internal fun failIfHelperExitedFatally(exitCode: Int?) {
     if (exitCode == WAYLAND_SESSION_CONSENT_EXIT) {
         throw WaylandConsentNotGrantedException(waylandConsentNotGrantedMessage())
     }

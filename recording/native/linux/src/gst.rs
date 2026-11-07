@@ -178,6 +178,76 @@ pub fn build_pipewire_png_argv(
     ])
 }
 
+/// One RGBA PNG frame from a GNOME Mutter window stream. Mutter's own ScreenCast API needs no
+/// portal FD, so `pipewiresrc` uses the user's default PipeWire core. The frame is not cropped:
+/// Mutter puts the window at the top-left of a monitor-sized buffer and leaves the rest
+/// transparent, and the JVM finds the window by that transparency.
+pub fn build_mutter_window_png_argv(pipewire_node_id: u32, output: &Path) -> Vec<String> {
+    vec![
+        "gst-launch-1.0".to_string(),
+        "-q".to_string(),
+        "pipewiresrc".to_string(),
+        "num-buffers=1".to_string(),
+        format!("path={pipewire_node_id}"),
+        "do-timestamp=true".to_string(),
+        "always-copy=true".to_string(),
+        "!".to_string(),
+        "videoconvert".to_string(),
+        "!".to_string(),
+        "video/x-raw,format=RGBA".to_string(),
+        "!".to_string(),
+        "pngenc".to_string(),
+        "compression-level=1".to_string(),
+        "!".to_string(),
+        "filesink".to_string(),
+        gst_string_property("location", &output.display().to_string()),
+    ]
+}
+
+/// Recording of a GNOME Mutter window stream, cropped to `region` (stream pixels). Same encoder
+/// chain as [`build_pipewire_argv`], on the default PipeWire core instead of a portal FD.
+pub fn build_mutter_window_recording_argv(
+    pipewire_node_id: u32,
+    region: Region,
+    stream_size: (u32, u32),
+    frame_rate: u32,
+    output: &Path,
+    codec: &str,
+) -> Result<Vec<String>> {
+    let (top, bottom, left, right) = crop_insets(region, stream_size)?;
+    let mut argv = vec![
+        "gst-launch-1.0".to_string(),
+        "-e".to_string(),
+        "pipewiresrc".to_string(),
+        format!("path={pipewire_node_id}"),
+        "do-timestamp=true".to_string(),
+        "always-copy=true".to_string(),
+        "!".to_string(),
+        "videorate".to_string(),
+        "!".to_string(),
+        format!("video/x-raw,framerate={frame_rate}/1"),
+        "!".to_string(),
+        "videocrop".to_string(),
+        format!("top={top}"),
+        format!("bottom={bottom}"),
+        format!("left={left}"),
+        format!("right={right}"),
+        "!".to_string(),
+        "videoconvert".to_string(),
+        "!".to_string(),
+    ];
+    push_x264_encoder(&mut argv, codec)?;
+    argv.extend([
+        "!".to_string(),
+        "mp4mux".to_string(),
+        "faststart=true".to_string(),
+        "!".to_string(),
+        "filesink".to_string(),
+        gst_string_property("location", &output.display().to_string()),
+    ]);
+    Ok(argv)
+}
+
 pub fn build_x11_recording_argv(
     target: X11CaptureTarget,
     frame_rate: u32,
@@ -334,6 +404,12 @@ fn pipewire_crop_insets(
             pipewire_fd
         );
     }
+    crop_insets(region, stream_size)
+}
+
+/// `videocrop` insets (top, bottom, left, right) that keep `region` of a `stream_size` frame.
+fn crop_insets(region: Region, stream_size: (u32, u32)) -> Result<(u32, u32, u32, u32)> {
+    validate_positive_region(region)?;
     let (stream_w, stream_h) = stream_size;
     if stream_w == 0 || stream_h == 0 {
         bail!(
@@ -378,6 +454,43 @@ fn non_blank(value: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mutter_window_png_reads_the_default_pipewire_core_and_keeps_alpha() {
+        let argv = build_mutter_window_png_argv(61, Path::new("/tmp/frame.png"));
+        assert!(argv.contains(&"path=61".to_string()));
+        assert!(
+            !argv.iter().any(|arg| arg.starts_with("fd=")),
+            "a Mutter stream has no portal FD: {argv:?}"
+        );
+        assert!(argv.contains(&"video/x-raw,format=RGBA".to_string()));
+        assert!(argv.contains(&"num-buffers=1".to_string()));
+        assert_eq!(argv.last().unwrap(), "location=\"/tmp/frame.png\"");
+    }
+
+    #[test]
+    fn mutter_window_recording_crops_to_the_window_in_stream_pixels() {
+        let argv = build_mutter_window_recording_argv(
+            61,
+            Region {
+                x: 25,
+                y: 25,
+                width: 400,
+                height: 300,
+            },
+            (2560, 1440),
+            30,
+            Path::new("/tmp/out.mp4"),
+            "libx264",
+        )
+        .unwrap();
+        assert!(argv.contains(&"path=61".to_string()));
+        assert!(!argv.iter().any(|arg| arg.starts_with("fd=")), "{argv:?}");
+        for inset in ["top=25", "left=25", "bottom=1115", "right=2135"] {
+            assert!(argv.contains(&inset.to_string()), "missing {inset}: {argv:?}");
+        }
+        assert!(argv.contains(&"-e".to_string()));
+    }
     use crate::protocol::Region;
     use std::path::PathBuf;
 

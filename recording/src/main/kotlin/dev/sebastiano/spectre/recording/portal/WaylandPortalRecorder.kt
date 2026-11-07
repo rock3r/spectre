@@ -259,7 +259,9 @@ private constructor(
                     return
                 }
                 is Event.FrameProgress,
-                is Event.InputAck -> {
+                is Event.InputAck,
+                is Event.WindowBound,
+                is Event.WindowUnbound -> {
                     // Reserved for a future progress-streaming UX / session input acks.
                 }
             }
@@ -438,7 +440,7 @@ internal fun killAndReapOrThrow(
 
 internal const val FORCED_REAP_TIMEOUT_MS: Long = 2_000
 
-private class SessionRecordingHandle(
+internal class SessionRecordingHandle(
     private val held: HeldRecordingSession,
     override val output: Path,
 ) : RecordingHandle {

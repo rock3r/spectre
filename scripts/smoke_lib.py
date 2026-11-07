@@ -2124,8 +2124,10 @@ def assert_linux_portal_tokens_captured(
         )
 
 
-WAYLAND_PORTAL_WARMUP_TASK = ":recording:runWaylandPortalSmoke"
-# spectre-wayland-helper waits this long for each portal Response (DEFAULT_RESPONSE_TIMEOUT).
+# Calls WaylandPortalAccess.request, the same operation as `spectre permissions request`: one
+# RemoteDesktop grant, restore token stored, session helper left running for later cells.
+WAYLAND_PORTAL_WARMUP_TASK = ":recording:requestWaylandPortalGrant"
+# spectre-wayland-helper waits this long for each portal Response during the warmup.
 WAYLAND_PORTAL_RESPONSE_TIMEOUT_SECONDS = 60
 LINUX_SEAT_ENV_KEYS: tuple[str, ...] = (
     "XDG_RUNTIME_DIR",
@@ -2346,7 +2348,13 @@ def wayland_portal_warmup_command(gradle: str) -> list[str]:
     JavaExec. A private JVM also keeps the cell serial: no other build shares its
     classloaders (a parallel `:agent:test` once broke the portal reader thread).
     """
-    return [gradle, "--no-daemon", WAYLAND_PORTAL_WARMUP_TASK, "--console=plain"]
+    return [
+        gradle,
+        "--no-daemon",
+        WAYLAND_PORTAL_WARMUP_TASK,
+        f"-PwaylandGrantTimeoutSeconds={WAYLAND_PORTAL_RESPONSE_TIMEOUT_SECONDS}",
+        "--console=plain",
+    ]
 
 
 def portal_warmup_operator_banner() -> str:
@@ -2364,8 +2372,9 @@ def portal_warmup_operator_banner() -> str:
             "No dialog after ~10s? Open the Activities overview (Super key): GNOME may log",
             "'Failed to associate portal window with parent window' and leave the dialog",
             "behind other windows.",
-            "Only helper monitor ScreenCast cells reuse the token. Robot-backed cells stay",
-            "under xvfb-run. Window-source prompts are per-window.",
+            "This is the same grant as `spectre permissions request`. Later cells reuse it;",
+            "window captures use GNOME Mutter window streams and open no dialog. Robot-backed",
+            "cells stay under xvfb-run.",
             rule,
             "",
         ]

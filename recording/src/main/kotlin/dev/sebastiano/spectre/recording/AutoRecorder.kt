@@ -1,7 +1,7 @@
 package dev.sebastiano.spectre.recording
 
+import dev.sebastiano.spectre.recording.portal.MutterWindowRecorder
 import dev.sebastiano.spectre.recording.portal.WaylandPortalRecorder
-import dev.sebastiano.spectre.recording.portal.WaylandPortalWindowRecorder
 import dev.sebastiano.spectre.recording.portal.WaylandWindowSourceRecorder
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
 import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitRecorder
@@ -17,9 +17,9 @@ import java.nio.file.Path
  * High-level recorder with explicit capture modes.
  *
  * [startWindow] uses window-scoped backends only: ScreenCaptureKit on macOS, Windows Graphics
- * Capture on Windows, the Linux helper's Xorg/Xvfb named-window path, and the Wayland portal
- * window-source path on Linux Wayland. If the requested window mode is unavailable, it throws with
- * an actionable error instead of silently falling back to region capture.
+ * Capture on Windows, the Linux helper's Xorg/Xvfb named-window path, and a GNOME Mutter window
+ * stream on Linux Wayland (no dialog per window). If the requested window mode is unavailable, it
+ * throws with an actionable error instead of silently falling back to region capture.
  *
  * [startRegion] uses region capture only: ScreenCaptureKit on macOS, Windows Graphics Capture on
  * Windows, the Linux helper's Xorg/Xvfb path, and the Wayland portal monitor-source path on Linux
@@ -101,8 +101,8 @@ internal constructor(
      * snapshot). They convert AWT user-space crop to device pixels on Windows; macOS uses points
      * and applies the window's backing scale inside the helper.
      *
-     * **v1:** crop is fixed at start. Linux Wayland/X11 do not yet implement window+crop; callers
-     * get an actionable error rather than a silent region fallback.
+     * **v1:** crop is fixed at start. Linux X11 does not implement window+crop yet; callers get an
+     * actionable error rather than a silent region fallback.
      */
     public fun startWindow(
         window: TitledWindow,
@@ -286,10 +286,20 @@ internal constructor(
                 scaleY = scaleY,
             )
         }
-        // Linux parity evaluation (#186): X11 ximagesrc can grab a named window but has no
-        // capture-side surface crop that keeps occlusion immunity; Wayland portal window streams
-        // could videocrop stream-relative rects but that path is not wired yet. Fail loud rather
-        // than silently degrading to region capture (region is the explicit last resort).
+        if (isWayland()) {
+            // The Mutter window stream renders only this window, so cropping inside it keeps
+            // occlusion immunity (#186).
+            val recorder =
+                waylandPortalWindowRecorder as? MutterWindowRecorder
+                    ?: throw unavailable(
+                        "Wayland window+crop capture",
+                        waylandPortalWindowRecorderFailure,
+                    )
+            return recorder.startCropped(window, cropInWindow, output, options)
+        }
+        // Linux X11 parity evaluation (#186): ximagesrc can grab a named window but has no
+        // capture-side surface crop that keeps occlusion immunity. Fail loud rather than
+        // silently degrading to region capture (region is the explicit last resort).
         error(
             "Window capture + crop is not available on this Linux session. " +
                 "macOS (ScreenCaptureKit sourceRect) and Windows (WGC pre-encode crop) support " +
@@ -453,7 +463,9 @@ internal data class WaylandPortalRecorders(
             var window: WaylandWindowSourceRecorder? = null
             var windowFailure: Throwable? = null
             try {
-                window = WaylandPortalWindowRecorder()
+                // Mutter window streams, not the portal window source: the portal asks the user to
+                // pick every new window.
+                window = MutterWindowRecorder()
             } catch (t: Throwable) {
                 windowFailure = t
             }

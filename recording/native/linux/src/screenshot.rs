@@ -150,7 +150,7 @@ fn clear_cloexec(fd: RawFd) -> Result<()> {
     Ok(())
 }
 
-fn run_gst_oneshot(argv: &[String]) -> Result<()> {
+pub(crate) fn run_gst_oneshot(argv: &[String]) -> Result<()> {
     let gst_stdout_target: OwnedFd = unsafe {
         let raw = nix::unistd::dup(std::io::stderr().as_raw_fd())
             .context("dup(stderr) so gst-launch stdout can redirect to helper stderr")?;

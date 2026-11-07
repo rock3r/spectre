@@ -102,7 +102,9 @@ public class LaunchAndAttachExtension(
         }
 
     override fun beforeEach(context: ExtensionContext) {
-        val launchedSession = LaunchAndAttach.launch(spec, warningSink)
+        WaylandPortalPrecheck.ensureOnce()
+        val launchedSession =
+            LaunchAndAttach.launch(WaylandPortalPrecheck.forwardConsentPrompt(spec), warningSink)
         context.getStore(storeNamespace).put(STORE_KEY, launchedSession)
         threadSession.set(launchedSession)
     }

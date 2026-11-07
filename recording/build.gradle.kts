@@ -1244,6 +1244,36 @@ tasks.register<JavaExec>("runWaylandPortalSmoke") {
     errorOutput = System.err
 }
 
+// Release smoke `portal-token-warmup` (and anyone scripting the seat): the same one-time grant as
+// `spectre permissions request`. Opens the Share dialog only when no grant is stored, stores the
+// RemoteDesktop restore token, and leaves the session helper running. Exits 1 when no grant.
+tasks.register<JavaExec>("requestWaylandPortalGrant") {
+    group = "verification"
+    description =
+        "Requests the Linux Wayland RemoteDesktop portal grant (WaylandPortalAccess.request); " +
+            "-PwaylandGrantTimeoutSeconds sets the wait for each dialog step."
+    onlyIf { OperatingSystem.current().isLinux }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.portal.WaylandPortalGrantRequestKt")
+    args(providers.gradleProperty("waylandGrantTimeoutSeconds").orElse("300").get())
+    standardOutput = System.out
+    errorOutput = System.err
+}
+
+// Attended GNOME Wayland smoke (#642): window stills and window recording through Mutter window
+// streams, with another window covering the target. Run after `spectre permissions request`; it
+// must open no dialog.
+tasks.register<JavaExec>("runWaylandMutterWindowSmoke") {
+    group = "verification"
+    description =
+        "Captures and records a covered JFrame through GNOME Mutter window streams; opens no dialog."
+    onlyIf { OperatingSystem.current().isLinux }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.portal.WaylandMutterWindowSmoke")
+    standardOutput = System.out
+    errorOutput = System.err
+}
+
 // Sibling of `runWaylandPortalSmoke` for #87: drives the cursor across the JFrame via
 // `java.awt.Robot.mouseMove` during capture so the resulting mp4 can be eyeballed for
 // cursor pixels (verifies portal `cursor_mode=Embedded` actually delivers).

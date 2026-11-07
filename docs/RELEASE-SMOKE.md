@@ -349,7 +349,7 @@ Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `R
 | `mcp-sdk-flow` | Packaged MCP attach/op/detach lifecycle + strict stdio |
 | `host-native-recording` | Host native recording smoke |
 | `maven-local-consumer` | Maven Local publication + fresh consumer |
-| `portal-token-warmup` | Linux Wayland: one interactive RemoteDesktop + monitor grant at run start, then reuse the stored restore token. Hard `n/a` on macOS/Windows/Xvfb. |
+| `portal-token-warmup` | Linux Wayland: one interactive RemoteDesktop + monitor grant at run start through `WaylandPortalAccess.request` (the same operation as `spectre permissions request`), then reuse the stored restore token and running session. Hard `n/a` on macOS/Windows/Xvfb. |
 | `pointer-move` | In-process `moveTo` / `moveBy` hover without click (`:sample-desktop:validationTest --tests '*PointerMoveLive*'`). Hard `n/a` only if the verbs disappear from `ComposeAutomator`. On Windows, a post-green `MessageIOException` / `Could not write '/127.0.0.1:…'` after `exitApplication` teardown (#500 / #72) is a pass when the PointerMoveLive JUnit XML is green. |
 | `input-coord-contention` | Two independent JVMs take one desktop lease in FIFO order (`:input-coordinator-server:test` FIFO client contention + forked-coordinator process). Hard on macOS/Windows/Linux Xorg/Xvfb — no display needed, so hard on Windows SSH too. |
 | `input-coord-cancellation` | A cancelled queued waiter is removed without stranding the next waiter. |
@@ -387,7 +387,7 @@ The cross-platform runner covers the stable baseline that should not be reinvent
   pass) + strict stdio (version / tools/list including `detach` / unknown-session detach `isError`)
 - host native recording smoke (macOS SCK region / Linux X11; Windows WGC via interactive PS script)
 - Maven Local `verifyMavenLocalPublication` + fresh consumer jar resolve
-- Linux Wayland `portal-token-warmup`: one `--no-daemon` `:recording:runWaylandPortalSmoke` with a pinned `SPECTRE_WAYLAND_HELPER` + `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` under `build/smoke/wayland-restore-tokens/`. Approve **Share** + **Remember** / **Allow remote interaction** for the **whole screen**; the warmup writes `wayland-rd-restore-token-rd-monitor-embedded`. Later helper monitor cells (`host-native-recording`) reuse that grant via the long-lived session. Robot-backed cells stay under `xvfb-run`. Window-source prompts are per-window and may still appear. Xvfb / macOS / Windows record hard `n/a`.
+- Linux Wayland `portal-token-warmup`: one `--no-daemon` `:recording:requestWaylandPortalGrant -PwaylandGrantTimeoutSeconds=60` with a pinned `SPECTRE_WAYLAND_HELPER` + `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` under `build/smoke/wayland-restore-tokens/`. The task calls `WaylandPortalAccess.request`, the same operation as `spectre permissions request`. Approve **Share** + **Remember** / **Allow remote interaction** for the **whole screen**; the warmup writes `wayland-rd-restore-token-rd-monitor-embedded`. Later helper cells (`host-native-recording`) reuse that grant via the long-lived session. Window captures use GNOME Mutter window streams and open no dialog. Robot-backed cells stay under `xvfb-run`. Xvfb / macOS / Windows record hard `n/a`.
 - `pointer-move` ([#433](https://github.com/rock3r/spectre/issues/433) / [#435](https://github.com/rock3r/spectre/pull/435)): live hover via `moveTo(node)` / `moveBy` / `moveTo(x, y)` against the sample `scenario.hover` fixture, with JUnit XML fail-closed so assumption-skips cannot fake PASS. If `ComposeAutomator` ever loses both verbs the cell is hard `n/a` with reason. This is the in-process gap; CLI / MCP / agent verbs are a follow-up. Windows: `SampleAppFixture` keeps `exitProcessOnExit = false` so the validation worker can close the Gradle test-event socket after `exitApplication`. If a residual `#72` / `#500` `MessageIOException` still kills the worker, the smoke cell still **passes** when PointerMoveLive XML is green.
 
 Each release still needs delta cells based on `git log <previous-tag>..HEAD`. Add reusable delta
@@ -479,7 +479,8 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   SCK still/record plus signed-app `codesign --verify --deep --strict`, `spctl`, and
   `xcrun stapler validate` remain manual. A local ad-hoc app is not notarization evidence.
 - **Wayland portal:** Xvfb proves X11 only. On a real Wayland desktop the Unix harness runs
-  `portal-token-warmup` first (`:recording:runWaylandPortalSmoke`) and pins
+  `portal-token-warmup` first (`:recording:requestWaylandPortalGrant`, the same operation as
+  `spectre permissions request`) and pins
   `SPECTRE_WAYLAND_HELPER` + `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`. Approve **Share** + **Remember**
   / **Allow remote interaction** for the whole screen once. The warmup stores
   `wayland-rd-restore-token-rd-monitor-embedded`. Helper monitor capture/input on the seat

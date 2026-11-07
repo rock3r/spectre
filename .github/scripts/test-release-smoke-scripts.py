@@ -1457,7 +1457,17 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
         command = smoke_lib.wayland_portal_warmup_command("/repo/gradlew")
         self.assertEqual("/repo/gradlew", command[0])
         self.assertIn("--no-daemon", command)
-        self.assertIn(":recording:runWaylandPortalSmoke", command)
+
+    def test_wayland_portal_warmup_requests_the_grant_like_the_cli(self):
+        # The warmup and `spectre permissions request` share WaylandPortalAccess.request, so the
+        # smoke proves the path users run. Each portal step keeps the operator banner's wait.
+        command = smoke_lib.wayland_portal_warmup_command("/repo/gradlew")
+        self.assertIn(":recording:requestWaylandPortalGrant", command)
+        self.assertNotIn(":recording:runWaylandPortalSmoke", command)
+        self.assertIn(
+            f"-PwaylandGrantTimeoutSeconds={smoke_lib.WAYLAND_PORTAL_RESPONSE_TIMEOUT_SECONDS}",
+            command,
+        )
 
     def test_release_smoke_runs_warmup_through_no_daemon_command(self):
         source = RELEASE_SMOKE.read_text(encoding="utf-8")

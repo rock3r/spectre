@@ -1,7 +1,8 @@
 //! Long-lived Spectre Wayland session: one RemoteDesktop grant, unix-socket RPC.
 
 use crate::input_map::{awt_button_mask_to_evdev, vk_to_keysym};
-use crate::protocol::{Command, Event, ScreenshotCommand, StartCommand};
+use crate::mutter_window::{error_kind, MutterWindowStreams};
+use crate::protocol::{Command, Event, ScreenshotCommand, StartCommand, WindowRecordingCommand};
 use crate::remote_desktop::{open_remote_desktop_session, RemoteDesktopSession};
 use crate::session_lock::{self, acquire_session_lock, SessionLock};
 use anyhow::{Context, Result};
@@ -49,7 +50,8 @@ pub fn serve() -> Result<()> {
     // JVM Process exit 0 even when the handshake later failed.
     let session = match open_remote_desktop_session(
         crate::protocol::CursorMode::Embedded,
-        crate::portal::DEFAULT_RESPONSE_TIMEOUT,
+        crate::portal::consent_timeout(),
+        crate::portal::consent_prompt_allowed(),
     ) {
         Ok(session) => session,
         Err(e) => {
@@ -74,6 +76,8 @@ pub fn serve() -> Result<()> {
         input_holds: HashMap::new(),
         _lock: lock,
     }));
+    // Separate lock: binding a window waits on Mutter, which must not stall other clients' input.
+    let windows = Arc::new(Mutex::new(MutterWindowStreams::new()));
 
     eprintln!(
         "spectre-wayland-helper: RemoteDesktop session ready on {}",
@@ -84,11 +88,12 @@ pub fn serve() -> Result<()> {
         match incoming {
             Ok(stream) => {
                 let state = Arc::clone(&state);
+                let windows = Arc::clone(&windows);
                 let client_id = NEXT_CLIENT_ID.fetch_add(1, Ordering::Relaxed);
                 let _ = std::thread::Builder::new()
                     .name("wayland-session-client".into())
                     .spawn(move || {
-                        if let Err(e) = handle_client(stream, &state, client_id) {
+                        if let Err(e) = handle_client(stream, &state, &windows, client_id) {
                             eprintln!("spectre-wayland-helper: session client error: {e:#}");
                         }
                     });
@@ -242,9 +247,15 @@ fn dup_keep_pipewire_fd(fd: i32) -> Result<()> {
     Ok(())
 }
 
-fn handle_client(stream: UnixStream, state: &Mutex<SessionState>, client_id: u64) -> Result<()> {
+fn handle_client(
+    stream: UnixStream,
+    state: &Mutex<SessionState>,
+    windows: &Mutex<MutterWindowStreams>,
+    client_id: u64,
+) -> Result<()> {
     let _reap = DisconnectReap {
         state,
+        windows,
         client_id,
     };
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -258,13 +269,14 @@ fn handle_client(stream: UnixStream, state: &Mutex<SessionState>, client_id: u64
         }
         let command: Command = serde_json::from_str(line.trim())
             .with_context(|| format!("parsing session command: {}", line.trim()))?;
-        let event = dispatch(command, state, client_id);
+        let event = dispatch(command, state, windows, client_id);
         write_event(&mut writer, event)?;
     }
 }
 
 struct DisconnectReap<'a> {
     state: &'a Mutex<SessionState>,
+    windows: &'a Mutex<MutterWindowStreams>,
     client_id: u64,
 }
 
@@ -273,6 +285,9 @@ impl Drop for DisconnectReap<'_> {
         let reap_recording = release_held_input(self.state, self.client_id);
         if reap_recording {
             let _ = stop_recording(self.state);
+        }
+        if let Ok(mut windows) = self.windows.lock() {
+            windows.unbind_owner(self.client_id);
         }
     }
 }
@@ -301,8 +316,40 @@ fn release_held_input(state: &Mutex<SessionState>, client_id: u64) -> bool {
     cleanup.reap_recording
 }
 
-fn dispatch(command: Command, state: &Mutex<SessionState>, client_id: u64) -> Event {
+fn dispatch(
+    command: Command,
+    state: &Mutex<SessionState>,
+    windows: &Mutex<MutterWindowStreams>,
+    client_id: u64,
+) -> Event {
     match command {
+        Command::BindFocusedWindow {
+            key,
+            output,
+            cursor_mode,
+        } => window_event(bind_focused_window(
+            windows,
+            &key,
+            &output,
+            cursor_mode,
+            client_id,
+        )),
+        Command::WindowScreenshot { key, output } => {
+            window_event(window_screenshot(windows, &key, &output))
+        }
+        Command::StartWindowRecording(start) => {
+            window_event(run_window_recording_start(state, windows, start, client_id))
+        }
+        Command::UnbindWindow { key } => match windows.lock() {
+            Ok(mut guard) => Event::WindowUnbound {
+                was_bound: guard.unbind(&key),
+                key,
+            },
+            Err(e) => Event::Error {
+                kind: "Helper".into(),
+                message: format!("window stream mutex poisoned: {e}"),
+            },
+        },
         Command::PointerMove { x, y } => with_session(state, |s| {
             let (ox, oy) = s.stream.position;
             s.notify_pointer_motion_absolute((x - ox) as f64, (y - oy) as f64)?;
@@ -481,6 +528,113 @@ fn stop_recording(state: &Mutex<SessionState>) -> Result<u64> {
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+}
+
+fn window_event(result: Result<Event>) -> Event {
+    result.unwrap_or_else(|e| Event::Error {
+        kind: error_kind(&e).into(),
+        message: format!("{e:#}"),
+    })
+}
+
+fn bind_focused_window(
+    windows: &Mutex<MutterWindowStreams>,
+    key: &str,
+    output: &str,
+    cursor_mode: crate::protocol::CursorMode,
+    client_id: u64,
+) -> Result<Event> {
+    let bound = {
+        let mut guard = windows
+            .lock()
+            .map_err(|e| anyhow::anyhow!("window stream mutex poisoned: {e}"))?;
+        guard.bind_focused(key, client_id, cursor_mode)?
+    };
+    let output = PathBuf::from(output);
+    if let Err(e) = write_window_frame(bound.node_id, &output) {
+        if let Ok(mut guard) = windows.lock() {
+            guard.unbind(key);
+        }
+        return Err(e.context("reading the first frame of the bound window"));
+    }
+    Ok(Event::WindowBound {
+        key: key.to_string(),
+        node_id: bound.node_id,
+        logical_size: [bound.logical_size.0, bound.logical_size.1],
+    })
+}
+
+fn window_screenshot(
+    windows: &Mutex<MutterWindowStreams>,
+    key: &str,
+    output: &str,
+) -> Result<Event> {
+    let node_id = windows
+        .lock()
+        .map_err(|e| anyhow::anyhow!("window stream mutex poisoned: {e}"))?
+        .get(key)?
+        .node_id;
+    let output = PathBuf::from(output);
+    write_window_frame(node_id, &output)?;
+    Ok(Event::ScreenshotSaved {
+        output_size_bytes: std::fs::metadata(&output)?.len(),
+    })
+}
+
+fn write_window_frame(node_id: u32, output: &PathBuf) -> Result<()> {
+    let argv = crate::gst::build_mutter_window_png_argv(node_id, output);
+    crate::screenshot::run_gst_oneshot(&argv)
+        .with_context(|| format!("running Mutter window frame pipeline: {argv:?}"))
+}
+
+fn run_window_recording_start(
+    state: &Mutex<SessionState>,
+    windows: &Mutex<MutterWindowStreams>,
+    start: WindowRecordingCommand,
+    client_id: u64,
+) -> Result<Event> {
+    let node_id = windows
+        .lock()
+        .map_err(|e| anyhow::anyhow!("window stream mutex poisoned: {e}"))?
+        .get(&start.key)?
+        .node_id;
+    let mut guard = state.lock().expect("session mutex");
+    if guard.recording.is_some() {
+        anyhow::bail!("a recording is already running on the Spectre Wayland session");
+    }
+    let stream_size = (start.stream_size[0], start.stream_size[1]);
+    let output = PathBuf::from(&start.output);
+    let argv = crate::gst::build_mutter_window_recording_argv(
+        node_id,
+        start.region,
+        stream_size,
+        start.frame_rate,
+        &output,
+        &start.codec,
+    )?;
+    let gst_stdout_target = unsafe {
+        let stderr_raw = nix::unistd::dup(std::io::stderr().as_raw_fd())?;
+        std::os::fd::OwnedFd::from_raw_fd(stderr_raw)
+    };
+    let child = ProcessCommand::new(&argv[0])
+        .args(&argv[1..])
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(gst_stdout_target))
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("spawning gst-launch: {argv:?}"))?;
+    let gst_pid = child.id();
+    guard.recording = Some(ActiveRecording {
+        child,
+        output,
+        owner: client_id,
+    });
+    Ok(Event::Started {
+        node_id,
+        stream_size: [stream_size.0, stream_size.1],
+        stream_position: [0, 0],
+        gst_pid,
+    })
 }
 
 fn gst_pid_i32(pid: u32) -> i32 {

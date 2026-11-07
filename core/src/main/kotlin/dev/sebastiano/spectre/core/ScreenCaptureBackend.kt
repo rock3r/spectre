@@ -163,8 +163,12 @@ internal class PlatformScreenCaptureBackend(
                 }
         }
 
+        /**
+         * macOS tells shared titles apart in its helper. Linux Wayland binds a Mutter window stream
+         * to the window itself, so titles do not select anything there.
+         */
         fun defaultNativeCaptureDisambiguatesTitles(): Boolean =
-            System.getProperty("os.name").contains("mac", ignoreCase = true)
+            System.getProperty("os.name").contains("mac", ignoreCase = true) || isWaylandSession()
     }
 }
 

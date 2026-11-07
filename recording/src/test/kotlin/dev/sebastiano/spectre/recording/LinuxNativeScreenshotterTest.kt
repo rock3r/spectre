@@ -1,7 +1,9 @@
 package dev.sebastiano.spectre.recording
 
+import dev.sebastiano.spectre.recording.portal.WaylandCaptureUnavailableException
 import dev.sebastiano.spectre.recording.portal.WaylandHelperBinaryExtractor
 import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
+import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import java.awt.Rectangle
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -84,7 +86,7 @@ class LinuxNativeScreenshotterTest {
     }
 
     @Test
-    fun `Wayland captureWindow refuses an untitled window before starting the helper`() {
+    fun `Wayland captureWindow never starts a portal window-source helper`() {
         val tempDir = Files.createTempDirectory("spectre-linux-screenshotter-test-")
         val screenshotter =
             linuxScreenshotter(
@@ -92,24 +94,30 @@ class LinuxNativeScreenshotterTest {
                 processFactory =
                     object : LinuxNativeScreenshotter.ProcessFactory {
                         override fun start(helperPath: Path): Process =
-                            error("the helper must not start for an untitled Wayland window")
+                            error("Wayland window capture must not start a one-shot portal helper")
                     },
                 isWayland = true,
             )
-        val window =
+        val titled =
+            object : TitledWindow {
+                override var title: String? = "Not an AWT window"
+                override val bounds: Rectangle = Rectangle(0, 0, 300, 200)
+            }
+        val framedWithoutWindow =
             FramedWindow(
                 logicalFrame = Rectangle(10, 20, 300, 200),
                 deviceFrame = Rectangle(20, 40, 600, 400),
             )
 
         try {
-            val error =
-                assertFailsWith<UnsupportedOperationException> {
-                    screenshotter.captureWindow(window, 4242L)
-                }
-
-            assertTrue(error.message.orEmpty().contains("Wayland"), error.message)
-            assertTrue(error.message.orEmpty().contains("untitled"), error.message)
+            for (window in listOf(titled, framedWithoutWindow)) {
+                val error =
+                    assertFailsWith<WaylandCaptureUnavailableException> {
+                        screenshotter.captureWindow(window, 4242L)
+                    }
+                assertTrue(error.message.orEmpty().contains("Wayland"), error.message)
+                assertTrue(error.message.orEmpty().contains("Mutter"), error.message)
+            }
         } finally {
             tempDir.toFile().deleteRecursively()
         }
@@ -140,7 +148,7 @@ class LinuxNativeScreenshotterTest {
             processFactory = processFactory,
             isWayland = { isWayland },
             displayNameProvider = { ":99" },
-            frameExtentsLookup = { null },
+            waylandWindowCapture = { error("no Mutter window stream in unit tests") },
         )
 }
 

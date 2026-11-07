@@ -164,6 +164,7 @@ internal constructor(
             }
 
     override fun beforeEach(context: ExtensionContext) {
+        WaylandPortalPrecheck.ensureOnce()
         val store = context.getStore(NAMESPACE)
         val isolation =
             InputIsolationSession(

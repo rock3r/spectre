@@ -49,9 +49,14 @@ internal fun captureSurfaceForVisualIdle(
                 cropImageToScreenRegion(normalized, visibleRegion, capture.boundsOnScreen)
             }
         }
-    } catch (_: UnsupportedOperationException) {
+    } catch (error: UnsupportedOperationException) {
+        // A window Wayland cannot capture yet stays unsupported for the whole wait: say so now.
+        if (isWaylandCaptureFailFast(error)) throw error
         null
     } catch (error: IllegalStateException) {
+        // A missing Wayland grant or an unusable Wayland window capture does not get better by
+        // waiting: surface it now instead of timing out on "unsampleable" frames.
+        if (isWaylandCaptureFailFast(error)) throw error
         if (isNativeCaptureHelperUnusable(error)) {
             backend.captureRegion(surfaceRegion)
         } else {
@@ -172,6 +177,30 @@ internal fun isNativeCaptureHelperUnusable(error: Throwable): Boolean {
             message.contains("error=2)", ignoreCase = true)
     }
 }
+
+/**
+ * `:recording`'s Linux Wayland exceptions that mean "fail now, with this message": a missing portal
+ * grant (`spectre permissions request`), or a window that cannot get a Mutter window stream.
+ * Matched by class name because core cannot link `:recording`; keep in sync with
+ * `WaylandCaptureUnavailableException` in `WaylandHelperProtocol.kt`.
+ */
+internal val WAYLAND_CAPTURE_FAIL_FAST_EXCEPTIONS: Set<String> =
+    setOf(
+        "dev.sebastiano.spectre.recording.portal.WaylandCaptureUnavailableException",
+        "dev.sebastiano.spectre.recording.portal.WaylandConsentNotGrantedException",
+        "dev.sebastiano.spectre.recording.portal.WaylandWindowCaptureUnsupportedException",
+    )
+
+/** True when [error], or a cause, is (a subclass of) one of [classNames]. */
+internal fun isWaylandCaptureFailFast(
+    error: Throwable,
+    classNames: Set<String> = WAYLAND_CAPTURE_FAIL_FAST_EXCEPTIONS,
+): Boolean =
+    generateSequence(error) { it.cause }
+        .any { cause ->
+            generateSequence<Class<*>>(cause.javaClass) { it.superclass }
+                .any { it.name in classNames }
+        }
 
 /**
  * GitHub-**hosted** Windows Actions runners are not an interactive console for WGC stills.

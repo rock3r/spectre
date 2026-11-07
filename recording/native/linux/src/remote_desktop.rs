@@ -100,16 +100,36 @@ impl RemoteDesktopSession {
     }
 }
 
+/// Open the combined RemoteDesktop + monitor ScreenCast session. With `allow_prompt` false
+/// (`SPECTRE_WAYLAND_CONSENT_PROMPT=never`) the session never opens a Share dialog itself: it
+/// fails with [`ConsentNotGranted`] when no restore token is stored, or when the compositor
+/// rejects the stored one.
 pub fn open_remote_desktop_session(
     cursor_mode: CursorMode,
     timeout: Duration,
+    allow_prompt: bool,
 ) -> Result<RemoteDesktopSession> {
     let token_key = remote_desktop_token_key(cursor_mode);
     let stored = portal::load_restore_token_named(RD_TOKEN_FILE_PREFIX, &token_key)?;
+    if stored.is_none() && !allow_prompt {
+        return Err(portal::prompt_forbidden_error(
+            "RemoteDesktop",
+            &format!(
+                "no stored restore_token at {}",
+                portal::restore_token_file_named(RD_TOKEN_FILE_PREFIX, &token_key).display()
+            ),
+        ));
+    }
     match open_remote_desktop_session_inner(cursor_mode, timeout, stored.as_deref(), &token_key) {
         Ok(session) => Ok(session),
         Err(first) if stored.is_some() && is_rd_token_rejection(&first) => {
             let _ = portal::clear_restore_token_named(RD_TOKEN_FILE_PREFIX, &token_key);
+            if !allow_prompt {
+                return Err(portal::prompt_forbidden_error(
+                    "RemoteDesktop",
+                    &format!("the stored restore_token was rejected ({first:#})"),
+                ));
+            }
             eprintln!(
                 "spectre-wayland-helper: stored RemoteDesktop restore_token was rejected \
                  ({first:#}). Cleared token and retrying interactively — a human must \
@@ -138,6 +158,7 @@ fn interactive_consent_banner(timeout: Duration) -> String {
          No stored RemoteDesktop restore_token: the desktop portal is opening a Share /\n\
          Allow remote interaction dialog on the seat. Select the whole screen, tick\n\
          Remember, and click Share. Each portal step waits {secs}s.\n\
+         Approve it once with `spectre permissions request`; later runs reuse the grant.\n\
          If no dialog is visible, open the Activities overview (Super key): GNOME may not\n\
          attach the dialog to a parent window, so it can sit behind other windows.\n\
          ================================================================================\n"
@@ -396,5 +417,6 @@ mod tests {
         assert!(banner.contains("60s"));
         assert!(banner.contains("Activities"));
         assert!(banner.contains("Remember"));
+        assert!(banner.contains("spectre permissions request"));
     }
 }

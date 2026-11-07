@@ -29,10 +29,13 @@ import kotlinx.serialization.json.Json
  */
 internal class WaylandSessionClient
 internal constructor(
-    private val helperExtractor: WaylandHelperBinaryExtractor,
+    helperExtractor: WaylandHelperBinaryExtractor,
     private val envLookup: (String) -> String?,
-    private val processFactory: SessionProcessFactory,
-    private val waitForSocket: (Path, Long) -> Boolean = ::waitUntilExists,
+    processFactory: SessionProcessFactory,
+    waitForSocket: (Path, Long) -> Boolean = ::waitUntilExists,
+    private val consentPrompt: () -> WaylandConsentPrompt = {
+        waylandConsentPrompt(System::getProperty, envLookup)
+    },
 ) {
     constructor() :
         this(
@@ -45,6 +48,9 @@ internal constructor(
     private val lock = Any()
     private val inputConnection = WaylandSessionInputConnection(json)
     private val consentMemo = WaylandSessionConsentMemo()
+
+    private val starter =
+        WaylandSessionStarter(helperExtractor, envLookup, processFactory, waitForSocket)
 
     fun mouseMove(x: Int, y: Int) {
         send(Command.PointerMove(x, y))
@@ -94,7 +100,24 @@ internal constructor(
     fun send(command: Command): Event =
         synchronized(lock) { inputConnection.send(ensureSocket(), command) }
 
-    fun startHeld(command: Command.Start): HeldRecordingSession {
+    /** The session socket path for this environment, or null without a runtime directory. */
+    fun sessionSocketPath(): Path? = sessionDirOrNull()?.let { waylandSessionPaths(it).socket }
+
+    /**
+     * Starts the session helper for an attended `spectre permissions request`, or joins the running
+     * one. The helper may open the Share dialog and waits [consentTimeoutSeconds] for each portal
+     * step. Unlike captures, this ignores the consent memo and [WaylandConsentPrompt.NEVER]: a
+     * person asked for the dialog.
+     */
+    fun openSessionForRequest(consentTimeoutSeconds: Long): Path =
+        synchronized(lock) {
+            starter.startOrJoin(
+                waylandSessionPaths(sessionDir()),
+                SessionStart(WaylandConsentPrompt.ALLOW, consentTimeoutSeconds, attended = true),
+            )
+        }
+
+    fun startHeld(command: Command): HeldRecordingSession {
         val socket = synchronized(lock) { ensureSocket() }
         val channel = SocketChannel.open(StandardProtocolFamily.UNIX)
         var transferred = false
@@ -119,47 +142,26 @@ internal constructor(
 
     private fun ensureSocket(): Path {
         val paths = waylandSessionPaths(sessionDir())
-        return consentMemo.resolve(paths.socket, ::probeUnixSocket) { startOrJoinSession(paths) }
-    }
-
-    private fun startOrJoinSession(paths: WaylandSessionPaths): Path {
-        val helperProcess = java.util.concurrent.atomic.AtomicReference<Process?>(null)
-        return resolveWaylandSessionSocket(
-            paths = paths,
-            socketIsLive = ::probeUnixSocket,
-            startHelper = {
-                val helper = helperExtractor.extract()
-                helperProcess.set(
-                    processFactory.startSession(helper, waylandHelperEnvironment(envLookup))
-                )
-            },
-            waitForSocket = waitForSocket,
-            timeoutMs = SESSION_SOCKET_TIMEOUT_MS,
-            helperExitCode = { helperProcess.get().sessionExitCode() },
-        )
-    }
-
-    private fun probeUnixSocket(socket: Path): Boolean =
-        try {
-            SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
-                channel.connect(UnixDomainSocketAddress.of(socket))
-                true
-            }
-        } catch (_: IOException) {
-            false
+        return consentMemo.resolve(paths.socket, ::probeUnixSocket) {
+            starter.startOrJoin(paths, SessionStart(consentPrompt()))
         }
+    }
 
-    private fun sessionDir(): Path {
+    private fun sessionDirOrNull(): Path? {
         envLookup("SPECTRE_WAYLAND_SESSION_DIR")
             ?.takeIf { it.isNotBlank() }
             ?.let {
                 return Path.of(it)
             }
-        envLookup("XDG_RUNTIME_DIR")
+        return envLookup("XDG_RUNTIME_DIR")
             ?.takeIf { it.isNotBlank() }
-            ?.let {
-                return Path.of(it).resolve("spectre")
-            }
+            ?.let { Path.of(it).resolve("spectre") }
+    }
+
+    private fun sessionDir(): Path {
+        sessionDirOrNull()?.let {
+            return it
+        }
         error(
             "The Wayland session needs a private runtime directory, but XDG_RUNTIME_DIR is not " +
                 "set and /run/user/<uid> is missing or not owned by this user. Set " +
@@ -187,9 +189,34 @@ internal constructor(
                 .start()
     }
 
+    /** How one helper start may prompt, and how long the JVM waits for its socket. */
+    internal data class SessionStart(
+        val prompt: WaylandConsentPrompt,
+        val consentTimeoutSeconds: Long? = null,
+        /** A person asked for the dialog: an earlier dialog that timed out must not block it. */
+        val attended: Boolean = false,
+    ) {
+        val extraEnvironment: Map<String, String>
+            get() = buildMap {
+                // Always explicit: the helper inherits this JVM's environment, and an exported
+                // SPECTRE_WAYLAND_CONSENT_PROMPT=never must not block an attended request.
+                put(WAYLAND_CONSENT_PROMPT_ENV, prompt.envValue)
+                consentTimeoutSeconds?.let { put(WAYLAND_CONSENT_TIMEOUT_ENV, it.toString()) }
+            }
+
+        /** The helper waits for up to [PORTAL_CONSENT_STEPS] portal responses in a row. */
+        val socketTimeoutMs: Long
+            get() =
+                consentTimeoutSeconds?.let {
+                    TimeUnit.SECONDS.toMillis(it * PORTAL_CONSENT_STEPS + SOCKET_MARGIN_SECONDS)
+                } ?: SESSION_SOCKET_TIMEOUT_MS
+    }
+
     private companion object {
         const val SESSION_SOCKET_TIMEOUT_MS: Long = 90_000
         const val SOCKET_POLL_MS: Long = 50
+        const val PORTAL_CONSENT_STEPS: Long = 3
+        const val SOCKET_MARGIN_SECONDS: Long = 30
 
         fun waitUntilExists(path: Path, timeoutMs: Long): Boolean {
             val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
@@ -199,6 +226,86 @@ internal constructor(
             }
             return Files.exists(path)
         }
+    }
+}
+
+/**
+ * Starts the session helper, or joins one that is starting. Not thread-safe: [WaylandSessionClient]
+ * calls it under its own lock.
+ */
+internal class WaylandSessionStarter(
+    private val helperExtractor: WaylandHelperBinaryExtractor,
+    private val envLookup: (String) -> String?,
+    private val processFactory: WaylandSessionClient.SessionProcessFactory,
+    private val waitForSocket: (Path, Long) -> Boolean,
+) {
+    /**
+     * The helper started here that has not bound its socket yet, usually because its Share dialog
+     * is still open. A capture whose own time budget runs out (a 5 s visual-idle sample, for
+     * example) is interrupted while it waits, but the helper and its dialog stay up: the next
+     * capture waits on this helper instead of starting a new one, and reads its exit status when
+     * the dialog times out or is denied.
+     */
+    private var pendingHelper: Process? = null
+
+    fun startOrJoin(paths: WaylandSessionPaths, start: WaylandSessionClient.SessionStart): Path {
+        if (Files.exists(paths.socket) && probeUnixSocket(paths.socket)) {
+            pendingHelper = null
+            return paths.socket
+        }
+        val helper = pendingHelper?.takeIf { it.isAlive } ?: startHelper(start)
+        try {
+            val socket =
+                resolveWaylandSessionSocket(
+                    paths = paths,
+                    socketIsLive = ::probeUnixSocket,
+                    startHelper = {},
+                    waitForSocket = waitForSocket,
+                    timeoutMs = start.socketTimeoutMs,
+                    helperExitCode = { helper.sessionExitCode() },
+                )
+            pendingHelper = null
+            return socket
+        } catch (error: WaylandConsentNotGrantedException) {
+            pendingHelper = null
+            if (start.prompt == WaylandConsentPrompt.NEVER) {
+                throw WaylandConsentNotGrantedException(
+                    waylandNoStoredGrantMessage(waylandRemoteDesktopTokenPath(envLookup)),
+                    error,
+                )
+            }
+            throw error
+        } catch (error: IllegalStateException) {
+            // A helper that is still waiting on its dialog stays pending for the next capture.
+            if (helper.sessionExitCode() != null) pendingHelper = null
+            throw error
+        }
+    }
+
+    /**
+     * Starts a helper. A pending helper that exited while nobody waited reports its result first: a
+     * dialog that timed out or was denied becomes [WaylandConsentNotGrantedException], which the
+     * consent memo then keeps.
+     */
+    private fun startHelper(start: WaylandSessionClient.SessionStart): Process {
+        pendingHelper?.let { finished ->
+            pendingHelper = null
+            if (!start.attended) failIfHelperExitedFatally(finished.sessionExitCode())
+        }
+        if (start.prompt == WaylandConsentPrompt.NEVER) {
+            val token = waylandRemoteDesktopTokenPath(envLookup)
+            if (token == null || !hasStoredRestoreToken(token)) {
+                throw WaylandConsentNotGrantedException(waylandNoStoredGrantMessage(token))
+            }
+        }
+        val helper = helperExtractor.extract()
+        val process =
+            processFactory.startSession(
+                helper,
+                waylandHelperEnvironment(envLookup) + start.extraEnvironment,
+            )
+        pendingHelper = process
+        return process
     }
 }
 
@@ -271,12 +378,23 @@ internal class WaylandSessionInputConnection(private val json: Json) {
     }
 }
 
+/** True when [socket] accepts a unix-domain connection now. */
+internal fun probeUnixSocket(socket: Path): Boolean =
+    try {
+        SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
+            channel.connect(UnixDomainSocketAddress.of(socket))
+            true
+        }
+    } catch (_: IOException) {
+        false
+    }
+
 private fun exchangeSessionCommand(channel: SocketChannel, json: Json, command: Command): Event {
     writeHeldLine(channel, json.encodeToString(Command.serializer(), command))
     val line = readHeldLine(channel)
     val event = json.decodeFromString(Event.serializer(), line)
     if (event is Event.Error) {
-        error("spectre-wayland-helper session error: kind=${event.kind} message=${event.message}")
+        throw WaylandHelperErrorException(event.kind, event.message)
     }
     return event
 }
@@ -288,9 +406,7 @@ internal class HeldRecordingSession(private val channel: SocketChannel, private 
         val line = readHeldLine(channel)
         val event = json.decodeFromString(Event.serializer(), line)
         if (event is Event.Error) {
-            error(
-                "spectre-wayland-helper session error: kind=${event.kind} message=${event.message}"
-            )
+            throw WaylandHelperErrorException(event.kind, event.message)
         }
         return event
     }

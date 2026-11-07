@@ -6,17 +6,19 @@ import dev.sebastiano.spectre.recording.portal.Command
 import dev.sebastiano.spectre.recording.portal.CursorMode
 import dev.sebastiano.spectre.recording.portal.DefaultWaylandHelperBinaryExtractor
 import dev.sebastiano.spectre.recording.portal.DefaultWaylandSessionClient
+import dev.sebastiano.spectre.recording.portal.DefaultWaylandWindowStreams
 import dev.sebastiano.spectre.recording.portal.Event
 import dev.sebastiano.spectre.recording.portal.Region
 import dev.sebastiano.spectre.recording.portal.SourceType
+import dev.sebastiano.spectre.recording.portal.WaylandCaptureUnavailableException
 import dev.sebastiano.spectre.recording.portal.WaylandHelperBinaryExtractor
 import dev.sebastiano.spectre.recording.portal.awtDisplayBoundsContaining
-import dev.sebastiano.spectre.recording.portal.queryGtkFrameExtentsViaXprop
 import dev.sebastiano.spectre.recording.portal.toWire
+import dev.sebastiano.spectre.recording.screencapturekit.AwtWindowBacked
 import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
-import java.awt.Insets
 import java.awt.Rectangle
+import java.awt.Window
 import java.awt.image.BufferedImage
 import java.io.BufferedReader
 import java.io.IOException
@@ -40,7 +42,9 @@ internal constructor(
     private val processFactory: ProcessFactory,
     private val isWayland: () -> Boolean,
     private val displayNameProvider: () -> String?,
-    private val frameExtentsLookup: (String) -> Insets?,
+    private val waylandWindowCapture: (Window) -> BufferedImage = {
+        DefaultWaylandWindowStreams.instance.capture(it)
+    },
 ) : WindowScreenshotter, RegionScreenshotter {
 
     public constructor() :
@@ -49,44 +53,25 @@ internal constructor(
             processFactory = SystemProcessFactory,
             isWayland = HostPlatform::isWayland,
             displayNameProvider = { System.getenv("DISPLAY") },
-            frameExtentsLookup = ::queryGtkFrameExtentsViaXprop,
         )
 
     private val json = Json { ignoreUnknownKeys = true }
 
     override fun captureWindow(window: TitledWindow, windowOwnerPid: Long): BufferedImage {
+        if (isWayland()) return captureWaylandWindow(window)
         if (window is FramedWindow) return captureFramedWindow(window, windowOwnerPid)
         val title = window.title
         require(!title.isNullOrBlank()) {
             "LinuxNativeScreenshotter requires a non-blank window title; got \"$title\"."
         }
-        val wayland = isWayland()
-        val region =
-            if (wayland) {
-                val extents =
-                    frameExtentsLookup(title)
-                        ?: error(
-                            "Could not determine WM frame extents for window '$title' on this " +
-                                "Wayland session. The portal window screenshot path currently " +
-                                "depends on `_GTK_FRAME_EXTENTS`, which is usually available for " +
-                                "GTK/Mutter XWayland windows only. Missing `xprop`, a non-GTK " +
-                                "toolkit, an unsupported compositor, or no matching X11 window " +
-                                "can all produce this result; capture an explicit region instead."
-                        )
-                Rectangle(extents.left, extents.top, window.bounds.width, window.bounds.height)
-            } else {
-                window.bounds
-            }
         return capture(
             Command.Screenshot(
-                backend = if (wayland) CaptureBackend.WAYLAND_PORTAL else CaptureBackend.X11,
+                backend = CaptureBackend.X11,
                 target = CaptureTarget.WINDOW,
-                sourceTypes = if (wayland) listOf(SourceType.WINDOW) else emptyList(),
-                displayName =
-                    if (wayland) null else displayNameProvider()?.takeIf { it.isNotBlank() },
+                displayName = displayNameProvider()?.takeIf { it.isNotBlank() },
                 windowTitle = title,
                 cursorMode = CursorMode.HIDDEN,
-                region = region.toProtocolRegion(),
+                region = window.bounds.toProtocolRegion(),
                 screenSize = null,
                 output = tempPng().toAbsolutePath().toString(),
             )
@@ -94,18 +79,22 @@ internal constructor(
     }
 
     /**
-     * Captures an untitled window (a `JWindow` or plain AWT `Window`) found by its device-pixel
-     * frame. X11 only: on Wayland the portal, not Spectre, picks the window, so a frame cannot
-     * select it.
+     * Wayland: a GNOME Mutter window stream bound to the AWT window (see [WaylandWindowStreams]).
+     * The portal's window source is never used here: it asks the user to pick every new window.
      */
+    private fun captureWaylandWindow(window: TitledWindow): BufferedImage {
+        val awtWindow =
+            (window as? AwtWindowBacked)?.awtWindow
+                ?: throw WaylandCaptureUnavailableException(
+                    "Linux Wayland window capture needs a window of this JVM (an AWT Frame, " +
+                        "Dialog, or Window adapted with asTitledWindow()), because Spectre binds " +
+                        "a GNOME Mutter window stream to it. Got ${window.javaClass.name}."
+                )
+        return waylandWindowCapture(awtWindow)
+    }
+
+    /** Captures an untitled window (a `JWindow` or plain AWT `Window`) found by its frame. X11. */
     private fun captureFramedWindow(window: FramedWindow, windowOwnerPid: Long): BufferedImage {
-        if (isWayland()) {
-            throw UnsupportedOperationException(
-                "Linux Wayland window screenshot of an untitled window (JWindow or plain AWT " +
-                    "Window) is not supported: the portal path finds windows by title only. " +
-                    "Run under X11/Xvfb, or capture an explicit region with screenshot(region)."
-            )
-        }
         return capture(
             Command.Screenshot(
                 backend = CaptureBackend.X11,
@@ -274,7 +263,9 @@ internal constructor(
                 is Event.Started,
                 is Event.Stopped,
                 is Event.FrameProgress,
-                is Event.InputAck -> {
+                is Event.InputAck,
+                is Event.WindowBound,
+                is Event.WindowUnbound -> {
                     // Ignore recording/input-only events until a terminal screenshot event arrives.
                 }
             }

@@ -163,6 +163,70 @@ public final class dev/sebastiano/spectre/recording/WindowScreenshotter$DefaultI
 	public static synthetic fun captureWindow$default (Ldev/sebastiano/spectre/recording/WindowScreenshotter;Ldev/sebastiano/spectre/recording/screencapturekit/TitledWindow;JILjava/lang/Object;)Ljava/awt/image/BufferedImage;
 }
 
+public final class dev/sebastiano/spectre/recording/portal/WaylandPortalAccess {
+	public static final field DEFAULT_REQUEST_TIMEOUT_SECONDS J
+	public static final field INSTANCE Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccess;
+	public static final fun isApplicable ()Z
+	public static final fun preflight ()Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessResult;
+	public static final fun request ()Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessResult;
+	public static final fun request (J)Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessResult;
+	public static synthetic fun request$default (JILjava/lang/Object;)Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessResult;
+}
+
+public final class dev/sebastiano/spectre/recording/portal/WaylandPortalAccessResult {
+	public static final field Companion Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessResult$Companion;
+	public fun <init> (Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessStatus;ZLjava/lang/String;ZLjava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessStatus;ZLjava/lang/String;ZLjava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessStatus;
+	public final fun component2 ()Z
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Z
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()Ljava/lang/String;
+	public final fun copy (Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessStatus;ZLjava/lang/String;ZLjava/lang/String;Ljava/lang/String;)Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessResult;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessResult;Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessStatus;ZLjava/lang/String;ZLjava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessResult;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getGranted ()Z
+	public final fun getGuidance ()Ljava/lang/String;
+	public final fun getSessionActive ()Z
+	public final fun getSessionSocket ()Ljava/lang/String;
+	public final fun getStatus ()Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessStatus;
+	public final fun getTokenPath ()Ljava/lang/String;
+	public final fun getTokenStored ()Z
+	public fun hashCode ()I
+	public final fun relayMessage ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final synthetic class dev/sebastiano/spectre/recording/portal/WaylandPortalAccessResult$$serializer : kotlinx/serialization/internal/GeneratedSerializer {
+	public static final field INSTANCE Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessResult$$serializer;
+	public final fun childSerializers ()[Lkotlinx/serialization/KSerializer;
+	public final fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessResult;
+	public synthetic fun deserialize (Lkotlinx/serialization/encoding/Decoder;)Ljava/lang/Object;
+	public final fun getDescriptor ()Lkotlinx/serialization/descriptors/SerialDescriptor;
+	public final fun serialize (Lkotlinx/serialization/encoding/Encoder;Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessResult;)V
+	public synthetic fun serialize (Lkotlinx/serialization/encoding/Encoder;Ljava/lang/Object;)V
+	public fun typeParametersSerializers ()[Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/recording/portal/WaylandPortalAccessResult$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class dev/sebastiano/spectre/recording/portal/WaylandPortalAccessStatus : java/lang/Enum {
+	public static final field Companion Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessStatus$Companion;
+	public static final field GRANTED Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessStatus;
+	public static final field MISSING Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessStatus;
+	public static final field NOT_APPLICABLE Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessStatus;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessStatus;
+	public static fun values ()[Ldev/sebastiano/spectre/recording/portal/WaylandPortalAccessStatus;
+}
+
+public final class dev/sebastiano/spectre/recording/portal/WaylandPortalAccessStatus$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
 public final class dev/sebastiano/spectre/recording/portal/WaylandPortalRecorder : dev/sebastiano/spectre/recording/Recorder {
 	public fun <init> ()V
 	public fun start (Ljava/awt/Rectangle;Ljava/nio/file/Path;Ldev/sebastiano/spectre/recording/RecordingOptions;)Ldev/sebastiano/spectre/recording/RecordingHandle;

@@ -23,6 +23,15 @@ internal interface TitleDiscriminationAware {
 }
 
 /**
+ * A [TitledWindow] adapter that knows the AWT window of this JVM behind it. Linux Wayland window
+ * capture binds a GNOME Mutter window stream to that window, which needs the window itself, not its
+ * title.
+ */
+internal interface AwtWindowBacked {
+    val awtWindow: Window?
+}
+
+/**
  * Adapt an AWT [Frame] (or any subclass — `ComposeWindow`, `JFrame`) to the [TitledWindow] surface
  * [ScreenCaptureKitRecorder] expects. The adapter delegates `getTitle` / `setTitle` and marshals
  * all calls onto the AWT/Swing EDT via [EventQueue.invokeAndWait] so callers can drive the recorder
@@ -33,7 +42,10 @@ internal interface TitleDiscriminationAware {
  * behaviour for `Frame.setTitle(null)`.
  */
 public fun Frame.asTitledWindow(): TitledWindow =
-    object : TitledWindow, TitleDiscriminationAware {
+    object : TitledWindow, TitleDiscriminationAware, AwtWindowBacked {
+        override val awtWindow: Window
+            get() = this@asTitledWindow
+
         override var title: String?
             get() = onEdt { this@asTitledWindow.title }
             set(value) {
@@ -49,7 +61,10 @@ public fun Frame.asTitledWindow(): TitledWindow =
 
 /** Adapt an AWT [Dialog] (including `JDialog`) to the native capture window surface. */
 public fun Dialog.asTitledWindow(): TitledWindow =
-    object : TitledWindow, TitleDiscriminationAware {
+    object : TitledWindow, TitleDiscriminationAware, AwtWindowBacked {
+        override val awtWindow: Window
+            get() = this@asTitledWindow
+
         override var title: String?
             get() = onEdt { this@asTitledWindow.title }
             set(value) {

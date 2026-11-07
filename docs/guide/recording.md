@@ -81,9 +81,11 @@ Two limits apply:
 - **Two windows with the same position and size make the capture fail.** The helper cannot tell
   which one to capture, so it reports an error instead of guessing. This also applies to two
   windows that share a title on Windows or Linux X11.
-- **Linux Wayland cannot capture a window that has no title, or whose title is shared.** The
-  portal path finds windows by title only. `screenshot(windowIndex)` fails with an error that says
-  so, and `waitForVisualIdle()` cannot sample that window. Use X11 or Xvfb, or `screenshot(region)`.
+- **Linux Wayland window capture needs GNOME, and a Frame or Dialog that can take keyboard focus.**
+  Spectre binds a GNOME Mutter window stream to each window the first time it captures it (see
+  [Linux Wayland window capture](#linux-wayland-window-capture)). Titles do not matter there. A
+  translucent window, or a desktop other than GNOME, makes the capture fail with an error that
+  says why. Spectre never uses a crop of a monitor capture instead.
 
 Video recording still needs a titled window: there is no `TitledWindow` adapter for a `JWindow`.
 Record the owner window or a screen region instead.
@@ -93,7 +95,7 @@ Record the owner window or a screen region instead.
 | macOS | ScreenCaptureKit helper (`spectre-screencapture --mode screenshot`) | Captures only the window source; overlapping apps are excluded | Requires `spectre-recording-macos` at runtime and Screen Recording permission |
 | Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | Captures the named top-level window | Requires `spectre-recording-windows`, Windows 10 version 1903 or newer, .NET 8 Desktop Runtime, Windows App Runtime 1.8, and a non-blank exact window title (or an untitled window found by its bounds) |
 | Linux Xorg/Xvfb | Linux helper + GStreamer `ximagesrc` | Captures visible screen pixels | The target window must be visible/frontmost, same limitation as `ComposeAutomator.screenshot(...)`; window mode needs a non-blank exact title (or an untitled window found by its bounds) |
-| Linux Wayland | Linux helper + portal/PipeWire one-frame capture | Portal-scoped; region mode captures the selected monitor stream, window mode captures the selected window stream | Requires the compositor portal dialog to be accepted. Window mode needs `xprop` and `_GTK_FRAME_EXTENTS`, same as `WaylandPortalWindowRecorder` |
+| Linux Wayland | Linux helper + GNOME Mutter window stream (`org.gnome.Mutter.ScreenCast`) | Captures only the window, even when other windows cover it; follows the window when it moves | GNOME only. Needs the session helper, so the one-time `spectre permissions request` grant. The first capture of each window may focus it briefly. Region stills use the portal monitor stream |
 
 An embedded `ComposePanel` needs its **host** top-level window for window capture.
 When the host exposes a titled `Frame`, capture that window and crop to the panel
@@ -129,18 +131,29 @@ Expected results by platform:
   **`xvfb-run` proves X11 only.** Portal/PipeWire requires separate validation. Nested Xvfb on a host that still
   exports Wayland env or `wayland-*` sockets is handled by session detection (#397); set
   `SPECTRE_CAPTURE_BACKEND=x11` for an explicit override.
-- **Linux Wayland** — run with `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, and the D-Bus session
-  bus visible to the JVM. The task asks the compositor portal for a window stream and writes
-  a one-frame PNG after portal consent. If the dialog is hidden or rejected, the helper
-  fails loudly with the portal error or timeout. To test window-targeted Wayland video, run:
-
-  ```bash
-  ./gradlew :recording:runWaylandPortalWindowSmoke
-  ```
-
-  Pick the smoke window in the compositor portal dialog and inspect the resulting video.
+- **Linux Wayland** — run with `XDG_RUNTIME_DIR` and the D-Bus session bus visible to the JVM,
+  after `spectre permissions request`. The task binds a GNOME Mutter window stream to the smoke
+  window and writes a one-frame PNG. No dialog opens. `:recording:runWaylandPortalWindowSmoke`
+  still tests the portal's window picker, which asks for every window.
 
 ## Linux Wayland consent
+
+Approve Spectre once, then never again. Run this while someone is at the seat:
+
+```bash
+spectre permissions request
+```
+
+The desktop shows the Share / Allow remote interaction dialog. Select the whole screen, tick
+Remember, and click Share. Spectre stores the grant and keeps its session running, so later test
+runs, captures, recordings, and real input open no dialog. `spectre permissions check` reports the
+grant without opening a dialog. Each dialog step waits 300 seconds; change it with `--timeout`.
+From code, call `WaylandPortalAccess.preflight()` or `WaylandPortalAccess.request()`.
+
+Tests that use the JUnit integration never open the dialog themselves. Without a grant, the first
+capture or real input fails at once with an error that names `spectre permissions request`, and
+the run prints that fix once. Set `-Dspectre.wayland.consentPrompt=allow` (or
+`SPECTRE_WAYLAND_CONSENT_PROMPT=allow`) to let a test run open the dialog anyway.
 
 On a seated GNOME/Mutter desktop, Spectre uses **one** long-lived `spectre-wayland-helper`
 session for monitor capture and real OS input:
@@ -160,8 +173,34 @@ session for monitor capture and real OS input:
 `RobotDriver()`, attach (including the inject payload, which talks to the existing seat
 socket without shipping `spectre-recording`), CLI, and MCP on Wayland use this helper. `RobotDriver(robot)` still
 wraps the supplied `java.awt.Robot`. X11, macOS, and Windows keep their existing backends.
-Window-targeted portal capture is a separate ScreenCast grant and is still bound to the
-picked window.
+
+### Linux Wayland window capture
+
+The portal's window source cannot serve tests: it asks the user to pick every window, and GNOME
+cannot restore that grant onto a new window. So window stills, `waitForVisualIdle()` samples, and
+window recording use GNOME Mutter's own `org.gnome.Mutter.ScreenCast` API through the same session
+helper. It needs no dialog. Its stream renders only the window, so other windows on top of it do
+not show, and it follows the window when it moves.
+
+Mutter selects the window that has keyboard focus. The first time Spectre captures a window, it
+focuses that window if needed, binds the stream, checks that the frame shows a window of the
+expected size, and gives focus back. The stream stays bound until the window closes. Limits:
+
+- **GNOME only.** On another Wayland desktop, window capture fails with an error. Capture a screen
+  region instead, or run under X11 or Xvfb.
+- **Popup windows cannot be captured yet.** A `JWindow`, or any window that is not a `Frame` or
+  `Dialog`, never gets X keyboard focus under AWT: AWT keeps it on the owner frame, so Mutter
+  would record the owner. Window stills, visual-idle samples, and atomic captures of such a popup
+  fail at once with an `UnsupportedOperationException`. Capture the owner window or a screen
+  region instead. [#640](https://github.com/rock3r/spectre/issues/640) tracks binding by window
+  identity.
+- **The window must take focus when asked.** Spectre makes a non-focusable window focusable for
+  that moment. If AWT does not report the window as focused, for example because a modal dialog
+  holds focus, the capture fails with an error instead of risking another window.
+- **The first capture of a window must not run on the AWT event dispatch thread,** because
+  binding waits for focus events there. Later captures of a bound window work on any thread.
+- **Translucent windows cannot be bound yet**, because Spectre finds the window by its opaque
+  pixels.
 
 See [Recording limitations](../RECORDING-LIMITATIONS.md) for token env vars and the
 compositor matrix.
@@ -278,7 +317,7 @@ fixed screen rectangle is acceptable.
 | **Windows**             | `null`, or non-null with no title | `WindowsGraphicsCaptureRecorder` region capture.                     |
 | **Linux Xorg/Xvfb**     | non-null with a non-blank title   | `LinuxX11Recorder` window capture (`ximagesrc xid=` after title lookup). |
 | **Linux Xorg/Xvfb**     | `null`, or non-null with no title | `LinuxX11Recorder` region capture (`ximagesrc`).                     |
-| **Linux Wayland**       | non-null                          | `WaylandPortalWindowRecorder` (portal `Window` source type — only the picked window's pixels, window-sized output). |
+| **Linux Wayland**       | non-null                          | GNOME Mutter window stream (only the window's pixels, window-sized output, no dialog). Window + crop is supported. |
 | **Linux Wayland**       | `null`                            | `WaylandPortalRecorder` (portal `Monitor` source type — region capture). |
 
 Each platform has additional limits:
@@ -302,19 +341,19 @@ Each platform has additional limits:
   `FfmpegWindowScreenshotter` remain deprecated explicit legacy options.
   The helper accepts `RecordingOptions.codec = "libx264"` or `"x264enc"`.
   It rejects other encoder strings until the pipeline has structured configuration.
-- **Linux Wayland uses the portal.** Native Wayland capture cannot use the X11 route.
-  With `window != null`, `WaylandPortalWindowRecorder` requests `SourceType.WINDOW`.
-  The user selects a window, and the helper crops its isolated PipeWire stream to
-  window size. With `window == null`, `WaylandPortalRecorder` requests
-  `SourceType.MONITOR` and crops the selected monitor stream to the requested rectangle.
-  This supports embedded `ComposePanel` region capture. The first call opens the
-  compositor's sharing dialog. Later calls in the same JVM reuse the grant.
+- **Linux Wayland uses the session helper.** Native Wayland capture cannot use the X11 route.
+  With `window != null`, `AutoRecorder` records a GNOME Mutter window stream of that window
+  (see [Linux Wayland window capture](#linux-wayland-window-capture)). With
+  `window == null`, `WaylandPortalRecorder` crops the granted monitor stream to the requested
+  rectangle. This supports embedded `ComposePanel` region capture. Both reuse the one grant
+  from `spectre permissions request`.
 - **Linux helper.** Both portal recorders run the same small Rust binary
   (`spectre-wayland-helper`) from the `spectre-recording-linux` runtime artefact. The
   same binary also owns Linux Xorg/Xvfb capture. On Wayland it drives
   `xdg-desktop-portal`'s ScreenCast interface and hands a PipeWire FD to
   `gst-launch-1.0`; on Xorg/Xvfb it runs GStreamer's `ximagesrc` directly.
-- **Window-targeted Wayland needs `xprop`.** `WaylandPortalWindowRecorder` runs
+- **`WaylandPortalWindowRecorder` is explicit opt-in.** `AutoRecorder` no longer uses it,
+  because it asks the user to pick every window. It runs
   `xprop` on the JFrame's XWayland window to read `_GTK_FRAME_EXTENTS`. It uses
   those extents to calculate the crop within the stream. Mutter adds about
   25 pixels of GTK shadow outside AWT's `frame.getBounds()`. Without the extents,
@@ -338,10 +377,10 @@ Instantiate a backend directly when a test needs a specific implementation:
 | `FfmpegWindowRecorder`        | Deprecated legacy explicit Windows-only window-targeted capture via `gdigrab title=`. |
 | `WindowsWindowScreenshotter`  | Windows-only still window screenshots via the `spectre-recording-windows` Windows Graphics Capture helper. |
 | `LinuxX11Recorder`            | Linux Xorg/Xvfb region and named-window capture via the `spectre-recording-linux` helper and GStreamer `ximagesrc`. |
-| `LinuxNativeScreenshotter`    | Linux Xorg/Xvfb screenshots via `ximagesrc`, and Linux Wayland screenshots via portal/PipeWire one-frame capture. |
+| `LinuxNativeScreenshotter`    | Linux Xorg/Xvfb screenshots via `ximagesrc`. Linux Wayland region screenshots via the portal monitor stream, and window screenshots via GNOME Mutter window streams. |
 | `ScreenCaptureKitRecorder`    | macOS-only window-targeted and region capture via the `spectre-recording-macos` Swift helper. |
 | `WaylandPortalRecorder`       | Linux Wayland region capture via `xdg-desktop-portal` (`SourceType.MONITOR`) and the `spectre-recording-linux` Rust helper. |
-| `WaylandPortalWindowRecorder` | Linux Wayland window-targeted capture via `xdg-desktop-portal` (`SourceType.WINDOW`). Window-sized output containing only the picked window's pixels. |
+| `WaylandPortalWindowRecorder` | Linux Wayland window-targeted capture via `xdg-desktop-portal` (`SourceType.WINDOW`). Asks the user to pick every window; `AutoRecorder` does not use it. |
 
 ## Per-OS prerequisites
 

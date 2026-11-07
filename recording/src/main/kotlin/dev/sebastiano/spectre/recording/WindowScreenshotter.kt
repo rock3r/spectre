@@ -18,9 +18,9 @@ import java.lang.ProcessHandle
  *
  * [captureWindow] uses true window-targeted capture where Spectre has one available: macOS
  * ScreenCaptureKit and the native Windows helper on Windows. On Linux, Spectre uses the bundled
- * helper: GStreamer `ximagesrc` on Xorg/Xvfb and portal/PipeWire one-frame capture on Wayland.
- * Linux Xorg/Xvfb callers must keep the target visible/frontmost; Wayland callers must accept the
- * compositor portal dialog.
+ * helper: GStreamer `ximagesrc` on Xorg/Xvfb, and a GNOME Mutter window stream on Wayland (no
+ * dialog; see `WaylandWindowStreams`). Linux Xorg/Xvfb callers must keep the target
+ * visible/frontmost.
  */
 public class AutoScreenshotter
 internal constructor(
@@ -63,17 +63,16 @@ internal constructor(
                     ?: throw unavailable("Windows window screenshot", null)
             }
         }
+        if (isLinux() && isWayland()) {
+            // A Mutter window stream is bound to the window itself, so no title stamp is needed;
+            // a stamp would even show up in the captured title bar.
+            return linuxWindowScreenshotter?.captureWindow(window, windowOwnerPid)
+                ?: throw unavailable("Linux Wayland window screenshot", null)
+        }
         if (isLinux()) {
             return withTitleForCapture(window) {
                 linuxWindowScreenshotter?.captureWindow(window, windowOwnerPid)
-                    ?: throw unavailable(
-                        if (isWayland()) {
-                            "Linux Wayland window screenshot"
-                        } else {
-                            "Linux X11 window screenshot"
-                        },
-                        null,
-                    )
+                    ?: throw unavailable("Linux X11 window screenshot", null)
             }
         }
         throw UnsupportedOperationException(
