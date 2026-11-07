@@ -363,9 +363,11 @@ public surface:
   On Wayland, the first seated run shows one Share + Remember / Allow remote interaction
   dialog; later Spectre processes reuse the helper session. See
   [Linux Wayland consent](recording.md#linux-wayland-consent).
-- **`RobotDriver(robot)`** — same as the no-arg real-OS form but reuses an existing
-  `java.awt.Robot` you've already constructed (e.g., one targeted at a non-default
-  `GraphicsDevice`).
+- **`RobotDriver(robot)`** — real OS input through an existing `java.awt.Robot` that you
+  already built (for example, one for a non-default `GraphicsDevice`). It always sends input
+  through that `Robot`, which on X11 means XTest. On Linux Wayland, that input does not use
+  Spectre's portal session, so Xwayland asks for its own consent, and the input may never
+  reach the app. Use the no-arg `RobotDriver()` on Wayland.
 - **`RobotDriver.headless()`** — for read-only flows in headless CI where real OS I/O is
   unavailable. Every input, clipboard, and screenshot call throws
   `UnsupportedOperationException` so an accidental `automator.click(...)` /
