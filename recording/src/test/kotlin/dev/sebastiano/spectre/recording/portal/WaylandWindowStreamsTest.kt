@@ -10,6 +10,7 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -158,6 +159,113 @@ class WaylandWindowStreamsTest {
             )
 
         assertTrue(handoff.confirmed)
+    }
+
+    @Test
+    fun `focus falls back to window-manager activation when the window's own request is ignored`() {
+        // GNOME ignores toFront/requestFocus from an Xwayland window once another window, or no
+        // window, holds focus; an EWMH activation request is honoured.
+        var activations = 0
+        val handoff =
+            acquireFocus(
+                takeFocus = {},
+                isFocused = { activations > 0 },
+                restore = {},
+                timeoutMs = 50,
+                sleep = {},
+                activate = { activations += 1 },
+            )
+
+        assertTrue(handoff.confirmed)
+        assertEquals(1, activations)
+    }
+
+    @Test
+    fun `a window that takes focus by itself is not activated through the window manager`() {
+        var activations = 0
+        val handoff =
+            acquireFocus(
+                takeFocus = {},
+                isFocused = { true },
+                restore = {},
+                timeoutMs = 50,
+                sleep = {},
+                activate = { activations += 1 },
+            )
+
+        assertTrue(handoff.confirmed)
+        assertEquals(0, activations)
+    }
+
+    @Test
+    fun `a failed activation leaves focus unconfirmed and says why`() {
+        var restored = 0
+        val handoff =
+            acquireFocus(
+                takeFocus = {},
+                isFocused = { false },
+                restore = { restored += 1 },
+                timeoutMs = 20,
+                sleep = {},
+                activate = { error("no X11 window matches the frame") },
+            )
+
+        assertFalse(handoff.confirmed)
+        assertTrue(handoff.detail.orEmpty().contains("no X11 window matches"), handoff.detail)
+        handoff.restore()
+        assertEquals(1, restored)
+    }
+
+    @Test
+    fun `a missing portal grant during activation fails clearly instead of reading as no focus`() {
+        var restored = 0
+        assertFailsWith<WaylandConsentNotGrantedException> {
+            acquireFocus(
+                takeFocus = {},
+                isFocused = { false },
+                restore = { restored += 1 },
+                timeoutMs = 20,
+                sleep = {},
+                activate = { throw WaylandConsentNotGrantedException("run permissions request") },
+            )
+        }
+
+        assertEquals(1, restored)
+    }
+
+    @Test
+    fun `binding waits for the window to paint before checking its size`() {
+        // Mutter can hand over the first frame before the window is drawn into the stream.
+        val session = FakeSession(frameWindow = Rectangle(25, 25, 400, 300), transparentFrames = 2)
+        val focus = FakeFocus(size = Dimension(400, 300))
+        val binder = FocusWindowStreamBinder(session, focus, paintWaitMs = 1_000, sleep = {})
+
+        val stream = binder.bind("main", "k1", CursorMode.HIDDEN)
+
+        assertEquals(Point(25, 25), stream.origin)
+        assertEquals(2, session.screenshots, "the binder polls frames until the window shows")
+        assertTrue(session.unbound.isEmpty())
+    }
+
+    @Test
+    fun `a window that never paints still fails after the paint wait`() {
+        val session =
+            FakeSession(frameWindow = Rectangle(25, 25, 400, 300), transparentFrames = 1_000)
+        val binder =
+            FocusWindowStreamBinder(
+                session,
+                FakeFocus(size = Dimension(400, 300)),
+                paintWaitMs = 30,
+                sleep = {},
+            )
+
+        val error =
+            assertFailsWith<WaylandCaptureUnavailableException> {
+                binder.bind("main", "k1", CursorMode.HIDDEN)
+            }
+
+        assertTrue(error.message.orEmpty().contains("fully transparent"), error.message)
+        assertEquals(listOf("k1"), session.unbound)
     }
 
     @Test
@@ -311,6 +419,8 @@ class WaylandWindowStreamsTest {
     private class FakeSession(
         private val frameWindow: Rectangle,
         private val frameSize: Dimension = Dimension(2560, 1440),
+        /** How many frames, from the bind frame on, come before the window is painted. */
+        private var transparentFrames: Int = 0,
     ) : WaylandWindowStreamSession {
         var binds = 0
         val bindCursorModes = mutableListOf<CursorMode>()
@@ -354,8 +464,18 @@ class WaylandWindowStreamsTest {
             }
         }
 
-        private fun frame() =
-            mutterFrame(frameWindow, shadow = 6, width = frameSize.width, height = frameSize.height)
+        private fun frame(): BufferedImage {
+            if (transparentFrames > 0) {
+                transparentFrames -= 1
+                return BufferedImage(frameSize.width, frameSize.height, BufferedImage.TYPE_INT_ARGB)
+            }
+            return mutterFrame(
+                frameWindow,
+                shadow = 6,
+                width = frameSize.width,
+                height = frameSize.height,
+            )
+        }
     }
 }
 

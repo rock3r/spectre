@@ -92,6 +92,9 @@ this: GNOME stores a window grant as the window's app id and title, and gives a 
 without a matching `.desktop` file a new `window:<n>` app id, so every new window would show
 a new window picker. Mutter selects the window that has keyboard focus, so Spectre focuses a
 window briefly the first time it captures it, checks the frame size, and gives focus back.
+GNOME ignores a Java window's own focus request when another application, or no window, has
+focus, so Spectre then asks the window manager to activate the window (`_NET_ACTIVE_WINDOW`).
+It does not give focus back to another application's window.
 A window that cannot take focus, a translucent window, or a desktop other than GNOME fails
 with an error. Popup windows (a `JWindow`, or any window that is not a `Frame` or `Dialog`)
 cannot be captured yet: AWT keeps their keyboard focus on the owner frame, so Mutter would record

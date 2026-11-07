@@ -184,7 +184,13 @@ not show, and it follows the window when it moves.
 
 Mutter selects the window that has keyboard focus. The first time Spectre captures a window, it
 focuses that window if needed, binds the stream, checks that the frame shows a window of the
-expected size, and gives focus back. The stream stays bound until the window closes. Limits:
+expected size, and gives focus back. The stream stays bound until the window closes.
+
+GNOME ignores a Java window's own focus request (`toFront`, `requestFocus`) when another
+application, or no window, has focus. This happens, for example, when a test closes its window
+and the next test opens a new one. When the window does not get focus from its own request,
+Spectre asks the window manager to activate it, with the same request a taskbar sends
+(`_NET_ACTIVE_WINDOW`). Spectre does not give focus back to another application's window. Limits:
 
 - **GNOME only.** On another Wayland desktop, window capture fails with an error. Capture a screen
   region instead, or run under X11 or Xvfb.
@@ -195,8 +201,9 @@ expected size, and gives focus back. The stream stays bound until the window clo
   region instead. [#640](https://github.com/rock3r/spectre/issues/640) tracks binding by window
   identity.
 - **The window must take focus when asked.** Spectre makes a non-focusable window focusable for
-  that moment. If AWT does not report the window as focused, for example because a modal dialog
-  holds focus, the capture fails with an error instead of risking another window.
+  that moment. If AWT still does not report the window as focused after the window manager was
+  asked to activate it, for example because a modal dialog holds focus, the capture fails with an
+  error instead of risking another window.
 - **The first capture of a window must not run on the AWT event dispatch thread,** because
   binding waits for focus events there. Later captures of a bound window work on any thread.
 - **Translucent windows cannot be bound yet**, because Spectre finds the window by its opaque

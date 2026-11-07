@@ -261,7 +261,8 @@ private constructor(
                 is Event.FrameProgress,
                 is Event.InputAck,
                 is Event.WindowBound,
-                is Event.WindowUnbound -> {
+                is Event.WindowUnbound,
+                is Event.WindowActivated -> {
                     // Reserved for a future progress-streaming UX / session input acks.
                 }
             }

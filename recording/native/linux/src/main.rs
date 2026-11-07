@@ -70,7 +70,8 @@ fn main() -> Result<()> {
         | Ok(Command::BindFocusedWindow { .. })
         | Ok(Command::WindowScreenshot { .. })
         | Ok(Command::StartWindowRecording(_))
-        | Ok(Command::UnbindWindow { .. }) => {
+        | Ok(Command::UnbindWindow { .. })
+        | Ok(Command::ActivateWindow { .. }) => {
             let _ = event_tx.send(Event::Error {
                 kind: "Protocol".into(),
                 message: "input and window-stream commands require spectre-wayland-helper --session"

@@ -18,7 +18,7 @@
 use crate::protocol::{Region, ScreenshotCommand};
 use anyhow::{anyhow, bail, Context, Result};
 use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_int, c_long, c_ulong, c_void};
+use std::os::raw::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use std::ptr;
 
 const RTLD_LAZY: c_int = 1;
@@ -83,6 +83,49 @@ type XTranslateCoordinatesFn = unsafe extern "C" fn(
     *mut c_ulong,
 ) -> c_int;
 
+type XCreateSimpleWindowFn = unsafe extern "C" fn(
+    *mut c_void,
+    c_ulong,
+    c_int,
+    c_int,
+    c_uint,
+    c_uint,
+    c_uint,
+    c_ulong,
+    c_ulong,
+) -> c_ulong;
+type XSelectInputFn = unsafe extern "C" fn(*mut c_void, c_ulong, c_long) -> c_int;
+type XChangePropertyFn = unsafe extern "C" fn(
+    *mut c_void,
+    c_ulong,
+    c_ulong,
+    c_ulong,
+    c_int,
+    c_int,
+    *const u8,
+    c_int,
+) -> c_int;
+type XCheckTypedWindowEventFn =
+    unsafe extern "C" fn(*mut c_void, c_ulong, c_int, *mut c_long) -> c_int;
+type XDestroyWindowFn = unsafe extern "C" fn(*mut c_void, c_ulong) -> c_int;
+type XSendEventFn = unsafe extern "C" fn(*mut c_void, c_ulong, c_int, c_long, *mut c_long) -> c_int;
+type XSyncFn = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
+
+/// `XEvent` is a union padded to 24 C longs (192 bytes on LP64).
+const XEVENT_LONGS: usize = 24;
+const PROPERTY_NOTIFY: c_int = 28;
+const CLIENT_MESSAGE: c_int = 33;
+const PROPERTY_CHANGE_MASK: c_long = 1 << 22;
+const SUBSTRUCTURE_NOTIFY_MASK: c_long = 1 << 19;
+const SUBSTRUCTURE_REDIRECT_MASK: c_long = 1 << 20;
+const XA_CARDINAL: c_ulong = 6;
+const PROP_MODE_REPLACE: c_int = 0;
+/// EWMH source indication 2: a pager or other tool acting for the user. Mutter honours it with
+/// a current timestamp; a plain application request (1) with the same timestamp also works on
+/// GNOME 50, but a pager request is what Spectre is.
+const ACTIVE_WINDOW_SOURCE_PAGER: c_long = 2;
+const SERVER_TIME_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1_000);
+
 struct X11Api {
     handle: *mut c_void,
     open_display: XOpenDisplayFn,
@@ -95,6 +138,13 @@ struct X11Api {
     get_window_attributes: XGetWindowAttributesFn,
     free: XFreeFn,
     translate_coordinates: XTranslateCoordinatesFn,
+    create_simple_window: XCreateSimpleWindowFn,
+    select_input: XSelectInputFn,
+    change_property: XChangePropertyFn,
+    check_typed_window_event: XCheckTypedWindowEventFn,
+    destroy_window: XDestroyWindowFn,
+    send_event: XSendEventFn,
+    sync: XSyncFn,
 }
 
 impl Drop for X11Api {
@@ -239,6 +289,129 @@ pub fn find_window_by_frame(
         let candidates = collect_frame_candidates(&api, display, root)?;
         select_frame_match(&candidates, frame, owner_pid, root as u64)
     })
+}
+
+/// Asks the window manager to activate the top-level client window whose root-relative geometry
+/// equals [frame], through an EWMH `_NET_ACTIVE_WINDOW` request with the current X server time.
+///
+/// On GNOME's Xwayland, Mutter ignores a Java window's own focus requests (`toFront`,
+/// `requestFocus`) once another window, or no window, holds focus. A pager-style activation
+/// request with a current timestamp is honoured. The window is found the same way as for a
+/// frame-selected screenshot, so zero or several matches fail instead of activating another
+/// window.
+pub fn activate_window_by_frame(
+    display_name: Option<&str>,
+    frame: Region,
+    owner_pid: Option<u32>,
+) -> Result<ResolvedX11Window> {
+    if frame.width <= 0 || frame.height <= 0 {
+        bail!(
+            "X11 window activation requires a positive width and height; got {}x{}",
+            frame.width,
+            frame.height
+        );
+    }
+    let api = X11Api::load().context("loading libX11.so.6 for window activation")?;
+    let what = format!(
+        "window frame {},{} {}x{} to activate",
+        frame.x, frame.y, frame.width, frame.height
+    );
+    with_display(&api, display_name, &what, |display| unsafe {
+        let root = (api.default_root_window)(display);
+        let candidates = collect_frame_candidates(&api, display, root)?;
+        let window = select_frame_match(&candidates, frame, owner_pid, root as u64)?;
+        let message_type = intern_atom(&api, display, "_NET_ACTIVE_WINDOW").ok_or_else(|| {
+            anyhow!("the window manager does not support _NET_ACTIVE_WINDOW (EWMH)")
+        })?;
+        let timestamp = server_time(&api, display, root)?;
+        let mut event = active_window_message(window.xid, message_type as u64, timestamp);
+        let status = (api.send_event)(
+            display,
+            root,
+            0,
+            SUBSTRUCTURE_REDIRECT_MASK | SUBSTRUCTURE_NOTIFY_MASK,
+            event.as_mut_ptr(),
+        );
+        (api.sync)(display, 0);
+        if status == 0 {
+            bail!(
+                "XSendEvent failed to send _NET_ACTIVE_WINDOW for XID {:#x}",
+                window.xid
+            );
+        }
+        Ok(window)
+    })
+}
+
+/// An EWMH `_NET_ACTIVE_WINDOW` client message for [window], as the raw `XEvent` union
+/// (`XClientMessageEvent` on LP64: `type` at long 0, `window` at 4, `message_type` at 5,
+/// `format` at 6, `data.l` from 7).
+fn active_window_message(window: u64, message_type: u64, timestamp: u64) -> [c_long; XEVENT_LONGS] {
+    let mut event = [0 as c_long; XEVENT_LONGS];
+    event[0] = CLIENT_MESSAGE as c_long;
+    event[4] = window as c_long;
+    event[5] = message_type as c_long;
+    event[6] = 32;
+    event[7] = ACTIVE_WINDOW_SOURCE_PAGER;
+    event[8] = timestamp as c_long;
+    event[9] = 0;
+    event
+}
+
+/// The `time` of a raw `XPropertyEvent` (long 6 on LP64), or None for any other event.
+fn property_notify_time(event: &[c_long; XEVENT_LONGS]) -> Option<u64> {
+    if event[0] as c_int == PROPERTY_NOTIFY {
+        Some(event[6] as u64)
+    } else {
+        None
+    }
+}
+
+/// The current X server time: change a property on a scratch window and read the timestamp of
+/// the `PropertyNotify` event the server sends back (the ICCCM way to get a current timestamp).
+unsafe fn server_time(api: &X11Api, display: *mut c_void, root: c_ulong) -> Result<u64> {
+    let window = (api.create_simple_window)(display, root, -10, -10, 1, 1, 0, 0, 0);
+    if window == 0 {
+        bail!("XCreateSimpleWindow failed while reading the X server time");
+    }
+    let result = (|| {
+        (api.select_input)(display, window, PROPERTY_CHANGE_MASK);
+        let name = CString::new("_SPECTRE_SERVER_TIME").expect("static atom name");
+        let atom = (api.intern_atom)(display, name.as_ptr(), 0);
+        if atom == 0 {
+            bail!("XInternAtom(_SPECTRE_SERVER_TIME) failed");
+        }
+        let value = 0u8;
+        (api.change_property)(
+            display,
+            window,
+            atom,
+            XA_CARDINAL,
+            8,
+            PROP_MODE_REPLACE,
+            &value,
+            1,
+        );
+        let deadline = std::time::Instant::now() + SERVER_TIME_TIMEOUT;
+        let mut event = [0 as c_long; XEVENT_LONGS];
+        loop {
+            (api.sync)(display, 0);
+            if (api.check_typed_window_event)(display, window, PROPERTY_NOTIFY, event.as_mut_ptr())
+                != 0
+            {
+                if let Some(time) = property_notify_time(&event) {
+                    return Ok(time);
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                bail!("the X server sent no PropertyNotify event to read its time from");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    })();
+    (api.destroy_window)(display, window);
+    (api.sync)(display, 0);
+    result
 }
 
 fn with_display<T>(
@@ -736,6 +909,13 @@ impl X11Api {
                     get_window_attributes: load_sym(handle, "XGetWindowAttributes")?,
                     free: load_sym(handle, "XFree")?,
                     translate_coordinates: load_sym(handle, "XTranslateCoordinates")?,
+                    create_simple_window: load_sym(handle, "XCreateSimpleWindow")?,
+                    select_input: load_sym(handle, "XSelectInput")?,
+                    change_property: load_sym(handle, "XChangeProperty")?,
+                    check_typed_window_event: load_sym(handle, "XCheckTypedWindowEvent")?,
+                    destroy_window: load_sym(handle, "XDestroyWindow")?,
+                    send_event: load_sym(handle, "XSendEvent")?,
+                    sync: load_sym(handle, "XSync")?,
                 })
             })() {
                 Ok(api) => Ok(api),
@@ -778,6 +958,56 @@ unsafe fn dlerror_message() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_window_message_is_an_ewmh_pager_request_with_the_timestamp() {
+        let event = active_window_message(0xa0_0007, 301, 123_456);
+        assert_eq!(event[0] as i32, CLIENT_MESSAGE);
+        assert_eq!(event[4], 0xa0_0007, "window");
+        assert_eq!(event[5], 301, "message_type");
+        assert_eq!(event[6] as i32, 32, "format");
+        assert_eq!(event[7], ACTIVE_WINDOW_SOURCE_PAGER, "source indication");
+        assert_eq!(event[8], 123_456, "timestamp");
+        assert_eq!(event[9], 0, "no currently active window");
+        assert_eq!(event.len() * std::mem::size_of::<c_long>(), 192);
+    }
+
+    #[test]
+    fn parses_an_activate_window_command() {
+        let json = r#"{"command":"activate_window","display_name":":0",
+            "frame":{"x":200,"y":187,"width":420,"height":273},"owner_pid":42}"#;
+        match serde_json::from_str::<crate::protocol::Command>(json).expect("activate command") {
+            crate::protocol::Command::ActivateWindow {
+                display_name,
+                frame,
+                owner_pid,
+            } => {
+                assert_eq!(display_name.as_deref(), Some(":0"));
+                assert_eq!(
+                    frame,
+                    Region {
+                        x: 200,
+                        y: 187,
+                        width: 420,
+                        height: 273
+                    }
+                );
+                assert_eq!(owner_pid, Some(42));
+            }
+            other => panic!("unexpected command {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reads_the_server_time_only_from_a_property_notify_event() {
+        let mut event = [0 as c_long; XEVENT_LONGS];
+        event[0] = PROPERTY_NOTIFY as c_long;
+        event[6] = 987_654;
+        assert_eq!(property_notify_time(&event), Some(987_654));
+
+        event[0] = CLIENT_MESSAGE as c_long;
+        assert_eq!(property_notify_time(&event), None);
+    }
 
     #[test]
     fn decodes_latin1_middle_dot_wm_name() {
