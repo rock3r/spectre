@@ -522,6 +522,9 @@ the window is translucent, or the first capture ran on the AWT event dispatch th
 
 - Make sure the window can take focus, and that nothing else grabs focus at that moment.
 - Translucent windows cannot be bound yet. Capture a screen region instead.
+- Popup windows (a `JWindow`, or any window that is not a `Frame` or `Dialog`) fail with an
+  `UnsupportedOperationException` that names [#640](https://github.com/rock3r/spectre/issues/640):
+  AWT keeps their keyboard focus on the owner frame. Capture the owner window or a region.
 - On a desktop other than GNOME there is no Mutter API, and window capture fails with an
   error. Use `screenshot(region)`, `startRegion`, or X11/Xvfb.
 

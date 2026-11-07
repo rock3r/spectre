@@ -43,5 +43,24 @@ class WaylandCaptureFailFastTest {
             "dev.sebastiano.spectre.recording.portal.WaylandCaptureUnavailableException" in
                 WAYLAND_CAPTURE_FAIL_FAST_EXCEPTIONS
         )
+        // A popup that Wayland cannot capture yet is an UnsupportedOperationException, which
+        // visual idle otherwise treats as one unsampleable frame.
+        assertTrue(
+            "dev.sebastiano.spectre.recording.portal.WaylandWindowCaptureUnsupportedException" in
+                WAYLAND_CAPTURE_FAIL_FAST_EXCEPTIONS
+        )
+    }
+
+    @Test
+    fun `an unsupported-operation subclass is recognised by class name`() {
+        class FakeUnsupported(message: String) : UnsupportedOperationException(message)
+
+        assertTrue(
+            isWaylandCaptureFailFast(
+                FakeUnsupported("popup"),
+                setOf(FakeUnsupported::class.java.name),
+            )
+        )
+        assertFalse(isWaylandCaptureFailFast(UnsupportedOperationException("other"), names))
     }
 }

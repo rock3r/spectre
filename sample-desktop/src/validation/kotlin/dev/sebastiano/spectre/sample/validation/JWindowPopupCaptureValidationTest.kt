@@ -45,10 +45,12 @@ import org.junit.jupiter.api.TestInstance
  *   unsampleable.
  *
  * Runs on macOS (ScreenCaptureKit), Windows (Windows Graphics Capture, interactive desktop only),
- * and Linux X11/Xvfb. On Linux Wayland the portal cannot select a window by frame, so the test
- * asserts the clear failure message instead and skips the visual-idle check. Skips headless hosts,
- * GitHub-hosted Windows (no interactive desktop for WGC), and macOS hosts where the capture helper
- * has no Screen Recording permission.
+ * and Linux X11/Xvfb. On Linux Wayland, Spectre binds a GNOME Mutter window stream to the focused
+ * window, and XAWT keeps a JWindow's keyboard focus on its owner frame, so a popup cannot be bound
+ * yet (#640). There the test asserts that every path fails at once with an
+ * [UnsupportedOperationException] that says so, and never returns the owner or a monitor crop.
+ * Skips headless hosts, GitHub-hosted Windows (no interactive desktop for WGC), and macOS hosts
+ * where the capture helper has no Screen Recording permission.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class JWindowPopupCaptureValidationTest {
@@ -88,7 +90,8 @@ class JWindowPopupCaptureValidationTest {
                 assertFailsWith<UnsupportedOperationException> {
                     fixture.automator.screenshot(windowIndex = index)
                 }
-            assertTrue(error.message.orEmpty().contains("Wayland"), error.message)
+            assertTrue(error.message.orEmpty().contains("popup"), error.message)
+            assertTrue(error.message.orEmpty().contains("issues/640"), error.message)
             return
         }
 
@@ -141,11 +144,19 @@ class JWindowPopupCaptureValidationTest {
 
     @Test
     fun `waitForVisualIdle settles while a JWindow popup is open`() {
-        assumeFalse(
-            isWaylandSession(),
-            "Wayland cannot capture an untitled window natively; visual idle cannot sample it",
-        )
         popupWindowIndex()
+        if (isWaylandSession()) {
+            // The popup cannot be sampled on Wayland yet (#640): fail at once, not after timing out
+            // on unsampleable frames.
+            val error =
+                assertFailsWith<UnsupportedOperationException> {
+                    runBlocking {
+                        fixture.automator.waitForVisualIdle(timeout = 15.seconds, stableFrames = 2)
+                    }
+                }
+            assertTrue(error.message.orEmpty().contains("issues/640"), error.message)
+            return
+        }
 
         runBlocking { fixture.automator.waitForVisualIdle(timeout = 15.seconds, stableFrames = 2) }
     }

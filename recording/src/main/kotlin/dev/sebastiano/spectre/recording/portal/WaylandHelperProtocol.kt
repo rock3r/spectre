@@ -257,6 +257,15 @@ internal open class WaylandCaptureUnavailableException(message: String, cause: T
     IllegalStateException(message, cause)
 
 /**
+ * Linux Wayland cannot capture this window yet, such as a popup that Mutter cannot bind (#640). An
+ * [UnsupportedOperationException], as Wayland popup capture was before 0.9.0, so callers that
+ * handle that keep working. Core matches it by class name so visual idle fails at once instead of
+ * timing out; keep the name in `WAYLAND_CAPTURE_FAIL_FAST_EXCEPTIONS`.
+ */
+internal class WaylandWindowCaptureUnsupportedException(message: String) :
+    UnsupportedOperationException(message)
+
+/**
  * The session helper could not open the portal session because nobody answered the consent dialog
  * in time, the user denied it, or Spectre may not open the dialog in this run (see
  * [WaylandConsentPrompt]). [WaylandSessionClient] remembers it so later captures in this JVM fail

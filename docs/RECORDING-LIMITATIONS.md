@@ -93,7 +93,10 @@ without a matching `.desktop` file a new `window:<n>` app id, so every new windo
 a new window picker. Mutter selects the window that has keyboard focus, so Spectre focuses a
 window briefly the first time it captures it, checks the frame size, and gives focus back.
 A window that cannot take focus, a translucent window, or a desktop other than GNOME fails
-with an error. Spectre never substitutes a crop of a monitor capture for a window capture.
+with an error. Popup windows (a `JWindow`, or any window that is not a `Frame` or `Dialog`)
+cannot be captured yet: AWT keeps their keyboard focus on the owner frame, so Mutter would record
+the owner. Their capture fails at once with an `UnsupportedOperationException`;
+[#640](https://github.com/rock3r/spectre/issues/640) tracks binding by window identity. Spectre never substitutes a crop of a monitor capture for a window capture.
 GNOME shows its screen-sharing indicator in the top bar while window streams run. Each bound
 stream lives until its window closes or the session helper's client disconnects.
 

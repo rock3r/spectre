@@ -74,6 +74,26 @@ class WaylandWindowStreamsTest {
     }
 
     @Test
+    fun `a popup window fails before any focus change or binding`() {
+        // XAWT keeps a JWindow's keyboard focus on its owner frame, so Mutter would record the
+        // owner. Spectre must not bind, and must not substitute the owner or a monitor crop.
+        val session = FakeSession(frameWindow = Rectangle(25, 25, 240, 160))
+        val focus =
+            FakeFocus(size = Dimension(240, 160), unbindable = "popup windows are not bound yet")
+        val binder = FocusWindowStreamBinder(session, focus)
+
+        val error =
+            assertFailsWith<WaylandWindowCaptureUnsupportedException> {
+                binder.bind("popup", "k1", CursorMode.HIDDEN)
+            }
+
+        assertTrue(error is UnsupportedOperationException, "keeps the pre-0.9.0 popup contract")
+        assertEquals(0, session.binds)
+        assertTrue(focus.focused.isEmpty(), "no focus change for a window that cannot be bound")
+        assertEquals("popup windows are not bound yet", error.message)
+    }
+
+    @Test
     fun `a window that did not get focus is not bound even when sizes match`() {
         // Another window of the same size kept focus: Mutter would record that one.
         val session = FakeSession(frameWindow = Rectangle(25, 25, 400, 300))
@@ -270,8 +290,13 @@ class WaylandWindowStreamsTest {
             isEventDispatchThread = onEdt,
         )
 
-    private class FakeFocus(val size: Dimension, private val confirmed: Boolean = true) :
-        WindowFocus<String> {
+    private class FakeFocus(
+        val size: Dimension,
+        private val confirmed: Boolean = true,
+        private val unbindable: String? = null,
+    ) : WindowFocus<String> {
+        override fun unbindableReason(window: String): String? = unbindable
+
         val focused = mutableListOf<String>()
         var restored = 0
 

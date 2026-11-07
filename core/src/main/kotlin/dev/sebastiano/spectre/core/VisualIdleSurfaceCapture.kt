@@ -49,7 +49,9 @@ internal fun captureSurfaceForVisualIdle(
                 cropImageToScreenRegion(normalized, visibleRegion, capture.boundsOnScreen)
             }
         }
-    } catch (_: UnsupportedOperationException) {
+    } catch (error: UnsupportedOperationException) {
+        // A window Wayland cannot capture yet stays unsupported for the whole wait: say so now.
+        if (isWaylandCaptureFailFast(error)) throw error
         null
     } catch (error: IllegalStateException) {
         // A missing Wayland grant or an unusable Wayland window capture does not get better by
@@ -186,6 +188,7 @@ internal val WAYLAND_CAPTURE_FAIL_FAST_EXCEPTIONS: Set<String> =
     setOf(
         "dev.sebastiano.spectre.recording.portal.WaylandCaptureUnavailableException",
         "dev.sebastiano.spectre.recording.portal.WaylandConsentNotGrantedException",
+        "dev.sebastiano.spectre.recording.portal.WaylandWindowCaptureUnsupportedException",
     )
 
 /** True when [error], or a cause, is (a subclass of) one of [classNames]. */

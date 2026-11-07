@@ -188,6 +188,7 @@ internal class FocusWindowStreamBinder<W : Any>(
     private val focus: WindowFocus<W>,
 ) : WaylandWindowStreamBinder<W> {
     override fun bind(window: W, key: String, cursor: CursorMode): BoundWindowStream {
+        focus.unbindableReason(window)?.let { throw WaylandWindowCaptureUnsupportedException(it) }
         val expected = focus.size(window)
         val handoff = focus.focus(window)
         try {
@@ -230,6 +231,9 @@ internal class FocusWindowStreamBinder<W : Any>(
 
 /** Keyboard-focus control for [FocusWindowStreamBinder]. */
 internal interface WindowFocus<W : Any> {
+    /** Why [window] can never be bound by focus, or null when it can. Checked before any change. */
+    fun unbindableReason(window: W): String? = null
+
     fun size(window: W): Dimension
 
     /** Gives [window] keyboard focus when it lacks it. The handoff gives focus back. */
@@ -257,6 +261,16 @@ internal class AwtWindowFocus(
     override fun size(window: Window): Dimension = awtWindowSize(window)
 
     override fun describe(window: Window): String = window.describe()
+
+    /**
+     * XAWT never gives a window that is not a Frame or Dialog (a `JWindow` popup, a plain AWT
+     * [Window]) X keyboard focus: it reports such a window focused while X focus stays on its owner
+     * frame (`XWindowPeer.requestWindowFocus`). Mutter would record the owner, so these windows
+     * cannot be bound by focus.
+     */
+    override fun unbindableReason(window: Window): String? =
+        if (window is java.awt.Frame || window is java.awt.Dialog) null
+        else POPUP_UNSUPPORTED_MESSAGE
 
     override fun focus(window: Window): FocusHandoff {
         val state = onEdt {
@@ -389,6 +403,14 @@ internal fun acquireFocus(
 }
 
 private const val FOCUS_POLL_MS: Long = 25
+
+internal const val POPUP_UNSUPPORTED_MESSAGE: String =
+    "Linux Wayland cannot capture a popup window (a JWindow, or any window that is not a Frame or " +
+        "Dialog) yet: Spectre binds a GNOME Mutter window stream to the focused window, and AWT " +
+        "keeps a popup's keyboard focus on its owner frame. Spectre does not substitute a crop of " +
+        "the owner or of the monitor. Tracked in https://github.com/rock3r/spectre/issues/640. " +
+        "Capture the owner window, an explicit screen region with screenshot(region), or run " +
+        "under X11/Xvfb."
 
 internal const val BIND_ON_EDT_MESSAGE: String =
     "Spectre cannot bind a GNOME Mutter window stream on the AWT event dispatch thread: binding " +

@@ -39,8 +39,8 @@ import org.junit.jupiter.api.TestInstance
  * every native still fail, and `waitForVisualIdle` reported every sample as unsampleable. Spectre
  * now selects such a window by its owner process and on-screen frame (#606) instead. It still fails
  * clearly when the frame is shared too. macOS is unchanged: its helper tells shared titles apart
- * itself. On Linux Wayland the portal cannot select a window by frame, so the clear ambiguity error
- * stays.
+ * itself. On GNOME Wayland, Spectre binds a Mutter window stream to the window itself (#642), so
+ * neither the title nor the frame selects anything and the still is simply the window.
  *
  * Skips headless hosts and GitHub-hosted Windows (no interactive desktop for WGC).
  */
@@ -75,20 +75,13 @@ class DuplicateTitleCaptureValidationTest {
     @Test
     fun `window screenshot of a window whose title is shared is a native still of that window`() {
         val index = ownerWindowIndex()
-        if (isWaylandSession()) {
-            val error =
-                assertFailsWith<IllegalStateException> {
-                    fixture.automator.screenshot(windowIndex = index)
-                }
-            assertTrue(error.message.orEmpty().contains("uniquely"), error.message)
-            return
-        }
 
         val ownerBounds = onEdt { Rectangle(ownerFrame().bounds) }
         val scale = onEdt { ownerFrame().graphicsConfiguration.defaultTransform.scaleX }
         val image = screenshotUntilPainted(index)
 
         // The still is the window or its client area; either way it is far larger than the twin.
+        // On Wayland it is the whole window from its own Mutter stream, so the twin cannot show.
         val ownerWidth = (ownerBounds.width * scale).roundToInt()
         assertTrue(
             image.width >= ownerWidth - DECORATION_ALLOWANCE_PX && image.width <= ownerWidth,
@@ -104,10 +97,6 @@ class DuplicateTitleCaptureValidationTest {
 
     @Test
     fun `waitForVisualIdle settles while two windows share a title`() {
-        assumeFalse(
-            isWaylandSession(),
-            "Wayland cannot select a window by frame; a shared title stays unsampleable there",
-        )
         ownerWindowIndex()
 
         runBlocking { fixture.automator.waitForVisualIdle(timeout = 15.seconds, stableFrames = 2) }
@@ -121,7 +110,7 @@ class DuplicateTitleCaptureValidationTest {
         )
         assumeFalse(
             isWaylandSession(),
-            "Wayland rejects a shared title before frames matter; the first test covers that error",
+            "Wayland binds a Mutter stream to the window itself; a shared frame selects nothing",
         )
         val index = ownerWindowIndex()
         val twinWindow = checkNotNull(twin)

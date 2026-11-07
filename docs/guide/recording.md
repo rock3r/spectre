@@ -81,7 +81,7 @@ Two limits apply:
 - **Two windows with the same position and size make the capture fail.** The helper cannot tell
   which one to capture, so it reports an error instead of guessing. This also applies to two
   windows that share a title on Windows or Linux X11.
-- **Linux Wayland window capture needs GNOME, and a window that can take keyboard focus.**
+- **Linux Wayland window capture needs GNOME, and a Frame or Dialog that can take keyboard focus.**
   Spectre binds a GNOME Mutter window stream to each window the first time it captures it (see
   [Linux Wayland window capture](#linux-wayland-window-capture)). Titles do not matter there. A
   translucent window, or a desktop other than GNOME, makes the capture fail with an error that
@@ -188,6 +188,12 @@ expected size, and gives focus back. The stream stays bound until the window clo
 
 - **GNOME only.** On another Wayland desktop, window capture fails with an error. Capture a screen
   region instead, or run under X11 or Xvfb.
+- **Popup windows cannot be captured yet.** A `JWindow`, or any window that is not a `Frame` or
+  `Dialog`, never gets X keyboard focus under AWT: AWT keeps it on the owner frame, so Mutter
+  would record the owner. Window stills, visual-idle samples, and atomic captures of such a popup
+  fail at once with an `UnsupportedOperationException`. Capture the owner window or a screen
+  region instead. [#640](https://github.com/rock3r/spectre/issues/640) tracks binding by window
+  identity.
 - **The window must take focus when asked.** Spectre makes a non-focusable window focusable for
   that moment. If AWT does not report the window as focused, for example because a modal dialog
   holds focus, the capture fails with an error instead of risking another window.
