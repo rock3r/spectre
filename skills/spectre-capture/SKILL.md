@@ -219,6 +219,10 @@ possible, capture fails with a message that says why. Common causes:
   when another window has the same bounds.
 - **macOS Screen Recording not granted.** Run `spectre permissions check`. Ask a human to grant it;
   do not retry in a loop.
+- **Linux Wayland grant missing.** The error names `spectre permissions request`. Ask a person at
+  the machine to run it once; it stores the grant for every later run. Do not retry in a loop.
+- **Linux Wayland popup.** A popup that is not a `Frame` or `Dialog` cannot be captured on
+  Wayland yet (#640). Capture the owner window instead.
 - **The window moved or resized during the capture.** Settle the UI and retry once.
 - **In-process capture without `spectre-recording`.** `ComposeAutomator.capture` and
   `AttachedAutomator.capture` take the still inside the target JVM, so that JVM needs

@@ -198,7 +198,7 @@ Use `ComposeAutomator.inProcess()` for most tests. By default, it sends
 synthetic AWT events (`RobotDriver.synthetic()`) posted into the window hierarchy.
 Switch drivers only when needed:
 
-- `RobotDriver()` — real `java.awt.Robot` input; moves the actual cursor and takes OS focus.
+- `RobotDriver()` — real `java.awt.Robot` input; moves the actual cursor and takes OS focus. On Linux Wayland it sends input through Spectre's portal session, which a person approves once with `spectre permissions request`; avoid `RobotDriver(robot)` there, because it bypasses that session.
 - `RobotDriver.synthetic(rootWindow = window)` — same synthetic path as the default, pinned to a window.
 - `RobotDriver.headless()` — read-only; every input or screenshot call throws `UnsupportedOperationException`. Semantics-tree reads still work.
 - `ComposeAutomator.http(security, host = "localhost", port = 7654)` — experimental authenticated

@@ -15,16 +15,17 @@ window still image.
 
 `screenshot(windowIndex)`, `screenshot(node)`, and `waitForVisualIdle()` also work for popups
 hosted in an untitled `JWindow`: the helper finds that window by its position and size. Two
-windows with the same bounds make the capture fail. On Linux Wayland an untitled window cannot be
-captured (`UnsupportedOperationException`), so visual idle cannot settle while such a popup is
-open; use X11/Xvfb or `screenshot(region)`. Recording still needs a titled window.
+windows with the same bounds make the capture fail. On Linux Wayland a popup that is not a `Frame`
+or `Dialog` cannot be captured yet (`UnsupportedOperationException`, #640), so visual idle fails
+at once while such a popup is open; capture the owner window, use `screenshot(region)`, or run
+under X11/Xvfb. Recording still needs a titled window.
 
 | Platform | Backend | Runtime helper |
 |---|---|---|
 | macOS | ScreenCaptureKit still-image mode | `spectre-recording-macos` |
 | Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | `spectre-recording-windows` |
-| Linux X11 / XWayland | Linux helper (`ximagesrc`) | `spectre-recording-linux` |
-| Linux Wayland | Linux portal/PipeWire helper | Requires the compositor portal dialog, `xprop`, and `_GTK_FRAME_EXTENTS`; supported on GNOME/Mutter, other compositors are best-effort |
+| Linux X11/XWayland | Linux helper (`ximagesrc`) | `spectre-recording-linux` |
+| Linux Wayland | GNOME Mutter window stream through `spectre-wayland-helper` | `spectre-recording-linux`; GNOME only; no dialog |
 
 Windows stills and recording share a Windows Graphics Capture helper.
 At runtime it needs Windows 10 version 1903 or newer, .NET 8 Desktop Runtime,
@@ -43,8 +44,8 @@ Verify a local build with:
 |---|---|---|
 | macOS | ScreenCaptureKit (native) | ScreenCaptureKit helper; missing helper artefacts and SCK-unsupported options (`codec`) produce an error. There is no ffmpeg/avfoundation fallback. `screenIndex` is the SCK display index: primary first, then by frame `minX`/`minY` |
 | Windows | Windows Graphics Capture helper | Windows Graphics Capture helper; missing helper artefacts and WGC-unsupported options (`codec`, `screenIndex`) produce an error. There is no ffmpeg fallback |
-| Linux X11 / XWayland | Linux helper | Linux helper |
-| Linux Wayland (GNOME/Mutter) | xdg-desktop-portal window source | xdg-desktop-portal monitor source |
+| Linux X11/XWayland | Linux helper | Linux helper |
+| Linux Wayland (GNOME/Mutter) | GNOME Mutter window stream (no dialog) | xdg-desktop-portal monitor source (one-time grant) |
 
 ```kotlin
 val recorder = AutoRecorder()
@@ -88,31 +89,37 @@ before debugging TCC; Robot screenshot diagnostics check `IOConsoleLocked` for t
 
 ## Linux Wayland caveats
 
-On a seated GNOME/Mutter desktop, Spectre shares **one** long-lived
-`spectre-wayland-helper` session for monitor capture and real OS input. The first
-run shows Share + Remember / Allow remote interaction. Later Spectre processes
-reconnect through `$XDG_RUNTIME_DIR/spectre/wayland-session.sock`. Window-targeted
-ScreenCast uses a separate grant for the selected window. Other compositors have
-best-effort support.
+Approve once, then never again: a person at the seat runs `spectre permissions request`, picks
+the whole screen, ticks Remember, and clicks Share. Spectre stores the grant and keeps one
+long-lived `spectre-wayland-helper` session for monitor capture and real OS input. Later
+processes reconnect through `$XDG_RUNTIME_DIR/spectre/wayland-session.sock` and open no dialog.
+`spectre permissions check` (or `WaylandPortalAccess.preflight()`) reports the grant without a
+dialog.
 
-Window-targeted Wayland recording throws `IllegalStateException` if:
+JUnit runs never open the dialog. Without a grant, the first capture or real input fails at once
+with an error that names `spectre permissions request`. Ask a person to run it; do not retry in a
+loop. `-Dspectre.wayland.consentPrompt=allow` lets a test run open the dialog anyway.
 
-- `xprop` is not on PATH.
-- The window has no title.
-- The compositor doesn't publish `_GTK_FRAME_EXTENTS` (verified only on
-  GNOME/Mutter; KDE, sway, wlroots are best-effort).
+Window stills, visual-idle samples, and window recording use GNOME Mutter window streams instead
+of the portal, so they need no grant. Limits:
 
-If a test must run on those compositors, use `startRegion(...)` with a fixed
-`Rectangle`.
+- GNOME only. On another Wayland desktop, window capture fails; use `startRegion(...)` or
+  `screenshot(region)`, or run under X11/Xvfb.
+- Spectre focuses the window for its first capture and gives focus back. The first capture of a
+  window must not run on the AWT event dispatch thread.
+- Popups that are not a `Frame` or `Dialog` (for example a `JWindow`) cannot be captured yet
+  (#640).
+- Use the no-argument `RobotDriver()` for real input. `RobotDriver(robot)` bypasses the portal
+  session.
 
-User guide: [Linux Wayland consent](https://spectre.sebastiano.dev/guide/recording/).
+User guide: [Linux Wayland consent](https://spectre.sebastiano.dev/guide/recording/#linux-wayland-consent).
 
 ## HiDPI and coordinates
 
 `Rectangle` arguments are in **screen pixels** (post-HiDPI scaling), as is
 `AutomatorNode.boundsOnScreen`. Prefer `boundsOnScreen`: it already divides by
 the display scale and adds the surface/panel screen origin.
-`AutomatorNode.boundsInWindow` is already in **Compose / device pixels**
+`AutomatorNode.boundsInWindow` is already in **Compose/device pixels**
 (density-scaled) and window-relative. Manual conversion requires both
 steps. Dividing alone lands near `(0, 0)` when the window is not at the
 screen origin. Multiplying by density double-scales the region on a Retina
