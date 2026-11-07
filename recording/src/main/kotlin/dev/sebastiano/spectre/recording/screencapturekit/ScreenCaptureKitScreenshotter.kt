@@ -27,7 +27,7 @@ internal constructor(
     private val requireScreenCaptureAccess: () -> Unit = {
         MacOsScreenCaptureAccess.requireGranted(helperExtractor)
     },
-    private val stillSessions: HelperStillSessions = sharedStillSessions,
+    private val stillSessions: HelperStillSessions = screenCaptureKitStillSessions,
 ) : WindowScreenshotter {
 
     public constructor() :
@@ -105,6 +105,8 @@ internal constructor(
                         discoveryTimeoutMs = SCREENSHOT_DISCOVERY_TIMEOUT_MS,
                     )
                     .toArgv(helperPath)
+            // An open stills session would keep this capture from getting any frames.
+            stillSessions.stopAll()
             process = processFactory.start(argv)
             if (!process.waitFor(SCREENSHOT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 process.destroyForcibly()
@@ -136,13 +138,14 @@ internal constructor(
             }
         }
     }
+}
 
-    private companion object {
-        // One pool per JVM, so every screenshotter instance reuses the same open sessions.
-        val sharedStillSessions: HelperStillSessions by lazy {
-            HelperStillSessions(ScreenCaptureKitStillHelper)
-        }
-    }
+/**
+ * One pool of macOS stills sessions per JVM. Every screenshotter reuses the same open sessions, and
+ * every new capture stops them first (see [HelperStillSessions.stopAll]).
+ */
+internal val screenCaptureKitStillSessions: HelperStillSessions by lazy {
+    HelperStillSessions(ScreenCaptureKitStillHelper)
 }
 
 /** The macOS `spectre-screencapture` helper in `--mode stills`. */

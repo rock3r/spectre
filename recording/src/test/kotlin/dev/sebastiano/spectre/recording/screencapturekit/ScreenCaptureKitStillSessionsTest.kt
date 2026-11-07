@@ -1,18 +1,22 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
 import dev.sebastiano.spectre.recording.HelperStillSessions
+import dev.sebastiano.spectre.recording.RecordingOptions
 import java.awt.Rectangle
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.io.PipedInputStream
 import java.io.PipedOutputStream
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
 import javax.imageio.ImageIO
+import kotlin.io.path.deleteIfExists
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -120,28 +124,135 @@ class ScreenCaptureKitStillSessionsTest {
         assertContains(error.message.orEmpty(), "could not find")
     }
 
+    @Test
+    fun `a recording stops the open stills sessions before it starts its capture`() {
+        // On macOS 27.2 a new ScreenCaptureKit capture gets no frames while a stills session
+        // still holds its stream, so a recording right after a visual-idle wait failed with
+        // "timed out waiting for first recording frame".
+        val stills = StillsHelper(frames = listOf(frame()))
+        val recording = StillsHelper()
+        var stillsAliveAtRecordingStart: Boolean? = null
+        val helpers =
+            ArrayDeque<() -> StillsHelper>(
+                listOf(
+                    { stills },
+                    {
+                        stillsAliveAtRecordingStart = stills.isAlive
+                        recording
+                    },
+                )
+            )
+        val factory = StillsProcessFactory { helpers.removeFirst()() }
+        val sessions = stillSessions()
+        screenshotter(factory, stillSessions = sessions)
+            .captureWindow(UniqueTitledWindow("Spectre"), 4242L)
+        val output = Files.createTempFile("spectre-sck-after-stills-", ".mp4")
+        try {
+            recorder(factory, sessions)
+                .start(UniqueTitledWindow("Spectre"), 4242L, output, RecordingOptions())
+                .stop()
+        } finally {
+            output.deleteIfExists()
+        }
+
+        assertEquals(false, stillsAliveAtRecordingStart)
+    }
+
+    @Test
+    fun `a one-shot still stops the open stills sessions before it starts its capture`() {
+        val stills = StillsHelper(frames = listOf(frame()))
+        var stillsAliveAtOneShotStart: Boolean? = null
+        val factory =
+            StillsProcessFactory(onOneShot = { stillsAliveAtOneShotStart = stills.isAlive }) {
+                stills
+            }
+        val screenshotter = screenshotter(factory)
+        screenshotter.captureWindow(UniqueTitledWindow("Spectre"), 4242L)
+
+        screenshotter.captureWindow(SharedTitleWindow("Shared"), 4242L)
+
+        assertEquals(false, stillsAliveAtOneShotStart)
+    }
+
+    @Test
+    fun `a stills helper that does not stop in time is killed before a new capture`() {
+        val stills = StillsHelper(frames = listOf(frame()), exitsOnQuit = false)
+        val factory = StillsProcessFactory { stills }
+        val screenshotter = screenshotter(factory, stopWaitMillis = 50)
+        screenshotter.captureWindow(UniqueTitledWindow("Spectre"), 4242L)
+
+        screenshotter.captureWindow(SharedTitleWindow("Shared"), 4242L)
+
+        assertTrue(stills.destroyed, "a stills helper still holding its stream must be killed")
+    }
+
+    @Test
+    fun `an interrupt while stills sessions stop kills them and cancels the new capture`() {
+        val stills = StillsHelper(frames = listOf(frame()), exitsOnQuit = false)
+        val factory = StillsProcessFactory { stills }
+        val screenshotter = screenshotter(factory)
+        screenshotter.captureWindow(UniqueTitledWindow("Spectre"), 4242L)
+
+        Thread.currentThread().interrupt()
+        var stillInterrupted = false
+        try {
+            assertFailsWith<InterruptedException> {
+                screenshotter.captureWindow(SharedTitleWindow("Shared"), 4242L)
+            }
+            stillInterrupted = Thread.currentThread().isInterrupted
+        } finally {
+            // Clear the flag so it does not leak into other tests on this thread.
+            Thread.interrupted()
+        }
+
+        assertTrue(stillInterrupted, "the caller must still see the interrupt")
+        assertTrue(stills.destroyed, "an interrupted stop must not leave the stills helper running")
+        assertEquals(1, factory.started.size, "a cancelled capture must not start its helper")
+    }
+
     private fun screenshotter(
         factory: StillsProcessFactory,
         idleCloseMillis: Long = 60_000,
+        stopWaitMillis: Long = 5_000,
         onAccessCheck: () -> Unit = {},
+        stillSessions: HelperStillSessions = stillSessions(idleCloseMillis, stopWaitMillis),
     ): ScreenCaptureKitScreenshotter =
         ScreenCaptureKitScreenshotter(
-            helperExtractor =
-                HelperBinaryExtractor(
-                    envLookup = { null },
-                    sysPropLookup = { null },
-                    materialLocator = { helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf()) },
-                    targetDirProvider = { Path.of("/tmp") },
-                ),
+            helperExtractor = fakeExtractor(),
             processFactory = factory,
             requireScreenCaptureAccess = { onAccessCheck() },
-            stillSessions =
-                HelperStillSessions(
-                    helper = ScreenCaptureKitStillHelper,
-                    idleCloseMillis = idleCloseMillis,
-                    readyTimeoutMillis = 5_000,
-                    frameTimeoutMillis = 5_000,
-                ),
+            stillSessions = stillSessions,
+        )
+
+    private fun recorder(
+        factory: StillsProcessFactory,
+        stillSessions: HelperStillSessions,
+    ): ScreenCaptureKitRecorder =
+        ScreenCaptureKitRecorder(
+            helperExtractor = fakeExtractor(),
+            processFactory = factory,
+            requireScreenCaptureAccess = {},
+            stillSessions = stillSessions,
+        )
+
+    private fun stillSessions(
+        idleCloseMillis: Long = 60_000,
+        stopWaitMillis: Long = 5_000,
+    ): HelperStillSessions =
+        HelperStillSessions(
+            helper = ScreenCaptureKitStillHelper,
+            idleCloseMillis = idleCloseMillis,
+            readyTimeoutMillis = 5_000,
+            frameTimeoutMillis = 5_000,
+            stopWaitMillis = stopWaitMillis,
+        )
+
+    private fun fakeExtractor(): HelperBinaryExtractor =
+        HelperBinaryExtractor(
+            envLookup = { null },
+            sysPropLookup = { null },
+            materialLocator = { helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf()) },
+            targetDirProvider = { Path.of("/tmp") },
         )
 }
 
@@ -164,13 +275,16 @@ private class SharedTitleWindow(title: String) : TitledWindow, TitleDiscriminati
     override val requiresTitleDiscriminator: Boolean = true
 }
 
-private class StillsProcessFactory(private val next: () -> StillsHelper) :
-    ScreenCaptureKitRecorder.ProcessFactory {
+private class StillsProcessFactory(
+    private val onOneShot: () -> Unit = {},
+    private val next: () -> StillsHelper,
+) : ScreenCaptureKitRecorder.ProcessFactory {
     val started: MutableList<List<String>> = mutableListOf()
 
     override fun start(argv: List<String>): Process {
         started += argv
         if ("screenshot" in argv) {
+            onOneShot()
             // The one-shot helper writes a PNG and exits.
             val output = Path.of(argv[argv.indexOf("--output") + 1])
             val image =
@@ -259,10 +373,14 @@ private class StillsHelper(
 
     override fun waitFor(): Int = exited.get()
 
-    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = runCatching {
-        exited.get(timeout, unit)
-    }
-        .isSuccess
+    // Like Process.waitFor, this throws InterruptedException when the caller is interrupted.
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean =
+        try {
+            exited.get(timeout, unit)
+            true
+        } catch (_: TimeoutException) {
+            false
+        }
 
     override fun exitValue(): Int =
         if (exited.isDone) exited.get() else throw IllegalThreadStateException("running")
