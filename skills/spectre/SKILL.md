@@ -384,11 +384,11 @@ API. This is separate from video recording:
   Desktop Runtime, and Windows App Runtime 1.8. Source builds and CI also need
   .NET 8 SDK.
 - Linux X11: Linux helper (`ximagesrc`) for stills; the target must be visible/frontmost.
-- Linux Wayland: one long-lived `spectre-wayland-helper` session. Window stills,
-  visual-idle samples, and window video use GNOME Mutter window streams (GNOME only, no
-  dialog). Monitor capture and real OS input use one portal grant that a person approves
-  once with `spectre permissions request`. JUnit runs never open the dialog. See
-  `references/recording.md`.
+- Linux Wayland: one long-lived `spectre-wayland-helper` session, which needs one portal
+  grant that a person approves once with `spectre permissions request`. Monitor capture and
+  real OS input use that grant. Window stills, visual-idle samples, and window video use GNOME
+  Mutter window streams (GNOME only, no dialog of their own) through the same session, so they
+  need the grant too. JUnit runs never open the dialog. See `references/recording.md`.
 
 ## Recording, JUnit, IntelliJ-hosted Compose
 

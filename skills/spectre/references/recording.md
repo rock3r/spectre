@@ -25,7 +25,7 @@ under X11/Xvfb. Recording still needs a titled window.
 | macOS | ScreenCaptureKit still-image mode | `spectre-recording-macos` |
 | Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | `spectre-recording-windows` |
 | Linux X11/XWayland | Linux helper (`ximagesrc`) | `spectre-recording-linux` |
-| Linux Wayland | GNOME Mutter window stream through `spectre-wayland-helper` | `spectre-recording-linux`; GNOME only; no dialog |
+| Linux Wayland | GNOME Mutter window stream through `spectre-wayland-helper` | `spectre-recording-linux`; GNOME only; needs the one-time `spectre permissions request` grant |
 
 Windows stills and recording share a Windows Graphics Capture helper.
 At runtime it needs Windows 10 version 1903 or newer, .NET 8 Desktop Runtime,
@@ -45,7 +45,7 @@ Verify a local build with:
 | macOS | ScreenCaptureKit (native) | ScreenCaptureKit helper; missing helper artefacts and SCK-unsupported options (`codec`) produce an error. There is no ffmpeg/avfoundation fallback. `screenIndex` is the SCK display index: primary first, then by frame `minX`/`minY` |
 | Windows | Windows Graphics Capture helper | Windows Graphics Capture helper; missing helper artefacts and WGC-unsupported options (`codec`, `screenIndex`) produce an error. There is no ffmpeg fallback |
 | Linux X11/XWayland | Linux helper | Linux helper |
-| Linux Wayland (GNOME/Mutter) | GNOME Mutter window stream (no dialog) | xdg-desktop-portal monitor source (one-time grant) |
+| Linux Wayland (GNOME/Mutter) | GNOME Mutter window stream (one-time grant, no dialog of its own) | xdg-desktop-portal monitor source (one-time grant) |
 
 ```kotlin
 val recorder = AutoRecorder()
@@ -100,8 +100,9 @@ JUnit runs never open the dialog. Without a grant, the first capture or real inp
 with an error that names `spectre permissions request`. Ask a person to run it; do not retry in a
 loop. `-Dspectre.wayland.consentPrompt=allow` lets a test run open the dialog anyway.
 
-Window stills, visual-idle samples, and window recording use GNOME Mutter window streams instead
-of the portal, so they need no grant. Limits:
+Window stills, visual-idle samples, and window recording use GNOME Mutter window streams. They
+open no dialog and need no grant of their own, but they run through the same session helper, so
+they also fail until the one-time approval exists. Limits:
 
 - GNOME only. On another Wayland desktop, window capture fails; use `startRegion(...)` or
   `screenshot(region)`, or run under X11/Xvfb.
