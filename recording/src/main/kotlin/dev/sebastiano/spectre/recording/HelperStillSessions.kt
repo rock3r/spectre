@@ -39,6 +39,7 @@ internal open class HelperStillSessions(
     private val idleCloseMillis: Long = DEFAULT_IDLE_CLOSE_MILLIS,
     private val readyTimeoutMillis: Long = DEFAULT_READY_TIMEOUT_MILLIS,
     private val frameTimeoutMillis: Long = DEFAULT_FRAME_TIMEOUT_MILLIS,
+    private val stopWaitMillis: Long = DEFAULT_STOP_WAIT_MILLIS,
 ) {
     private val sessions = HashMap<List<String>, HelperStillSession>()
     private val idleCloser =
@@ -71,6 +72,22 @@ internal open class HelperStillSessions(
             "${helper.name} could not keep a capture session on the target window: " +
                 "it changed again after a new session started. Argv: $argv"
         )
+    }
+
+    /**
+     * Closes every open session and waits up to [stopWaitMillis] for their helpers to exit. A
+     * helper that is still running then is killed.
+     *
+     * Call this before a new capture of any kind starts. On macOS 27.2, a new ScreenCaptureKit
+     * capture gets no frames while another helper process still holds its stream, even for a
+     * different window.
+     */
+    fun stopAll() {
+        val open = synchronized(sessions) { sessions.values.toList().also { sessions.clear() } }
+        if (open.isEmpty()) return
+        open.forEach { it.close() }
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(stopWaitMillis)
+        open.forEach { it.awaitExit(deadline) }
     }
 
     private fun sessionFor(
@@ -112,6 +129,8 @@ internal open class HelperStillSessions(
         // Covers helper startup, window lookup, and the helpers' first-frame deadlines.
         const val DEFAULT_READY_TIMEOUT_MILLIS: Long = 10_000
         const val DEFAULT_FRAME_TIMEOUT_MILLIS: Long = 5_000
+        // The macOS helper takes about 0.9 s to stop its stream after `q`.
+        const val DEFAULT_STOP_WAIT_MILLIS: Long = 3_000
         private const val STALE_RETRIES: Int = 1
     }
 }
@@ -207,6 +226,18 @@ private constructor(
         }
     }
 
+    /**
+     * Waits until the helper exits or [deadlineNanos] passes, then kills a helper still running.
+     */
+    fun awaitExit(deadlineNanos: Long) {
+        val remaining = (deadlineNanos - System.nanoTime()).coerceAtLeast(0)
+        val exited = runCatching { process.waitFor(remaining, TimeUnit.NANOSECONDS) }
+        if (exited.getOrDefault(false) != true) {
+            process.destroyForcibly()
+            runCatching { process.waitFor(KILL_WAIT_MILLIS, TimeUnit.MILLISECONDS) }
+        }
+    }
+
     private fun readStill(): Still {
         val header =
             readAsciiLine(stdout)
@@ -294,6 +325,7 @@ private constructor(
         private const val BYTES_PER_PIXEL: Int = 4
         private const val STDOUT_BUFFER_BYTES: Int = 1 shl 20
         private const val EXIT_PROBE_MILLIS: Long = 200
+        private const val KILL_WAIT_MILLIS: Long = 1_000
         private val readers = Executors.newCachedThreadPool(daemonThreads("spectre-stills-reader"))
     }
 }

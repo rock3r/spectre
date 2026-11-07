@@ -387,6 +387,17 @@ an app window and an open popup, then ran out of its 2 s budget, and `waitForVis
 out with most samples unsampleable. A window whose title another window also contains still takes
 one-shot stills, because Spectre adds a different title suffix for each still to find it.
 
+On macOS 27.2, ScreenCaptureKit gives no frames to a new capture while another capture helper
+still holds its stream, even when the two captures show different windows. Spectre therefore
+stops every open stills session before it starts a recording or a one-shot still. This was
+measured on macOS 27.2 with the helper alone, outside the JVM. It has two effects you can see:
+
+- A still taken while a recording runs gets no frame, so `waitForVisualIdle()` reports that
+  sample as unsampleable.
+- A second stills session cannot start while the first one is open. A visual-idle sample of an
+  app window and an open popup can then run out of its budget
+  ([#605](https://github.com/rock3r/spectre/issues/605)).
+
 Check the node's interaction state when comparing colours from `screenshot()`.
 A focused, hovered, or pressed node can display a theme overlay, such as a
 state layer, focus halo, or ripple. The overlay blends with the underlying

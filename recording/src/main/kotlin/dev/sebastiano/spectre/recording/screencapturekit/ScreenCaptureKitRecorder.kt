@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
+import dev.sebastiano.spectre.recording.HelperStillSessions
 import dev.sebastiano.spectre.recording.Recorder
 import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
@@ -43,6 +44,7 @@ internal constructor(
     private val requireScreenCaptureAccess: () -> Unit = {
         MacOsScreenCaptureAccess.requireGranted()
     },
+    private val stillSessions: HelperStillSessions = screenCaptureKitStillSessions,
 ) : WindowRecorder, Recorder {
 
     public constructor() : this(HelperBinaryExtractor(), SystemProcessFactory)
@@ -214,6 +216,9 @@ internal constructor(
     ): RecordingHandle {
         // Fail fast before any SCStream work that could pop a TCC prompt mid-run (#187).
         requireScreenCaptureAccess()
+        // A stills session left open by an earlier screenshot would keep this capture from
+        // getting any frames.
+        stillSessions.stopAll()
         val process = processFactory.start(argv)
 
         // Wait for the helper to either:
