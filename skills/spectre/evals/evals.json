@@ -7,10 +7,9 @@
       "prompt": "I have a Compose Desktop app with a counter screen. There's a button tagged `Increment` and a text node tagged `CounterValue` whose text reads `Count: 0`. I want to write a JUnit 5 test that launches my app via `launchCounterApp()`, clicks the button once, and asserts the counter reads `Count: 1`. We use Spectre. Write the full test class.",
       "assertions": [
         "Uses ComposeAutomatorExtension (the JUnit 5 wrapper) — not ComposeAutomatorRule",
-        "Registers the extension with @RegisterExtension",
-        "Uses @JvmField on the extension field",
-        "Wraps the test body in runSpectreTest { ... } and NOT in runTest or runBlocking",
-        "Calls a wait (waitForNode or waitForVisualIdle or waitForIdle) before reading post-click state",
+        "Registers the extension with @RegisterExtension and @JvmField",
+        "Declares an explicit : Unit return type if using an expression body and wraps the test body in runSpectreTest { ... } (NOT runTest or runBlocking)",
+        "Calls an explicit wait (waitForNode, waitForVisualIdle, or waitForIdle) before reading initial and post-click state",
         "Uses click() — not performSemanticsClick — on the Increment node",
         "Locates nodes via findOneByTestTag",
         "Asserts the counter text equals \"Count: 1\" after the click"
@@ -21,23 +20,23 @@
       "name": "diagnose-flaky-find-after-click",
       "prompt": "My Spectre test is flaky — sometimes after I click the `OpenSettings` button, `automator.findOneByTestTag(\"SettingsDialogTitle\")` returns null and the test fails, but if I add a `Thread.sleep(500)` it passes. What's the actual fix? Don't just say 'sleep is bad', tell me the proper Spectre API.",
       "assertions": [
-        "Explicitly recommends waitForNode (with tag = \"SettingsDialogTitle\") as the fix",
-        "Explains that findBy... selectors are single non-waiting reads",
-        "Does NOT recommend Thread.sleep or any fixed-duration sleep as the answer",
-        "Does NOT incorrectly suggest Compose's runComposeUiTest / onNodeWithTag / waitUntil APIs"
+        "Explicitly recommends waitForNode(tag = \"SettingsDialogTitle\") as the fix",
+        "Explains that findBy... / findOneBy... selectors are single non-waiting snapshot reads",
+        "Does NOT recommend Thread.sleep or any fixed-duration delay as the answer",
+        "Does NOT suggest Compose's off-screen runComposeUiTest / onNodeWithTag APIs"
       ]
     },
     {
       "id": 2,
       "name": "parallel-junit5-tests-focus-fight",
-      "prompt": "We run our Spectre tests in parallel (Gradle maxParallelForks = 4). On CI they keep failing because the JVMs steal focus from each other when clicking. We don't actually need real OS-level input — we just click buttons and type text into a Compose window. What should I change?",
+      "prompt": "We run our Spectre tests in parallel (Gradle maxParallelForks = 4, and some classes also run @Test methods concurrently). On CI they keep failing because the JVMs steal focus from each other when clicking, and inside parallel classes the automator reference races. We don't actually need real OS-level input — we just click buttons and type text into a Compose window. What should I change?",
       "assertions": [
-        "Recommends switching to RobotDriver.synthetic(...) as the primary fix",
-        "Identifies that RobotDriver.synthetic takes a rootWindow (the top-level java.awt.Window)",
-        "Wires the driver via the factory-form trailing lambda on ComposeAutomatorExtension/Rule (e.g. ComposeAutomatorExtension { ComposeAutomator.inProcess(robotDriver = ...) }) — NOT via a non-existent robotDriver = named arg on the extension/rule itself",
-        "Uses RobotDriver.synthetic(rootWindow = ...) from RobotDriver's companion (import RobotDriver; there is no separate synthetic extension import)",
+        "Recommends synthetic input via RobotDriver.synthetic(rootWindow = ...) (or notes that ComposeAutomator.inProcess() defaults to RobotDriver.synthetic(), pinning rootWindow when multiple windows exist)",
+        "Wires a custom driver through the factory parameter or trailing lambda on ComposeAutomatorExtension (e.g., ComposeAutomatorExtension { ComposeAutomator.inProcess(robotDriver = ...) } or factory = { ... }) — NOT a non-existent robotDriver = parameter on the extension",
+        "Uses RobotDriver.synthetic(...) from RobotDriver's companion (import dev.sebastiano.spectre.core.RobotDriver; no separate top-level extension import)",
+        "Explains that for parallel @Test methods within one JUnit 5 class, callers should inject (automator: ComposeAutomator) as a method parameter (via ParameterResolver / @ExtendWith) rather than reading automatorExt.automator, which only holds the most recently created instance",
         "Does NOT recommend disabling parallelism / lowering maxParallelForks as the fix",
-        "Does NOT recommend performSemanticsClick as the primary fix"
+        "Does NOT recommend performSemanticsClick as the primary fix when tests also type text"
       ]
     },
     {
@@ -48,7 +47,7 @@
         "Uses ComposeAutomatorRule (the JUnit 4 wrapper) — not ComposeAutomatorExtension",
         "Annotates the rule with @get:Rule (Kotlin-correct form)",
         "Wraps the test body in runSpectreTest { ... } and NOT in runTest or runBlocking",
-        "Types the email into EmailField via typeText or clearAndTypeText",
+        "Clicks or focuses EmailField and types the email via typeText or clearAndTypeText",
         "Calls click on the LoginButton node",
         "Uses waitForNode(tag = \"Dashboard\") (or equivalent) to wait for the dashboard"
       ]
@@ -62,7 +61,7 @@
         "Calls automator.screenshot(...) to obtain a BufferedImage",
         "Saves the BufferedImage via ImageIO.write to the target PNG path",
         "Does NOT recommend Thread.sleep before the screenshot",
-        "Does NOT suggest using AutoRecorder / recording APIs"
+        "Does NOT suggest using AutoRecorder / video recording APIs"
       ]
     },
     {
@@ -71,13 +70,109 @@
       "prompt": "Our JUnit 5 Spectre suite uses four Gradle forks and must keep real java.awt.Robot behavior. The forks steal focus from each other. Show the supported coordination setup, including dependencies and any experimental opt-in. Also tell me how to recover if a lease is stuck.",
       "assertions": [
         "States that desktop input coordination is experimental and includes @OptIn(ExperimentalSpectreInputCoordinationApi::class)",
-        "Adds spectre-input-coordinator-server as a runtime dependency, or correctly explains that spectre-testing already wires it",
+        "Adds spectre-input-coordinator-server as a runtime dependency, or explains that spectre-testing already wires it",
         "Uses InputIsolationConfig.perTest() on ComposeAutomatorExtension",
         "Uses InputLeasePolicy.Required or explains why Required fails closed for real input",
         "Recommends spectre input-lock status before revocation",
-        "Requires the exact observed lease ID and a reason for revoke",
+        "Requires the exact observed lease ID and a reason for spectre input-lock revoke",
         "Describes --force as unsafe and mentions unsafeTakeover=true or possible overlap with an in-flight native call",
         "Does NOT claim the coordinator blocks humans or other automation tools"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "near-miss-isolated-composable-compose-ui-test",
+      "prompt": "I want a fast unit test for an isolated `@Composable fun BadgeChip(label: String, onDismiss: () -> Unit)` without opening any AWT or desktop window, so it runs in milliseconds in headless JVM CI. Should I use Spectre's `ComposeAutomator` with `RobotDriver.headless()` or something else?",
+      "assertions": [
+        "Recommends Compose Multiplatform's off-screen test framework (runComposeUiTest / createComposeRule) rather than Spectre for isolated windowless composable unit tests",
+        "Explains that Spectre drives a real AWT/Compose window (even RobotDriver.headless() only disables input/capture on a live Compose surface and still requires non-headless AWT)",
+        "Warns against mixing runComposeUiTest / onNodeWithTag APIs into a Spectre test"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "edt-wait-deadlock-intellij-action",
+      "prompt": "Inside an IntelliJ plugin `AnAction.actionPerformed`, I built `ComposeAutomator.inProcess()` and called `automator.waitForNode(tag = \"ToolWindowReady\")`, and it immediately threw `IllegalStateException` complaining about the Event Dispatch Thread. Plus when I ran `RobotDriver()` earlier it stole focus from the IDE. How should an IntelliJ/Jewel action drive Spectre?",
+      "assertions": [
+        "Explains that all five Spectre wait helpers (waitForNode, waitUntilGone, waitUntil, waitForIdle, waitForVisualIdle) reject calls on the AWT EDT because they marshal onto the EDT with invokeAndWait",
+        "Moves the automator work off the EDT via ApplicationManager.getApplication().executeOnPooledThread or withContext(Dispatchers.Default)",
+        "Uses RobotDriver.synthetic(rootWindow = ideFrame) (where ideFrame comes from WindowManager) so synthetic events stay inside the IDE frame without stealing OS focus"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "hidpi-bounds-and-device-scale-screenshot",
+      "prompt": "Two HiDPI bugs in my Spectre test: (1) I passed `node.boundsInWindow` multiplied by 2 into `automator.screenshot(region = ...)` on my Retina Mac and got the wrong corner of the screen; (2) I switched to `automator.screenshot(node)` to inspect a 2 px gap between two chips, and it works locally on macOS (2x) but throws on our minimal Linux `xvfb-run` container where GStreamer isn't installed. What's the coordinate rule and how do I get a device-scale node crop that works in both environments?",
+      "assertions": [
+        "Explains that boundsInWindow is already in density-scaled surface pixels and window-relative, whereas screenshot(region) and RobotDriver expect boundsOnScreen (AWT logical screen pixels)",
+        "Warns never to multiply boundsInWindow by display density (manual conversion divides by scale and adds the surface screen origin, or simply uses node.boundsOnScreen)",
+        "Explains that screenshot(node) and screenshot(windowIndex) require :recording and its native window helper (GStreamer on Linux X11) and fail closed rather than falling back to a desktop crop",
+        "Recommends screenshotAtDeviceScale(node.boundsOnScreen) for a Robot-only capture at device resolution (2x on Retina, 1x under Xvfb) without needing the native window helper",
+        "Shows deriving the effective scale factor (e.g., image.width / bounds.width) when checking pixel-width gaps across 2x local and 1x Xvfb runs"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "linux-x11-visual-idle-vs-window-stills-and-xvfb-daemon",
+      "prompt": "On Linux CI we run `xvfb-run ./gradlew desktopUiTest`. Two questions: why did `xvfb-run ./gradlew ...` hang after the tests finished, and why did `waitForVisualIdle()` succeed without GStreamer installed while `ComposeAutomatorExtension`'s automatic failure window PNGs produced nothing until we installed GStreamer?",
+      "assertions": [
+        "Explains that xvfb-run hangs when Gradle spawns a long-lived background daemon holding display/stdio handles, and recommends passing --no-daemon",
+        "Notes that Spectre under Xvfb still needs -Djava.awt.headless=false (real AWT toolkit against the virtual X framebuffer)",
+        "Explains that waitForVisualIdle falls back to Robot region capture when the native recording helper / GStreamer cannot run, whereas window-scoped stills (screenshot(windowIndex), screenshot(node), capture, and failure-artefact window captures) fail closed without GStreamer"
+      ]
+    },
+    {
+      "id": 10,
+      "name": "macos-uielement-paste-vs-typetext-and-runtest",
+      "prompt": "Our macOS test JVM sets `-Dapple.awt.UIElement=true` so Dock icons don't pop up, and the test uses `kotlinx.coroutines.test.runTest`. Both `longClick` and `pasteText(\"hello\")` fail silently or time out. Why are both broken, and what works for ASCII vs Unicode input here?",
+      "assertions": [
+        "Explains that runTest skips virtual delay(), collapsing longClick hold times, swipe pacing, and pasteText's macOS clipboard polling to zero — must use runSpectreTest instead",
+        "Explains that apple.awt.UIElement=true breaks clipboard-backed pasteText on macOS even with synthetic input",
+        "Recommends typeText for supported ASCII under RobotDriver.synthetic(rootWindow = ...), noting Spectre routes synthetic key events to the Compose key-listening host even when Window.focusOwner is null",
+        "States that tests needing pasteText (e.g., non-ASCII / Unicode or large pastes) must disable apple.awt.UIElement=true on that JVM and avoid CI clipboard managers"
+      ]
+    },
+    {
+      "id": 11,
+      "name": "wayland-permissions-and-real-robot-trap",
+      "prompt": "On Ubuntu GNOME Wayland, my JUnit test passes `RobotDriver(java.awt.Robot())` for real mouse hover and also calls `AutoRecorder().startWindow(...)`. Input never arrives, and capture immediately fails mentioning `spectre permissions request`. Should my `@BeforeEach` retry `spectre permissions request`? How do I fix both?",
+      "assertions": [
+        "Tells the user NOT to retry or invoke spectre permissions request from JUnit (JUnit runs never open the portal consent dialog)",
+        "Instructs a human at the machine to run spectre permissions request once to store the long-lived Wayland portal grant",
+        "Replaces RobotDriver(java.awt.Robot()) with the no-argument RobotDriver(), explaining that passing a raw java.awt.Robot bypasses Spectre's Wayland portal session and goes through Xwayland",
+        "Shows AutoRecorder().startWindow(window.asTitledWindow(), ...) wrapped in try { ... } finally { handle.stop() } and notes GNOME Mutter window-stream limits (GNOME only; untitled JWindow popups unsupported)"
+      ]
+    },
+    {
+      "id": 12,
+      "name": "agent-attach-zero-dep-vs-preinstalled",
+      "prompt": "We want a separate inspector tool JVM to attach to a running Compose Desktop app by PID via `AgentAttach.attach(pid)`. What Gradle dependencies go on the inspector vs the target app if (a) we control the target build, or (b) it's a stock third-party Compose/IntelliJ binary we can't recompile?",
+      "assertions": [
+        "Puts spectre-agent (implementation) and spectre-agent-runtime (runtimeOnly, separate artifactId — NOT an -all classifier) on the attacher/inspector JVM only",
+        "Recommends preinstalled spectre-core on the target JVM as the preferred setup when the target build is controlled",
+        "Explains that for a stock Compose binary without preinstalled spectre-core, AgentAttach.attach(pid) still works with zero Spectre dependencies on the target by injecting META-INF/spectre/inject-runtime.jar",
+        "Mentions key attach requirements: same OS user and -XX:+EnableDynamicAgentLoading on the target JVM"
+      ]
+    },
+    {
+      "id": 13,
+      "name": "popup-dismissal-multi-window-screenshot-and-golds",
+      "prompt": "In JUnit 5, my app opens a Swing/Jewel popup menu in a separate AWT window that extends past the main window. I want to (1) capture one image containing both the owner window and the popup and compare it against a committed Spectre screenshot gold inside `runSpectreTest`, and (2) click outside and wait until the popup window is completely gone and the main list goes back to 3 items.",
+      "assertions": [
+        "Uses automator.screenshotWindows(listOf(0, 1)) in back-to-front painter's order (owner before popup) after waitForVisualIdle(), checking CompositeScreenshot.composite (which is null if any window capture fails)",
+        "Calls assertMatchesGold(testInfo = testInfo, name = ..., image = ...) passing JUnit 5 TestInfo explicitly because the body runs on runSpectreTest's worker dispatcher",
+        "Uses waitUntilGone(tag = ...) to wait for the dismissed popup window's node to disappear (noting it refreshes windows on each poll)",
+        "Uses waitUntil(description = ...) { ... } against the AutomatorTree snapshot to wait for the 3-item count condition"
+      ]
+    },
+    {
+      "id": 14,
+      "name": "cli-attach-scrollable-offscreen-and-capture",
+      "prompt": "Using the `spectre` CLI against a running app, `spectre click $SESSION node-42` failed with `in-window bounds are empty` on an item at the bottom of a `Column(Modifier.verticalScroll(...))`, and then `spectre screenshot $SESSION` failed too. What's the right CLI sequence to scroll to the item, click it, and grab an atomic window PNG + semantics JSON?",
+      "assertions": [
+        "Explains that off-screen children of a verticalScroll container have empty in-window bounds, so the caller must scroll the container first via spectre scroll-wheel <session> <node-key> <wheel-clicks>",
+        "Stresses re-running spectre tree or spectre find after scrolling or any UI change because node keys are scoped to the session and tree snapshot",
+        "Explains that spectre screenshot on an attached session requires --fullscreen, whereas single-window PNG + capture.json uses spectre capture <session> --json"
       ]
     }
   ]

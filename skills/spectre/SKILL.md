@@ -1,107 +1,35 @@
 ---
 name: spectre
-description: Use when writing, debugging, or reviewing tests that drive a real on-screen Compose Desktop window with Spectre through semantics plus real/synthetic input, cooperative desktop leases, HTTP, or agent attach. Trigger on `ComposeAutomator`, `RobotDriver`, `AutomatorNode`, `InputLeasePolicy`, `InputIsolationConfig`, `spectre input-lock`, `AgentAttach`, `AttachedAutomator`, `findByTestTag`, `waitForNode`, `waitForIdle`, parallel JVM focus contention, cross-JVM Compose automation, screenshots/recording, IntelliJ/Jewel-hosted Compose, or `dev.sebastiano.spectre.*` imports. Also use for JUnit 4/5 tests that open a real top-level Compose window. Do not use for the off-screen `runComposeUiTest` / `createComposeRule` / `onNodeWithTag` framework.
+description: >
+  Use when writing, debugging, or reviewing UI automation that drives a real on-screen Compose Desktop or
+  IntelliJ/Jewel window with Spectre (`dev.sebastiano.spectre.*`, `ComposeAutomator`, `RobotDriver`, `AgentAttach`,
+  `findByTestTag`, `waitForNode`, or `spectre`). Not for off-screen `runComposeUiTest`/`createComposeRule`.
 ---
 
 # Spectre
 
-Spectre drives a running Compose Desktop UI from a JUnit test.
-It reads the semantics tree of a real window and sends synthetic AWT events through
-`RobotDriver.synthetic()` by default. Tests can opt into `java.awt.Robot` for real OS input.
-`runComposeUiTest` and `onNodeWithTag` belong to the separate off-screen Compose test framework.
+Spectre drives a live on-screen Compose Desktop or Swing/IntelliJ/Jewel window through its semantics tree plus synthetic
+AWT input (`RobotDriver.synthetic()`, the default) or real OS input (`RobotDriver()`). Never mix `runComposeUiTest`,
+`createComposeRule`, or `onNodeWithTag` into a Spectre test; those belong to Compose's separate off-screen framework on
+a virtual clock. Even `RobotDriver.headless()` requires a real AWT toolkit (`-Djava.awt.headless=false`, e.g., under
+`xvfb-run`; pass `--no-daemon` when `xvfb-run` wraps `./gradlew` so a newly spawned Gradle daemon does not hold Xvfb
+open).
 
-Use Spectre to test application windows, popups, IntelliJ or Jewel hosts, and video capture.
+## Source of truth
 
-## User guide source of truth
-
-The installed `spectre` CLI bundles the user guide for its own version. It is the primary,
-always-current reference and works offline:
-
-```shell
-spectre guide                          # CLI workflow and the topic list
-spectre guide traps                    # known traps and how to avoid them
-spectre guide --search "<symptom>"     # best-matching sections, with breadcrumbs
-spectre guide -s "<words>" --json      # the same, as JSON
-```
-
-Search the guide before guessing at an error. CLI errors end with a hint that names the
-matching topic. The published guides hold the same pages:
-
-- Installation and coordinates: <https://spectre.sebastiano.dev/guide/installation/>
-- Experimental desktop input coordination: <https://spectre.sebastiano.dev/guide/input-coordination/>
-- Agent attach: <https://spectre.sebastiano.dev/guide/agent/>
-- Cross-JVM HTTP transport: <https://spectre.sebastiano.dev/guide/cross-jvm/>
-- Compose Hot Reload awareness (CLI/MCP only): <https://spectre.sebastiano.dev/guide/hot-reload/>
-
-In the Spectre repository, the same pages live under `docs/guide/`.
-
-## CLI attach workflow
-
-`spectre attach <pid>` drives a running Compose Desktop, Swing-hosted Compose, or
-IntelliJ/Jewel JVM (JDK 21+, same OS user) without any Gradle or classpath change in the
-target; when the target lacks `spectre-core`, Spectre injects it. Store the session ID;
-the shell has no current session.
+The `spectre` CLI bundles offline docs matching its installed version:
 
 ```shell
-spectre ps --json                                   # attachable JVMs
-SESSION=$(spectre attach <pid> --json | jq -r .sessionId)
-spectre windows "$SESSION"
-spectre tree "$SESSION" --json                      # node keys
-spectre find "$SESSION" <test-tag> --json           # or find-text / wait-for-node
-spectre click "$SESSION" <node-key>                 # keys, not tags
-spectre type "$SESSION" "text"                      # into the focused node
-spectre press-key "$SESSION" Enter                  # key name, chord (Ctrl+S), or AWT code
-spectre capture "$SESSION" --json                   # window PNG + capture.json
-spectre record start "$SESSION" --window 0 --output ./run.mp4
-spectre record stop "$SESSION"
-spectre detach "$SESSION"
+spectre guide                          # workflow overview and topic list
+spectre guide traps                    # known traps and fixes
+spectre guide --search "<symptom>"     # ranked sections (-s "<words>" --json for JSON)
 ```
 
-Key gotchas (`spectre guide traps` has the full list):
+Published guides mirror `docs/guide/` in the Spectre repository, starting at
+<https://spectre.sebastiano.dev/guide/installation/>. Check the installation guide before giving Maven coordinates if a
+tagged release is not on Maven Central yet (consumers may wire a composite build or local clone).
 
-- **Keys are per session and tree.** Run `tree` or `find` again after any UI change.
-- **`type` needs a focused node.** Click the field first. Synthetic input, the attach
-  default, needs no OS focus. With real OS input, `type` and `press-key` refuse while the
-  target lacks OS keyboard focus: run `spectre focus-window <session-id> --window <index>`.
-- **`screenshot` needs `--fullscreen` on attach.** Use `capture` for one window. `capture`
-  never crops the screen: it fails instead, most often on a blank or non-unique window
-  title. On Linux the target needs `spectre-recording` for `capture`.
-- **Off-screen children of `Column(Modifier.verticalScroll(…))`** have empty window bounds
-  (`1×1` screen bounds in `tree --json`), and pointer actions on them fail with
-  `in-window bounds are empty`. Scroll the container, then look the node up again.
-- **A daemon restart drops every session.** `session not found` after a successful
-  attach means a fresh daemon: run `spectre attach <pid>` again.
-- **`xvfb-run ./gradlew …` hangs** when it starts a Gradle daemon. Pass `--no-daemon`.
-- **JUnit window lifecycle.** Wait for `isShowing` and a non-zero size before the first
-  query. `exitApplication()` is asynchronous: wait for `!window.isDisplayable` in teardown.
-
-## Compose Hot Reload MCP and Spectre
-
-When both MCP servers are configured:
-
-> Use Compose Hot Reload MCP to check recomposition during a live reload session.
-> Use Spectre to inspect or control the UI.
-
-Repeatable tests run without Hot Reload. `waitForReloadSettled` exists on the interactive
-CLI, daemon, and MCP paths; `:testing` and JUnit do not expose it.
-
-## Test setup
-
-A test needs three components:
-
-1. **A running Compose window.** The test harness launches the app
-   (e.g. `application { Window(...) { … } }`); Spectre does *not* host it.
-2. **A `ComposeAutomator`.** Built once per test via
-   `ComposeAutomator.inProcess()` (usually through the JUnit extension/rule),
-   it discovers Compose surfaces and reads their semantics.
-3. **Suspending input + synchronisation calls** against that automator. All
-   input methods (`click`, `typeText`, etc.) and waits are `suspend` functions.
-   Wrap the test body in `runSpectreTest { ... }` (from `dev.sebastiano.spectre.testing`).
-
-Every `findBy…` call reads the current state once.
-Wait explicitly when the required state may appear later.
-
-## Minimal end-to-end example
+## Minimal JUnit 5 test and core invariants
 
 ```kotlin
 import dev.sebastiano.spectre.testing.ComposeAutomatorExtension
@@ -115,354 +43,176 @@ class CounterTest {
     val automatorExt = ComposeAutomatorExtension()
 
     @Test
-    fun `clicking increment bumps the counter`(): Unit = runSpectreTest {
-        launchCounterApp() // your harness — opens the Compose window
+    fun mySpec(): Unit = runSpectreTest {
+        launchCounterApp() // your harness opens the real Compose window
 
         val automator = automatorExt.automator
         automator.waitForNode(tag = "CounterValue")
         automator.waitForVisualIdle()
+        check(automator.findOneByTestTag("CounterValue")?.text == "Count: 0")
 
-        val initial = automator.findOneByTestTag("CounterValue")
-        check(initial?.text == "Count: 0")
-
-        val increment = automator.findOneByTestTag("Increment")
-            ?: error("Could not find Increment button")
+        val increment = automator.findOneByTestTag("Increment") ?: error("Missing Increment")
         automator.click(increment)
         automator.waitForVisualIdle()
-
-        val updated = automator.findOneByTestTag("CounterValue")
-        check(updated?.text == "Count: 1")
+        check(automator.findOneByTestTag("CounterValue")?.text == "Count: 1")
     }
 }
 ```
 
-JUnit 4 uses `ComposeAutomatorRule` and `@get:Rule` in place of the JUnit 5 extension.
+- **Spectre owns the automator, not the window.** Wait for `window.isShowing` and non-zero size before the first query.
+  `exitApplication()` is asynchronous; wait for `!window.isDisplayable` in teardown.
+- **Always use `runSpectreTest` and `: Unit`.** `kotlinx.coroutines.test.runTest` skips `delay()`, collapsing
+  `longClick` holds, `swipe` pacing, and `pasteText` clipboard polling to zero. Expression-body `@Test` methods need an
+  explicit `: Unit` return type because JUnit 5.14+ rejects non-void test methods at discovery.
+- **JUnit 4 and parallel JUnit 5.** JUnit 4 uses `@get:Rule val automatorRule = ComposeAutomatorRule()`. When JUnit 5
+  `@Test` methods run concurrently in one class, inject `(automator: ComposeAutomator)` via
+  `@ExtendWith(ComposeAutomatorExtension::class)` (`automatorExt.automator` is sequential-only).
 
-## Choosing a `RobotDriver`
+## Choosing and wiring `RobotDriver`
 
-`ComposeAutomator.inProcess()` uses synthetic AWT input by default.
-Choose a driver for the interactions the test needs:
+`ComposeAutomator.inProcess()` defaults to synthetic AWT input:
 
-- **`RobotDriver.synthetic()` / `RobotDriver.synthetic(rootWindow = someTopLevelWindow)`**
-  dispatches AWT events into a live `java.awt.Window`. It is the default and
-  supports parallel test JVMs without global focus contention. It also works
-  for IDE-hosted Compose. For keys, Spectre uses the AWT focus owner when
-  available. Otherwise, it finds a key-listening descendant under the last
-  pointer target or Compose host. This lets a Compose Desktop `TextField`
-  receive input in macOS helper JVMs with `apple.awt.UIElement=true`, where
-  AWT may provide no `Window.focusOwner`. Synthetic input does not trigger
-  OS shortcuts such as Cmd+Tab or system menus.
-- **`RobotDriver()`** sends real `java.awt.Robot` input on the host. It uses
-  global focus and supports OS shortcuts and focus handoffs. The no-argument
-  form remains uncoordinated while input coordination is experimental. If
-  several processes need real input, use `RobotDriver(InputLeasePolicy.Required)`
-  and read `references/input-coordination.md`. On Linux Wayland, use the no-argument
-  `RobotDriver()`: it sends input through Spectre's portal session. `RobotDriver(robot)`
-  always uses the `java.awt.Robot` you pass, which on Wayland goes through Xwayland and
-  needs its own consent, so the input may never arrive.
-- **`RobotDriver.headless()`** — refuses to send any input. Use it for tests that
-  only read the semantics tree (e.g. asserting a screen layout) without
-  driving it.
+- **`RobotDriver.synthetic()` / `RobotDriver.synthetic(rootWindow = hostWindow)`** (`RobotDriver.Companion`, no separate
+  import): dispatches AWT events directly into the live `java.awt.Window` hierarchy without global focus contention —
+  safe for parallel test JVMs and IDE-hosted Compose. For keys, Spectre targets the AWT focus owner or falls back to the
+  key-listening Compose descendant, so `typeText` works in macOS helper JVMs with `apple.awt.UIElement=true` where
+  `Window.focusOwner` is `null`. Does not trigger OS shortcuts (`Cmd+Tab`, system menus) or move the OS cursor
+  (`MouseInfo`).
+- **`RobotDriver()`**: explicit opt-in for real OS pointer/focus (`MouseInfo` hover via `moveTo`, OS shortcuts).
+  Uncoordinated across processes by default; pass `RobotDriver(InputLeasePolicy.Required)` for experimental cross-JVM
+  coordination (`references/input-coordination.md`). On Linux Wayland, always use no-arg `RobotDriver()` (routes through
+  `spectre-wayland-helper`); `RobotDriver(robot)` or raw `java.awt.Robot()` goes through Xwayland and needs separate
+  consent.
+- **`RobotDriver.headless()`**: semantics-only inspection; throws `UnsupportedOperationException` on input, clipboard,
+  or screenshots.
 
-```kotlin
-import dev.sebastiano.spectre.core.ComposeAutomator
-import dev.sebastiano.spectre.core.RobotDriver
-val automator = ComposeAutomator.inProcess(
-    robotDriver = RobotDriver.synthetic(rootWindow = ideFrame),
-)
-```
-
-### Wiring a custom driver through the JUnit extension/rule
-
-`ComposeAutomatorExtension` and `ComposeAutomatorRule` do **not** take a
-`robotDriver = …` named argument. Their primary constructor takes a single
-`AutomatorFactory = () -> ComposeAutomator`. Use the trailing-lambda form to
-build the automator with the required driver:
+`ComposeAutomatorExtension` and `ComposeAutomatorRule` have **no** `robotDriver =` parameter. Every factory constructor
+puts `factory: AutomatorFactory = () -> ComposeAutomator` last, so both trailing-lambda and `factory = { ... }` compile:
 
 ```kotlin
 @JvmField
 @RegisterExtension
 val automatorExt = ComposeAutomatorExtension {
-    ComposeAutomator.inProcess(robotDriver = RobotDriver.headless())
+    ComposeAutomator.inProcess(robotDriver = RobotDriver.synthetic(rootWindow = hostWindow))
 }
 ```
 
-The JUnit 4 rule uses the same shape: `ComposeAutomatorRule { ComposeAutomator.inProcess(...) }`.
+## API cheat sheet
 
-## Finding nodes
+### Selectors and tree inspection (non-waiting single reads)
 
-`ComposeAutomator` selectors return one `AutomatorNode` or a list of nodes.
-They read once. Use the synchronisation helpers when a node may appear later.
+Selectors read the current tree once and never auto-wait:
 
-Choose a selector by the semantics the application provides:
+1. `findByTestTag(tag)` / `findOneByTestTag(tag)` / `hasTag(tag)` — prefer `Modifier.testTag("...")`.
+2. `findByText(text, exact = true)` / `findOneByText(...)` / `hasText(...)` (or `TextQuery.exact`/`substring`).
+3. `findByContentDescription(...)`, `findByRole(Role.Button)`.
+4. `tree()` / `tree(windowIndex)` / `printTree()` / `allNodes()` / `refreshWindows()` / `surfaceIds()`.
 
-1. **`findByTestTag(tag)` / `findOneByTestTag(tag)`** — relies on
-   `Modifier.testTag("…")` on the composable. The default. Most reliable.
-   `hasTag(tag)` is the boolean form of the same snapshot read.
-2. **`findByText(text, exact = true)` / `findOneByText(...)`** — match
-   semantics `Text`. Brittle to i18n; OK for affordances written in test
-   harness code. `hasText(text)` is the boolean form of the same snapshot
-   read.
-3. **`findByContentDescription(...)`** — accessibility descriptions.
-4. **`findByRole(Role.Button)`** — semantics roles.
-5. **`allNodes()`** / **`tree()`** / **`printTree()`** — for debugging.
-   `printTree()` returns a human-readable dump; log it when a selector returns
-   `null`.
+`tree()` refreshes windows automatically; `findBy*`, `hasTag`, `hasText`, and `allNodes()` inspect the last snapshot
+unless `refreshWindows()` is called. When a selector unexpectedly returns `null`, log `println(automator.printTree())`;
+if `printTree()` returns an empty string, composition failed or no window registered yet (check stderr for EDT errors).
 
-`AutomatorNode` exposes `testTag`, `text`/`texts`, `contentDescription(s)`,
-`role`, `isFocused`, `isDisabled`, `isSelected`, `isClickable`, `editableText`,
-`toggleableState` (checkbox/switch `On`/`Off`/`Indeterminate`),
-`progressBarRangeInfo` (slider/progress value, range, steps), plus
-coordinates: `boundsInWindow` (Compose pixels, already density-scaled),
-`boundsOnScreen` (screen pixels, post-HiDPI), `boundsInAwtWindow`
-(`boundsOnScreen` relative to the hosting AWT window, title bar included),
-`centerOnScreen`. Tree navigation via `children`/`parent`. Each
-`AutomatorWindow` from `tree()` exposes its AWT host: `window`,
-`composePanel` (or `null`), and `hostComponent` (`composePanel ?: window`). Compare `boundsInWindow` against
-`Dp.roundToPx()` / `LocalDensity`-scaled values. For `boundsOnScreen`, only
-compare sizes and coordinate deltas against dp figures; absolute `x`/`y` also
-include the Compose surface origin, so subtract that (or prefer
-`boundsInWindow` for window-relative position asserts).
+`AutomatorNode` exposes `key`, `surfaceId`, `testTag`, `text`/`texts`, `editableText`,
+`contentDescription`/`contentDescriptions`, `role`, `isFocused`, `isDisabled`, `isSelected`, `isClickable`,
+`toggleableState`, `progressBarRangeInfo`, `parent`, and `children`. Each `AutomatorWindow` in `tree()` exposes
+`window`, `composePanel`, `hostComponent`, `isPopup`, and `surfaceId`.
 
-## Driving input
+### Coordinate spaces and scrollable containers
 
-All `suspend` on `ComposeAutomator`:
+- **`boundsInWindow`**: density-scaled surface pixels (e.g., 48 px for `24.dp` at 2× Retina), relative to the Compose
+  surface. Compare against `Dp.roundToPx()`/`LocalDensity`, never raw `dp`, and never multiply by display scale.
+- **`boundsOnScreen` / `centerOnScreen`**: AWT logical screen pixels (`boundsInWindow / scale + surfaceScreenOrigin`).
+  Use for `RobotDriver`, `screenshot(region)`, `screenshotAtDeviceScale(region)`, and `AutoRecorder.startRegion`.
+- **`boundsInAwtWindow`**: logical units relative to the hosting `Window` (including title-bar insets).
+- **Off-screen `Modifier.verticalScroll(...)` children** report empty `boundsInWindow` (`in-window bounds are empty` on
+  pointer actions); scroll the container with `scrollWheel` first, then re-query the child.
 
-- `click(node)`, `doubleClick(node)`, `longClick(node, holdFor = 500.milliseconds)`
-- `moveTo(node)`, `moveTo(x, y)`, `moveBy(deltaX, deltaY)` move the pointer
-  without pressing a button. `moveBy` starts from the last Spectre pointer
-  position and throws if none exists.
-- `swipe(from, to, steps, duration)` or `swipe(startX, startY, endX, endY, …)`
-- `scrollWheel(node, wheelClicks)`
-- `typeText("hello")` — types supported ASCII text via key events without using
-  the clipboard. Use `pasteText` for large or Unicode strings.
-- `pasteText("hello")` — pastes via the system clipboard. On macOS the clipboard
-  write is async; Spectre polls until the clipboard reads back the requested text.
-  Disable clipboard managers in CI, and do not use `apple.awt.UIElement=true` for
-  JVMs that need clipboard-backed paste. `typeText` is the preferred UIElement-safe
-  path for supported ASCII because it uses per-character key events and does not
-  touch the clipboard.
-- `clearAndTypeText(node, "new")` — Ctrl/Cmd+A, Backspace, then `typeText`.
-- `pressKey(KeyEvent.VK_ENTER, modifiers = 0)`, `pressEnter()`.
-- `performSemanticsClick(node)` invokes Compose `OnClick` semantics directly.
-  Use it for click-only or strictly headless flows. It does not type, send
-  keys, or scroll. For parallel JVM tests that also type text, use
-  `RobotDriver.synthetic(rootWindow)`.
-- `focusWindow(node)` — raises and focuses the window hosting `node`. Over attach,
-  use `AttachedAutomator.focusWindow(nodeKey)` (#364), or `spectre focus-window` /
-  the `focus_window` MCP tool, before `pressKey` / `typeText` when real OS input is in
-  use and the target app may not own OS keyboard focus. Synthetic input (the attach
-  default) does not need OS focus.
+### Input (`suspend` except `focusWindow` and `performSemanticsClick`)
 
-## Synchronization
+- **Pointer:** `click(node)`, `doubleClick(node)`, `longClick(node, holdFor = 500.milliseconds)`, `moveTo(node)` /
+  `moveTo(x, y)`, `moveBy(dx, dy)` (throws without a prior Spectre pointer position), `swipe(...)`,
+  `scrollWheel(node, wheelClicks)`. Spectre has no secondary-button (right-click) API; use `longClick` where supported
+  or dispatch an AWT `MouseEvent`.
+- **Keyboard and text:** `typeText("ascii")` sends per-character key events without touching the clipboard (preferred
+  for supported ASCII and safe under macOS `apple.awt.UIElement=true`). `pasteText("unicode")` uses the system clipboard
+  (polling async macOS pasteboard writes); disable CI clipboard managers and avoid `apple.awt.UIElement=true` on JVMs
+  that require `pasteText`. `clearAndTypeText(node, "new")` selects all, deletes, and calls `typeText`.
+  `pressKey(KeyEvent.VK_ENTER, modifiers = 0)` and `pressEnter()` send raw keys.
+- **Focus and semantics:** `focusWindow(node)` raises/focuses the host window (use before real-input `typeText` or
+  `pressKey` over attach when unfocused; synthetic input needs no OS focus). `performSemanticsClick(node)` invokes
+  Compose `OnClick` directly for click-only headless flows; it cannot type or scroll.
 
-Wait for expected UI state before querying or interacting with it.
+### Five waits (all `suspend`, all forbid the AWT EDT)
 
-### Queries read once
+Every wait marshals onto AWT via `invokeAndWait` and throws `IllegalStateException` if called on the EDT. On Swing or
+IntelliJ EDT dispatchers, wrap waits in `withContext(Dispatchers.Default) { ... }` or `executeOnPooledThread`.
 
-`findByTestTag("Submit")` / `hasTag("Submit")` read whatever is in the semantics
-tree *right now*. If the screen hasn't rendered yet, they return empty / `false`.
-Always wait before querying state that depends on a prior action.
+- `waitForNode(tag = "...", text = ..., timeout = 5.seconds)` — wait until a matching node appears.
+- `waitUntilGone(tag = "...", text = ..., timeout = 5.seconds)` — refreshes windows each poll so a closed popup `Window`
+  counts as gone.
+- `waitUntil(description = "...", timeout = 5.seconds) { ... }` — predicate with `AutomatorTree` receiver (`windows()`,
+  `allNodes()`, `roots()`); in-process Spectre tree state only.
+- `waitForIdle()` — semantics fingerprint + `AutomatorIdlingResource`s (`registerIdlingResource` /
+  `unregisterIdlingResource` in `try/finally`).
+- `waitForVisualIdle(stableFrames = 3)` — consecutive pixel-stable frames; use before screenshots or after animations.
+  Uses native window capture when `:recording` and a runnable helper exist, falls back to `Robot` region capture when
+  `:recording` is absent or the helper cannot launch, and fails fast on missing Wayland grants or unsupported Wayland
+  `JWindow` popups (`#640`).
 
-### Choose a wait
+### Screenshots and atomic capture
 
-- **`waitForNode(tag = "...", timeout = 5.seconds)`** — wait until a node with
-  the given tag (or text) exists. Throws on timeout. Use this when a *new*
-  node must appear.
-- **`waitUntilGone(tag = "...", timeout = 5.seconds)`** — wait until *no* node
-  with the given tag (or text) exists in any tracked window. Refreshes windows
-  before every poll, so a popup that closes its own `Window` counts as gone.
-  Throws `IllegalStateException` naming the selector on timeout. Use this
-  after dismissing a popup, menu, or dialog.
-- **`waitUntil(description = "...") { ... }`** — wait until a predicate on the
-  `AutomatorTree` snapshot holds. The lambda's receiver is the tree, so phrase
-  the condition with `windows()` / `allNodes()` / `roots()`; every poll re-reads
-  it (refreshing windows first). Throws `IllegalStateException` naming the
-  `description` on timeout, so describe the expected state. Use
-  this for barriers no tag/text selector expresses: a node count, a comparison,
-  or a combination. It is scoped to Spectre-observable state. Wait for a service
-  flag, a file, or an HTTP response with the tool that owns it.
-- **`waitForIdle()`** — wait until the semantics fingerprint stabilises and
-  all registered `AutomatorIdlingResource`s are idle. Use this after
-  work that updates semantics without producing a specific new node.
-- **`waitForVisualIdle(stableFrames = 3)`** — wait until tracked Compose
-  surface pixels are stable for N consecutive frames. With `spectre-recording`
-  present, samples use the same window-scoped native still path as
-  `screenshot(windowIndex)`; it does not use a screen-region crop. It is heavier than
-  `waitForIdle`. Use it before screenshotting or for animations that do not
-  change semantics.
+Single-target `screenshot(...)` calls return a `BufferedImage` (write PNGs via `ImageIO.write(image, "png", file)`), and
+`capture(windowIndex)` returns an `AtomicCapture` (image + semantics snapshot); call `waitForVisualIdle()` before
+capturing animated UI.
 
-A typical pattern after an interaction is `waitForVisualIdle()`. After
-triggering a screen *change* (e.g. opening a dialog), `waitForNode(tag = …)`
-is more precise.
-
-### Keep waits off the EDT
-
-All five waits reject calls from the AWT event dispatch thread: `waitForNode`,
-`waitUntilGone`, `waitUntil`, `waitForIdle`, and `waitForVisualIdle`.
-They read state through `invokeAndWait`; an EDT caller could deadlock.
-On a Swing-backed dispatcher, including IntelliJ's EDT dispatcher, move the
-wait with `withContext(Dispatchers.Default) { … }` or another non-EDT dispatcher.
-`waitForNode` follows the same rule.
-
-### Use `runSpectreTest`
-
-`kotlinx-coroutines-test`'s `runTest` skips `delay()`. That collapses
-`longClick` hold durations, `swipe` pacing, and the macOS clipboard-settle
-poll inside `pasteText` to zero, breaking them all. Use `runSpectreTest { ... }`
-in the test body.
-
-### Return `Unit` from expression-body tests
-
-Write `@Test fun mySpec(): Unit = runSpectreTest { ... }`. JUnit 5.14+ rejects
-non-void test methods during discovery, and Kotlin infers an expression-body
-function's return type from the last expression in the `runSpectreTest` body. Some
-assertions return the asserted value. JUnit therefore needs the explicit `Unit` return type.
-
-### Custom idling resources
-
-Background work that doesn't tick the semantics tree (custom animations,
-network calls) is invisible to `waitForIdle`. Register an
-`AutomatorIdlingResource` so the wait knows about it:
-
-```kotlin
-automator.registerIdlingResource(myResource)
-try {
-    // ...
-    automator.waitForIdle()
-} finally {
-    automator.unregisterIdlingResource(myResource)
-}
-```
-
-## Screenshots
-
-`automator.screenshot()` returns a `BufferedImage` (or a multi-window scene; see below):
-
-```kotlin
-import dev.sebastiano.spectre.core.WindowScreenshotResult
-
-automator.screenshot()                  // full desktop
-automator.screenshot(region = Rectangle(x, y, w, h))
-automator.screenshot(node)              // node bounds
-automator.screenshot(windowIndex = 0)   // a tracked window
-
-// several physical windows (back→front painter order), e.g. owner then dialog/popup
-val scene = automator.screenshotWindows(listOf(0, 1))
-scene.windows.forEachIndexed { index, result ->
-    if (result is WindowScreenshotResult.Success) {
-        // result.image, bounds, density, capture order
-    }
-}
-scene.composite?.let { /* union canvas of successful captures; null if any window failed */ }
-```
-
-`screenshotWindows` is for heavyweight popup renderers (Swing/Jewel dialogs, menus,
-tooltips). Index list is painter's order; put the owner before its popups. The composite
-uses the union of requested bounds so a popup that extends past the owner is not clipped.
-If any requested window fails, that entry is `WindowScreenshotResult.Failure` and
-`composite` is null; successful per-window images remain available.
-
-Call `waitForVisualIdle()` before a screenshot when an animation may still change the pixels.
-
-On macOS, screenshots need an unlocked console session in addition to Screen
-Recording TCC. A locked screen can make `Robot.createScreenCapture` return black
-pixels; current Spectre checks the macOS `IOConsoleLocked` flag first and tells
-the caller to unlock/retry before pointing at TCC.
-
-`screenshot(node)` and `screenshot(windowIndex)` are native window-scoped still
-screenshots and require `:recording`; they fail clearly when no native backend is available.
-They never substitute a framebuffer crop. Use `screenshot(region)` only when a
-screen-region capture is intended. `AutoScreenshotter` remains the direct top-level-window
-API. This is separate from video recording:
-
-- macOS: `ScreenCaptureKitScreenshotter` via `spectre-recording-macos`.
-- Windows: `WindowsWindowScreenshotter` takes stills, and
-  `WindowsGraphicsCaptureRecorder` records window or region video. Both use the
-  framework-dependent Windows Graphics Capture helper in `spectre-recording-windows`
-  for x64 and arm64. Runtime needs Windows 10 version 1903 or newer, .NET 8
-  Desktop Runtime, and Windows App Runtime 1.8. Source builds and CI also need
-  .NET 8 SDK.
-- Linux X11: Linux helper (`ximagesrc`) for stills; the target must be visible/frontmost.
-- Linux Wayland: one long-lived `spectre-wayland-helper` session, which needs one portal
-  grant that a person approves once with `spectre permissions request`. Monitor capture and
-  real OS input use that grant. Window stills, visual-idle samples, and window video use GNOME
-  Mutter window streams (GNOME only, no dialog of their own) through the same session, so they
-  need the grant too. JUnit runs never open the dialog. See `references/recording.md`.
-
-## Recording, JUnit, IntelliJ-hosted Compose
-
-Open the relevant reference for recording, JUnit, input coordination, IntelliJ, or attach work:
-
-- **Still window screenshots and video recording** → `references/recording.md` —
-  `AutoScreenshotter`, `AutoRecorder`, platform helper artefacts
-  (`spectre-recording-macos` / `-linux` / `-windows`), region vs window targeting,
-  frame-drop and HiDPI traps.
-- **JUnit 4 vs JUnit 5 integration** → `references/junit.md` —
-  `ComposeAutomatorExtension`, `ComposeAutomatorRule`, parameter resolution,
-  lifecycle, and opt-in **screenshot golds** (`assertMatchesGold`,
-  `ScreenshotTolerance`, JUnit 5 `TestInfo` / `ScreenshotGoldJunit5`).
-- **Experimental desktop input coordination** → `references/input-coordination.md` — real-input
-  contention across JVMs, `InputLeasePolicy`, JUnit `InputIsolationConfig`, runtime dependency,
-  exact revoke, and unsafe forced recovery.
-- **IntelliJ/Jewel-hosted Compose** → `references/intellij.md` — running
-  the automator from an `AnAction` against the IDE frame, the
-  pooled-thread requirement, and the `synthetic` driver. If the work also
-  involves Jewel popups, `ComposePanel` embedding, or `SwingBridgeTheme`,
-  the repo-local `jewel-swing-interop` skill applies as well.
-- **Java-agent attach** → `references/agent.md` — `AgentAttach`,
-  `AttachedAutomator`, `AttachOptions`, the `spectre-agent` /
-  `spectre-agent-runtime` split, runtime jar auto-discovery, custom
-  attach paths, and **inject** when the target has Compose without
-  preinstalled `spectre-core`.
-
-## Common failures
-
-| Symptom | Cause | Fix |
+| Call | Resolution | Backend and failure behaviour |
 |---|---|---|
-| `findOneBy…` returns `null` right after an interaction | Selectors don't wait | Add `waitForNode(...)` or `waitForVisualIdle()` first |
-| Test deadlocks or throws inside any `waitFor…` / `waitUntil…` | Called from the AWT EDT | Wrap in `withContext(Dispatchers.Default) { … }` — applies to all five waits, including `waitForNode`, `waitUntilGone`, and `waitUntil` |
-| `longClick`/`swipe`/`typeText` complete instantly and miss | Test body uses `runTest` | Switch to `runSpectreTest` |
-| Two parallel test JVMs steal focus from each other | Both opted into real `RobotDriver()` | Stay on the default `RobotDriver.synthetic()` (or pin `rootWindow`) |
-| Parallel JVMs must preserve real OS input behaviour | Real focus/pointer/clipboard state is shared across processes | Opt in to experimental coordination, add `spectre-input-coordinator-server` at runtime, use `Required` and JUnit `InputIsolationConfig.perTest()` |
-| Cmd+Tab or OS shortcuts don't work under synthetic driver | Synthetic events bypass HID | Use real `RobotDriver()` for those tests |
-| Screenshot is blurry / mid-animation | Captured before frame stabilised | `waitForVisualIdle()` first |
-| Windows WGC helper missing or fails to start | `spectre-recording-windows` is not on the runtime classpath, the helper was not built/staged locally, or .NET / Windows App Runtime is missing | Add `testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-windows")`; install .NET 8 Desktop Runtime + Windows App Runtime 1.8 for runtime; for source builds install .NET 8 SDK and run `:recording-windows:verifyRecordingWindowsHelper` |
-| `typeText` silently does not land on macOS with `apple.awt.UIElement=true` | Usually stale Spectre or wrong `rootWindow`; current synthetic input should target the Compose key-listening host even without AWT focus | Verify the test uses a Spectre build with the UIElement synthetic-key fallback, click/focus the field first, and pass the top-level host window to `RobotDriver.synthetic(rootWindow)` |
-| `pasteText` silently does not land on macOS with `apple.awt.UIElement=true` | UI-element/helper mode breaks clipboard-backed paste, even with synthetic input | Disable `apple.awt.UIElement=true` for the JVM hosting the test window, or use `typeText` for supported ASCII |
-| `pasteText` times out on macOS in CI | Clipboard manager rewriting `NSPasteboard` | Disable clipboard utilities in CI |
-| Recording misses popups that escape the host window | Popups live in their own AWT window outside both the region rectangle *and* a window-targeted capture | Choose an explicit region (or full-desktop crop) wide enough to include where the popup opens, or document the limitation — neither region nor window targeting follows cross-window popups |
-| Wayland capture or real input fails and names `spectre permissions request` | No stored portal grant on this seat | Ask a person at the machine to run `spectre permissions request` once. Do not retry in a loop |
-| Wayland window capture fails on a non-GNOME desktop | Window capture uses GNOME Mutter window streams | Use `AutoRecorder.startRegion(...)` or `screenshot(region)`, or run under X11 or Xvfb |
-| Wayland capture of a `JWindow` popup throws `UnsupportedOperationException` | Popups that are not a `Frame` or `Dialog` cannot be bound yet (#640) | Capture the owner window or a screen region |
-| Coordinates derived from `boundsInWindow` land off-target on HiDPI | `boundsInWindow` is Compose pixels (already density-scaled) and window-relative; AWT/Robot and recording regions use screen pixels | Use `boundsOnScreen`/`centerOnScreen` for input and region targeting. If converting yourself, divide by the display scale **and** add the surface/panel screen origin — do not multiply |
+| `screenshot()`, `screenshot(region)` | 1 px per logical screen unit (`boundsOnScreen` maps 1:1) | `Robot` capture; no `:recording` needed |
+| `screenshotAtDeviceScale(region)` | Device pixels (2× Retina, 1× Xvfb) | `Robot` multi-resolution capture; derive scale as `image.width / bounds.width` for sub-dp pixel assertions |
+| `screenshot(node)`, `screenshot(windowIndex)`, `capture(windowIndex)` | Device pixels | Native window backend (`:recording` + OS helper); **fails closed** — never falls back to a desktop crop |
+| `screenshotWindows(listOf(0, 1))` | Device pixels on union canvas | Painter's order (owner before popup); returns `CompositeScreenshot` (`composite` is `null` if any window fails) |
 
-## API boundaries
+On macOS, screenshots require Screen Recording TCC plus an unlocked console (`IOConsoleLocked`; unlock before debugging
+black captures as TCC).
 
-- If a tagged release is not available on Maven Central yet, consumers wire Spectre as a
-  composite build or local clone. Check the installation guide before giving coordinates.
-- Spectre tests use Spectre APIs. Keep `compose-test`, `runComposeUiTest`, and
-  `onNodeWithTag` out of them.
-- It does **not** capture audio. Recording is video-only.
-- The cross-JVM **HTTP transport is experimental**. It uses bearer authentication
-  and HTTPS by default. It offers windows, nodes, input, and screenshots, with
-  no live idling-resource registration or `withTracing`. It grants privileged
-  desktop automation. Explain these limits when recommending it. User guide:
-  <https://spectre.sebastiano.dev/guide/cross-jvm/>.
-- Desktop input coordination is experimental, cooperative, and opt-in. Do not call it an OS input
-  grab, imply `RobotDriver()` coordinates by default, or suggest `--force` without its
-  `unsafeTakeover=true` overlap warning.
-- It does **not** auto-wait on queries. Don't write tests that assume it
-  does.
+### CLI attach workflow and advanced entry points
 
-## Inspect the tree
+`spectre attach <pid>` attaches to a same-user JDK 21+ JVM (injecting core automatically when `spectre-core` is absent):
 
-Print the tree before a failing selector:
-
-```kotlin
-println(automator.printTree())
+```shell
+spectre ps --json
+SESSION=$(spectre attach <pid> --json | jq -r .sessionId)
+spectre tree "$SESSION" --json                      # or: spectre find "$SESSION" <tag> --json
+spectre scroll-wheel "$SESSION" <node-key> 5        # scroll off-screen verticalScroll items first
+spectre click "$SESSION" <node-key>                 # keys are per session + tree; re-query after UI changes
+spectre type "$SESSION" "text"                      # click field first; focus-window if real OS input
+spectre press-key "$SESSION" Enter
+spectre capture "$SESSION" --json                   # window PNG + capture.json (screenshot needs --fullscreen)
+spectre detach "$SESSION"                           # daemon restart invalidates sessions; re-attach if needed
 ```
 
-The output lists visible nodes, tags, text, and bounds.
-If it is empty, composition may have failed before registering nodes.
-Check test stderr for EDT or composition exceptions.
+When Compose Hot Reload MCP is also active, use Hot Reload MCP for recomposition status and Spectre for UI inspection or
+input (`spectre wait --reload-settled` / MCP `wait_for_reload_settled` is interactive-only, not in `:testing`).
+
+Other `ComposeAutomator` entry points: `withTracing(output, tracer) { ... }` (in-process),
+`@ExperimentalSpectreApi monitorRecompositions()`, `@ExperimentalSpectreInputCoordinationApi withExclusiveInput { ... }`,
+and experimental authenticated `ComposeAutomator.http(...)` (`DEFAULT_PORT = 9274`, HTTPS + bearer token by default, no
+live idling resources or `withTracing`; flag its desktop-control trust boundary and see
+<https://spectre.sebastiano.dev/guide/cross-jvm/>).
+
+## References
+
+Load only the reference matching the task:
+
+- **Native window stills, `AutoScreenshotter`, `AutoRecorder`, OS helpers (`spectre-recording-{macos,linux,windows}`),
+  Linux X11 GStreamer vs Wayland `spectre permissions request`, Windows WGC prerequisites, or popup/HiDPI capture
+  traps** → `references/recording.md`
+- **JUnit 4/5 wrappers, parallel `@ExtendWith` parameter injection, `FailureArtifactsConfig`, `FailureVideoConfig`,
+  screenshot golds (`assertMatchesGold`, `TestInfo`), or `LaunchAndAttachExtension`/`Rule`** → `references/junit.md`
+- **Parallel JVMs requiring real OS `RobotDriver` input, `InputLeasePolicy`, `InputIsolationConfig`,
+  `withExclusiveInput`, or `spectre input-lock` recovery** → `references/input-coordination.md`
+- **IntelliJ Platform/Jewel plugin `ComposePanel` or tool-window automation (`IDE` dependency baseline,
+  `executeOnPooledThread`, `synthetic(rootWindow = ideFrame)`, popup layers)** → `references/intellij.md`
+- **Programmatic `AgentAttach`, `AttachedAutomator`, `AttachOptions`, `spectre-agent`/`spectre-agent-runtime`
+  dependencies, or zero-dependency `inject-runtime.jar` bootstrap** → `references/agent.md`
+- **Querying, diffing, or pruning `capture.json` (`schemaVersion 1`) with `jq`** → sibling skill `spectre-capture`

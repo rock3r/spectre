@@ -1,51 +1,76 @@
 # Recording and screenshots
 
-The `:recording` module captures video and native window screenshots from a running
-Compose Desktop UI. `ComposeAutomator.screenshot(node)` and `screenshot(windowIndex)`
-need it for window capture. `screenshot(region)` captures an explicit screen rectangle.
-**Audio is not supported.**
+The `:recording` module captures MP4 video and native window-scoped still screenshots from a running Compose Desktop UI.
+`ComposeAutomator.screenshot(node)`, `screenshot(windowIndex)`, `screenshotWindows(...)`, and `capture(windowIndex)`
+require it; `screenshot(region)` and `screenshotAtDeviceScale(region)` use `java.awt.Robot` directly without
+`:recording`. **Audio is not supported** (video-only).
 
-## Still window screenshots — `AutoScreenshotter`
+## Native window stills and `AutoScreenshotter`
 
-Use `ComposeAutomator.screenshot(region)` for an explicit framebuffer rectangle.
-`ComposeAutomator.screenshot(node)` and `screenshot(windowIndex)` use the native
-window backend and fail clearly if it is unavailable or cannot identify the window.
-Use `AutoScreenshotter.captureWindow(frame.asTitledWindow())` for a direct top-level
-window still image.
+`screenshot(node)`, `screenshot(windowIndex)`, `capture(windowIndex)`, and JUnit's automatic failure-artefact window
+captures all use the native window backend and **fail closed** when that backend cannot run or cannot uniquely identify
+the window — they never substitute a `Robot` desktop crop. Use `AutoScreenshotter.captureWindow(frame.asTitledWindow())`
+when calling the top-level window still API directly outside `ComposeAutomator`.
 
-`screenshot(windowIndex)`, `screenshot(node)`, and `waitForVisualIdle()` also work for popups
-hosted in an untitled `JWindow`: the helper finds that window by its position and size. Two
-windows with the same bounds make the capture fail. On Linux Wayland a popup that is not a `Frame`
-or `Dialog` cannot be captured yet (`UnsupportedOperationException`, #640), so visual idle fails
-at once while such a popup is open; capture the owner window, use `screenshot(region)`, or run
-under X11/Xvfb. Recording still needs a titled window.
-
-| Platform | Backend | Runtime helper |
+| Platform | Still backend | Runtime helper artefact |
 |---|---|---|
-| macOS | ScreenCaptureKit still-image mode | `spectre-recording-macos` |
-| Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | `spectre-recording-windows` |
-| Linux X11/XWayland | Linux helper (`ximagesrc`) | `spectre-recording-linux` |
-| Linux Wayland | GNOME Mutter window stream through `spectre-wayland-helper` | `spectre-recording-linux`; GNOME only; needs the one-time `spectre permissions request` grant |
+| macOS | ScreenCaptureKit still-image mode (`ScreenCaptureKitScreenshotter`) | `spectre-recording-macos` |
+| Windows | Windows Graphics Capture (`WindowsWindowScreenshotter` / `spectre-window-capture.exe`) | `spectre-recording-windows` |
+| Linux X11/XWayland | Linux GStreamer helper (`ximagesrc`; target must be visible/frontmost) | `spectre-recording-linux` + GStreamer (`gst-launch-1.0`) |
+| Linux Wayland | GNOME Mutter window stream via `spectre-wayland-helper` | `spectre-recording-linux` (GNOME only; requires the one-time `spectre permissions request` grant) |
 
-Windows stills and recording share a Windows Graphics Capture helper.
-At runtime it needs Windows 10 version 1903 or newer, .NET 8 Desktop Runtime,
-and Windows App Runtime 1.8. Building the helper needs the .NET 8 SDK.
-Verify a local build with:
+### Untitled `JWindow` popups and multi-window stills
 
-```bash
+- On macOS, Windows, and Linux X11, `screenshot(windowIndex)`, `screenshot(node)`, and `waitForVisualIdle()` also
+  support popups hosted in an untitled `JWindow` by matching window position and size (two windows with identical bounds
+  fail closed as ambiguous). Recording (`AutoRecorder.startWindow`) still requires a titled window.
+- On Linux Wayland, popups that are not a `Frame` or `Dialog` (e.g., `JWindow`) throw `UnsupportedOperationException`
+  (`#640`), causing `waitForVisualIdle()` to fail immediately while open; capture the owner window, use
+  `screenshot(region)`, or run under X11/Xvfb.
+- When Swing/Jewel dialogs, menus, or tooltips open in separate AWT windows extending beyond the owner, call
+  `automator.screenshotWindows(listOf(0, 1))` in back-to-front painter's order (owner before popup). It composites
+  per-window captures onto their union bounds (`CompositeScreenshot.composite` is `null` if any window fails, while
+  successful `WindowScreenshotResult.Success` entries remain accessible).
+
+### Linux X11 `xvfb-run` and `waitForVisualIdle` vs fail-closed stills
+
+Under `xvfb-run` (with `-Djava.awt.headless=false`), `screenshot(region)` and `screenshotAtDeviceScale(region)` need
+only `Robot`. When `spectre-recording` is on the classpath, `screenshot(node)`, `screenshot(windowIndex)`, `capture`,
+`waitForVisualIdle`, and JUnit failure-artefact captures go through the Linux GStreamer window bridge:
+
+- `screenshot(node)`, `screenshot(windowIndex)`, `capture`, and failure-artefact window captures fail closed when
+  GStreamer (`gst-launch-1.0`) is missing. Install GStreamer on Linux X11 CI runners if failing tests should save
+  per-window PNG artefacts.
+- `waitForVisualIdle` falls back to `Robot` region capture when `:recording` is absent or the native helper/GStreamer
+  binary cannot launch, whereas other native capture failures (such as an occluded or ambiguous window) count as
+  unsampleable frames and reset the stability streak until timeout.
+
+### Windows prerequisites
+
+Windows stills and `WindowsGraphicsCaptureRecorder` share the framework-dependent helper in `spectre-recording-windows`
+(x64 and arm64). Add `testRuntimeOnly("dev.sebastiano.spectre:spectre-recording-windows")` and install Windows 10 1903+,
+.NET 8 Desktop Runtime, and Windows App Runtime 1.8. Building from source also requires the .NET 8 SDK; verify with:
+
+```shell
 ./gradlew :recording-windows:verifyRecordingWindowsHelper
 ```
 
-## Entry point — `AutoRecorder`
+### macOS console lock and display order
 
-`AutoRecorder` exposes explicit window and region capture entry points:
+macOS capture requires both Screen Recording TCC permission and an unlocked console session. A locked screen makes
+`Robot.createScreenCapture` return black pixels; Spectre checks `IOConsoleLocked` first and reports a locked console
+before pointing at TCC. For `AutoRecorder.startRegion`, `RecordingOptions.screenIndex` uses ScreenCaptureKit ordering:
+display `0` is primary, then remaining displays sorted by frame `minX`/`minY` (legacy `FfmpegRecorder` callers still use
+avfoundation ordering).
+
+## Video recording — `AutoRecorder`
 
 | Platform | `startWindow` | `startRegion` |
 |---|---|---|
-| macOS | ScreenCaptureKit (native) | ScreenCaptureKit helper; missing helper artefacts and SCK-unsupported options (`codec`) produce an error. There is no ffmpeg/avfoundation fallback. `screenIndex` is the SCK display index: primary first, then by frame `minX`/`minY` |
-| Windows | Windows Graphics Capture helper | Windows Graphics Capture helper; missing helper artefacts and WGC-unsupported options (`codec`, `screenIndex`) produce an error. There is no ffmpeg fallback |
-| Linux X11/XWayland | Linux helper | Linux helper |
-| Linux Wayland (GNOME/Mutter) | GNOME Mutter window stream (one-time grant, no dialog of its own) | xdg-desktop-portal monitor source (one-time grant) |
+| macOS | ScreenCaptureKit (native) | ScreenCaptureKit helper; missing helper artefacts or SCK-unsupported options (`codec`) fail closed (no ffmpeg/avfoundation fallback) |
+| Windows | Windows Graphics Capture helper | Windows Graphics Capture helper; missing helper artefacts or WGC-unsupported options (`codec`, `screenIndex`) fail closed (no ffmpeg fallback) |
+| Linux X11/XWayland | Linux GStreamer helper | Linux GStreamer helper |
+| Linux Wayland (GNOME/Mutter) | GNOME Mutter window stream (needs one-time grant; no per-window dialog) | `xdg-desktop-portal` monitor source (one-time grant) |
 
 ```kotlin
 val recorder = AutoRecorder()
@@ -61,77 +86,43 @@ try {
 }
 ```
 
-Use `try { … } finally { handle.stop() }` so a failing test still finalises the file.
+Always stop the handle inside `finally` so failing tests still finalise the MP4.
 
-## Window and region targeting
+### Window vs region targeting
 
-Choose capture by the source pixels the test needs:
+- **Region (`startRegion`)**: fixed screen `Rectangle`. Does not follow window moves/resizes; popups outside the
+  rectangle are clipped. Required for embedded `ComposePanel` hosts that lack a top-level title.
+- **Window (`startWindow`)**: follows window moves, fails closed when unavailable, and omits popups rendered in separate
+  AWT windows outside the target. Choose an explicit `startRegion` wide enough for cross-window popups when needed.
 
-- **Region (`startRegion`)**: fixed screen `Rectangle`. Does **not** follow
-  the window if it moves or resizes; pixels outside the rectangle (popups,
-  dialogs that escape the bounds) are lost. Use for a fixed crop when window
-  placement is controlled.
-- **Window-targeted**: follows the window. Does **not** capture popups that
-  live in their own AWT window outside the target. Use for tests where the
-  window may move while remaining the focus.
+## Linux Wayland consent and limits
 
-An embedded `ComposePanel` has no top-level title of its own.
-Use `startRegion(...)` with an explicit rectangle when no host window is suitable.
-`startWindow(...)` reports an error when window capture is unavailable.
+A human at the seat approves once via `spectre permissions request` (select whole screen, tick Remember, click Share).
+Spectre stores the grant and keeps one long-lived `spectre-wayland-helper` session at
+`$XDG_RUNTIME_DIR/spectre/wayland-session.sock` for monitor capture and real OS input (`spectre permissions check` or
+`WaylandPortalAccess.preflight()` inspects it without prompting).
 
-For macOS region capture, `RecordingOptions.screenIndex` is interpreted by the SCK helper:
-display `0` is the primary display, then remaining displays are sorted by frame `minX` and
-`minY`. Explicit legacy `FfmpegRecorder` callers still get avfoundation device ordering.
-
-macOS capture also requires an unlocked console session. If a smoke or test suddenly reports
-black screenshots/frames or a permission-looking capture failure, unlock the screen and retry
-before debugging TCC; Robot screenshot diagnostics check `IOConsoleLocked` for this case.
-
-## Linux Wayland caveats
-
-Approve once, then never again: a person at the seat runs `spectre permissions request`, picks
-the whole screen, ticks Remember, and clicks Share. Spectre stores the grant and keeps one
-long-lived `spectre-wayland-helper` session for monitor capture and real OS input. Later
-processes reconnect through `$XDG_RUNTIME_DIR/spectre/wayland-session.sock` and open no dialog.
-`spectre permissions check` (or `WaylandPortalAccess.preflight()`) reports the grant without a
-dialog.
-
-JUnit runs never open the dialog. Without a grant, the first capture or real input fails at once
-with an error that names `spectre permissions request`. Ask a person to run it; do not retry in a
-loop. `-Dspectre.wayland.consentPrompt=allow` lets a test run open the dialog anyway.
-
-Window stills, visual-idle samples, and window recording use GNOME Mutter window streams. They
-open no dialog and need no grant of their own, but they run through the same session helper, so
-they also fail until the one-time approval exists. Limits:
-
-- GNOME only. On another Wayland desktop, window capture fails; use `startRegion(...)` or
-  `screenshot(region)`, or run under X11/Xvfb.
-- Spectre focuses the window for its first capture and gives focus back. The first capture of a
-  window must not run on the AWT event dispatch thread.
-- Popups that are not a `Frame` or `Dialog` (for example a `JWindow`) cannot be captured yet
-  (#640).
-- Use the no-argument `RobotDriver()` for real input. `RobotDriver(robot)` bypasses the portal
-  session.
+- **Never retry in a loop in JUnit.** JUnit runs never open the portal dialog unless
+  `-Dspectre.wayland.consentPrompt=allow` is explicitly set; without a stored grant they fail immediately naming
+  `spectre permissions request`.
+- **GNOME Mutter window streams** power window stills, visual-idle samples, and `startWindow` through the same helper
+  session (so they still require the one-time grant). On non-GNOME Wayland desktops, use `startRegion(...)`,
+  `screenshot(region)`, or X11/Xvfb.
+- **First window capture off EDT:** Spectre briefly activates the window on its first capture and restores focus; do not
+  call it on the AWT EDT.
+- **Real OS input:** always use no-arg `RobotDriver()`; `RobotDriver(robot)` bypasses the portal session via Xwayland.
 
 User guide: [Linux Wayland consent](https://spectre.sebastiano.dev/guide/recording/#linux-wayland-consent).
 
-## HiDPI and coordinates
+## HiDPI coordinates, device-scale crops, and CI cost
 
-`Rectangle` arguments are in **screen pixels** (post-HiDPI scaling), as is
-`AutomatorNode.boundsOnScreen`. Prefer `boundsOnScreen`: it already divides by
-the display scale and adds the surface/panel screen origin.
-`AutomatorNode.boundsInWindow` is already in **Compose/device pixels**
-(density-scaled) and window-relative. Manual conversion requires both
-steps. Dividing alone lands near `(0, 0)` when the window is not at the
-screen origin. Multiplying by density double-scales the region on a Retina
-display.
-
-## Frame drops
-
-Heavy CPU load can cause frame drops. The MP4 can remain playable with visible
-stutter. See `docs/RECORDING-LIMITATIONS.md` for platform behaviour.
-
-## Recording cost on CI
-
-Recording adds 5–30% CPU overhead and can produce large artefacts.
-Enable it for selected tests or through an environment variable.
+- `Rectangle` regions and `AutomatorNode.boundsOnScreen` use **logical screen pixels** (already divided by display scale
+  plus the Compose surface's screen origin). `AutomatorNode.boundsInWindow` uses **density-scaled surface pixels**
+  relative to the Compose surface; never multiply `boundsInWindow` by display density, and include the surface screen
+  origin if converting manually.
+- When `screenshot(node)` is unavailable (e.g., Linux Xvfb without GStreamer) and a test inspects sub-dp pixel geometry,
+  capture `val img = automator.screenshotAtDeviceScale(node.boundsOnScreen)` and scale pixel thresholds by
+  `img.width / node.boundsOnScreen.width` so 2× Retina and 1× Xvfb runs agree.
+- Heavy CPU load can drop frames (stutter without corrupting the MP4; see `docs/RECORDING-LIMITATIONS.md`). Recording
+  adds 5–30% CPU overhead and large files — enable on failure (`FailureVideoPolicy.OnFailureKeep`) or behind an env var
+  rather than unconditionally across CI.
