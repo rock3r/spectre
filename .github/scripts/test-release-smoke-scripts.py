@@ -716,6 +716,165 @@ class SmokeLibSchemaTest(unittest.TestCase):
             if old_display is not None:
                 os.environ["DISPLAY"] = old_display
 
+    def test_forced_xvfb_mode_clears_seat_environment_without_discovery(self):
+        env = {
+            "DISPLAY": ":0",
+            "WAYLAND_DISPLAY": "wayland-0",
+            "XAUTHORITY": "/tmp/auth",
+            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+            "XDG_RUNTIME_DIR": "/run/user/1000",
+            "XDG_SESSION_TYPE": "wayland",
+            "SPECTRE_CAPTURE_BACKEND": "wayland",
+            "PATH": "/usr/bin",
+        }
+
+        changed = smoke_lib.configure_linux_display_mode(
+            "xvfb", env, discover=lambda _env: self.fail("seat discovery must be skipped")
+        )
+
+        self.assertEqual("xvfb", changed)
+        self.assertEqual({"PATH": "/usr/bin"}, env)
+        self.assertIsNotNone(
+            smoke_lib.portal_token_warmup_skip_reason(env, system="Linux")
+        )
+        self.assertFalse(smoke_lib.is_linux_wayland_portal_session(env))
+
+    def test_forced_seat_mode_runs_seat_discovery(self):
+        env = {"PATH": "/usr/bin"}
+
+        changed = smoke_lib.configure_linux_display_mode(
+            "seat",
+            env,
+            discover=lambda _env: {"DISPLAY": ":2"},
+            verify=lambda _env: True,
+        )
+
+        self.assertEqual("seat", changed)
+        self.assertEqual(":2", env["DISPLAY"])
+
+    def test_forced_seat_mode_fails_when_no_seat_can_be_found(self):
+        with self.assertRaisesRegex(RuntimeError, "graphical login seat"):
+            smoke_lib.configure_linux_display_mode(
+                "seat", {"PATH": "/usr/bin"}, discover=lambda _env: {}
+            )
+
+    def test_forced_seat_mode_rejects_an_inherited_xvfb_display(self):
+        with self.assertRaisesRegex(RuntimeError, "graphical login seat"):
+            smoke_lib.configure_linux_display_mode(
+                "seat",
+                {"DISPLAY": ":99", "XDG_SESSION_TYPE": "x11"},
+                discover=lambda _env: {},
+                verify=lambda _env: False,
+            )
+
+    def test_forced_seat_mode_accepts_a_verified_x11_login_seat(self):
+        env = {"DISPLAY": ":0", "XDG_SESSION_TYPE": "x11"}
+        changed = smoke_lib.configure_linux_display_mode(
+            "seat", env, discover=lambda _env: {}, verify=lambda _env: True
+        )
+        self.assertEqual("seat", changed)
+
+    @unittest.skipUnless(hasattr(os, "getuid"), "X11 seat verification uses POSIX uids")
+    def test_x11_login_seat_verifier_requires_the_users_xorg_server(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            x11 = root / "X11-unix"
+            x11.mkdir()
+            (x11 / "X0").touch()
+            proc = root / "proc"
+            process = proc / "1234"
+            process.mkdir(parents=True)
+            process.joinpath("cmdline").write_bytes(
+                b"/usr/lib/xorg/Xorg\0:0\0-seat\0seat0\0"
+            )
+            self.assertTrue(
+                smoke_lib.is_linux_graphical_login_seat(
+                    {"DISPLAY": ":0", "XDG_SESSION_TYPE": "x11"},
+                    uid=os.getuid(),
+                    x11_socket_dir=x11,
+                    proc_root=proc,
+                    authorize_x11=lambda _env: True,
+                )
+            )
+            self.assertFalse(
+                smoke_lib.is_linux_graphical_login_seat(
+                    {"DISPLAY": ":99", "XDG_SESSION_TYPE": "x11"},
+                    uid=os.getuid(),
+                    x11_socket_dir=x11,
+                    proc_root=proc,
+                )
+            )
+
+    @unittest.skipUnless(hasattr(os, "getuid"), "X11 seat verification uses POSIX uids")
+    def test_x11_login_seat_verifier_accepts_an_authorized_root_owned_xorg(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            x11 = root / "X11-unix"
+            x11.mkdir()
+            (x11 / "X0").touch()
+            proc = root / "proc"
+            process = proc / "1234"
+            process.mkdir(parents=True)
+            process.joinpath("cmdline").write_bytes(
+                b"/usr/lib/xorg/Xorg\0:0\0-seat\0seat0\0"
+            )
+            authorized = []
+
+            self.assertTrue(
+                smoke_lib.is_linux_graphical_login_seat(
+                    {"DISPLAY": ":0", "XAUTHORITY": "/run/user/1000/gdm/Xauthority"},
+                    uid=1000,
+                    x11_socket_dir=x11,
+                    proc_root=proc,
+                    authorize_x11=lambda env: authorized.append(dict(env)) or True,
+                    process_uid=lambda _path: 0,
+                )
+            )
+            self.assertEqual(":0", authorized[0]["DISPLAY"])
+
+    @unittest.skipUnless(hasattr(os, "getuid"), "X11 seat verification uses POSIX uids")
+    def test_x11_login_seat_verifier_rejects_root_xorg_when_access_is_denied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            x11 = root / "X11-unix"
+            x11.mkdir()
+            (x11 / "X0").touch()
+            proc = root / "proc"
+            process = proc / "1234"
+            process.mkdir(parents=True)
+            process.joinpath("cmdline").write_bytes(b"/usr/lib/xorg/Xorg\0:0\0")
+            self.assertFalse(
+                smoke_lib.is_linux_graphical_login_seat(
+                    {"DISPLAY": ":0", "XAUTHORITY": "/wrong/cookie"},
+                    uid=1000,
+                    x11_socket_dir=x11,
+                    proc_root=proc,
+                    authorize_x11=lambda _env: False,
+                    process_uid=lambda _path: 0,
+                )
+            )
+
+    def test_x11_login_seat_verifier_rejects_authorized_xvfb(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            x11 = root / "X11-unix"
+            x11.mkdir()
+            (x11 / "X0").touch()
+            proc = root / "proc"
+            process = proc / "1234"
+            process.mkdir(parents=True)
+            process.joinpath("cmdline").write_bytes(b"/usr/bin/Xvfb\0:0\0")
+
+            self.assertFalse(
+                smoke_lib.is_linux_graphical_login_seat(
+                    {"DISPLAY": ":0"},
+                    uid=1000,
+                    x11_socket_dir=x11,
+                    proc_root=proc,
+                    authorize_x11=lambda _env: True,
+                )
+            )
+
     def test_gradle_ui_force_args_disable_cache_only_pass(self):
         args = smoke_lib.gradle_ui_force_args()
         self.assertIn("--rerun-tasks", args)
@@ -736,6 +895,8 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn("runLinuxX11RecordingSmoke", text)
         self.assertIn("runWaylandPortalSmoke", text)
         self.assertIn("portal-token-warmup", text)
+        self.assertIn('"--display-mode"', text)
+        self.assertIn("waylandRestoreTokenDir", text)
         self.assertIn("verifyMavenLocalPublication", text)
         self.assertIn("LaunchAndAttachIntegration", text)
         # #414: hard pass requires fixture e2e lifecycle gate, not tools/list alone.
@@ -1095,6 +1256,85 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
                 self.assertTrue(token_dir.is_dir())
             else:
                 self.assertEqual("0700", oct(token_dir.stat().st_mode)[-4:])
+
+    def test_prepare_linux_portal_token_env_reuses_inherited_token_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "build" / "smoke"
+            stored = root / "operator-tokens"
+            env = smoke_lib.prepare_linux_portal_token_env(
+                root,
+                out_dir,
+                environ={"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(stored)},
+            )
+
+            self.assertEqual(str(stored), env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"])
+            self.assertTrue(stored.is_dir())
+
+    def test_relative_restore_token_dir_is_resolved_against_caller_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            caller_cwd = Path(tmp) / "caller"
+            caller_cwd.mkdir()
+            resolved = smoke_lib.wayland_restore_token_dir(
+                Path(tmp) / "repo" / "build" / "smoke",
+                {"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": "saved/../saved/tokens"},
+                caller_cwd=caller_cwd,
+            )
+            self.assertEqual(caller_cwd / "saved" / "tokens", resolved)
+            self.assertTrue(resolved.is_absolute())
+
+    def test_absolute_restore_token_dir_preserves_symlink_alias_spelling(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real = root / "real"
+            real.mkdir()
+            alias = root / "alias"
+            try:
+                alias.symlink_to(real, target_is_directory=True)
+            except (OSError, NotImplementedError) as error:
+                if os.name == "nt":
+                    self.skipTest(f"directory symlinks unavailable on Windows: {error}")
+                raise
+            inherited = alias / "tokens"
+            env = smoke_lib.prepare_linux_portal_token_env(
+                root,
+                root / "build" / "smoke",
+                environ={"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(inherited)},
+            )
+            selected = Path(env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"])
+            self.assertEqual(inherited, selected)
+            self.assertTrue(selected.is_absolute())
+            self.assertTrue(selected.samefile(real / "tokens"))
+
+    @unittest.skipIf(os.name == "nt", "POSIX directory modes are not available")
+    def test_prepare_linux_portal_token_env_preserves_inherited_token_dir_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "build" / "smoke"
+            stored = root / "operator-tokens"
+            stored.mkdir(mode=0o755)
+
+            env = smoke_lib.prepare_linux_portal_token_env(
+                root,
+                out_dir,
+                environ={"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(stored)},
+            )
+
+            self.assertEqual(str(stored), env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"])
+            self.assertEqual(0o755, stored.stat().st_mode & 0o777)
+
+    def test_prepare_linux_portal_token_env_ignores_blank_inherited_token_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "build" / "smoke"
+            env = smoke_lib.prepare_linux_portal_token_env(
+                root, out_dir, environ={"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": "  "}
+            )
+
+            self.assertEqual(
+                str(out_dir / "wayland-restore-tokens"),
+                env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"],
+            )
 
     def test_prepare_linux_portal_token_env_replaces_the_private_helper_copy(self):
         with tempfile.TemporaryDirectory() as tmp:
