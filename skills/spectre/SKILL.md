@@ -177,6 +177,22 @@ black captures as TCC).
 
 ### CLI attach workflow and advanced entry points
 
+For an application that Spectre must not or cannot JVM-attach to, read the native accessibility
+tree that a screen reader receives:
+
+```shell
+spectre a11y tree --pid <pid>
+spectre a11y tree --window "<window title>"
+```
+
+The MCP `accessibility_tree` tool takes the same `pid` or `window` target. For an attached session, CLI `capture --source accessibility` and MCP `capture` with
+`source: "accessibility"` store `accessibility.json` beside the screenshot; `compose` is the default. Accessibility keys belong to one
+snapshot only: re-read and resolve by `id`, name, role, and bounds after the UI changes. On GNOME
+Wayland, heed the output's `window-relative` bounds marker and never use those bounds directly as
+screen input coordinates. Linux may report that Spectre temporarily enabled session
+accessibility; preserve that notice in agent output. AccessKit text-field values can be `null` on
+Linux even when the field is present.
+
 `spectre attach <pid>` attaches to a same-user JDK 21+ JVM (injecting core automatically when `spectre-core` is absent):
 
 ```shell

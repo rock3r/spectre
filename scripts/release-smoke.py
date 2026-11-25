@@ -15,8 +15,10 @@ See docs/RELEASE-SMOKE.md and scripts/smoke_lib.py for scenario IDs.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
+import select
 import subprocess
 import sys
 import time
@@ -36,6 +38,7 @@ from smoke_lib import (  # noqa: E402
     HEADED_ROBOT_TESTCASE,
     MACOS_TCC_BLOCKED_REASON,
     REQUIRED_SCENARIO_IDS,
+    A11Y_ACCESSKIT_SCENARIO_IDS,
     RESULT_FAIL,
     RESULT_PASS,
     ScenarioResult,
@@ -44,6 +47,8 @@ from smoke_lib import (  # noqa: E402
     apply_linux_toolchain_path,
     assert_junit_testcases_passed,
     assert_linux_portal_tokens_captured,
+    assert_accessibility_snapshot,
+    assert_accessibility_limit_result,
     assert_mcp_fixture_e2e_executed,
     assert_pointer_move_live_executed,
     input_coordination_missing_surface,
@@ -94,6 +99,93 @@ OUT = ROOT / "build" / "smoke"
 
 # Default overall budget for a full baseline (seconds). Overridable via CLI.
 DEFAULT_OVERALL_TIMEOUT = 7200
+
+# Stable IDs are spelled out here as well as in smoke_lib so wiring checks catch accidental
+# removal from this entrypoint: a11y-accesskit-macos, a11y-accesskit-windows,
+# a11y-accesskit-linux.
+
+
+def _accesskit_cli_smoke(executable: Path) -> str:
+    manifest = ROOT / "fixtures/accesskit/Cargo.toml"
+    if not manifest.is_file():
+        raise RuntimeError(f"AccessKit fixture manifest missing: {manifest}")
+    subprocess.run(
+        ["cargo", "build", "--locked", "--manifest-path", str(manifest)],
+        cwd=ROOT,
+        check=True,
+        timeout=600,
+    )
+    fixture = manifest.parent / "target/debug/spectre-accesskit-fixture"
+    process = subprocess.Popen(
+        [str(fixture)],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        assert process.stdout is not None
+        ready = ""
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            readable, _, _ = select.select([process.stdout], [], [], 0.25)
+            if readable:
+                ready = process.stdout.readline().strip()
+                if ready.startswith("SPECTRE_ACCESSKIT_FIXTURE_READY"):
+                    break
+            if process.poll() is not None:
+                raise RuntimeError(f"AccessKit fixture exited before ready: {ready}")
+        else:
+            raise TimeoutError("AccessKit fixture did not report ready within 30s")
+
+        system = platform.system()
+
+        def read(*target: str, check: bool = True) -> tuple[subprocess.CompletedProcess[str], dict]:
+            completed = subprocess.run(
+                [str(executable), "a11y", "tree", *target],
+                cwd=ROOT,
+                check=check,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            json_start = completed.stdout.find("{")
+            if json_start < 0:
+                raise AssertionError(f"CLI emitted no JSON snapshot: {completed.stdout!r}")
+            return completed, json.loads(completed.stdout[json_start:])
+
+        _, pid_snapshot = read("--pid", str(process.pid))
+        assert_accessibility_snapshot(pid_snapshot, system)
+        _, title_snapshot = read("--window", "Spectre AccessKit Fixture")
+        assert_accessibility_snapshot(title_snapshot, system)
+        limited = subprocess.run(
+            [
+                str(executable),
+                "a11y",
+                "tree",
+                "--pid",
+                str(process.pid),
+                "--maximum-node-count",
+                "2",
+            ],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert_accessibility_limit_result(limited, maximum_node_count=2)
+        return (
+            "real helper read fixture by pid and title; stable native roles, values, "
+            "ownership, and schemaVersion=2 verified"
+        )
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
 
 
 def _print_result(item: ScenarioResult) -> None:
@@ -1194,6 +1286,36 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
         )
 
     executable = packaged_cli_executable(ROOT, system)
+    active_a11y_id = A11Y_ACCESSKIT_SCENARIO_IDS[system]
+    for smoke_system, scenario_id in A11Y_ACCESSKIT_SCENARIO_IDS.items():
+        if smoke_system != system:
+            add(
+                scenario_result(
+                    scenario_id,
+                    name=f"AccessKit accessibility snapshot ({smoke_system})",
+                    result="n/a",
+                    reason=f"requires a native {smoke_system} desktop",
+                    hard=True,
+                )
+            )
+    if package_result.result == RESULT_PASS and executable.is_file():
+        add(
+            run_callable_scenario(
+                active_a11y_id,
+                name=f"AccessKit accessibility snapshot ({system})",
+                action=lambda: _accesskit_cli_smoke(executable),
+                out_dir=out_dir,
+            )
+        )
+    else:
+        add(
+            scenario_result(
+                active_a11y_id,
+                name=f"AccessKit accessibility snapshot ({system})",
+                result=RESULT_FAIL,
+                detail="packaged CLI unavailable; cannot invoke the real accessibility helper",
+            )
+        )
     if not executable.is_file():
         add(
             scenario_result(

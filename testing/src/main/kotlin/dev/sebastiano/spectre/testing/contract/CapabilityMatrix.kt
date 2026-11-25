@@ -99,6 +99,8 @@ public object CapabilityMatrix {
      * platform row when the op is transport-global.
      */
     public val cells: List<CapabilityCell> = buildList {
+        // Release smoke is a hard pre-tag proof, not retrospective CI evidence.
+        addAll(accessibilityCapabilityCells())
         // --- Intersection ops already on all three clients ---
         for (op in
             listOf(

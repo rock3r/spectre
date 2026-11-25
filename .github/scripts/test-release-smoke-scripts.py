@@ -14,6 +14,7 @@ import time
 import unittest
 import unittest.mock
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 MCP_SMOKE = ROOT / "scripts" / "mcp-stdio-smoke.py"
@@ -254,6 +255,9 @@ class SmokeLibSchemaTest(unittest.TestCase):
             "input-coord-forced-recovery",
             "input-coord-junit-pertest",
             "input-coord-headed-robot",
+            "a11y-accesskit-macos",
+            "a11y-accesskit-windows",
+            "a11y-accesskit-linux",
         }
         self.assertEqual(expected, set(smoke_lib.REQUIRED_SCENARIO_IDS))
         self.assertLess(
@@ -261,6 +265,74 @@ class SmokeLibSchemaTest(unittest.TestCase):
             smoke_lib.REQUIRED_SCENARIO_IDS.index("check"),
             "macos-tcc must run before ./gradlew check so missing TCC fails in seconds",
         )
+
+    def test_accesskit_snapshot_contract_matches_real_linux_roles(self):
+        nodes = [
+            {"key": "w0/fixture-window", "parentKey": None, "id": "fixture-window", "name": "Spectre AccessKit Fixture", "role": "window", "platformRole": "frame", "states": [], "value": None, "bounds": {"x": 0, "y": 0, "width": 640, "height": 480}, "onScreen": True},
+            {"key": "w0/fixture-window/primary-button", "parentKey": "w0/fixture-window", "id": "primary-button", "name": "Save changes", "role": "button", "platformRole": "push button", "states": ["focusable"], "value": None, "bounds": {"x": 10, "y": 20, "width": 100, "height": 30}, "onScreen": True},
+            {"key": "w0/fixture-window/newsletter", "parentKey": "w0/fixture-window", "id": "newsletter", "name": "Receive updates", "role": "checkbox", "platformRole": "check box", "states": ["checked"], "value": None, "bounds": {"x": 10, "y": 70, "width": 100, "height": 30}, "onScreen": True},
+            {"key": "w0/fixture-window/account-name", "parentKey": "w0/fixture-window", "id": "account-name", "name": "Account name", "role": "text-field", "platformRole": "text", "states": ["focusable"], "value": None, "bounds": {"x": 10, "y": 120, "width": 100, "height": 30}, "onScreen": True},
+            {"key": "w0/fixture-window/disabled-button", "parentKey": "w0/fixture-window", "id": "disabled-button", "name": "Unavailable action", "role": "button", "platformRole": "push button", "states": ["disabled"], "value": None, "bounds": {"x": 10, "y": 400, "width": 100, "height": 30}, "onScreen": True},
+            {"key": "w0/fixture-window/4", "parentKey": "w0/fixture-window", "id": "group-a", "name": "First group"},
+            {"key": "w0/fixture-window/5", "parentKey": "w0/fixture-window", "id": "group-b", "name": "Second group"},
+            {"key": "w0/fixture-window/4/repeated", "parentKey": "w0/fixture-window/4", "id": "repeated", "name": "Repeated in first group"},
+            {"key": "w0/fixture-window/5/0", "parentKey": "w0/fixture-window/5", "id": "repeated", "name": "Repeated sibling one"},
+            {"key": "w0/fixture-window/5/1", "parentKey": "w0/fixture-window/5", "id": "repeated", "name": "Repeated sibling two"},
+        ]
+        snapshot = {"schemaVersion": 2, "source": "os-accessibility", "windows": [{"key": "w0", "title": "Spectre AccessKit Fixture", "bounds": {"x": 0, "y": 0, "width": 640, "height": 480}, "boundsSpace": "screen"}], "nodes": nodes, "notes": []}
+        smoke_lib.assert_accessibility_snapshot(snapshot, system="Linux")
+        with self.assertRaisesRegex(AssertionError, "parentKey"):
+            smoke_lib.assert_accessibility_snapshot({**snapshot, "nodes": [nodes[0], {**nodes[1], "parentKey": "missing"}, *nodes[2:]]}, system="Linux")
+        with self.assertRaisesRegex(AssertionError, "schemaVersion 2"):
+            smoke_lib.assert_accessibility_snapshot(
+                {"schemaVersion": 1, "source": "os-accessibility", "nodes": nodes}, system="Linux"
+            )
+        with self.assertRaisesRegex(AssertionError, "all three repeated"):
+            smoke_lib.assert_accessibility_snapshot(
+                {**snapshot, "nodes": nodes[:-1]}, system="Linux"
+            )
+
+    def test_accesskit_snapshot_contract_matches_real_macos_shape(self):
+        nodes = [
+            {"key": "w0", "parentKey": None, "id": None, "name": "Spectre AccessKit Fixture", "platformRole": "AXWindow", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window", "parentKey": "w0", "id": "fixture-window", "name": None, "platformRole": "AXGroup", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/primary-button", "parentKey": "w0/fixture-window", "id": "primary-button", "name": "Save changes", "platformRole": "AXButton", "states": [], "value": None, "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/newsletter", "parentKey": "w0/fixture-window", "id": "newsletter", "name": "Receive updates", "platformRole": "AXCheckBox", "states": ["checked"], "value": "1", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/account-name", "parentKey": "w0/fixture-window", "id": "account-name", "name": "Account name", "platformRole": "AXTextField", "states": [], "value": "Ada Lovelace", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/disabled-button", "parentKey": "w0/fixture-window", "id": "disabled-button", "name": "Unavailable action", "platformRole": "AXButton", "states": ["disabled"], "value": None, "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/a/repeated", "parentKey": "w0/fixture-window", "id": "repeated", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/b/repeated", "parentKey": "w0/fixture-window", "id": "repeated", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/c/repeated", "parentKey": "w0/fixture-window", "id": "repeated", "bounds": {}, "onScreen": True},
+        ]
+        snapshot = {"schemaVersion": 2, "source": "os-accessibility", "windows": [{"key": "w0", "title": "Spectre AccessKit Fixture", "boundsSpace": "screen"}], "nodes": nodes}
+        smoke_lib.assert_accessibility_snapshot(snapshot, system="Darwin")
+
+    def test_accessibility_limit_contract_uses_cli_exit_five_and_separate_streams(self):
+        partial = {"schemaVersion": 2, "source": "os-accessibility", "nodes": [{}, {}]}
+        completed = SimpleNamespace(
+            returncode=5,
+            stdout=json.dumps(partial),
+            stderr=(
+                "Spectre daemon error: LimitReached: maximumNodeCount 2 reached\n"
+                'Hint: run "spectre guide traps" or "spectre guide --search <words>".\n'
+            ),
+        )
+        smoke_lib.assert_accessibility_limit_result(completed, maximum_node_count=2)
+
+    def test_accesskit_snapshot_contract_matches_real_windows_controls(self):
+        nodes = [
+            {"key": "w0", "parentKey": None, "id": None, "name": "Spectre AccessKit Fixture", "platformRole": "Window", "states": [], "value": None, "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window", "parentKey": "w0", "id": "fixture-window", "name": "Spectre AccessKit Fixture", "platformRole": "Group", "states": [], "value": None, "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/primary-button", "parentKey": "w0/fixture-window", "id": "primary-button", "name": "Save changes", "platformRole": "Button", "states": [], "value": None, "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/newsletter", "parentKey": "w0/fixture-window", "id": "newsletter", "name": "Receive updates", "platformRole": "CheckBox", "states": ["checked"], "value": "on", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/account-name", "parentKey": "w0/fixture-window", "id": "account-name", "name": "Account name", "platformRole": "Edit", "states": [], "value": "Ada Lovelace", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/disabled-button", "parentKey": "w0/fixture-window", "id": "disabled-button", "name": "Unavailable action", "platformRole": "Button", "states": ["disabled"], "value": None, "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/a/repeated", "parentKey": "w0/fixture-window", "id": "repeated", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/b/repeated", "parentKey": "w0/fixture-window", "id": "repeated", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/c/repeated", "parentKey": "w0/fixture-window", "id": "repeated", "bounds": {}, "onScreen": True},
+        ]
+        snapshot = {"schemaVersion": 2, "source": "os-accessibility", "windows": [{"key": "w0", "title": "Spectre AccessKit Fixture", "boundsSpace": "screen"}], "nodes": nodes}
+        smoke_lib.assert_accessibility_snapshot(snapshot, system="Windows")
 
     def test_pointer_move_api_skip_reason_when_verbs_missing(self):
         with tempfile.TemporaryDirectory() as tmp:

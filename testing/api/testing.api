@@ -349,6 +349,7 @@ public final class dev/sebastiano/spectre/testing/contract/AutomatorContractDriv
 }
 
 public final class dev/sebastiano/spectre/testing/contract/AutomatorOperation : java/lang/Enum {
+	public static final field AccessibilityTree Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field AllNodes Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field Capture Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
 	public static final field ClearAndTypeText Ldev/sebastiano/spectre/testing/contract/AutomatorOperation;
@@ -383,6 +384,7 @@ public final class dev/sebastiano/spectre/testing/contract/AutomatorOperation : 
 
 public final class dev/sebastiano/spectre/testing/contract/AutomatorTransport : java/lang/Enum {
 	public static final field Agent Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
+	public static final field Cli Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
 	public static final field Http Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
 	public static final field InProcess Ldev/sebastiano/spectre/testing/contract/AutomatorTransport;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
@@ -503,6 +505,7 @@ public final class dev/sebastiano/spectre/testing/contract/ContractWindow {
 public final class dev/sebastiano/spectre/testing/contract/PlatformPrerequisite : java/lang/Enum {
 	public static final field AnyJvm Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
 	public static final field Headless Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
+	public static final field LinuxDesktop Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
 	public static final field LinuxWayland Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
 	public static final field LinuxXvfb Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
 	public static final field MacOsDesktop Ldev/sebastiano/spectre/testing/contract/PlatformPrerequisite;
