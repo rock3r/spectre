@@ -388,6 +388,10 @@ internal fun discoverOwnedAppJvm(
 /**
  * Pick among native-tree java descendants after command-line name filtering.
  *
+ * Roots may overlap (for example, a no-daemon Gradle client and its single-use daemon), so process
+ * identity is deduplicated before uniqueness is checked. Distinct matching processes remain
+ * ambiguous and fail closed.
+ *
  * When [nameFilter] is set, only [namedMatches] count. A unique unnamed `java` may be a Gradle
  * worker whose argv is hidden — uniqueness is not identity proof.
  */
@@ -397,5 +401,7 @@ internal fun pickNativeTreeJvm(
     javaDescendants: Collection<Long>,
     ownsLaunch: (Long) -> Boolean = { true },
 ): Long? =
-    namedMatches.filter(ownsLaunch).singleOrNull()
-        ?: javaDescendants.filter(ownsLaunch).singleOrNull().takeIf { nameFilter.isNullOrBlank() }
+    namedMatches.distinct().filter(ownsLaunch).singleOrNull()
+        ?: javaDescendants.distinct().filter(ownsLaunch).singleOrNull().takeIf {
+            nameFilter.isNullOrBlank()
+        }

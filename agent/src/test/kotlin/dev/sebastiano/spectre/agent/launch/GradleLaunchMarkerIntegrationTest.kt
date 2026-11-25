@@ -10,6 +10,7 @@ import java.time.Instant
 import kotlin.io.path.writeText
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.condition.EnabledOnOs
@@ -57,7 +58,24 @@ class GradleLaunchMarkerIntegrationTest {
         }
     }
 
-    private fun createFixture(name: String): Path {
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    fun `no-daemon JavaExec hidden from hsperfdata is found once through overlapping native roots`() {
+        val fixture = createFixture("no-daemon-no-perfdata", disablePerfData = true)
+        val launch = startMarkedFixture(fixture, "marker-no-daemon-no-perfdata", noDaemon = true)
+        try {
+            val pid = awaitOwnedJvm(launch, "marker-no-daemon-no-perfdata")
+            assertFalse(
+                LaunchDescendantDiscovery.isJvmAttachable(pid),
+                "-XX:-UsePerfData must force discovery through the native process-tree fallback",
+            )
+            assertTrue(LaunchDescendantDiscovery.commandLineContains(pid, "-XX:-UsePerfData"))
+        } finally {
+            destroyLaunch(launch)
+        }
+    }
+
+    private fun createFixture(name: String, disablePerfData: Boolean = false): Path {
         val directory = Files.createTempDirectory("spectre-gradle-marker-$name-")
         directory.resolve("settings.gradle").writeText("rootProject.name = '$name'\n")
         directory
@@ -67,6 +85,7 @@ class GradleLaunchMarkerIntegrationTest {
                 |tasks.register('runFixture', JavaExec) {
                 |    classpath = files('.')
                 |    mainClass = 'SameMain'
+                |    ${if (disablePerfData) "jvmArgs '-XX:-UsePerfData'" else ""}
                 |}
                 """
                     .trimMargin()

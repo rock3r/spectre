@@ -550,6 +550,29 @@ class LaunchDescendantDiscoveryTest {
     }
 
     @Test
+    fun `native fallback treats a duplicated pid as one process`() {
+        assertEquals(
+            12_672L,
+            pickNativeTreeJvm(
+                nameFilter = "ComposeFixtureMain",
+                namedMatches = listOf(12_672L, 12_672L),
+                javaDescendants = listOf(12_672L, 12_672L),
+            ),
+        )
+    }
+
+    @Test
+    fun `native fallback rejects two distinct matching processes`() {
+        assertNull(
+            pickNativeTreeJvm(
+                nameFilter = "ComposeFixtureMain",
+                namedMatches = listOf(12_672L, 12_900L),
+                javaDescendants = listOf(12_672L, 12_900L),
+            )
+        )
+    }
+
+    @Test
     fun `selectAppJvm still skips leftover when parent is unknown`() {
         val launchedAt = Instant.parse("2026-08-23T10:00:00Z")
         val clientPid = 12_300L
