@@ -8,6 +8,7 @@ import java.nio.channels.ClosedChannelException
 import java.nio.channels.FileChannel
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
+import java.nio.file.AccessDeniedException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -460,20 +461,20 @@ public class DaemonAlreadyRunningException(socketPath: Path) :
 /**
  * Keeps the daemon's per-user UDS directory and socket private on POSIX and Windows filesystems.
  */
-private sealed interface DaemonSocketProtection {
+internal sealed interface DaemonSocketProtection {
     @Throws(IOException::class)
     fun createMissingParents(socketPath: Path, validateAncestor: Boolean = true): List<Path> {
         val parent = (socketPath.parent ?: Path.of("")).toAbsolutePath().normalize()
-        if (Files.exists(parent, NOFOLLOW_LINKS)) {
+        val missingParents =
+            generateSequence(parent) { path -> path.parent }
+                .takeWhile { path -> !Files.exists(path, NOFOLLOW_LINKS) }
+                .toList()
+        if (missingParents.isEmpty()) {
             rejectSymbolicLink(parent)
             parent.parent?.let { validateAncestorChain(it, validateAncestor) }
             validateExistingDirectory(parent)
             return emptyList()
         }
-        val missingParents =
-            generateSequence(parent) { path -> path.parent }
-                .takeWhile { path -> !Files.exists(path, NOFOLLOW_LINKS) }
-                .toList()
         missingParents.last().parent?.let { validateAncestorChain(it, validateAncestor) }
         val createdParents = mutableListOf<Path>()
         try {
@@ -494,6 +495,32 @@ private sealed interface DaemonSocketProtection {
         }
         return createdParents.asReversed()
     }
+
+    fun prepareDiagnosticLog(path: Path) {
+        if (!Files.exists(path, NOFOLLOW_LINKS)) {
+            try {
+                createProtectedFile(path)
+            } catch (_: FileAlreadyExistsException) {
+                // A concurrent first launch published its private log.
+            }
+        }
+        if (!Files.isRegularFile(path, NOFOLLOW_LINKS)) {
+            throw IOException("Daemon diagnostic log must be a regular file: $path")
+        }
+        if (
+            Files.getOwner(path, NOFOLLOW_LINKS) !=
+                Files.getOwner(path.toAbsolutePath().parent, NOFOLLOW_LINKS)
+        ) {
+            throw IOException(
+                "Existing daemon diagnostic log $path must belong to the directory owner"
+            )
+        }
+        validatePrivateFile(path)
+    }
+
+    fun createProtectedFile(path: Path)
+
+    fun validatePrivateFile(path: Path)
 
     @Throws(IOException::class) fun createProtectedDirectory(directory: Path)
 
@@ -563,6 +590,16 @@ private data object Posix : DaemonSocketProtection {
         )
     }
 
+    override fun createProtectedFile(path: Path) {
+        Files.createFile(path, PosixFilePermissions.asFileAttribute(OWNER_ONLY_SOCKET_PERMISSIONS))
+    }
+
+    override fun validatePrivateFile(path: Path) {
+        if (Files.getPosixFilePermissions(path, NOFOLLOW_LINKS) != OWNER_ONLY_SOCKET_PERMISSIONS) {
+            throw IOException("Existing daemon diagnostic log $path must be owner-only")
+        }
+    }
+
     override fun protectSocket(socketPath: Path) {
         Files.setPosixFilePermissions(socketPath, OWNER_ONLY_SOCKET_PERMISSIONS)
     }
@@ -583,12 +620,30 @@ private data object Posix : DaemonSocketProtection {
 
 private data object WindowsAcl : DaemonSocketProtection {
     override fun createProtectedDirectory(directory: Path) {
-        Files.createDirectory(directory)
+        publishWithPrivateAcl(directory, Files.createTempDirectory(directory.parent, ".spectre-"))
+    }
+
+    override fun createProtectedFile(path: Path) {
+        publishWithPrivateAcl(
+            path,
+            Files.createTempFile(path.toAbsolutePath().parent, ".spectre-", ".tmp"),
+        )
+    }
+
+    // Windows needs the newly created object's actual owner to build its DACL. Publish only
+    // after setting that ACL so a concurrent launcher never observes an inherited intermediate ACL.
+    private fun publishWithPrivateAcl(path: Path, temporary: Path) {
         try {
-            setOwnerOnlyAcl(directory)
-        } catch (exception: IOException) {
-            runCatching { Files.deleteIfExists(directory) }
-            throw exception
+            setOwnerOnlyAcl(temporary)
+            try {
+                Files.move(temporary, path)
+            } catch (exception: AccessDeniedException) {
+                // Windows can report an existing destination directory as access denied.
+                if (!Files.exists(path, NOFOLLOW_LINKS)) throw exception
+                throw FileAlreadyExistsException(path.toString()).apply { initCause(exception) }
+            }
+        } finally {
+            Files.deleteIfExists(temporary)
         }
     }
 
@@ -597,19 +652,22 @@ private data object WindowsAcl : DaemonSocketProtection {
     }
 
     override fun validateExistingDirectory(directory: Path) {
+        if (!Files.isDirectory(directory, NOFOLLOW_LINKS)) {
+            throw IOException("Daemon socket parent must be a directory: $directory")
+        }
+        validateOwnerOnlyAcl(directory)
+    }
+
+    override fun validatePrivateFile(path: Path) {
+        validateOwnerOnlyAcl(path)
+    }
+
+    private fun validateOwnerOnlyAcl(path: Path) {
         val view =
-            Files.getFileAttributeView(directory, AclFileAttributeView::class.java)
-                ?: throw IOException("Filesystem at $directory does not support ACLs")
-        val owner = view.owner
-        if (
-            view.acl.isEmpty() ||
-                view.acl.any { entry ->
-                    entry.type() != AclEntryType.ALLOW ||
-                        entry.principal() != owner ||
-                        !entry.permissions().containsAll(ALL_ACL_PERMISSIONS)
-                }
-        ) {
-            throw IOException("Existing daemon socket directory $directory must be owner-only")
+            Files.getFileAttributeView(path, AclFileAttributeView::class.java, NOFOLLOW_LINKS)
+                ?: throw IOException("Filesystem at $path does not support ACLs")
+        if (view.acl != listOf(ownerOnlyAcl(view))) {
+            throw IOException("Existing daemon path $path must be owner-only")
         }
     }
 
@@ -617,14 +675,15 @@ private data object WindowsAcl : DaemonSocketProtection {
         val view =
             Files.getFileAttributeView(path, AclFileAttributeView::class.java)
                 ?: throw IOException("Filesystem at $path does not support ACLs")
-        val ownerOnly =
-            AclEntry.newBuilder()
-                .setType(AclEntryType.ALLOW)
-                .setPrincipal(view.owner)
-                .setPermissions(EnumSet.allOf(AclEntryPermission::class.java))
-                .build()
-        view.acl = listOf(ownerOnly)
+        view.acl = listOf(ownerOnlyAcl(view))
     }
+
+    private fun ownerOnlyAcl(view: AclFileAttributeView): AclEntry =
+        AclEntry.newBuilder()
+            .setType(AclEntryType.ALLOW)
+            .setPrincipal(view.owner)
+            .setPermissions(ALL_ACL_PERMISSIONS)
+            .build()
 }
 
 private val OWNER_ONLY_DIRECTORY_PERMISSIONS = PosixFilePermissions.fromString("rwx------")

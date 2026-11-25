@@ -139,7 +139,8 @@ internal object RequestDiagnostics {
             }
             val marker =
                 "[spectre-daemon] diagnostics truncated (discarded ${reason.joinToString(" and ")}); " +
-                    "complete diagnostics remain in the daemon log"
+                    "recent diagnostics may remain in the retained suffix of the per-socket " +
+                    "daemon log"
             return if (markerDiscardsWarning) warnings.dropLast(1) + marker else warnings + marker
         }
     }

@@ -6,10 +6,23 @@ The per-user daemon validates JVM settings that affect captures, attachment, and
 connection. If a caller's settings differ from the running daemon, the command fails with the
 differing values and asks you to run `spectre daemon kill` before retrying.
 
-Daemon output is retained in a bounded, owner-only log next to its socket. Each socket has its own
-log, so test and override sockets cannot rotate or remove another daemon's diagnostics. Warnings
-and unexpected operation failures are returned to CLI and MCP callers instead of appearing only as
-a closed connection.
+Daemon output is retained in a bounded, owner-only log next to its socket. For a socket at
+`<socket-path>`, the log is `<socket-path>.log` (for example, `daemon.sock.log`). Each socket has its
+own log, so test and override sockets cannot rotate or remove another daemon's diagnostics. The
+daemon polls the log every 250 ms. After it observes a stable size above 4 MiB for a complete poll
+interval, it retains the most recent 64 KiB suffix.
+
+Every warning produced by a normal operation is returned to its CLI or MCP caller. An operation
+returns at most 100 warning entries, and each entry contains at most 4,096 characters. If either
+limit is exceeded, the final entry is a truncation marker with the exact number of warning entries
+and warning characters discarded; replacing the final retained warning with that marker counts as
+a discarded warning. All preceding in-budget warnings are preserved in order and exactly once.
+The operation's normal response, partial failure, or image payload is unaffected.
+
+The truncation marker points to the recent suffix retained in the per-socket log, not a complete
+archive. The log uses in-place truncation so the daemon's stderr remains attached, but independent
+raw stderr writers or appends that race rotation may be lost. Do not rely on this log for complete
+diagnostic history.
 
 ## Inspecting and recovering the desktop input lease
 

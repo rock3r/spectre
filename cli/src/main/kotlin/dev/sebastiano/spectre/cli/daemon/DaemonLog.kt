@@ -15,7 +15,6 @@ internal class DaemonLog(
     private val checkIntervalMillis: Long = DEFAULT_CHECK_INTERVAL_MILLIS,
 ) : AutoCloseable {
     private val running = AtomicBoolean(true)
-    private var observedSize: Long = -1
     private val worker =
         Thread(
                 {
@@ -36,21 +35,7 @@ internal class DaemonLog(
                 start()
             }
 
-    private fun rotate() {
-        val size = runCatching { Files.size(path) }.getOrDefault(-1)
-        if (size <= maxBytes) {
-            observedSize = size
-            return
-        }
-        // A detached daemon can still be appending after its launcher exits. Rotate only after a
-        // complete check interval with no growth, avoiding truncate/rewrite races with that writer.
-        if (size != observedSize) {
-            observedSize = size
-            return
-        }
-        rotateIfNeeded(path, maxBytes, retainedBytes)
-        observedSize = runCatching { Files.size(path) }.getOrDefault(-1)
-    }
+    private fun rotate() = rotateIfNeeded(path, maxBytes, retainedBytes)
 
     override fun close() {
         running.set(false)
@@ -61,31 +46,43 @@ internal class DaemonLog(
     companion object {
         internal fun rotateIfNeeded(path: Path, maxBytes: Long, retainedBytes: Int) {
             if (!Files.isRegularFile(path) || Files.size(path) <= maxBytes) return
-            val tail = readLogTail(path, retainedBytes)
-            FileChannel.open(path, StandardOpenOption.WRITE).use { channel ->
-                channel.truncate(0)
-                var written = 0
-                while (written < tail.size) written +=
-                    channel.write(ByteBuffer.wrap(tail, written, tail.size - written))
+            FileChannel.open(path, StandardOpenOption.READ, StandardOpenOption.WRITE).use { channel
+                ->
+                val size = channel.size()
+                if (size <= maxBytes) return
+                var tail = readTail(channel, size, retainedBytes)
+                // Refresh once if an append raced the read. Waiting for a quiet poll can starve
+                // rotation indefinitely, so the threshold can be exceeded between polls.
+                val latestSize = channel.size()
+                if (latestSize != size) {
+                    if (latestSize <= maxBytes) return
+                    tail = readTail(channel, latestSize, retainedBytes)
+                }
+                // Move the snapshot to the front before truncating. Writers keep the same file
+                // and can append normally immediately after truncate. Uncoordinated appends
+                // between the snapshot and truncate can still be lost.
+                val buffer = ByteBuffer.wrap(tail)
+                while (buffer.hasRemaining()) channel.write(buffer)
+                channel.truncate(tail.size.toLong())
                 channel.force(false)
             }
         }
 
         internal fun readLogTail(path: Path, limit: Int = DEFAULT_RETAINED_BYTES): ByteArray {
             if (limit <= 0 || !Files.isRegularFile(path)) return byteArrayOf()
-            FileChannel.open(path, StandardOpenOption.READ).use { channel ->
-                val size = channel.size()
-                if (size == 0L) return byteArrayOf()
-                val wanted = minOf(size, limit.toLong()).toInt()
-                val buffer = ByteBuffer.allocate(wanted)
-                var position = (size - wanted).coerceAtLeast(0)
-                while (buffer.hasRemaining()) {
-                    val read = channel.read(buffer, position)
-                    if (read <= 0) break
-                    position += read
-                }
-                return buffer.array().copyOf(buffer.position())
+            return FileChannel.open(path, StandardOpenOption.READ).use { channel ->
+                readTail(channel, channel.size(), limit)
             }
+        }
+
+        private fun readTail(channel: FileChannel, size: Long, limit: Int): ByteArray {
+            val wanted = minOf(size, limit.coerceAtLeast(0).toLong()).toInt()
+            val buffer = ByteBuffer.allocate(wanted)
+            while (buffer.hasRemaining()) {
+                val read = channel.read(buffer, size - wanted + buffer.position())
+                if (read <= 0) break
+            }
+            return buffer.array().copyOf(buffer.position())
         }
 
         private const val DEFAULT_MAX_BYTES: Long = 4L * 1024 * 1024

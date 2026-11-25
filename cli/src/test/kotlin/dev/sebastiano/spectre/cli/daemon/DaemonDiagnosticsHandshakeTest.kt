@@ -5,7 +5,6 @@ import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.channels.Channels
 import java.nio.channels.SocketChannel
-import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -15,8 +14,7 @@ import kotlin.test.assertTrue
 class DaemonDiagnosticsHandshakeTest {
     @Test
     fun `current handshake receives diagnostics while old handshake fails closed`() {
-        val socketDirectory = Files.createTempDirectory("spectre-diagnostics-handshake")
-        val socketPath = socketDirectory.resolve("daemon.sock")
+        val socketPath = temporaryDaemonClientSocketPath()
         val registry = DaemonSessionRegistry {
             TestDaemonSessionAutomator(
                 nodesResult = {
@@ -54,7 +52,7 @@ class DaemonDiagnosticsHandshakeTest {
         } finally {
             server.close()
             assertTrue(server.awaitTermination())
-            Files.deleteIfExists(socketDirectory)
+            deleteTemporaryDaemonClientSocketPath(socketPath)
         }
     }
 }

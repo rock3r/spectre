@@ -27,7 +27,8 @@ class DaemonClientTest {
         val registry = DaemonSessionRegistry {
             TestDaemonSessionAutomator(
                 windowsResult = {
-                    RequestDiagnostics.report("window enumeration degraded")
+                    repeat(101) { RequestDiagnostics.report("window warning $it") }
+                    RequestDiagnostics.report("x".repeat(5_000))
                     throw java.io.IOException("window provider failed")
                 }
             )
@@ -43,9 +44,22 @@ class DaemonClientTest {
             val exit = SpectreCli(output, errorOutput, socketPath).run(listOf("windows", "pid-91"))
 
             assertNotEquals(0, exit)
-            assertTrue(errorOutput.contains("independent process group"), errorOutput.toString())
-            assertTrue(errorOutput.contains("window enumeration degraded"), errorOutput.toString())
-            assertTrue(errorOutput.contains("window provider failed"), errorOutput.toString())
+            val lines = errorOutput.lines().filter(String::isNotEmpty)
+            assertEquals(103, lines.size, errorOutput.toString())
+            assertTrue(
+                lines.single { it.contains("independent process group") }.startsWith("warning: ")
+            )
+            assertEquals(
+                (0..98).map { "warning: window warning $it" },
+                lines.filter { it.startsWith("warning: window warning") },
+            )
+            assertEquals(
+                "warning: [spectre-daemon] diagnostics truncated (discarded 3 warning(s) and " +
+                    "904 warning character(s)); recent diagnostics may remain in the retained " +
+                    "suffix of the per-socket daemon log",
+                lines[100],
+            )
+            assertEquals(1, lines.count { it.contains("window provider failed") })
         } finally {
             if (original == null) System.clearProperty(property)
             else System.setProperty(property, original)
@@ -313,14 +327,14 @@ class DaemonClientTest {
     }
 }
 
-private fun temporaryDaemonClientSocketPath(): Path =
+internal fun temporaryDaemonClientSocketPath(): Path =
     if ("posix" in FileSystems.getDefault().supportedFileAttributeViews()) {
         Path.of("/tmp", "sp-d-${UUID.randomUUID().toString().take(8)}", "daemon", "daemon.sock")
     } else {
         Files.createTempDirectory("spectre-daemon-test").resolve("daemon").resolve("daemon.sock")
     }
 
-private fun deleteTemporaryDaemonClientSocketPath(socketPath: Path) {
+internal fun deleteTemporaryDaemonClientSocketPath(socketPath: Path) {
     Files.deleteIfExists(socketPath)
     Files.deleteIfExists(DaemonProcessLauncher.diagnosticPath(socketPath))
     Files.deleteIfExists(socketPath.parent)

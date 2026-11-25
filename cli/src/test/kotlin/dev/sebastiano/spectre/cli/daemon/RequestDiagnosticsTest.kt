@@ -71,9 +71,13 @@ class RequestDiagnosticsTest {
             }
 
         assertEquals(100, warnings.size)
-        assertTrue(warnings.last().contains("discarded 3 warning(s)"))
-        assertTrue(warnings.last().contains("904 warning character(s)"))
-        assertTrue(warnings.last().contains("daemon log"))
+        assertEquals((0..98).map { "warning-$it" }, warnings.dropLast(1))
+        assertEquals(
+            "[spectre-daemon] diagnostics truncated (discarded 3 warning(s) and " +
+                "904 warning character(s)); recent diagnostics may remain in the retained " +
+                "suffix of the per-socket daemon log",
+            warnings.last(),
+        )
     }
 
     @Test

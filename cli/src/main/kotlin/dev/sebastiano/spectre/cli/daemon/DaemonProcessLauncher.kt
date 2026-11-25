@@ -8,7 +8,6 @@ import dev.sebastiano.spectre.cli.bootstrap.SpectreBootstrap
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.attribute.PosixFilePermissions
 
 /** Starts a detached JVM hosting [DaemonMain] for one local socket endpoint. */
 @OptIn(ExperimentalSpectreAgentApi::class)
@@ -33,14 +32,13 @@ public class DaemonProcessLauncher(
     /** Launches the daemon process without inheriting this client's standard streams. */
     @Throws(IOException::class)
     public fun start(): Process {
-        val parentCreated = Files.notExists(socketPath.parent)
-        Files.createDirectories(socketPath.parent)
-        if (parentCreated) setOwnerOnlyPermissions(socketPath.parent, true)
-        val errorLog = diagnosticPath(socketPath)
-        if (Files.notExists(errorLog)) {
-            Files.createFile(errorLog)
-            setOwnerOnlyPermissions(errorLog, false)
+        require(socketPath == socketPath.normalize()) {
+            "Daemon socket path must not contain dot segments"
         }
+        val protection = DaemonSocketProtection.forPath(socketPath)
+        protection.createMissingParents(socketPath)
+        val errorLog = diagnosticPath(socketPath)
+        protection.prepareDiagnosticLog(errorLog)
         startupErrorLog = errorLog
         return processBuilder()
             .also { restoreBundledRuntimeExecutePermissions() }
@@ -63,15 +61,6 @@ public class DaemonProcessLauncher(
 
     /** Removes the startup diagnostic after a confirmed daemon exits. */
     public fun discardStartupError(): Unit = Unit
-
-    private fun setOwnerOnlyPermissions(path: Path, directory: Boolean) {
-        runCatching {
-            Files.setPosixFilePermissions(
-                path,
-                PosixFilePermissions.fromString(if (directory) "rwx------" else "rw-------"),
-            )
-        }
-    }
 
     /**
      * The builder for the daemon process: the isolated command, started in a new session where the

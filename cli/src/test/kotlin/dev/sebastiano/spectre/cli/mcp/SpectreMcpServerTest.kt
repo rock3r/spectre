@@ -12,6 +12,8 @@ import dev.sebastiano.spectre.cli.daemon.DaemonServer
 import dev.sebastiano.spectre.cli.daemon.DaemonSessionRegistry
 import dev.sebastiano.spectre.cli.daemon.RequestDiagnostics
 import dev.sebastiano.spectre.cli.daemon.TestDaemonSessionAutomator
+import dev.sebastiano.spectre.cli.daemon.deleteTemporaryDaemonClientSocketPath
+import dev.sebastiano.spectre.cli.daemon.temporaryDaemonClientSocketPath
 import io.modelcontextprotocol.kotlin.sdk.server.ClientConnection
 import io.modelcontextprotocol.kotlin.sdk.shared.RequestOptions
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
@@ -33,7 +35,6 @@ import io.modelcontextprotocol.kotlin.sdk.types.RequestId
 import io.modelcontextprotocol.kotlin.sdk.types.ResourceUpdatedNotification
 import io.modelcontextprotocol.kotlin.sdk.types.ServerNotification
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
-import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -52,8 +53,7 @@ class SpectreMcpServerTest {
     @Test
     fun `real daemon wire carries warnings into generic image and partial MCP results`() =
         runBlocking {
-            val socketPath =
-                Files.createTempDirectory("spectre-mcp-diagnostics").resolve("daemon.sock")
+            val socketPath = temporaryDaemonClientSocketPath()
             val registry = DaemonSessionRegistry {
                 TestDaemonSessionAutomator(
                     nodesResult = {
@@ -61,7 +61,8 @@ class SpectreMcpServerTest {
                         emptyList()
                     },
                     screenshotResult = { _, _, _ ->
-                        RequestDiagnostics.report("screenshot degraded")
+                        repeat(101) { RequestDiagnostics.report("screenshot warning $it") }
+                        RequestDiagnostics.report("x".repeat(5_000))
                         byteArrayOf(1, 2, 3)
                     },
                     windowsResult = {
@@ -82,11 +83,18 @@ class SpectreMcpServerTest {
                 assertTrue(tree.isError != true)
 
                 val screenshot = invokeTool(server, "screenshot", arguments)
+                assertEquals(101, screenshot.content.size)
                 assertEquals(
-                    "warning: screenshot degraded",
-                    (screenshot.content.first() as TextContent).text,
+                    (0..98).map { "warning: screenshot warning $it" },
+                    screenshot.content.dropLast(2).map { (it as TextContent).text },
                 )
-                assertIs<ImageContent>(screenshot.content.last())
+                assertEquals(
+                    "warning: [spectre-daemon] diagnostics truncated (discarded 3 warning(s) " +
+                        "and 904 warning character(s)); recent diagnostics may remain in the " +
+                        "retained suffix of the per-socket daemon log",
+                    (screenshot.content[99] as TextContent).text,
+                )
+                assertEquals("AQID", assertIs<ImageContent>(screenshot.content.last()).data)
                 assertTrue(screenshot.isError != true)
 
                 val partial = invokeTool(server, "windows", arguments)
@@ -98,8 +106,7 @@ class SpectreMcpServerTest {
             } finally {
                 daemon.close()
                 daemon.awaitTermination()
-                Files.deleteIfExists(socketPath.parent.resolve("daemon.log"))
-                Files.deleteIfExists(socketPath.parent)
+                deleteTemporaryDaemonClientSocketPath(socketPath)
             }
         }
 

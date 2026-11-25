@@ -1,11 +1,129 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import java.io.IOException
+import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.AclEntry
+import java.nio.file.attribute.AclEntryPermission
+import java.nio.file.attribute.AclEntryType
+import java.nio.file.attribute.AclFileAttributeView
+import java.nio.file.attribute.PosixFilePermissions
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.condition.EnabledOnOs
+import org.junit.jupiter.api.condition.OS
 
 class DaemonProcessLauncherTest {
+    @Test
+    fun `concurrent first launches create a private parent and persistent log`() {
+        val socket = temporaryDaemonClientSocketPath()
+        val pool = Executors.newFixedThreadPool(4)
+        val start = CountDownLatch(1)
+        try {
+            val launches =
+                List(4) {
+                    pool.submit<Int> {
+                        start.await()
+                        probeLauncher(socket).start().waitFor()
+                    }
+                }
+            start.countDown()
+            launches.forEach { assertEquals(0, it.get(30, TimeUnit.SECONDS)) }
+            val log = DaemonProcessLauncher.diagnosticPath(socket)
+            assertPrivate(socket.parent, "rwx------")
+            assertPrivate(log, "rw-------")
+            assertTrue(Files.size(log) > 0)
+        } finally {
+            pool.shutdownNow()
+            deleteTemporaryDaemonClientSocketPath(socket)
+        }
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX, OS.MAC)
+    fun `launcher rejects a caller-owned readable log without modifying it`() {
+        val socket = temporaryDaemonClientSocketPath()
+        try {
+            probeLauncher(socket).start().waitFor()
+            val log = DaemonProcessLauncher.diagnosticPath(socket)
+            val original = Files.readString(log)
+            val permissions = PosixFilePermissions.fromString("rw-r--r--")
+            Files.setPosixFilePermissions(log, permissions)
+            assertFailsWith<IOException> { probeLauncher(socket).start().waitFor() }
+            assertEquals(permissions, Files.getPosixFilePermissions(log))
+            assertEquals(original, Files.readString(log))
+        } finally {
+            deleteTemporaryDaemonClientSocketPath(socket)
+        }
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    fun `launcher rejects an existing noncanonical log ACL without rewriting it`() {
+        val socket = temporaryDaemonClientSocketPath()
+        try {
+            probeLauncher(socket).start().waitFor()
+            val log = DaemonProcessLauncher.diagnosticPath(socket)
+            val view = Files.getFileAttributeView(log, AclFileAttributeView::class.java)
+            val entry = view.acl.single()
+            val limited =
+                AclEntry.newBuilder(entry)
+                    .setPermissions(entry.permissions() - AclEntryPermission.WRITE_ATTRIBUTES)
+                    .build()
+            view.acl = listOf(limited)
+            assertFailsWith<IOException> { probeLauncher(socket).start().waitFor() }
+            assertEquals(listOf(limited), view.acl)
+        } finally {
+            deleteTemporaryDaemonClientSocketPath(socket)
+        }
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX, OS.MAC)
+    fun `launcher leaves a symbolic link log target untouched`() {
+        val socket = temporaryDaemonClientSocketPath()
+        val target = socket.parent.resolve("target")
+        try {
+            probeLauncher(socket).start().waitFor()
+            val log = DaemonProcessLauncher.diagnosticPath(socket)
+            Files.move(log, target)
+            val original = Files.readString(target)
+            Files.createSymbolicLink(log, target)
+            assertFailsWith<IOException> { probeLauncher(socket).start().waitFor() }
+            assertEquals(original, Files.readString(target))
+        } finally {
+            Files.deleteIfExists(target)
+            deleteTemporaryDaemonClientSocketPath(socket)
+        }
+    }
+
+    private fun probeLauncher(socket: Path) =
+        DaemonProcessLauncher(
+            socket,
+            aotJvmArguments = { listOf("-version") },
+            newSessionPrefix = { emptyList() },
+        )
+
+    private fun assertPrivate(path: Path, posixMode: String) {
+        if ("posix" in path.fileSystem.supportedFileAttributeViews()) {
+            assertEquals(
+                PosixFilePermissions.fromString(posixMode),
+                Files.getPosixFilePermissions(path),
+            )
+        } else {
+            val view = Files.getFileAttributeView(path, AclFileAttributeView::class.java)
+            val entry = view.acl.single()
+            assertEquals(AclEntryType.ALLOW, entry.type())
+            assertEquals(view.owner, entry.principal())
+            assertEquals(AclEntryPermission.values().toSet(), entry.permissions())
+        }
+    }
+
     @Test
     fun `builds a daemon-only Java command for its socket`() {
         val command =
