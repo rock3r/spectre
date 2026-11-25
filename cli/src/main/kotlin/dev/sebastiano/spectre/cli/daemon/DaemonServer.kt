@@ -193,7 +193,9 @@ public constructor(
                             handleRequest(request, handshakeComplete, handshakeVersion)
                         } catch (exception: IOException) {
                             operationFailure(exception)
-                        } catch (exception: RuntimeException) {
+                        } catch (exception: IllegalStateException) {
+                            operationFailure(exception)
+                        } catch (exception: IllegalArgumentException) {
                             operationFailure(exception)
                         }
                     if (request is DaemonRequest.Hello) {
@@ -216,16 +218,16 @@ public constructor(
             // dirs can be unlinked; always run when Shutdown was handled (write may have failed).
             if (shutdownAfterResponse) close()
         }
+    }
 
-        private fun operationFailure(exception: Exception): DaemonResponse.Error {
-            logConnectionFailure(exception)
-            return DaemonResponse.Error(
-                code = DaemonErrorCode.OperationFailed,
-                message =
-                    "${exception.javaClass.simpleName}: " +
-                        (exception.message ?: "daemon operation failed"),
-            )
-        }
+    private fun operationFailure(exception: Exception): DaemonResponse.Error {
+        logConnectionFailure(exception)
+        return DaemonResponse.Error(
+            code = DaemonErrorCode.OperationFailed,
+            message =
+                "${exception.javaClass.simpleName}: " +
+                    (exception.message ?: "daemon operation failed"),
+        )
     }
 
     private fun handleRequest(
