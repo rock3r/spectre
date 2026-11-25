@@ -315,6 +315,16 @@ fn open_remote_desktop_session_inner(
             ),
         ));
     }
+    let stream = parse_first_stream(&start_response.results).with_context(|| {
+        format!(
+            "parsing RemoteDesktop Start streams. Raw results: {:?}",
+            start_response.results
+        )
+    })?;
+
+    if stream.source_type == Some(portal::SOURCE_TYPE_WINDOW) {
+        anyhow::bail!("Portal returned a window stream for a desktop region; refusing capture");
+    }
     if let Some(token) = extract_restore_token(&start_response.results) {
         if let Err(e) = portal::save_restore_token_named(RD_TOKEN_FILE_PREFIX, token_key, &token) {
             eprintln!(
@@ -323,12 +333,6 @@ fn open_remote_desktop_session_inner(
             );
         }
     }
-    let stream = parse_first_stream(&start_response.results).with_context(|| {
-        format!(
-            "parsing RemoteDesktop Start streams. Raw results: {:?}",
-            start_response.results
-        )
-    })?;
 
     let open_options: PropMap = HashMap::new();
     let proxy = conn.with_proxy(PORTAL_BUS, PORTAL_PATH, timeout);

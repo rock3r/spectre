@@ -3,8 +3,6 @@ package dev.sebastiano.spectre.recording
 import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
 import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitScreenshotter
-import dev.sebastiano.spectre.recording.screencapturekit.TitleDiscriminationAware
-import dev.sebastiano.spectre.recording.screencapturekit.TitleDiscriminator
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import dev.sebastiano.spectre.recording.screencapturekit.deviceFrameFor
 import dev.sebastiano.spectre.recording.windows.WindowsWindowScreenshotter
@@ -178,18 +176,7 @@ internal constructor(
         // An untitled host is selected by its frame; it has no title to rewrite.
         if (window is FramedWindow) return capture()
         if (!window.title.isNullOrBlank()) return capture()
-        val discriminator = TitleDiscriminator(window)
-        discriminator.apply()
-        return try {
-            capture()
-        } finally {
-            val wasInterrupted = Thread.interrupted()
-            try {
-                discriminator.restore()
-            } finally {
-                if (wasInterrupted) Thread.currentThread().interrupt()
-            }
-        }
+        error("Native window capture requires a title or an explicit frame selector")
     }
 
     private companion object {
@@ -233,10 +220,8 @@ public interface RegionScreenshotter {
  * discriminator would only rename this local object, and the helper would then search the target
  * process for a title that does not exist.
  */
-private class RemoteTitledWindow(title: String) : TitledWindow, TitleDiscriminationAware {
+private class RemoteTitledWindow(title: String) : TitledWindow {
     override var title: String? = title
 
     override val bounds: Rectangle = Rectangle()
-
-    override val requiresTitleDiscriminator: Boolean = false
 }

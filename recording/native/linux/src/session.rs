@@ -386,8 +386,9 @@ fn dispatch(
             Ok(Event::InputAck)
         }),
         Command::Screenshot(command) => match run_screenshot(state, command) {
-            Ok(size) => Event::ScreenshotSaved {
+            Ok((size, region)) => Event::ScreenshotSaved {
                 output_size_bytes: size,
+                capture_region: Some([region.x, region.y, region.width, region.height]),
             },
             Err(e) => Event::Error {
                 kind: "Helper".into(),
@@ -439,15 +440,40 @@ fn with_state(
     }
 }
 
-fn run_screenshot(state: &Mutex<SessionState>, command: ScreenshotCommand) -> Result<u64> {
+fn run_screenshot(
+    state: &Mutex<SessionState>,
+    command: ScreenshotCommand,
+) -> Result<(u64, crate::protocol::Region)> {
+    crate::protocol::require_portal_region(
+        command.target,
+        &command.source_types,
+        command.window_frame.is_some()
+            || command.window_title.is_some()
+            || command.window_owner_pid.is_some(),
+    )?;
+    session_screenshot_cursor_mode(&command)?;
     let output = PathBuf::from(&command.output);
     let (stream, owned) = {
         let guard = state.lock().expect("session mutex");
         let owned = guard.session.open_pipewire_remote()?;
         (guard.session.stream.clone(), owned)
     };
-    crate::screenshot::capture_from_stream(&stream, owned.as_raw_fd(), &command, &output)?;
-    Ok(std::fs::metadata(&output)?.len())
+    let region =
+        crate::screenshot::capture_from_stream(&stream, owned.as_raw_fd(), &command, &output)?;
+    Ok((std::fs::metadata(&output)?.len(), region))
+}
+
+fn session_screenshot_cursor_mode(
+    command: &ScreenshotCommand,
+) -> Result<crate::protocol::CursorMode> {
+    match command.cursor_mode {
+        None | Some(crate::protocol::CursorMode::Embedded) => {
+            Ok(crate::protocol::CursorMode::Embedded)
+        }
+        Some(requested) => anyhow::bail!(
+            "explicit cursor_mode {requested:?} cannot be honored: the active Wayland RemoteDesktop stream embeds the compositor cursor"
+        ),
+    }
 }
 
 fn run_recording_start(
@@ -455,6 +481,18 @@ fn run_recording_start(
     start: StartCommand,
     client_id: u64,
 ) -> Result<Event> {
+    crate::protocol::require_portal_region(
+        start.target,
+        &start.source_types,
+        start.window_frame.is_some()
+            || start.window_title.is_some()
+            || start.window_owner_pid.is_some(),
+    )?;
+    if start.cursor_mode != crate::protocol::CursorMode::Embedded {
+        anyhow::bail!(
+            "the active Wayland RemoteDesktop grant embeds the cursor; hidden cursor capture cannot be honored"
+        );
+    }
     let mut guard = state.lock().expect("session mutex");
     if guard.recording.is_some() {
         anyhow::bail!("a recording is already running on the Spectre Wayland session");
@@ -527,7 +565,7 @@ fn stop_recording(state: &Mutex<SessionState>) -> Result<u64> {
             if !status.success() {
                 anyhow::bail!("gst-launch exited with status {status:?}");
             }
-            return Ok(std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0));
+            return crate::recorder::finalized_size(&output);
         }
         if std::time::Instant::now() >= deadline {
             let _ = kill(Pid::from_raw(gst_pid_i32(pid)), Signal::SIGKILL);
@@ -586,6 +624,7 @@ fn window_screenshot(
     write_window_frame(node_id, &output)?;
     Ok(Event::ScreenshotSaved {
         output_size_bytes: std::fs::metadata(&output)?.len(),
+        capture_region: None,
     })
 }
 
@@ -666,6 +705,34 @@ mod tests {
     use crate::portal::response_timeout_error;
     use std::collections::{BTreeSet, HashMap};
     use std::time::Duration;
+
+    #[test]
+    fn session_screenshot_distinguishes_default_from_explicit_cursor_modes() {
+        use crate::protocol::{CursorMode, ScreenshotCommand};
+
+        fn parse(cursor: &str) -> ScreenshotCommand {
+            serde_json::from_str(&format!(
+                r#"{{"backend":"wayland_portal","target":"region","source_types":["monitor"],{cursor}"region":{{"x":0,"y":0,"width":10,"height":10}},"output":"/tmp/frame.png"}}"#
+            ))
+            .unwrap()
+        }
+
+        assert!(super::session_screenshot_cursor_mode(&parse("")).is_ok());
+        assert!(
+            super::session_screenshot_cursor_mode(&parse(r#""cursor_mode":"embedded","#)).is_ok()
+        );
+        for mode in ["hidden", "metadata"] {
+            let error = super::session_screenshot_cursor_mode(&parse(&format!(
+                r#""cursor_mode":"{mode}","#
+            )))
+            .unwrap_err();
+            assert!(format!("{error:#}").contains("explicit cursor_mode"));
+        }
+        assert_eq!(
+            super::session_screenshot_cursor_mode(&parse("")).unwrap(),
+            CursorMode::Embedded
+        );
+    }
 
     #[test]
     fn consent_failures_exit_with_the_consent_status() {

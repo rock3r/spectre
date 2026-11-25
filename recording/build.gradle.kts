@@ -1150,6 +1150,16 @@ tasks.register<JavaExec>("runWindowScreenshotSmoke") {
     mainClass.set("dev.sebastiano.spectre.recording.WindowScreenshotSmoke")
 }
 
+tasks.register<JavaExec>("runUntitledWindowScreenshotSmoke") {
+    group = "verification"
+    description =
+        "Captures an untitled AWT window by owner/frame and verifies content, ambiguity, and title stability."
+    onlyIf { OperatingSystem.current().isWindows || OperatingSystem.current().isLinux }
+    dependsOn(assembleWindowsScreenshotHelper, assembleWaylandHelper)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.UntitledWindowScreenshotSmoke")
+}
+
 tasks.register<JavaExec>("runWindowsGraphicsCaptureMoveInputSmoke") {
     group = "verification"
     description =
@@ -1168,6 +1178,16 @@ tasks.register<JavaExec>("runWindowsGraphicsCaptureRecordingSmoke") {
     onlyIf { OperatingSystem.current().isWindows }
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.recording.WindowsGraphicsCaptureRecordingSmoke")
+}
+
+tasks.register<JavaExec>("runWindowsDuplicateTitleRecordingSmoke") {
+    group = "verification"
+    description =
+        "Records and decodes two same-title windows with and without a crop (requires ffmpeg)."
+    onlyIf { OperatingSystem.current().isWindows }
+    dependsOn(assembleWindowsScreenshotHelper)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.WindowsDuplicateTitleRecordingSmoke")
 }
 
 tasks.register<JavaExec>("runWindowsGraphicsCaptureRegionSmoke") {
@@ -1289,19 +1309,11 @@ tasks.register<JavaExec>("runWaylandPortalCursorSmoke") {
     errorOutput = System.err
 }
 
-// Window-targeted Wayland portal smoke (#85). Boots a JFrame, captures only the picked
-// window via `SourceType.WINDOW` cropped to the window's bounds at start, prints stats.
-// Useful eyeball verification: the mp4 should be window-sized (matches the JFrame's pixel
-// dimensions, not the monitor's), and contain only the JFrame's pixels with no leakage
-// from other apps that happen to be on the desktop.
-tasks.register<JavaExec>("runWaylandPortalWindowSmoke") {
+tasks.register<Test>("runWaylandPortalWindowSmoke") {
     group = "verification"
-    description =
-        "Boots a JFrame, records it for ~3s via portal `Window` source type cropped to the " +
-            "JFrame's bounds, prints output stats. User picks the JFrame in the portal dialog."
-    onlyIf { OperatingSystem.current().isLinux }
+    description = "Checks that explicit portal window recording rejects unverifiable identities."
+    testClassesDirs = sourceSets["test"].output.classesDirs
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass.set("dev.sebastiano.spectre.recording.portal.WaylandPortalWindowSmoke")
-    standardOutput = System.out
-    errorOutput = System.err
+    useJUnitPlatform()
+    filter { includeTestsMatching("*WaylandPortalWindowRecorderTest") }
 }

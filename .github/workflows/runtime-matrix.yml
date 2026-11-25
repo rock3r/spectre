@@ -185,6 +185,18 @@ jobs:
         shell: bash
         run: xvfb-run -a ./gradlew :recording:runLinuxX11RecordingSmoke
 
+      - name: Untitled native window screenshot acceptance
+        if: runner.os == 'Linux' || runner.os == 'Windows'
+        env:
+          SPECTRE_MATRIX_JAVA_HOME: ${{ steps.jdk.outputs.path }}
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            xvfb-run -a ./gradlew :recording:runUntitledWindowScreenshotSmoke
+          else
+            ./gradlew :recording:runUntitledWindowScreenshotSmoke
+          fi
+
       - name: Upload cell artefacts
         if: always()
         uses: actions/upload-artifact@v4

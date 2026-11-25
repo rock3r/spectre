@@ -1,7 +1,7 @@
 //! One-shot screenshot orchestration for Linux capture sources.
 
 use crate::gst::{build_pipewire_png_argv, build_x11_png_argv, X11CaptureTarget};
-use crate::portal::{self, DEFAULT_RESPONSE_TIMEOUT, SOURCE_TYPE_WINDOW};
+use crate::portal::{self, DEFAULT_RESPONSE_TIMEOUT};
 use crate::protocol::{CaptureBackend, CaptureTarget, Event, ScreenshotCommand, SourceType};
 use crate::x11_window::X11WindowSelector;
 use anyhow::{Context, Result};
@@ -30,12 +30,22 @@ pub fn run(command: ScreenshotCommand, events: mpsc::Sender<Event>) -> Result<()
     let output_size_bytes = std::fs::metadata(&command.output)
         .with_context(|| format!("{:?} screenshot output was not written", command.backend))?
         .len();
-    let _ = events.send(Event::ScreenshotSaved { output_size_bytes });
+    let _ = events.send(Event::ScreenshotSaved {
+        output_size_bytes,
+        capture_region: None,
+    });
     Ok(())
 }
 
 fn build_x11_screenshot_argv(command: &ScreenshotCommand, output: &PathBuf) -> Result<Vec<String>> {
-    let capture_cursor = matches!(command.cursor_mode, crate::protocol::CursorMode::Embedded);
+    let capture_cursor = matches!(
+        command.cursor_mode,
+        Some(crate::protocol::CursorMode::Embedded)
+    );
+    if command.target == CaptureTarget::Region {
+        crate::x11_window::validate_region_in_root(command.display_name.as_deref(), command.region)
+            .context("validating X11 screenshot region before starting ximagesrc")?;
+    }
     let target = match command.target {
         CaptureTarget::Region => X11CaptureTarget::Region {
             display_name: command.display_name.clone(),
@@ -45,7 +55,7 @@ fn build_x11_screenshot_argv(command: &ScreenshotCommand, output: &PathBuf) -> R
             let display_name = command.display_name.as_deref();
             let resolved = match crate::x11_window::x11_window_selector(command)? {
                 X11WindowSelector::Title(title) => {
-                    crate::x11_window::find_window_by_title(display_name, &title)
+                    crate::x11_window::find_window_by_title(display_name, &title, command.window_owner_pid)
                         .with_context(|| format!("resolving X11 window title {title:?}"))?
                 }
                 X11WindowSelector::Frame { frame, owner_pid } => {
@@ -67,22 +77,26 @@ fn build_x11_screenshot_argv(command: &ScreenshotCommand, output: &PathBuf) -> R
 }
 
 fn run_wayland_screenshot(command: &ScreenshotCommand, output: &PathBuf) -> Result<()> {
-    reject_window_frame_on_wayland(command)?;
+    crate::protocol::require_portal_region(
+        command.target,
+        &command.source_types,
+        command.window_frame.is_some()
+            || command.window_title.is_some()
+            || command.window_owner_pid.is_some(),
+    )?;
     let source_types = if command.source_types.is_empty() {
-        match command.target {
-            CaptureTarget::Region => vec![SourceType::Monitor],
-            CaptureTarget::Window => vec![SourceType::Window],
-        }
+        vec![SourceType::Monitor]
     } else {
         command.source_types.clone()
     };
     let session = portal::open_screen_cast_session(
         &source_types,
-        command.cursor_mode,
+        command
+            .cursor_mode
+            .unwrap_or(crate::protocol::CursorMode::Hidden),
         DEFAULT_RESPONSE_TIMEOUT,
     )
     .context("portal screenshot handshake")?;
-    ensure_window_source_if_requested(command.target, session.stream.source_type)?;
     capture_from_stream(&session.stream, session.pipewire_fd, command, output)?;
     drop(session);
     Ok(())
@@ -93,53 +107,27 @@ pub(crate) fn capture_from_stream(
     pipewire_fd: i32,
     command: &ScreenshotCommand,
     output: &PathBuf,
-) -> Result<()> {
-    reject_window_frame_on_wayland(command)?;
+) -> Result<crate::protocol::Region> {
     clear_cloexec(pipewire_fd).context("allowing PipeWire FD inheritance")?;
-    let stream_relative_region = if command.target == CaptureTarget::Window {
-        crate::stream_region::clamp_region_to_stream(command.region, stream.size)
-            .context("clamping window-source screenshot crop to portal stream")?
-    } else {
-        crate::stream_region::map_awt_region_to_stream(
-            command.region,
-            stream.position,
-            stream.size,
-            command
-                .screen_size
-                .and_then(crate::stream_region::screen_size_to_region),
-        )
-        .context("mapping AWT screenshot region onto portal stream")?
-    };
-    let argv = build_pipewire_png_argv(stream.node_id, pipewire_fd, stream_relative_region, stream.size, output)?;
-    run_gst_oneshot(&argv).with_context(|| format!("running Wayland screenshot pipeline: {argv:?}"))?;
-    Ok(())
-}
-
-/// The portal picks the window, so a frame selector cannot be honoured there. Fail before any
-/// portal dialog instead of capturing whichever window the user picks.
-pub(crate) fn reject_window_frame_on_wayland(command: &ScreenshotCommand) -> Result<()> {
-    if command.window_frame.is_some() {
-        anyhow::bail!(
-            "Wayland portal screenshots cannot select an untitled window by its frame. \
-             Capturing a JWindow or plain AWT Window is supported on X11 only."
-        );
-    }
-    Ok(())
-}
-
-fn ensure_window_source_if_requested(
-    target: CaptureTarget,
-    source_type: Option<u32>,
-) -> Result<()> {
-    if target == CaptureTarget::Window && source_type != Some(SOURCE_TYPE_WINDOW) {
-        anyhow::bail!(
-            "Wayland portal screenshot requested a window source, but the compositor returned \
-             source_type={source_type:?}. Spectre cannot window-crop a monitor-source stream \
-             safely; use an explicit region screenshot or a compositor/version that supports \
-             portal window sources."
-        );
-    }
-    Ok(())
+    let stream_relative_region = crate::stream_region::map_awt_region_to_stream(
+        command.region,
+        stream.position,
+        stream.size,
+        command
+            .screen_size
+            .and_then(crate::stream_region::screen_size_to_region),
+    )
+    .context("mapping AWT screenshot region onto portal stream")?;
+    let argv = build_pipewire_png_argv(
+        stream.node_id,
+        pipewire_fd,
+        stream_relative_region,
+        stream.size,
+        output,
+    )?;
+    run_gst_oneshot(&argv)
+        .with_context(|| format!("running Wayland screenshot pipeline: {argv:?}"))?;
+    Ok(stream_relative_region)
 }
 
 fn clear_cloexec(fd: RawFd) -> Result<()> {
