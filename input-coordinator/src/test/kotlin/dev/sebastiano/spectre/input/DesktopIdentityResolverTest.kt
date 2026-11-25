@@ -169,9 +169,15 @@ class DesktopIdentityResolverTest {
 
     @Test
     fun `canonical Wayland socket failure is not replaced by a lexical identity`() {
+        val socketPath =
+            Path.of(System.getProperty("java.io.tmpdir")).resolve("wayland-0").toAbsolutePath()
+        var canonicalizedPath: Path? = null
         val resolver =
             DesktopIdentityResolver(
-                canonicalPathResolver = { throw java.io.IOException("unreadable") },
+                canonicalPathResolver = {
+                    canonicalizedPath = it
+                    throw java.io.IOException("unreadable")
+                },
                 linuxDisplayProbe = { LinuxDisplayEvidence.PureX11 },
             )
 
@@ -181,12 +187,15 @@ class DesktopIdentityResolverTest {
                     DesktopIdentityEnvironment(
                         DesktopPlatform.LINUX,
                         "1000",
-                        mapOf("WAYLAND_DISPLAY" to "/run/user/1000/wayland-0"),
+                        mapOf("WAYLAND_DISPLAY" to socketPath.toString()),
                     )
                 )
             }
 
-        assertTrue(failure.message.orEmpty().contains("canonicalize"), failure.message)
+        assertEquals(socketPath, canonicalizedPath)
+        assertEquals("Cannot canonicalize Wayland compositor socket $socketPath", failure.message)
+        assertTrue(failure.cause is java.io.IOException, failure.cause.toString())
+        assertEquals("unreadable", failure.cause?.message)
     }
 
     @Test

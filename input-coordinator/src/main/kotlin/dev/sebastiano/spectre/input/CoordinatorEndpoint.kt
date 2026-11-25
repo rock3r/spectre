@@ -85,7 +85,7 @@ public object CoordinatorEndpointResolver {
 }
 
 /** Canonicalizes the existing prefix and retains only genuinely missing path components. */
-private fun canonicalizeProspectivePath(path: Path): Path {
+internal fun canonicalizeProspectivePath(path: Path): Path {
     val unresolved = ArrayDeque<Path>()
     var candidate = path.toAbsolutePath()
     while (true) {

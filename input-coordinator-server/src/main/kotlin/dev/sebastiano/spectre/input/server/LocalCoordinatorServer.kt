@@ -415,9 +415,21 @@ private fun rejectOverCapacity(
             while (frame.hasRemaining() && System.nanoTime() < deadline) {
                 if (client.write(frame) == 0) LockSupport.parkNanos(REJECT_WRITE_RETRY_NANOS)
             }
+            if (!frame.hasRemaining()) {
+                // Windows resets an AF_UNIX peer when a socket is closed with unread inbound
+                // bytes. Half-close first, then briefly drain the SESSION_OPEN request so the
+                // already-written structured rejection remains observable by the client.
+                client.shutdownOutput()
+                val discard = ByteBuffer.allocate(OVER_CAPACITY_DRAIN_BUFFER_BYTES)
+                while (System.nanoTime() < deadline && client.read(discard) >= 0) {
+                    discard.clear()
+                    LockSupport.parkNanos(REJECT_WRITE_RETRY_NANOS)
+                }
+            }
         }
     }
 }
 
 private const val REJECT_WRITE_RETRY_NANOS: Long = 100_000
+private const val OVER_CAPACITY_DRAIN_BUFFER_BYTES: Int = 1024
 private val OVER_CAPACITY_WRITE_TIMEOUT: Duration = Duration.ofMillis(100)

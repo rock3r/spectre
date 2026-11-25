@@ -91,10 +91,12 @@ class CoordinatorEndpointTest {
                 return
             }
 
-            val endpoint = CoordinatorEndpointResolver.resolve(alias.resolve("n"), "501")
+            // Exercise canonicalisation directly: the endpoint name is irrelevant to this test,
+            // and appending it can exceed Windows' AF_UNIX limit when the user profile is long.
+            val resolved = canonicalizeProspectivePath(alias.resolve("n"))
 
-            assertTrue(endpoint.directory.startsWith(real.toRealPath()))
-            assertFalse(endpoint.directory.startsWith(alias))
+            assertEquals(real.toRealPath().resolve("n"), resolved)
+            assertFalse(resolved.startsWith(alias))
         } finally {
             Files.deleteIfExists(alias)
             Files.deleteIfExists(real)
