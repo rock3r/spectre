@@ -56,6 +56,11 @@ they never call `java.awt.Robot.createScreenCapture`. The former downsamples the
 one pixel per AWT unit, while the latter preserves device pixels. A region that crosses displays is
 captured one display at a time and combined at the centre display's scale. The runtime needs both
 `spectre-recording` and `spectre-recording-macos`.
+
+Region stills are one-shot captures and can take a second or more on macOS. Before each one,
+Spectre stops open window-stills sessions so a stuck `replayd` cannot leave two ScreenCaptureKit
+streams competing for frames. Prefer window-scoped `waitForVisualIdle()` sampling in polling loops;
+multi-display region stills pay the one-shot cost once per intersected display.
 For a top-level AWT window, call `AutoScreenshotter` directly:
 
 ```kotlin

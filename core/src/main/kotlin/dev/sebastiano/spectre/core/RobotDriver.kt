@@ -459,12 +459,12 @@ internal constructor(
      *
      * ## Trust boundary
      *
-     * `region` is passed through to `java.awt.Robot.createScreenCapture` unchanged. It is **not**
-     * constrained to the app under test: any rectangle the JVM can see — including other
-     * applications, sensitive on-screen content, and unrelated windows — is fair game. With `region
-     * = null` the capture covers the **entire virtual desktop**. Treat the returned pixels as
-     * OS-visible content rather than as a slice of the test surface. A narrower per-window /
-     * per-node screenshot API is tracked under #96. See
+     * `region` is passed to the platform screen-capture backend unchanged. It is **not**
+     * constrained to the app under test: any rectangle the capture helper or JVM can see —
+     * including other applications, sensitive on-screen content, and unrelated windows — is fair
+     * game. With `region = null` the capture covers the **entire virtual desktop**. Treat the
+     * returned pixels as OS-visible content rather than as a slice of the test surface. A narrower
+     * per-window / per-node screenshot API is tracked under #96. See
      * [the published security notes](https://spectre.sebastiano.dev/SECURITY/) for the full
      * exposure model.
      */

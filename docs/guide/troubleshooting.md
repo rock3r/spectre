@@ -655,9 +655,9 @@ shell, also stop its daemon with `./gradlew --stop`.
     legacy private-picker bypass. A test run that only uses Spectre screenshot APIs should not show
     a capture prompt naming `java` or `com.jetbrains.jbr.java`.
 
-The two probes are independent: a consumer who only takes screenshots is not
-punished for missing Accessibility, and vice versa. Probe results are cached
-after the first call, so subsequent operations have no extra cost.
+Accessibility input probing and the helper's Screen Recording preflight are independent: a consumer
+who only takes screenshots is not punished for missing Accessibility, and input-only use does not
+start a capture helper.
 
 When real OS input or capture is unnecessary (in CI, in tests, etc.), use
 `RobotDriver.headless()`. It bypasses the AWT Robot entirely and skips the TCC
