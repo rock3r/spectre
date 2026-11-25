@@ -188,6 +188,89 @@ final class AccessibilitySnapshotTests: XCTestCase {
         XCTAssertEqual(decoded.nodes.first { $0.id == "offscreen" }?.onScreen, false)
     }
 
+    func testNativeTraversalStopsBeforeSiblingAfterDepthTruncation() throws {
+        struct Element { let id: String; let children: [String] }
+        let elements = [
+            "root": Element(id: "root", children: ["limited", "slow"]),
+            "limited": Element(id: "limited", children: ["unread"]),
+            "slow": Element(id: "slow", children: []),
+        ]
+        var reads: [String] = []
+        var remaining = 10
+
+        let result = try AccessibilityNativeTraversal.load("root", depth: 0, maximumDepth: 1,
+                                                           remainingNodes: &remaining) { key in
+            reads.append(key)
+            let element = try XCTUnwrap(elements[key])
+            return nativeNode(id: element.id, children: element.children)
+        }
+
+        XCTAssertEqual(reads, ["root", "limited"])
+        XCTAssertTrue(result.didTruncate)
+        XCTAssertEqual(result.node.children.map(\.id), ["limited"])
+        XCTAssertEqual(result.node.children.first?.truncated, .depth)
+        let tree = SyntheticAccessibilityTree(loadedRoots: [result.node])
+        XCTAssertThrowsError(try AccessibilitySnapshotBuilder.capture(tree: tree, maximumDepth: 1,
+            maximumNodeCount: 10, deadline: .distantFuture)) {
+            guard case let AccessibilityCaptureError.limitReached(partial, _) = $0 else {
+                return XCTFail("unexpected error: \($0)")
+            }
+            XCTAssertEqual(partial.nodes.map(\.key), ["w0/root", "w0/root/limited"])
+        }
+    }
+
+    func testNativeTraversalStopsRemainingWindowsAtFirstTruncation() throws {
+        var reads: [String] = []
+        let result = try AccessibilityNativeTraversal.loadRoots(["first", "slow-window"],
+            maximumDepth: 0, maximumNodeCount: 10) { key in
+                reads.append(key)
+                return self.nativeNode(id: key, children: key == "first" ? ["unread"] : [])
+            }
+
+        XCTAssertEqual(reads, ["first"])
+        XCTAssertEqual(result.roots.map(\.id), ["first"])
+        XCTAssertEqual(result.trailingTruncation, .depth)
+    }
+
+    func testEveryPotentiallyBlockingReadGetsFreshRemainingDeadline() throws {
+        let deadline = Date(timeIntervalSinceReferenceDate: 10)
+        var times = [Date(timeIntervalSinceReferenceDate: 9.0),
+                     Date(timeIntervalSinceReferenceDate: 9.4),
+                     Date(timeIntervalSinceReferenceDate: 9.9)]
+        var applied: [TimeInterval] = []
+        let budget = AccessibilityReadBudget(deadline: deadline, now: { times.removeFirst() })
+
+        for _ in 0..<3 {
+            try budget.beforeRead { applied.append($0) }
+        }
+
+        XCTAssertEqual(applied.count, 3)
+        XCTAssertEqual(applied[0], 1.0, accuracy: 0.001)
+        XCTAssertEqual(applied[1], 0.6, accuracy: 0.001)
+        XCTAssertEqual(applied[2], 0.1, accuracy: 0.001)
+    }
+
+    func testExpiredBudgetDoesNotStartAnotherRepeatedAttributeRead() throws {
+        let deadline = Date(timeIntervalSinceReferenceDate: 10)
+        var times = [Date(timeIntervalSinceReferenceDate: 9.9), deadline]
+        var calls = 0
+        let budget = AccessibilityReadBudget(deadline: deadline, now: { times.removeFirst() })
+        try budget.beforeRead { _ in calls += 1 }
+
+        XCTAssertThrowsError(try budget.beforeRead { _ in calls += 1 }) {
+            guard case AccessibilityCaptureError.timeout = $0 else {
+                return XCTFail("unexpected error: \($0)")
+            }
+        }
+        XCTAssertEqual(calls, 1)
+    }
+
+    private func nativeNode(id: String, children: [String]) -> NativeAccessibilityNode<String> {
+        .init(id: id, role: "AXGroup", subrole: nil, title: id, description: nil, label: nil,
+              value: nil, enabled: true, focusable: false, focused: false, selected: false,
+              bounds: .init(x: 0, y: 0, width: 10, height: 10), children: children)
+    }
+
     private func request(_ target: String) throws -> AccessibilitySnapshotRequest {
         try AccessibilitySnapshotRequest.decode(Data("{\"target\":\(target),\"maximumDepth\":2,\"maximumNodeCount\":3,\"timeoutMs\":10}".utf8))
     }

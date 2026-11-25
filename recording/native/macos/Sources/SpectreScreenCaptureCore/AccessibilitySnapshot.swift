@@ -165,6 +165,13 @@ struct SyntheticAccessibilityTree: AccessibilityTree {
         windows = [.init(key: "w0", title: "Fixture", bounds: windowBounds)]
         self.roots = roots.map(\.loaded)
     }
+    init(windowBounds: AccessibilityBounds = .init(x: 0, y: 0, width: 100, height: 100),
+         loadedRoots: [LoadedAccessibilityNode]) {
+        windows = loadedRoots.indices.map {
+            .init(key: "w\($0)", title: "Fixture", bounds: windowBounds)
+        }
+        roots = loadedRoots
+    }
 }
 
 enum AccessibilitySnapshotBuilder {
@@ -293,21 +300,106 @@ enum AccessibilityNativeWindowLookup {
     }
 }
 
+struct AccessibilityReadBudget {
+    let deadline: Date
+    var now: () -> Date = Date.init
+
+    func beforeRead(_ applyTimeout: (TimeInterval) -> Void) throws {
+        let remaining = deadline.timeIntervalSince(now())
+        guard remaining > 0 else { throw AccessibilityCaptureError.timeout(nil) }
+        applyTimeout(remaining)
+    }
+}
+
+struct NativeAccessibilityNode<Element> {
+    let id: String?; let role: String?; let subrole: String?; let title: String?
+    let description: String?; let label: String?; let value: String?
+    let enabled: Bool?; let focusable: Bool?; let focused: Bool?; let selected: Bool?
+    let bounds: AccessibilityBounds; let children: [Element]
+}
+struct NativeAccessibilityLoadResult {
+    let node: LoadedAccessibilityNode; let firstTruncation: TraversalTruncation?
+    var didTruncate: Bool { firstTruncation != nil }
+}
+struct NativeAccessibilityRootsResult {
+    let roots: [LoadedAccessibilityNode]; let trailingTruncation: TraversalTruncation?
+}
+enum AccessibilityNativeTraversal {
+    static func loadRoots<Element>(_ elements: [Element], maximumDepth: Int,
+                                   maximumNodeCount: Int,
+                                   read: (Element) throws -> NativeAccessibilityNode<Element>) rethrows
+        -> NativeAccessibilityRootsResult {
+        var roots: [LoadedAccessibilityNode] = []
+        var remaining = maximumNodeCount
+        var truncation: TraversalTruncation?
+        for element in elements {
+            guard remaining > 0 else { truncation = .nodeCount; break }
+            let result = try load(element, depth: 0, maximumDepth: maximumDepth,
+                                  remainingNodes: &remaining, read: read)
+            roots.append(result.node)
+            if let firstTruncation = result.firstTruncation {
+                truncation = firstTruncation
+                break
+            }
+        }
+        if truncation == nil, roots.count < elements.count { truncation = .nodeCount }
+        return .init(roots: roots, trailingTruncation: truncation)
+    }
+
+    static func load<Element>(_ element: Element, depth: Int, maximumDepth: Int,
+                              remainingNodes: inout Int,
+                              read: (Element) throws -> NativeAccessibilityNode<Element>) rethrows
+        -> NativeAccessibilityLoadResult {
+        let raw = try read(element)
+        remainingNodes -= 1
+        var children: [LoadedAccessibilityNode] = []
+        var truncation: TraversalTruncation?
+        var firstTruncation: TraversalTruncation?
+        if depth == maximumDepth, !raw.children.isEmpty {
+            truncation = .depth
+            firstTruncation = .depth
+        } else {
+            for child in raw.children {
+                guard remainingNodes > 0 else {
+                    truncation = .nodeCount
+                    firstTruncation = .nodeCount
+                    break
+                }
+                let result = try load(child, depth: depth + 1, maximumDepth: maximumDepth,
+                                      remainingNodes: &remainingNodes, read: read)
+                children.append(result.node)
+                if let descendantTruncation = result.firstTruncation {
+                    firstTruncation = descendantTruncation
+                    break
+                }
+            }
+        }
+        let node = LoadedAccessibilityNode(id: raw.id, role: raw.role, subrole: raw.subrole,
+            title: raw.title, description: raw.description, label: raw.label, value: raw.value,
+            enabled: raw.enabled, focusable: raw.focusable, focused: raw.focused,
+            selected: raw.selected, bounds: raw.bounds, children: children,
+            truncated: truncation)
+        return .init(node: node, firstTruncation: firstTruncation)
+    }
+}
+
 private final class AXAccessibilityTree: AccessibilityTree {
     let windows: [AccessibilityWindowSnapshot]; let roots: [LoadedAccessibilityNode]
     let trailingTruncation: TraversalTruncation?
     init(target: AccessibilityTarget, maximumDepth: Int, maximumNodeCount: Int, deadline: Date) throws {
         let selection = try Self.selectWindows(target: target, deadline: deadline)
-        var snapshots: [AccessibilityWindowSnapshot] = []; var roots: [LoadedAccessibilityNode] = []
-        var remaining = maximumNodeCount
-        for (index, element) in selection.enumerated() where remaining > 0 {
-            let loaded = try Self.load(element, depth: 0, maximumDepth: maximumDepth,
-                                       remainingNodes: &remaining, deadline: deadline)
-            snapshots.append(.init(key: "w\(index)", title: loaded.title, bounds: loaded.bounds)); roots.append(loaded)
+        let loaded = try AccessibilityNativeTraversal.loadRoots(selection,
+            maximumDepth: maximumDepth, maximumNodeCount: maximumNodeCount) {
+                try Self.read($0, deadline: deadline)
+            }
+        let roots = loaded.roots
+        let snapshots = roots.enumerated().map {
+            AccessibilityWindowSnapshot(key: "w\($0.offset)", title: $0.element.title,
+                                        bounds: $0.element.bounds)
         }
         guard !roots.isEmpty else { throw AccessibilityCaptureError.noAccessibilityTree("target has no accessibility windows") }
         windows = snapshots; self.roots = roots
-        trailingTruncation = roots.count < selection.count ? .nodeCount : nil
+        trailingTruncation = loaded.trailingTruncation
     }
     private static func selectWindows(target: AccessibilityTarget, deadline: Date) throws -> [AXUIElement] {
         let pid: pid_t; var requestedTitle: String?; var requestedBounds: AccessibilityBounds?
@@ -341,44 +433,40 @@ private final class AXAccessibilityTree: AccessibilityTree {
             requestedTitle = title
             requestedBounds = identities[index].bounds
         }
-        let app = AXUIElementCreateApplication(pid); try setTimeout(app, deadline)
+        let app = AXUIElementCreateApplication(pid)
         var raw: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &raw) == .success,
+        let windowsError = try copyAttribute(app, kAXWindowsAttribute, deadline: deadline, value: &raw)
+        guard windowsError == .success,
               let axWindows = raw as? [AXUIElement] else {
             throw AccessibilityCaptureError.noAccessibilityTree("target has no accessibility windows") }
         guard let title = requestedTitle else { return axWindows }
         var identities: [AccessibilityWindowIdentity] = []
         for window in axWindows {
-            try setTimeout(window, deadline); var titleValue: CFTypeRef?; var position: CFTypeRef?; var size: CFTypeRef?
-            _ = AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleValue)
-            _ = AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &position)
-            _ = AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &size)
-            identities.append(.init(title: titleValue as? String, bounds: bounds(position, size)))
+            let identityAttributes = [kAXTitleAttribute, kAXPositionAttribute, kAXSizeAttribute]
+            let values = try copyAttributes(window, identityAttributes, deadline: deadline)
+            identities.append(.init(title: values[0] as? String,
+                                    bounds: bounds(values[1], values[2])))
         }
         let index = try AccessibilityWindowMatcher.uniqueMatch(identities, title: title, bounds: requestedBounds)
         return [axWindows[index]]
     }
-    private static func load(_ element: AXUIElement, depth: Int, maximumDepth: Int,
-                             remainingNodes: inout Int, deadline: Date) throws -> LoadedAccessibilityNode {
-        try setTimeout(element, deadline); var copied: CFArray?
-        let error = AXUIElementCopyMultipleAttributeValues(element, attributes as CFArray, [], &copied)
-        guard error == .success, let values = copied as? [Any], values.count == attributes.count else {
+    private static func read(_ element: AXUIElement, deadline: Date) throws
+        -> NativeAccessibilityNode<AXUIElement> {
+        let values: [Any]
+        do {
+            values = try copyAttributes(element, attributes, deadline: deadline)
+        } catch let error as AccessibilityCaptureError { throw error }
+        catch {
             if Date() >= deadline { throw AccessibilityCaptureError.timeout(nil) }
-            throw AccessibilityCaptureError.noAccessibilityTree("AX attribute read failed (\(error.rawValue))")
+            throw AccessibilityCaptureError.noAccessibilityTree("AX attribute read failed")
         }
-        let rawChildren = values[12] as? [AXUIElement] ?? []; remainingNodes -= 1
-        var children: [LoadedAccessibilityNode] = []; var truncated: TraversalTruncation?
-        if depth == maximumDepth, !rawChildren.isEmpty { truncated = .depth }
-        else { for child in rawChildren { guard remainingNodes > 0 else { truncated = .nodeCount; break }
-            children.append(try load(child, depth: depth+1, maximumDepth: maximumDepth,
-                                     remainingNodes: &remainingNodes, deadline: deadline)) } }
         return .init(id: values[11] as? String, role: values[0] as? String, subrole: values[1] as? String,
             title: values[2] as? String, description: values[3] as? String, label: values[4] as? String,
             value: display(values[5]), enabled: (values[6] as? NSNumber)?.boolValue,
             focusable: values[7] is NSNumber, focused: (values[7] as? NSNumber)?.boolValue,
             selected: (values[8] as? NSNumber)?.boolValue,
-            bounds: bounds(values[9], values[10]) ?? .init(x: 0,y: 0,width: 0,height: 0), children: children,
-            truncated: truncated)
+            bounds: bounds(values[9], values[10]) ?? .init(x: 0,y: 0,width: 0,height: 0),
+            children: values[12] as? [AXUIElement] ?? [])
     }
     private static func display(_ value: Any) -> String? { (value as? String) ?? (value as? NSNumber)?.stringValue }
     private static func bounds(_ position: Any?, _ sizeValue: Any?) -> AccessibilityBounds? {
@@ -399,10 +487,26 @@ private final class AXAccessibilityTree: AccessibilityTree {
         return .init(x: Int(rect.origin.x.rounded()), y: Int(rect.origin.y.rounded()),
                      width: Int(rect.width.rounded()), height: Int(rect.height.rounded()))
     }
-    private static func setTimeout(_ element: AXUIElement, _ deadline: Date) throws {
-        let remaining = deadline.timeIntervalSinceNow
-        guard remaining > 0 else { throw AccessibilityCaptureError.timeout(nil) }
-        AXUIElementSetMessagingTimeout(element, Float(remaining))
+    private static func copyAttribute(_ element: AXUIElement, _ attribute: String, deadline: Date,
+                                      value: inout CFTypeRef?) throws -> AXError {
+        try AccessibilityReadBudget(deadline: deadline).beforeRead {
+            AXUIElementSetMessagingTimeout(element, Float($0))
+        }
+        return AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+    }
+    private static func copyAttributes(_ element: AXUIElement, _ names: [String], deadline: Date) throws
+        -> [Any] {
+        var copied: CFArray?
+        try AccessibilityReadBudget(deadline: deadline).beforeRead {
+            AXUIElementSetMessagingTimeout(element, Float($0))
+        }
+        let error = AXUIElementCopyMultipleAttributeValues(element, names as CFArray, [], &copied)
+        guard error == .success, let values = copied as? [Any], values.count == names.count else {
+            if Date() >= deadline { throw AccessibilityCaptureError.timeout(nil) }
+            throw AccessibilityCaptureError.noAccessibilityTree(
+                "AX attribute read failed (\(error.rawValue))")
+        }
+        return values
     }
 }
 
