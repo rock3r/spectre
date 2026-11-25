@@ -289,23 +289,7 @@ internal fun readPreCaptureSnapshot(
         frameInsets = windowInsets(trackedWindow.window),
         densityScaleX = transform.scaleX,
         densityScaleY = transform.scaleY,
-        nodeSnapshots =
-            semanticsReader.readAllNodes(listOf(trackedWindow)).map { node ->
-                CaptureNodeSnapshot(
-                    key = node.key.toString(),
-                    testTag = node.testTag,
-                    text = node.text,
-                    texts = node.texts,
-                    editableText = node.editableText,
-                    contentDescription = node.contentDescription,
-                    role = node.role?.toString(),
-                    enabled = !node.isDisabled,
-                    clickable = node.isClickable,
-                    focused = node.isFocused,
-                    selected = node.isSelected,
-                    boundsScreen = node.bothBounds().onScreen,
-                )
-            },
+        nodeSnapshots = semanticsReader.snapshot(listOf(trackedWindow)),
     )
 }
 

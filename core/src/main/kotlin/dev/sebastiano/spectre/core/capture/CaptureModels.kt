@@ -11,13 +11,14 @@ import java.nio.file.Path
  */
 public data class CaptureDocument(
     public val schemaVersion: Int,
+    public val source: CaptureSource,
     public val capturedAt: String,
     public val window: CaptureWindow,
     public val nodes: List<CaptureNode>,
     public val summary: CaptureSummary,
 ) {
     public companion object {
-        public const val SCHEMA_VERSION: Int = 1
+        public const val SCHEMA_VERSION: Int = 2
     }
 }
 
@@ -28,6 +29,7 @@ public data class CaptureWindow(
     public val title: String?,
     public val isPopup: Boolean,
     public val boundsScreen: CaptureRect,
+    public val boundsSpace: BoundsSpace,
     public val densityScaleX: Double,
     public val densityScaleY: Double,
     public val imageWidth: Int,
@@ -42,19 +44,35 @@ public data class CaptureWindow(
  */
 public data class CaptureNode(
     public val key: String,
+    public val parentKey: String?,
+    public val id: String?,
     public val testTag: String?,
     public val text: String?,
     public val texts: List<String>,
     public val editableText: String?,
     public val contentDescription: String?,
     public val role: String?,
+    public val platformRole: String?,
+    public val states: List<String>,
+    public val value: String?,
     public val enabled: Boolean,
     public val clickable: Boolean,
     public val focused: Boolean,
     public val selected: Boolean,
     public val boundsImage: CaptureRect,
     public val boundsScreen: CaptureRect,
+    public val onScreen: Boolean = true,
 )
+
+public enum class CaptureSource(public val wireName: String) {
+    ComposeSemantics("compose-semantics"),
+    OsAccessibility("os-accessibility"),
+}
+
+public enum class BoundsSpace(public val wireName: String) {
+    Screen("screen"),
+    Window("window"),
+}
 
 /** Decision-grade summary safe to return inline without reading the full tree. */
 public data class CaptureSummary(

@@ -6,8 +6,59 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsOwner
+import dev.sebastiano.spectre.core.capture.CaptureNodeSnapshot
+import dev.sebastiano.spectre.core.capture.TreeSource
 
-internal class SemanticsReader {
+internal class SemanticsReader : TreeSource {
+
+    override fun snapshot(trackedWindows: List<TrackedWindow>): List<CaptureNodeSnapshot> {
+        val nodes = readAllNodes(trackedWindows)
+        val siblings = nodes.groupBy { it.trackedWindow.surfaceId to it.parent?.key }
+        val keys = mutableMapOf<NodeKey, String>()
+        fun snapshotKey(node: AutomatorNode): String =
+            keys.getOrPut(node.key) {
+                val parent = node.parent
+                val peers = siblings[node.trackedWindow.surfaceId to parent?.key].orEmpty()
+                val id = node.testTag
+                val segment =
+                    snapshotPathSegment(id, peers.map(AutomatorNode::testTag), peers.indexOf(node))
+                if (parent == null) {
+                    val windowIndex = trackedWindows.indexOf(node.trackedWindow).coerceAtLeast(0)
+                    "w$windowIndex/$segment"
+                } else {
+                    "${snapshotKey(parent)}/$segment"
+                }
+            }
+        return nodes.map { node ->
+            val bounds = node.bothBounds().onScreen
+            CaptureNodeSnapshot(
+                key = snapshotKey(node),
+                parentKey = node.parent?.let(::snapshotKey),
+                id = node.testTag,
+                testTag = node.testTag,
+                text = node.text,
+                texts = node.texts,
+                editableText = node.editableText,
+                contentDescription = node.contentDescription,
+                role = node.role?.toString(),
+                platformRole = null,
+                states =
+                    buildList {
+                        if (!node.isDisabled) add("enabled")
+                        if (node.isClickable) add("clickable")
+                        if (node.isFocused) add("focused")
+                        if (node.isSelected) add("selected")
+                        node.toggleableState?.let { add(it.toString().lowercase()) }
+                    },
+                value = node.editableText,
+                enabled = !node.isDisabled,
+                clickable = node.isClickable,
+                focused = node.isFocused,
+                selected = node.isSelected,
+                boundsScreen = bounds,
+            )
+        }
+    }
 
     fun readAllNodes(trackedWindows: List<TrackedWindow>): List<AutomatorNode> {
         if (trackedWindows.isEmpty()) return emptyList()
@@ -141,6 +192,11 @@ internal class SemanticsReader {
         }
     }
 }
+
+internal fun snapshotPathSegment(id: String?, siblingIds: List<String?>, childIndex: Int): String =
+    id?.takeIf { candidate -> siblingIds.count { it == candidate } == 1 }
+        ?.replace("~", "~0")
+        ?.replace("/", "~1") ?: childIndex.coerceAtLeast(0).toString()
 
 private data class NodeEntry(
     val key: NodeKey,

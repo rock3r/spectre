@@ -17,12 +17,17 @@ import kotlin.time.TimeSource
  */
 public data class CaptureNodeSnapshot(
     public val key: String,
+    public val parentKey: String?,
+    public val id: String?,
     public val testTag: String?,
     public val text: String?,
     public val texts: List<String>,
     public val editableText: String?,
     public val contentDescription: String?,
     public val role: String?,
+    public val platformRole: String?,
+    public val states: List<String>,
+    public val value: String?,
     public val enabled: Boolean,
     public val clickable: Boolean,
     public val focused: Boolean,
@@ -53,12 +58,17 @@ public object AtomicCaptureBuilder {
         val captureNodes = nodeSnapshots.map { snap ->
             CaptureNode(
                 key = snap.key,
+                parentKey = snap.parentKey,
+                id = snap.id,
                 testTag = snap.testTag,
                 text = snap.text,
                 texts = snap.texts,
                 editableText = snap.editableText,
                 contentDescription = snap.contentDescription,
                 role = snap.role,
+                platformRole = snap.platformRole,
+                states = snap.states,
+                value = snap.value,
                 enabled = snap.enabled,
                 clickable = snap.clickable,
                 focused = snap.focused,
@@ -80,6 +90,7 @@ public object AtomicCaptureBuilder {
                         width = snap.boundsScreen.width,
                         height = snap.boundsScreen.height,
                     ),
+                onScreen = captureRegion.intersects(snap.boundsScreen),
             )
         }
         val summary =
@@ -95,6 +106,7 @@ public object AtomicCaptureBuilder {
         val document =
             CaptureDocument(
                 schemaVersion = CaptureDocument.SCHEMA_VERSION,
+                source = CaptureSource.ComposeSemantics,
                 capturedAt = capturedAt.toString(),
                 window =
                     CaptureWindow(
@@ -109,6 +121,7 @@ public object AtomicCaptureBuilder {
                                 width = captureRegion.width,
                                 height = captureRegion.height,
                             ),
+                        boundsSpace = BoundsSpace.Screen,
                         densityScaleX = densityScaleX,
                         densityScaleY = densityScaleY,
                         imageWidth = image.width,
