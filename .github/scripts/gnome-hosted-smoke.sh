@@ -58,10 +58,10 @@ SMOKE_HOME=$(getent passwd "$SMOKE_USER" | cut -d: -f6)
 chown "$SMOKE_USER" "$SMOKE_ARTIFACTS"
 chmod 0755 "$SMOKE_SESSION_SCRIPT"
 systemd-run \
-  --wait --collect --pipe --service-type=exec \
+  --wait --collect --pipe --service-type=simple --property=TimeoutStartSec=45min --property=TimeoutStopSec=45min \
   --uid="$SMOKE_USER" --property=PAMName=login \
   --setenv="HOME=$SMOKE_HOME" \
-  --setenv="JAVA_HOME=$JAVA_HOME" \
+  --setenv="SMOKE_JAVA_HOME=$JAVA_HOME" \
   --setenv="PATH=$RUST_BIN:$JAVA_HOME/bin:/usr/local/bin:/usr/bin:/bin" \
   --setenv="SMOKE_ARTIFACTS=$SMOKE_ARTIFACTS" \
   --setenv="SMOKE_REPO=$SMOKE_REPO" \

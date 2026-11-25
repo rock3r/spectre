@@ -5,6 +5,8 @@ set -Eeuo pipefail
 : "${SMOKE_ARTIFACTS:?}"
 : "${SMOKE_REPO:?}"
 
+export JAVA_HOME="${SMOKE_JAVA_HOME:?}"
+export PATH="$JAVA_HOME/bin:$PATH"
 if [[ "${1:-}" != --inside-dbus ]]; then
   exec dbus-run-session -- "$0" --inside-dbus
 fi
@@ -82,7 +84,22 @@ if [[ "$SMOKE_MODE" == accessibility ]]; then
   cd "$ATSPI_REPO/recording/native/linux"
   cargo build --locked --manifest-path "$FIXTURE_CHECKOUT/fixtures/accesskit/Cargo.toml"
   cargo build --locked
-  bash tests/accessibility_xvfb.sh 2>&1 | tee "$SMOKE_ARTIFACTS/atspi-live.log"
+  python3 - tests/accessibility_xvfb.sh "$SMOKE_ARTIFACTS/atspi-wayland.sh" <<'PYTHON'
+from pathlib import Path
+import sys
+src = Path(sys.argv[1]).read_text()
+x11 = 's["windows"][0]["boundsSpace"] == "screen"'
+assert src.count(x11) == 1
+Path(sys.argv[2]).write_text(src.replace(x11, x11.replace('"screen"', '"window"')))
+PYTHON
+  cat > "$SMOKE_ARTIFACTS/reader-with-trace" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+trace=$(mktemp -d "$SMOKE_ARTIFACTS/atspi-call-XXXXXX")
+tee "$trace/request.json" | "$ATSPI_REPO/recording/native/linux/target/debug/spectre-wayland-helper" "$@" | tee "$trace/result.json"
+SH
+  chmod +x "$SMOKE_ARTIFACTS/reader-with-trace"
+  SPECTRE_HELPER="$SMOKE_ARTIFACTS/reader-with-trace" bash "$SMOKE_ARTIFACTS/atspi-wayland.sh" 2>&1 | tee "$SMOKE_ARTIFACTS/atspi-live.log"
   exit 0
 fi
 
