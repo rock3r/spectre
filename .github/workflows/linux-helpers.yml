@@ -56,7 +56,7 @@ jobs:
       - name: Install libdbus + pkg-config (for spectre-wayland-helper Rust build)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdbus-1-dev pkg-config
+          sudo apt-get install -y libdbus-1-dev pkg-config at-spi2-core dbus-x11 xvfb libxcursor1 libxkbcommon-x11-0
 
       - name: Set up Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -81,6 +81,19 @@ jobs:
           esac
           echo "Highest glibc symbol versions required:"
           objdump -T "$bin" | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -3
+
+      - name: Test AT-SPI snapshot against AccessKit fixture under Xvfb
+        if: matrix.arch == 'x86_64'
+        env:
+          FIXTURE_CHECKOUT: ${{ runner.temp }}/spectre-accesskit-fixture
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/rock3r/spectre.git "$FIXTURE_CHECKOUT"
+          git -C "$FIXTURE_CHECKOUT" fetch --depth=1 origin 4ed264d6897cb6b41ce216250b0bda5b9e6f0b06
+          git -C "$FIXTURE_CHECKOUT" checkout --detach FETCH_HEAD
+          cargo build --locked --manifest-path "$FIXTURE_CHECKOUT/fixtures/accesskit/Cargo.toml"
+          cargo build --locked --manifest-path recording/native/linux/Cargo.toml
+          cd recording/native/linux
+          dbus-run-session -- xvfb-run -a tests/accessibility_xvfb.sh
 
       - name: Upload ${{ matrix.arch }} helper
         uses: actions/upload-artifact@v4
