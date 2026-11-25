@@ -262,6 +262,7 @@ Optional flags:
 | --- | --- |
 | `--base v0.4.1` | Record the previous release tag (default: latest git tag) |
 | `--skip-check` | Skip `./gradlew check` (records hard `n/a` with reason) |
+| `--display-mode auto\|xvfb\|seat` | Linux only: auto-discover a seat (default), force isolated Xvfb, or require a real seat. Forced Xvfb clears inherited X11, Wayland, D-Bus, and runtime-directory handles before discovery can reconnect to the logged-in seat. |
 | `--out-dir PATH` | Report/log directory (default `build/smoke`) |
 | `--overall-timeout SECS` | Wall-clock budget for the whole run (default 7200) |
 | `--skip-maven-local` | Skip Maven Local publish + consumer (hard `n/a` with reason) |
@@ -269,8 +270,11 @@ Optional flags:
 | `--preflight-only` | Run only preflight; remaining required IDs are hard `n/a` with reason `preflight-only mode; scenario not executed`. Validates report schema + matrix wiring without a multi-hour GO. **Not a release smoke GO.** |
 
 On Linux it supplies `xvfb-run -a` when `DISPLAY` is unset and records `environment.displayMode`
-as `xvfb-auto` or `real-display:$DISPLAY`. On Windows use the interactive PowerShell runner in the
-next section (shared stable scenario IDs and `schemaVersion` report shape).
+as `xvfb-auto`, `real-display:$DISPLAY`, `xvfb-forced`, or `seat-forced`. Use
+`--display-mode xvfb` when a Wayland seat exists but the run must cover X11 in isolation; use
+`--display-mode seat` to fail rather than silently fall back when no real seat is discoverable.
+On Windows use the interactive PowerShell runner in the next section (shared stable scenario IDs
+and `schemaVersion` report shape).
 
 **Xvfb ≠ Wayland:** auto-Xvfb proves the X11 path only. Real portal consent/cancel requires a real
 Wayland session (manual cell below).
@@ -285,7 +289,8 @@ Every run writes under `build/smoke/` (or `--out-dir`):
 | `<scenario-id>-<timestamp>.log` | Per-step stdout/stderr |
 
 Report fields of note: `schemaVersion` (currently `1`), `version`, `base`, `sha` (full), `dirty`,
-`environment.displayMode`, and `scenarios[]` with stable `id`, `result` (`pass` \| `fail` \| `n/a`),
+`environment.displayMode`, optional `environment.extra.waylandRestoreTokenDir`, and `scenarios[]`
+with stable `id`, `result` (`pass` \| `fail` \| `n/a`),
 optional `reason` (required for hard `n/a`), timings, and log path.
 
 **Hard skips are fail-closed:** a hard scenario result of `n/a` without a non-empty `reason` is
@@ -387,7 +392,7 @@ The cross-platform runner covers the stable baseline that should not be reinvent
   pass) + strict stdio (version / tools/list including `detach` / unknown-session detach `isError`)
 - host native recording smoke (macOS SCK region / Linux X11; Windows WGC via interactive PS script)
 - Maven Local `verifyMavenLocalPublication` + fresh consumer jar resolve
-- Linux Wayland `portal-token-warmup`: one `--no-daemon` `:recording:requestWaylandPortalGrant -PwaylandGrantTimeoutSeconds=60` with a pinned `SPECTRE_WAYLAND_HELPER` + `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` under `build/smoke/wayland-restore-tokens/`. The task calls `WaylandPortalAccess.request`, the same operation as `spectre permissions request`. Approve **Share** + **Remember** / **Allow remote interaction** for the **whole screen**; the warmup writes `wayland-rd-restore-token-rd-monitor-embedded`. Later helper cells (`host-native-recording`) reuse that grant via the long-lived session. Window captures use GNOME Mutter window streams and open no dialog. Robot-backed cells stay under `xvfb-run`. Xvfb / macOS / Windows record hard `n/a`.
+- Linux Wayland `portal-token-warmup`: one `--no-daemon` `:recording:requestWaylandPortalGrant -PwaylandGrantTimeoutSeconds=60` with a pinned `SPECTRE_WAYLAND_HELPER`. It reuses the non-blank inherited `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`, falling back to `build/smoke/wayland-restore-tokens/`, and records the selected directory as `environment.extra.waylandRestoreTokenDir`. The task calls `WaylandPortalAccess.request`, the same operation as `spectre permissions request`. Approve **Share** + **Remember** / **Allow remote interaction** for the **whole screen**; the warmup writes `wayland-rd-restore-token-rd-monitor-embedded`. Later helper cells (`host-native-recording`) reuse that grant via the long-lived session. Window captures use GNOME Mutter window streams and open no dialog. Robot-backed cells stay under `xvfb-run`. Xvfb / macOS / Windows record hard `n/a`.
 - `pointer-move` ([#433](https://github.com/rock3r/spectre/issues/433) / [#435](https://github.com/rock3r/spectre/pull/435)): live hover via `moveTo(node)` / `moveBy` / `moveTo(x, y)` against the sample `scenario.hover` fixture, with JUnit XML fail-closed so assumption-skips cannot fake PASS. If `ComposeAutomator` ever loses both verbs the cell is hard `n/a` with reason. This is the in-process gap; CLI / MCP / agent verbs are a follow-up. Windows: `SampleAppFixture` keeps `exitProcessOnExit = false` so the validation worker can close the Gradle test-event socket after `exitApplication`. If a residual `#72` / `#500` `MessageIOException` still kills the worker, the smoke cell still **passes** when PointerMoveLive XML is green.
 
 Each release still needs delta cells based on `git log <previous-tag>..HEAD`. Add reusable delta
@@ -521,6 +526,8 @@ These cannot currently be made portable and fail-closed by the baseline runner:
   appended; a full token file path such as `…/wayland-rd-restore-token-rd-monitor-embedded` is
   used as is for that exact token and does not grow a second `-rd-monitor-embedded`. Other
   tokens, such as the ScreenCast `monitor-embedded` one, still get their own `-<key>` file.
+  The release harness honors the same directory variable instead of replacing it; when it is
+  blank or absent the harness uses `<out-dir>/wayland-restore-tokens`.
 - **Wayland Share dialog is easy to miss:** GNOME often logs `xdg-desktop-portal-gnome: Failed to
   associate portal window with parent window`, and the dialog can open behind other windows. The
   harness prints an `ACTION REQUIRED` banner before the warmup, and the helper writes a similar
@@ -684,6 +691,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\src\spectre\scripts\windo
 
 What it does (no second terminal), using the **same stable scenario IDs** as
 `scripts/release-smoke.py` / `scripts/smoke_lib.py`:
+
+All Gradle builds started by the script, including the fixture passed through packaged
+`spectre launch`, use `--no-daemon`. This prevents a daemon or Kotlin daemon from retaining the
+script's redirected stdout pipe after the report is complete; the harness does not stop unrelated
+daemons in the operator's Gradle user home.
 
 1. `preflight` + optional `check`
 2. `pointer-move` — live `moveTo`/`moveBy` hover (`*PointerMoveLive*`)

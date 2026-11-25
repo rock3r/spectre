@@ -716,6 +716,39 @@ class SmokeLibSchemaTest(unittest.TestCase):
             if old_display is not None:
                 os.environ["DISPLAY"] = old_display
 
+    def test_forced_xvfb_mode_clears_seat_environment_without_discovery(self):
+        env = {
+            "DISPLAY": ":0",
+            "WAYLAND_DISPLAY": "wayland-0",
+            "XAUTHORITY": "/tmp/auth",
+            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+            "XDG_RUNTIME_DIR": "/run/user/1000",
+            "PATH": "/usr/bin",
+        }
+
+        changed = smoke_lib.configure_linux_display_mode(
+            "xvfb", env, discover=lambda _env: self.fail("seat discovery must be skipped")
+        )
+
+        self.assertEqual("xvfb", changed)
+        self.assertEqual({"PATH": "/usr/bin"}, env)
+
+    def test_forced_seat_mode_runs_seat_discovery(self):
+        env = {"PATH": "/usr/bin"}
+
+        changed = smoke_lib.configure_linux_display_mode(
+            "seat", env, discover=lambda _env: {"DISPLAY": ":2"}
+        )
+
+        self.assertEqual("seat", changed)
+        self.assertEqual(":2", env["DISPLAY"])
+
+    def test_forced_seat_mode_fails_when_no_seat_can_be_found(self):
+        with self.assertRaisesRegex(RuntimeError, "real Linux seat"):
+            smoke_lib.configure_linux_display_mode(
+                "seat", {"PATH": "/usr/bin"}, discover=lambda _env: {}
+            )
+
     def test_gradle_ui_force_args_disable_cache_only_pass(self):
         args = smoke_lib.gradle_ui_force_args()
         self.assertIn("--rerun-tasks", args)
@@ -736,6 +769,8 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn("runLinuxX11RecordingSmoke", text)
         self.assertIn("runWaylandPortalSmoke", text)
         self.assertIn("portal-token-warmup", text)
+        self.assertIn('"--display-mode"', text)
+        self.assertIn("waylandRestoreTokenDir", text)
         self.assertIn("verifyMavenLocalPublication", text)
         self.assertIn("LaunchAndAttachIntegration", text)
         # #414: hard pass requires fixture e2e lifecycle gate, not tools/list alone.
@@ -1095,6 +1130,33 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
                 self.assertTrue(token_dir.is_dir())
             else:
                 self.assertEqual("0700", oct(token_dir.stat().st_mode)[-4:])
+
+    def test_prepare_linux_portal_token_env_reuses_inherited_token_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "build" / "smoke"
+            stored = root / "operator-tokens"
+            env = smoke_lib.prepare_linux_portal_token_env(
+                root,
+                out_dir,
+                environ={"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": str(stored)},
+            )
+
+            self.assertEqual(str(stored), env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"])
+            self.assertTrue(stored.is_dir())
+
+    def test_prepare_linux_portal_token_env_ignores_blank_inherited_token_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "build" / "smoke"
+            env = smoke_lib.prepare_linux_portal_token_env(
+                root, out_dir, environ={"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": "  "}
+            )
+
+            self.assertEqual(
+                str(out_dir / "wayland-restore-tokens"),
+                env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"],
+            )
 
     def test_prepare_linux_portal_token_env_replaces_the_private_helper_copy(self):
         with tempfile.TemporaryDirectory() as tmp:

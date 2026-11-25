@@ -54,6 +54,7 @@ from smoke_lib import (  # noqa: E402
     stop_session_helpers,
     build_report,
     collect_preflight,
+    configure_linux_display_mode,
     ensure_macos_screencapture_helper,
     fill_blocked_remaining,
     gradle_ui_force_args,
@@ -83,6 +84,7 @@ from smoke_lib import (  # noqa: E402
     wayland_portal_warmup_command,
     write_json_report,
     write_markdown_report,
+    wayland_restore_token_dir,
     xvfb_prefix,
 )
 
@@ -439,6 +441,12 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
     )
     parser.add_argument("--skip-check", action="store_true", help="Skip ./gradlew check")
     parser.add_argument(
+        "--display-mode",
+        choices=("auto", "xvfb", "seat"),
+        default="auto",
+        help="Linux display selection: discover automatically, force Xvfb, or force the real seat",
+    )
+    parser.add_argument(
         "--allow-dirty",
         action="store_true",
         help="Accepted for compatibility; dirty state is always recorded, never auto-failed",
@@ -491,9 +499,11 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
         # Non-login SSH PATH lacks ~/.cargo/bin; xvfb-run inherits that and
         # :recording:buildWaylandHelper then cannot start cargo.
         apply_linux_toolchain_path()
-        # SSH shells also lack the seat's WAYLAND_DISPLAY / DISPLAY / XAUTHORITY / D-Bus
-        # address, so portal detection and the seated JFrame would fail (#501).
-        seat_env = apply_linux_seat_env()
+        # Explicit Xvfb mode removes every inherited seat handle and skips discovery. Auto and
+        # seat mode retain #501 discovery for SSH shells that lack the seat environment; seat
+        # mode fails immediately when discovery finds no real display.
+        configure_linux_display_mode(args.display_mode)
+        seat_env = apply_linux_seat_env() if args.display_mode == "auto" else {}
         if seat_env:
             print(
                 "linux seat env: "
@@ -541,6 +551,12 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
             stop_failure_log = stop_log
 
     preflight = collect_preflight(ROOT, version=args.version, base=args.base)
+    if system == "Linux" and args.display_mode != "auto":
+        preflight.environment.display_mode = f"{args.display_mode}-forced"
+    if system == "Linux":
+        preflight.environment.extra["waylandRestoreTokenDir"] = str(
+            wayland_restore_token_dir(out_dir)
+        )
     results: list[ScenarioResult] = []
 
     if stop_failure_detail:
