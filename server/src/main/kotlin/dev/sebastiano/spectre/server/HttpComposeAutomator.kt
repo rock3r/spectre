@@ -245,8 +245,24 @@ internal constructor(private val baseUrl: String, security: SpectreHttpSecurity)
      * Fetches a screenshot from the remote automator and decodes it as a [BufferedImage]. Throws
      * [IllegalStateException] if the decoded PNG bytes can't be parsed.
      */
+    @Deprecated(
+        message = "Use screenshot(fullscreen = true) to explicitly opt into desktop capture",
+        level = DeprecationLevel.WARNING,
+    )
     public suspend fun screenshot(): BufferedImage {
-        val response = client.get("$baseUrl/screenshot").body<ScreenshotResponse>()
+        kotlinx.coroutines.currentCoroutineContext()
+        error(
+            "Unscoped screenshot is disabled; use screenshot(fullscreen = true) or screenshot(nodeKey)"
+        )
+    }
+
+    /** Captures the whole virtual desktop only when [fullscreen] is explicitly true. */
+    public suspend fun screenshot(fullscreen: Boolean): BufferedImage {
+        check(fullscreen) { "fullscreen must be true; use screenshot(nodeKey) for a node scope" }
+        val response =
+            getSuccess<ScreenshotResponse>("screenshot") {
+                parameter("fullscreen", fullscreen.toString())
+            }
         return decodePng(response)
     }
 
