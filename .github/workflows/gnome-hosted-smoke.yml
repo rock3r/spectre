@@ -49,6 +49,18 @@ jobs:
           persist-credentials: false
           path: fixture
 
+      - name: Apply pinned cloud candidate overlays
+        if: matrix.mode == 'capture' || matrix.mode == 'identity'
+        working-directory: smoke-tooling/.github/smoke-overlays
+        run: |
+          sha256sum -c SHA256SUMS
+          while read -r digest overlay; do
+            git -C "$GITHUB_WORKSPACE/candidate" apply --index "$PWD/$overlay"
+          done < SHA256SUMS
+          git -C "$GITHUB_WORKSPACE/candidate" diff --cached --check
+          git -C "$GITHUB_WORKSPACE/candidate" write-tree
+          git -C "$GITHUB_WORKSPACE/candidate" diff --cached --stat
+
       - name: Set up JDK 25
         uses: actions/setup-java@v5
         with:

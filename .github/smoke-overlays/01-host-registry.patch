@@ -1,0 +1,147 @@
+diff --git a/recording/native/linux/src/portal.rs b/recording/native/linux/src/portal.rs
+index 8a5c6511203b42af96f52ee1c6f04f4f91de8153..99002d00fdb154534fb9dea6e2614beceabbee04 100644
+--- a/recording/native/linux/src/portal.rs
++++ b/recording/native/linux/src/portal.rs
+@@ -88,70 +88,135 @@ pub fn consent_timeout() -> Duration {
+ pub fn consent_prompt_allowed() -> bool {
+     consent_prompt_allowed_from(std::env::var(CONSENT_PROMPT_ENV).ok().as_deref())
+ }
+ 
+ /// The error for a portal request Spectre may not open because [`CONSENT_PROMPT_ENV`] forbids a
+ /// dialog. `what` names the grant, `why` says why a dialog would be needed.
+ pub fn prompt_forbidden_error(what: &str, why: &str) -> anyhow::Error {
+     anyhow::Error::new(ConsentNotGranted(format!(
+         "{what}: {why}, and {CONSENT_PROMPT_ENV}=never forbids opening the Share dialog. \
+          Run `spectre permissions request` once while someone is at the seat."
+     )))
+ }
+ 
+ /// Install the `.desktop` and `Registry.Register` this connection before any portal method.
+ pub fn register_host_app(conn: &Connection, timeout: Duration) -> Result<()> {
+     crate::identity::install_desktop_file().context("installing Spectre .desktop for portal app_id")?;
+     let proxy = conn.with_proxy(PORTAL_BUS, PORTAL_PATH, timeout);
+     let options: PropMap = HashMap::new();
+     match proxy.method_call::<(), _, _, _>(
+         HOST_REGISTRY_INTERFACE,
+         "Register",
+         (crate::identity::SPECTRE_APP_ID.to_string(), options),
+     ) {
+         Ok(()) => Ok(()),
+         Err(e) => {
+-            let msg = e.to_string();
+-            if msg.contains("UnknownMethod")
+-                || msg.contains("unknown method")
+-                || msg.contains("does not exist")
+-            {
++            if is_optional_host_registry_error(&e) {
+                 eprintln!(
+                     "spectre-wayland-helper: org.freedesktop.host.portal.Registry.Register is \
+                      unavailable ({e:#}). Continuing without a host app_id — restore tokens \
+                      may not stick across processes on this portal version."
+                 );
+                 Ok(())
+-            } else if msg.to_lowercase().contains("already") {
+-                Ok(())
+             } else {
+                 Err(anyhow::Error::from(e).context("Registry.Register"))
+             }
+         }
+     }
+ }
+ 
++fn is_optional_host_registry_error(error: &dbus::Error) -> bool {
++    matches!(
++        error.name(),
++        Some(
++            "org.freedesktop.DBus.Error.UnknownInterface"
++                | "org.freedesktop.DBus.Error.UnknownMethod"
++        )
++    )
++}
++
++#[cfg(test)]
++mod host_registry_error_tests {
++    use super::*;
++    use std::process::Command;
++
++    #[test]
++    fn only_missing_dbus_api_errors_make_host_registration_optional() {
++        for name in [
++            "org.freedesktop.DBus.Error.UnknownInterface",
++            "org.freedesktop.DBus.Error.UnknownMethod",
++        ] {
++            let error = dbus::Error::new_custom(name, "deliberately misleading permission denied");
++            assert!(is_optional_host_registry_error(&error), "{name}");
++        }
++
++        for name in [
++            "org.freedesktop.DBus.Error.AccessDenied",
++            "org.freedesktop.DBus.Error.AuthFailed",
++            "org.freedesktop.DBus.Error.Failed",
++            "org.freedesktop.portal.Error.NotAllowed",
++        ] {
++            let error = dbus::Error::new_custom(name, "unknown method does not exist");
++            assert!(!is_optional_host_registry_error(&error), "{name}");
++        }
++    }
++
++    #[test]
++    fn private_bus_missing_interface_has_the_typed_optional_error() {
++        let output = Command::new("dbus-daemon")
++            .args(["--session", "--fork", "--print-address=1", "--print-pid=1"])
++            .output()
++            .expect("start private dbus-daemon");
++        assert!(output.status.success(), "{output:?}");
++        let stdout = String::from_utf8(output.stdout).expect("dbus-daemon output");
++        let mut lines = stdout.lines();
++        let address = lines.next().expect("private bus address");
++        let pid = lines.next().expect("private bus pid");
++
++        let conn = Connection::new_address(address).expect("connect to private bus");
++        let proxy = conn.with_proxy(
++            "org.freedesktop.DBus",
++            "/org/freedesktop/DBus",
++            Duration::from_secs(2),
++        );
++        let error = proxy
++            .method_call::<(), _, _, _>(HOST_REGISTRY_INTERFACE, "Register", ())
++            .expect_err("the private bus does not implement the host registry");
++        assert_eq!(
++            error.name(),
++            Some("org.freedesktop.DBus.Error.UnknownInterface")
++        );
++        assert!(is_optional_host_registry_error(&error));
++
++        let status = Command::new("kill")
++            .args(["-TERM", pid])
++            .status()
++            .expect("stop private dbus-daemon");
++        assert!(status.success());
++    }
++}
++
+ /// One stream returned by `Start.Response.streams[]`. Spectre uses the first (and on
+ /// `monitor` source type, only) stream.
+ #[derive(Debug, Clone)]
+ pub struct StreamMetadata {
+     pub node_id: u32,
+     pub position: (i32, i32),
+     pub size: (u32, u32),
+     pub source_type: Option<u32>,
+ }
+ 
+ pub const SOURCE_TYPE_WINDOW: u32 = 2;
+ 
+ /// Active screen-cast session. Owns the D-Bus connection (closing it tears the session down)
+ /// and the PipeWire FD (a Unix FD authorising a client to read the granted node).
+ pub struct ScreenCastSession {
+     pub session_handle: String,
+     pub stream: StreamMetadata,
+     /// The PipeWire FD as a raw int. Marked CLOEXEC by the kernel; the caller must clear
+     /// the flag with `fcntl(F_SETFD, ...)` before passing it to a subprocess via inheritance.
+     pub pipewire_fd: i32,
+     /// D-Bus connection that owns the portal session. Held alive by this struct so the
+     /// compositor doesn't drop the screen-cast on us mid-recording. Dropping the struct
+     /// closes the connection (RAII) which releases the session.
+     _connection: Connection,
+ }
