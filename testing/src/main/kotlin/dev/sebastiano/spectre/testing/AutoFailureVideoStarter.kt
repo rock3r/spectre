@@ -103,44 +103,15 @@ internal object AutoFailureVideoStarter : FailureVideoStarter {
 
 internal fun <T> routeX11SafeWindow(
     window: Window,
-    windows: List<Window> = Window.getWindows().toList(),
-    isLinuxX11: Boolean = isLinuxX11Session(),
     start: (TitledWindow) -> T,
 ): T {
     val titled =
         when (window) {
-            is Frame -> {
-                requireUnambiguousX11Title(window, window.title, windows, isLinuxX11)
-                window.asTitledWindow()
-            }
-            is Dialog -> {
-                requireUnambiguousX11Title(window, window.title, windows, isLinuxX11)
-                window.asTitledWindow()
-            }
+            is Frame -> window.asTitledWindow()
+            is Dialog -> window.asTitledWindow()
             else -> error("unsupported titled window ${window.javaClass.name}")
         }
     return start(titled)
-}
-
-internal fun requireUnambiguousX11Title(
-    requested: Window,
-    title: String?,
-    windows: List<Window> = Window.getWindows().toList(),
-    isLinuxX11: Boolean = isLinuxX11Session(),
-) {
-    if (!isLinuxX11) return
-    require(!title.isNullOrBlank()) {
-        "Linux X11 failure-video capture cannot establish a blank-titled AWT window identity"
-    }
-    val ambiguous = windows.any { candidate ->
-        candidate !== requested &&
-            candidate.isDisplayable &&
-            candidate.titleOrNull()?.contains(title) == true
-    }
-    check(!ambiguous) {
-        "Linux X11 failure-video capture cannot establish the requested AWT window identity: " +
-            "more than one displayable window matches title ${title.quote()}"
-    }
 }
 
 internal fun macOsBackendDisplayIndex(
@@ -196,17 +167,3 @@ internal fun displayRecordingRequest(
         )
     }
 }
-
-private fun Window.titleOrNull(): String? =
-    when (this) {
-        is Frame -> title
-        is Dialog -> title
-        else -> null
-    }
-
-private fun String.quote(): String = "\"$this\""
-
-private fun isLinuxX11Session(): Boolean =
-    System.getProperty("os.name").startsWith("Linux", ignoreCase = true) &&
-        System.getenv("WAYLAND_DISPLAY").isNullOrBlank() &&
-        !System.getenv("XDG_SESSION_TYPE").equals("wayland", ignoreCase = true)

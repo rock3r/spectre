@@ -4,6 +4,7 @@ import java.awt.Dialog
 import java.awt.Frame
 import java.awt.GraphicsConfiguration
 import java.awt.GraphicsDevice
+import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
 import java.awt.Transparency
 import java.awt.geom.AffineTransform
@@ -12,28 +13,22 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeFalse
 
 class AutoFailureVideoStarterRoutingTest {
     @Test
-    fun `X11 duplicate AWT titles fail before native title routing`() {
+    fun `X11 duplicate AWT titles reach owner and frame native routing`() {
+        assumeFalse(GraphicsEnvironment.isHeadless(), "requires a real AWT display")
         val requested = Frame("shared")
         val duplicate = Dialog(requested, "shared")
         try {
             requested.addNotify()
             duplicate.addNotify()
 
-            val error =
-                assertFailsWith<IllegalStateException> {
-                    routeX11SafeWindow(
-                        window = requested,
-                        windows = listOf(requested, duplicate),
-                        isLinuxX11 = true,
-                    ) {
-                        error("ambiguous window must not reach the recorder route")
-                    }
-                }
+            val routed = routeX11SafeWindow(window = requested) { window -> window }
 
-            assertTrue(error.message.orEmpty().contains("requested AWT window identity"))
+            assertEquals("shared", routed.title)
+            assertEquals(requested.bounds, routed.bounds)
         } finally {
             duplicate.dispose()
             requested.dispose()
@@ -42,20 +37,14 @@ class AutoFailureVideoStarterRoutingTest {
 
     @Test
     fun `X11 unique AWT title passes the real window guard`() {
+        assumeFalse(GraphicsEnvironment.isHeadless(), "requires a real AWT display")
         val requested = Frame("unique")
         val other = Frame("different")
         try {
             requested.addNotify()
             other.addNotify()
 
-            val routed =
-                routeX11SafeWindow(
-                    window = requested,
-                    windows = listOf(requested, other),
-                    isLinuxX11 = true,
-                ) { window ->
-                    window
-                }
+            val routed = routeX11SafeWindow(window = requested) { window -> window }
 
             assertEquals("unique", routed.title)
             assertEquals(requested.bounds, routed.bounds)

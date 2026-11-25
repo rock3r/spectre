@@ -13,6 +13,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.io.path.deleteIfExists
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -98,6 +99,29 @@ class WaylandPortalRecorderLifecycleTest {
             error.message!!.contains("did not emit a Started or Error event within 50ms"),
             "wrong error message: ${error.message}",
         )
+        assertReapedAfterFailedStart(fake)
+    }
+
+    @Test
+    fun `interrupted start force kills and reaps helper before returning`() {
+        val fake = FakeHelperProcess()
+        val recorder = recorder(fake)
+        val failure = AtomicReference<Throwable?>()
+        val starter = Thread {
+            try {
+                recorder.start(REGION, output(), OPTIONS)
+            } catch (throwable: Throwable) {
+                failure.set(throwable)
+            }
+        }
+
+        starter.start()
+        assertTrue(fake.awaitStartCommand(), "recorder did not send the helper Start command")
+        starter.interrupt()
+        starter.join(5_000)
+
+        assertEquals(false, starter.isAlive, "interrupted start must return after owned cleanup")
+        assertTrue(failure.get() is InterruptedException, "interrupt must remain observable")
         assertReapedAfterFailedStart(fake)
     }
 
@@ -265,6 +289,7 @@ private class FakeHelperProcess : Process() {
     private val terminated = AtomicBoolean(false)
     private val terminationLatch = CountDownLatch(1)
     private val stopCommandLatch = CountDownLatch(1)
+    private val startCommandLatch = CountDownLatch(1)
 
     val destroyForciblyCalled = AtomicBoolean(false)
     val waitForCalled = AtomicBoolean(false)
@@ -273,10 +298,14 @@ private class FakeHelperProcess : Process() {
         object : OutputStream() {
             override fun write(b: Int) {
                 helperStdin.write(b)
+                if (b == '\n'.code) startCommandLatch.countDown()
             }
 
             override fun write(b: ByteArray, off: Int, len: Int) {
                 helperStdin.write(b, off, len)
+                if (b.copyOfRange(off, off + len).contains('\n'.code.toByte())) {
+                    startCommandLatch.countDown()
+                }
             }
 
             override fun close() {
@@ -319,6 +348,9 @@ private class FakeHelperProcess : Process() {
         markTerminated()
         return this
     }
+
+    fun awaitStartCommand(): Boolean =
+        startCommandLatch.await(STOP_WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
 
     private fun markTerminated() {
         if (terminated.compareAndSet(false, true)) {

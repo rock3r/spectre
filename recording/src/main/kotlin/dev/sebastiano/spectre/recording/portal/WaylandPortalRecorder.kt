@@ -145,7 +145,22 @@ private constructor(
             throw launchFailure
         }
 
-        if (!startedLatch.await(startedTimeout, TimeUnit.MILLISECONDS)) {
+        val startCompleted =
+            try {
+                startedLatch.await(startedTimeout, TimeUnit.MILLISECONDS)
+            } catch (interrupted: InterruptedException) {
+                // Until Started is observed no RecordingHandle exists, so this invocation still
+                // owns the helper (and any encoder it may already have spawned). Reap it before
+                // cancellation escapes; otherwise the caller has no handle with which to stop it.
+                try {
+                    runCatching { process.outputStream.close() }
+                    killAndReapOrThrow(process, readerThread, interrupted)
+                } finally {
+                    Thread.currentThread().interrupt()
+                }
+                throw interrupted
+            }
+        if (!startCompleted) {
             val timeoutFailure =
                 IllegalStateException(
                     "spectre-wayland-helper did not emit a Started or Error event within " +
@@ -407,11 +422,10 @@ internal const val DEFAULT_PROCESS_EXIT_TIMEOUT_MS: Long = 5_000
 
 /**
  * Force-kills [process] and waits up to [FORCED_REAP_TIMEOUT_MS] for the OS to reap it, then joins
- * [readerThread] unbounded (the kill propagates EOF on the helper's stdout, so the reader
- * terminates promptly). Throws [IllegalStateException] if the process is still alive after the
- * forced-reap window — that should never happen with SIGKILL but is surfaced rather than silently
- * leaked. The error message uses [phase] (e.g. `"during a failed start"`, `"during stop"`) so
- * callers from different lifecycle stages produce accurate diagnostics.
+ * [readerThread] for the same bounded interval (the kill normally propagates EOF immediately).
+ * Throws [IllegalStateException] if either resource remains alive. The error message uses [phase]
+ * (e.g. `"during a failed start"`, `"during stop"`) so callers from different lifecycle stages
+ * produce accurate diagnostics.
  *
  * Shared by every `start()` and `stop()` failure path so the contract is consistent: when the
  * caller is about to throw, the helper process is reaped and the reader thread is gone before the
@@ -435,10 +449,25 @@ internal fun killAndReapOrThrow(
                 "spectre-wayland-helper did not exit within ${FORCED_REAP_TIMEOUT_MS}ms after " +
                     "SIGKILL $phase. Helper process may be leaked."
             )
-        if (pendingFailure != null) cleanupFailure.addSuppressed(pendingFailure)
+        if (pendingFailure != null) {
+            pendingFailure.addSuppressed(cleanupFailure)
+            throw pendingFailure
+        }
         throw cleanupFailure
     }
-    readerThread.join()
+    readerThread.join(FORCED_REAP_TIMEOUT_MS)
+    if (readerThread.isAlive) {
+        val cleanupFailure =
+            IllegalStateException(
+                "spectre-wayland-helper reader did not exit within " +
+                    "${FORCED_REAP_TIMEOUT_MS}ms after SIGKILL $phase."
+            )
+        if (pendingFailure != null) {
+            pendingFailure.addSuppressed(cleanupFailure)
+            throw pendingFailure
+        }
+        throw cleanupFailure
+    }
 }
 
 internal const val FORCED_REAP_TIMEOUT_MS: Long = 2_000

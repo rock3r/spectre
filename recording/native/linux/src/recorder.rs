@@ -20,6 +20,7 @@ use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 use std::io::BufRead;
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
@@ -143,11 +144,14 @@ fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
             .context("dup(stderr) so gst-launch stdout can redirect to helper stderr")?;
         OwnedFd::from_raw_fd(raw)
     };
-    let mut child = Command::new(&argv[0])
+    let mut encoder = Command::new(&argv[0]);
+    encoder
         .args(&argv[1..])
         .stdin(Stdio::null())
         .stdout(Stdio::from(gst_stdout_target))
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    guard_encoder_with_parent_lifetime(&mut encoder);
+    let mut child = encoder
         .spawn()
         .with_context(|| format!("spawning gst-launch from argv: {argv:?}"))?;
     let gst_pid = child.id();
@@ -268,6 +272,29 @@ fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
     Ok(())
 }
 
+/// Make the encoder a kernel-owned child of the helper for its entire lifetime.
+///
+/// `PR_SET_PDEATHSIG` alone has a small race: the helper can die after `fork()` but before the
+/// child calls `prctl()`. Comparing the post-`prctl` parent with the parent captured before spawn
+/// closes that window; the child exits before `exec()` if ownership was already lost.
+fn guard_encoder_with_parent_lifetime(command: &mut Command) {
+    let expected_parent = std::process::id() as nix::libc::pid_t;
+    unsafe {
+        command.pre_exec(move || {
+            if nix::libc::prctl(nix::libc::PR_SET_PDEATHSIG, nix::libc::SIGKILL) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if nix::libc::getppid() != expected_parent {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "recording helper exited while spawning encoder",
+                ));
+            }
+            Ok(())
+        });
+    }
+}
+
 fn run_x11(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
     if start.target == CaptureTarget::Region {
         crate::x11_window::validate_region_in_root(start.display_name.as_deref(), start.region)
@@ -354,11 +381,14 @@ fn run_gst_lifecycle(
             .context("dup(stderr) so gst-launch stdout can redirect to helper stderr")?;
         OwnedFd::from_raw_fd(raw)
     };
-    let mut child = Command::new(&argv[0])
+    let mut encoder = Command::new(&argv[0]);
+    encoder
         .args(&argv[1..])
         .stdin(Stdio::null())
         .stdout(Stdio::from(gst_stdout_target))
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    guard_encoder_with_parent_lifetime(&mut encoder);
+    let mut child = encoder
         .spawn()
         .with_context(|| format!("spawning gst-launch from argv: {argv:?}"))?;
     let gst_pid = child.id();
@@ -430,4 +460,86 @@ fn run_gst_lifecycle(
     let output_size_bytes = finalized_size(output.as_ref())?;
     let _ = events.send(Event::Stopped { output_size_bytes });
     Ok(())
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::guard_encoder_with_parent_lifetime;
+    use std::os::fd::FromRawFd;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn killing_helper_kills_and_reaps_real_encoder_child() {
+        unsafe {
+            assert_eq!(nix::libc::prctl(nix::libc::PR_SET_CHILD_SUBREAPER, 1), 0);
+        }
+        let mut pid_pipe = [0; 2];
+        assert_eq!(unsafe { nix::libc::pipe(pid_pipe.as_mut_ptr()) }, 0);
+
+        let helper_pid = unsafe { nix::libc::fork() };
+        assert!(helper_pid >= 0, "forking real helper fixture failed");
+        if helper_pid == 0 {
+            unsafe { nix::libc::close(pid_pipe[0]) };
+            let mut encoder = Command::new("sleep");
+            encoder
+                .arg("300")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            guard_encoder_with_parent_lifetime(&mut encoder);
+            let child = encoder.spawn().expect("spawning encoder stand-in");
+            let bytes = child.id().to_ne_bytes();
+            assert_eq!(
+                unsafe { nix::libc::write(pid_pipe[1], bytes.as_ptr().cast(), bytes.len(),) },
+                bytes.len() as isize
+            );
+            // Both processes now exist. The fixture deliberately never emits Started: this is
+            // the interrupted-start window exercised by the JVM cancellation path.
+            loop {
+                unsafe { nix::libc::pause() };
+            }
+        }
+
+        unsafe { nix::libc::close(pid_pipe[1]) };
+        let mut reader = unsafe { std::fs::File::from_raw_fd(pid_pipe[0]) };
+        let mut bytes = [0; std::mem::size_of::<u32>()];
+        std::io::Read::read_exact(&mut reader, &mut bytes).expect("reading encoder PID");
+        let encoder_pid = u32::from_ne_bytes(bytes) as nix::libc::pid_t;
+        assert_eq!(
+            unsafe { nix::libc::kill(helper_pid, nix::libc::SIGKILL) },
+            0
+        );
+
+        let mut helper_status = 0;
+        assert_eq!(
+            unsafe { nix::libc::waitpid(helper_pid, &mut helper_status, 0) },
+            helper_pid
+        );
+        assert!(std::process::ExitStatus::from_raw(helper_status).signal() == Some(9));
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let mut encoder_status = 0;
+            let reaped =
+                unsafe { nix::libc::waitpid(encoder_pid, &mut encoder_status, nix::libc::WNOHANG) };
+            if reaped == encoder_pid {
+                assert_eq!(
+                    std::process::ExitStatus::from_raw(encoder_status).signal(),
+                    Some(9)
+                );
+                break;
+            }
+            assert_eq!(
+                reaped, 0,
+                "encoder stand-in disappeared without being reaped"
+            );
+            assert!(
+                Instant::now() < deadline,
+                "encoder stand-in survived helper SIGKILL"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 }
