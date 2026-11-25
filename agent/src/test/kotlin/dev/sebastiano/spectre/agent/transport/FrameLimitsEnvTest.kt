@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -28,13 +29,15 @@ class FrameLimitsEnvTest {
     }
 
     @Test
-    fun `an unparseable override still boots on the default`() {
-        assertEquals("budget=$DEFAULT_MAX_FRAME_BYTES", runProbe(override = "banana"))
+    fun `an unparseable override fails process startup`() {
+        val error = assertFailsWith<AssertionError> { runProbe(override = "banana") }
+        assertTrue(error.message!!.contains(FrameLimits.ENV_VAR))
     }
 
     @Test
-    fun `an override above the ceiling is clamped rather than refused`() {
-        assertEquals("budget=$MAX_FRAME_BYTES_CEILING", runProbe(override = "1G"))
+    fun `an override above the ceiling fails process startup`() {
+        val error = assertFailsWith<AssertionError> { runProbe(override = "1G") }
+        assertTrue(error.message!!.contains(FrameLimits.ENV_VAR))
     }
 
     private fun runProbe(override: String?): String {

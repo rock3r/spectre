@@ -361,9 +361,8 @@ public object SpectreAgent {
      * parameter only ever carries a choice the *attacher* made deliberately — nothing on this side
      * infers it from a failure, a timeout, or a property the target happens to carry.
      *
-     * Targets predating `InputLeasePolicy` still fall back to the no-argument driver, which was
-     * never coordinated; the opt-out is a no-op there rather than an error, since it asks for what
-     * that target already does.
+     * Targets must provide both `InputLeasePolicy` and `RobotDriver.synthetic(policy)`. Older
+     * shapes fail rather than silently switching to real OS input or dropping the requested policy.
      */
     internal fun createCoordinatedRobotDriverOrLegacyFallback(
         classLoader: ClassLoader,
@@ -385,18 +384,20 @@ public object SpectreAgent {
                 )
             }
             invokeSyntheticFactory(robotDriverClass, policy)
-                ?: robotDriverClass.getDeclaredConstructor(policyClass).newInstance(policy)
-        } catch (_: ClassNotFoundException) {
-            invokeSyntheticFactory(robotDriverClass, policy = null)
-                ?: robotDriverClass.getDeclaredConstructor().newInstance()
-        } catch (_: NoSuchMethodException) {
-            invokeSyntheticFactory(robotDriverClass, policy = null)
-                ?: robotDriverClass.getDeclaredConstructor().newInstance()
+                ?: error(
+                    "Target Spectre core does not provide RobotDriver.synthetic(InputLeasePolicy); " +
+                        "refusing to substitute real OS input or discard InputLeasePolicy.$policyName"
+                )
+        } catch (ex: ClassNotFoundException) {
+            error(
+                "Target Spectre core does not provide InputLeasePolicy; refusing to substitute " +
+                    "the legacy real-OS RobotDriver (${ex.message})"
+            )
         }
 
     /**
-     * Prefers `RobotDriver.Companion.synthetic(policy)` / `synthetic()` so attach defaults to
-     * synthetic AWT input. Falls back to `null` when the target core predates those factories.
+     * Resolves `RobotDriver.Companion.synthetic(policy)`. Returns `null` when the target core
+     * predates that exact factory so the caller can reject the incompatible core.
      */
     private fun invokeSyntheticFactory(robotDriverClass: Class<*>, policy: Any?): Any? {
         val companionField =
@@ -409,7 +410,7 @@ public object SpectreAgent {
             }
             if (withPolicy != null) return withPolicy.invoke(companion, policy)
         }
-        return methods.firstOrNull { method -> method.parameterCount == 0 }?.invoke(companion)
+        return null
     }
 
     private fun invokeWindowsCountReflectively(automator: Any): Int {

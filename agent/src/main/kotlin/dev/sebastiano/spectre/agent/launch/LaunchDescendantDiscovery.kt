@@ -167,15 +167,14 @@ public object LaunchDescendantDiscovery {
             // Prefer client descendants over arbitrary daemon children so concurrent Gradle
             // apps with the same main class are not stolen from another launch.
             nameMatched
-                .filter { it.pid in clientDescendants }
-                .maxByOrNull { it.pid }
+                .singleOrNull { it.pid in clientDescendants }
                 ?.pid
                 ?.let {
                     return it
                 }
+            val daemonChildPids = childOfDaemon.map(JvmProcessInfo::pid).toSet()
             nameMatched
-                .filter { it.pid in childOfDaemon.map(JvmProcessInfo::pid).toSet() }
-                .maxByOrNull { it.pid }
+                .singleOrNull { it.pid in daemonChildPids }
                 ?.pid
                 ?.let {
                     return it
@@ -193,7 +192,7 @@ public object LaunchDescendantDiscovery {
         }
 
         // No name filter: only client descendants (never unfiltered daemon children).
-        return nonDaemon.filter { it.pid in clientDescendants }.maxByOrNull { it.pid }?.pid
+        return nonDaemon.singleOrNull { it.pid in clientDescendants }?.pid
             // No unfiltered daemon walk without nameFilter.
             ?: nativeFallback(clientPid, emptySet(), null)
     }
@@ -379,4 +378,7 @@ internal fun pickNativeTreeJvm(
     namedMatches: Collection<Long>,
     javaDescendants: Collection<Long>,
 ): Long? =
-    namedMatches.maxOrNull() ?: javaDescendants.singleOrNull().takeIf { nameFilter.isNullOrBlank() }
+    namedMatches.singleOrNull()
+        ?: javaDescendants.singleOrNull().takeIf {
+            nameFilter.isNullOrBlank() && namedMatches.isEmpty()
+        }

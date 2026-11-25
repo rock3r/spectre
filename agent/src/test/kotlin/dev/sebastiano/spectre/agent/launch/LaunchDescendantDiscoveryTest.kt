@@ -499,6 +499,17 @@ class LaunchDescendantDiscoveryTest {
     }
 
     @Test
+    fun `pickNativeTreeJvm rejects several command-line name matches`() {
+        assertNull(
+            pickNativeTreeJvm(
+                nameFilter = "ComposeFixtureMain",
+                namedMatches = listOf(12_672L, 12_900L),
+                javaDescendants = listOf(12_672L, 12_900L),
+            )
+        )
+    }
+
+    @Test
     fun `selectAppJvm still skips leftover when parent is unknown`() {
         val launchedAt = Instant.parse("2026-08-23T10:00:00Z")
         val clientPid = 12_300L
@@ -569,15 +580,11 @@ class LaunchDescendantDiscoveryTest {
     }
 
     @Test
-    fun `selectAppJvm falls back to the highest matching pid when start times are unknown`() {
-        // Fail-open: with no start times to compare, selection is exactly what it was before the
-        // gate — highest matching pid, leftover included. Worse than the gate, better than no
-        // discovery at all on a platform that hides process start times.
+    fun `selectAppJvm rejects ambiguous matches when start times are unknown`() {
+        // Missing start times cannot prove which matching JVM belongs to this launch. PID order is
+        // not identity, so keep polling rather than attaching to a leftover or sibling launch.
         val scenario = GradleLaunchScenario(startTimesKnown = false)
-        assertEquals(
-            scenario.leftoverFixturePid,
-            scenario.select(nameFilter = "ComposeFixtureMain"),
-        )
+        assertNull(scenario.select(nameFilter = "ComposeFixtureMain"))
     }
 
     /**

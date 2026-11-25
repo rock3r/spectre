@@ -75,9 +75,10 @@ quietly stopping policing the desktop. When the coordinator itself is broken and
 that leaves you with no way forward, there is one deliberate opt-out; see
 [When the coordinator cannot be reached](input-coordination.md#coordinator-unreachable).
 
-The exception is a target whose preinstalled Spectre core predates `InputLeasePolicy`. The agent
-falls back to the legacy no-argument driver there, which coordinates nothing — see
-[Attach](agent.md). Injected targets and current-core targets are unaffected.
+A target whose preinstalled Spectre core predates `InputLeasePolicy` or
+`RobotDriver.synthetic(policy)` is incompatible with current attach and fails with the missing
+capability named. The agent never silently selects the legacy real-OS driver or discards the lease
+policy — see [Attach](agent.md).
 
 ## Mouse: clicks and drags
 
