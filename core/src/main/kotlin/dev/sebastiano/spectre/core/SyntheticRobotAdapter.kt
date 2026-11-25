@@ -263,7 +263,21 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
 
     private fun dispatchMouse(type: Int, button: Int, modifiers: Int) {
         runOnEdt {
+            // A successful press owns the rest of its gesture, and a successful release owns the
+            // trailing CLICKED event. A handler may hide its window or open a modal while that
+            // event is being dispatched; real AWT then drops the remaining event(s) rather than
+            // reporting that the already-delivered gesture failed. Capture this before
+            // mouseTarget advances the press/release state.
+            val continuesDeliveredGesture =
+                when (type) {
+                    MouseEvent.MOUSE_RELEASED -> grabTarget != null
+                    MouseEvent.MOUSE_CLICKED -> releaseTarget != null
+                    else -> false
+                }
             val targetComponent = mouseTarget(type) ?: undeliverablePointer(mouseAction(type))
+            if (continuesDeliveredGesture && !targetComponent.canReceiveMouseInput()) {
+                return@runOnEdt
+            }
             check(targetComponent.canReceiveMouseInput()) {
                 "Cannot deliver synthetic ${mouseAction(type)} input: the intended recipient is " +
                     "not showing or is modal-blocked."

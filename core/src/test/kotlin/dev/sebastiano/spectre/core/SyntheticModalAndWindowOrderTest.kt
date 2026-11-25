@@ -3,7 +3,6 @@ package dev.sebastiano.spectre.core
 import androidx.compose.ui.awt.ComposePanel
 import java.awt.AWTEvent
 import java.awt.BorderLayout
-import java.awt.Component
 import java.awt.Dialog
 import java.awt.Dimension
 import java.awt.Toolkit
@@ -13,6 +12,7 @@ import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
@@ -23,9 +23,8 @@ import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import kotlin.concurrent.thread
 import kotlin.test.Test
-import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -84,7 +83,9 @@ class SyntheticModalAndWindowOrderTest {
             val driver = RobotDriver.synthetic(root)
 
             val (rootX, rootY) = centerOnScreen(rootTarget)
-            runOffTestThread { runBlocking { driver.click(rootX, rootY) } }
+            assertSyntheticRejection {
+                runOffTestThread { runBlocking { driver.click(rootX, rootY) } }
+            }
             val (dialogX, dialogY) = centerOnScreen(dialogTarget)
             runOffTestThread { runBlocking { driver.click(dialogX, dialogY) } }
             drainEdt()
@@ -101,7 +102,7 @@ class SyntheticModalAndWindowOrderTest {
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
-    fun `an active modal dialog receives keys when AWT has no focus owner`() {
+    fun `an active modal dialog rejects keys when AWT has no focus owner`() {
         assumeLiveAwtAvailable()
         val recorder = GlobalKeyRecorder().also { it.install() }
         try {
@@ -109,28 +110,23 @@ class SyntheticModalAndWindowOrderTest {
                 showFrame(JPanel().apply { preferredSize = PANEL_SIZE }) {
                     focusableWindowState = false
                 }
-            val dialog =
-                showModalDialog(
-                    owner = root,
-                    content = JPanel().apply { preferredSize = PANEL_SIZE },
-                    x = DIALOG_X,
-                    focusable = false,
-                )
+            showModalDialog(
+                owner = root,
+                content = JPanel().apply { preferredSize = PANEL_SIZE },
+                x = DIALOG_X,
+                focusable = false,
+            )
 
-            runOffTestThread { runBlocking { RobotDriver.synthetic(root).pressKey(KeyEvent.VK_A) } }
+            assertSyntheticRejection {
+                runOffTestThread {
+                    runBlocking { RobotDriver.synthetic(root).pressKey(KeyEvent.VK_A) }
+                }
+            }
             drainEdt()
 
-            val pressed =
-                recorder.events.firstOrNull {
-                    it.id == KeyEvent.KEY_PRESSED && it.keyCode == KeyEvent.VK_A
-                }
-            assertNotNull(pressed, "expected a KEY_PRESSED for VK_A")
-            val source = pressed.source as Component
-            val sourceWindow = source as? Window ?: SwingUtilities.getWindowAncestor(source)
-            assertEquals(
-                dialog,
-                sourceWindow,
-                "keys must go to the active modal dialog, not the window it blocks; source=$source",
+            assertTrue(
+                recorder.events.none { it.keyCode == KeyEvent.VK_A },
+                "a key without a focused key-listening recipient must not be delivered",
             )
         } finally {
             recorder.uninstall()
@@ -190,7 +186,9 @@ class SyntheticModalAndWindowOrderTest {
             val (earlierX, earlierY) = centerOnScreen(earlierTarget)
             runOffTestThread { runBlocking { driver.click(earlierX, earlierY) } }
             val (newerX, newerY) = centerOnScreen(newerTarget)
-            runOffTestThread { runBlocking { driver.click(newerX, newerY) } }
+            assertSyntheticRejection {
+                runOffTestThread { runBlocking { driver.click(newerX, newerY) } }
+            }
             drainEdt()
 
             assertTrue(
@@ -318,6 +316,7 @@ class SyntheticModalAndWindowOrderTest {
         val opener =
             JPanel().apply {
                 preferredSize = PANEL_SIZE
+                isFocusable = true
                 addKeyListener(
                     object : KeyAdapter() {
                         override fun keyPressed(e: KeyEvent) {
@@ -334,16 +333,11 @@ class SyntheticModalAndWindowOrderTest {
                 )
             }
         try {
-            val root = showFrame(opener) { focusableWindowState = false }
+            val root = showFrame(opener)
+            focusOnEdt(root, opener)
             val driver = RobotDriver.synthetic(root)
-            val (cx, cy) = centerOnScreen(opener)
 
-            runOffTestThread {
-                runBlocking {
-                    driver.moveTo(cx, cy)
-                    driver.pressKey(KeyEvent.VK_ENTER)
-                }
-            }
+            runOffTestThread { runBlocking { driver.pressKey(KeyEvent.VK_ENTER) } }
             waitUntil("modal dialog showing") { dialog.get()?.isShowing == true }
         } finally {
             disposeAll()
@@ -444,6 +438,30 @@ class SyntheticModalAndWindowOrderTest {
         }
 
     private fun JPanel.windowAncestor(): Window? = SwingUtilities.getWindowAncestor(this)
+
+    private fun assertSyntheticRejection(block: () -> Unit) {
+        val failure = assertFailsWith<InvocationTargetException>(block = block)
+        assertTrue(
+            failure.targetException is IllegalStateException,
+            "expected synthetic input rejection, got ${failure.targetException}",
+        )
+    }
+
+    private fun focusOnEdt(frame: JFrame, target: JPanel) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(CALL_TIMEOUT_SECONDS)
+        while (System.nanoTime() < deadline && frame.focusOwner !== target) {
+            SwingUtilities.invokeAndWait {
+                frame.toFront()
+                frame.requestFocus()
+                target.requestFocus()
+            }
+            drainEdt()
+            if (frame.focusOwner !== target) Thread.sleep(POLL_INTERVAL_MS)
+        }
+        check(frame.focusOwner === target) {
+            "the headed environment did not grant the enabled, showing key listener AWT focus"
+        }
+    }
 
     private fun centerOnScreen(target: JPanel): Pair<Int, Int> {
         var center = 0 to 0

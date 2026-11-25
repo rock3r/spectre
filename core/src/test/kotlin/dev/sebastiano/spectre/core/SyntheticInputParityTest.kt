@@ -412,12 +412,16 @@ class SyntheticInputParityTest {
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `pasteText through the synthetic driver isolates and restores the fake clipboard`() {
         assumeLiveAwtAvailable()
-        val target = JPanel().apply { preferredSize = Dimension(FRAME_SIZE_PX, FRAME_SIZE_PX) }
+        val events: MutableList<KeyEvent> = CopyOnWriteArrayList()
+        val target =
+            JPanel().apply {
+                preferredSize = Dimension(FRAME_SIZE_PX, FRAME_SIZE_PX)
+                isFocusable = true
+                addKeyListener(KeyEventRecorder(events))
+            }
         val frame = showFrameOnEdt(target)
-        // See modifier test: a global AWT key listener avoids brittle focus-transfer assumptions
-        // for tests that only need to observe dispatched keystrokes.
-        val recorder = GlobalKeyEventRecorder().also { it.install() }
         try {
+            focusOnEdt(frame.frame, target)
             val fakeClipboard = InMemoryClipboardAdapter(initial = "existing")
             // Build a RobotDriver manually so we can plug in the fake clipboard instead of
             // SystemClipboardAdapter. This is the canonical isolation strategy — no real
@@ -443,10 +447,9 @@ class SyntheticInputParityTest {
             val expectedMask =
                 if (detectMacOs()) KeyEvent.META_DOWN_MASK else KeyEvent.CTRL_DOWN_MASK
             val expectedModifierKey = if (detectMacOs()) KeyEvent.VK_META else KeyEvent.VK_CONTROL
-            val vPressed =
-                recorder.events.firstOrNull {
-                    it.id == KeyEvent.KEY_PRESSED && it.keyCode == KeyEvent.VK_V
-                }
+            val vPressed = events.firstOrNull {
+                it.id == KeyEvent.KEY_PRESSED && it.keyCode == KeyEvent.VK_V
+            }
             assertNotNull(vPressed, "expected a KEY_PRESSED for VK_V")
             assertTrue(
                 vPressed.modifiersEx and expectedMask != 0,
@@ -455,18 +458,16 @@ class SyntheticInputParityTest {
             )
             // Sanity: the modifier was pressed earlier in the sequence (so the mask above did
             // not sneak in from leftover state).
-            val modifierPressedIndex =
-                recorder.events.indexOfFirst {
-                    it.id == KeyEvent.KEY_PRESSED && it.keyCode == expectedModifierKey
-                }
-            val vPressedIndex = recorder.events.indexOf(vPressed)
+            val modifierPressedIndex = events.indexOfFirst {
+                it.id == KeyEvent.KEY_PRESSED && it.keyCode == expectedModifierKey
+            }
+            val vPressedIndex = events.indexOf(vPressed)
             assertTrue(
                 modifierPressedIndex in 0 until vPressedIndex,
                 "expected modifier (keyCode=$expectedModifierKey) KEY_PRESSED before VK_V; " +
                     "modifierPressedIndex=$modifierPressedIndex vPressedIndex=$vPressedIndex",
             )
         } finally {
-            recorder.uninstall()
             disposeFrame(frame.frame)
         }
     }

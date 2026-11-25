@@ -8,6 +8,7 @@ import java.awt.Robot
 import java.awt.Toolkit
 import java.awt.event.InputEvent
 import java.awt.event.MouseEvent
+import java.awt.event.MouseMotionAdapter
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -73,7 +74,7 @@ class AwtInputDeliveryWitnessTest {
 
     @Test
     fun `listener accepts only a primary press at the requested visible host and position`() {
-        assumeTrue(!java.awt.GraphicsEnvironment.isHeadless(), "requires a headed AWT display")
+        assumeLiveAwtAvailable()
         val frame = JFrame("input witness fixture")
         val target = JPanel()
         val child = JPanel()
@@ -106,24 +107,16 @@ class AwtInputDeliveryWitnessTest {
 
     @Test
     fun `real wheel input is delivered as a targeted AWT wheel event`() {
-        assumeTrue(!java.awt.GraphicsEnvironment.isHeadless(), "requires a headed AWT display")
+        assumeLiveAwtAvailable()
         val osName = System.getProperty("os.name").orEmpty()
         assumeTrue(
             osName.contains("linux", ignoreCase = true) ||
                 osName.contains("mac", ignoreCase = true),
             "wheel backend fixture is for Linux and macOS",
         )
-        val wheelDeliveries = AtomicInteger()
-        val wheelPositions = ConcurrentLinkedQueue<Point>()
-        val wheelDelivered = CountDownLatch(1)
         val (frame, target) =
             onEdt {
                 val target = JPanel()
-                target.addMouseWheelListener { event ->
-                    wheelDeliveries.incrementAndGet()
-                    wheelPositions.add(Point(event.xOnScreen, event.yOnScreen))
-                    wheelDelivered.countDown()
-                }
                 val frame = JFrame("wheel witness fixture")
                 frame.contentPane.add(target)
                 frame.setSize(160, 120)
@@ -141,6 +134,19 @@ class AwtInputDeliveryWitnessTest {
                     Point(it.x + target.width / 2, it.y + target.height / 2)
                 }
             }
+            val robot = Robot()
+            establishNativePointerReadiness(frame, target, expected, robot)
+
+            val wheelDeliveries = AtomicInteger()
+            val wheelPositions = ConcurrentLinkedQueue<Point>()
+            val wheelDelivered = CountDownLatch(1)
+            onEdt {
+                target.addMouseWheelListener { event ->
+                    wheelDeliveries.incrementAndGet()
+                    wheelPositions.add(Point(event.xOnScreen, event.yOnScreen))
+                    wheelDelivered.countDown()
+                }
+            }
             val observation =
                 AwtInputDeliveryWitness.attachListener(
                     DispatchedInput.Wheel,
@@ -150,14 +156,7 @@ class AwtInputDeliveryWitnessTest {
                 )
             assumeTrue(observation != null, "toolkit refused the AWT listener")
             checkNotNull(observation).use { watch ->
-                val robot = Robot()
-                robot.mouseMove(expected.x, expected.y)
-                robot.waitForIdle()
-                val actualPointer = MouseInfo.getPointerInfo()?.location
-                assertTrue(
-                    actualPointer != null && actualPointer.isNear(expected),
-                    wheelDiagnostic(expected, actualPointer, wheelPositions, wheelDeliveries.get()),
-                )
+                assertTrue(wheelDeliveries.get() == 0, "wheel witness must start empty")
 
                 robot.mouseWheel(1)
                 val targetReceived =
@@ -167,8 +166,8 @@ class AwtInputDeliveryWitnessTest {
                     targetReceived && wheelDeliveries.get() > 0,
                     "pointed-at target did not receive the commanded real wheel; " +
                         wheelDiagnostic(
+                            frame,
                             expected,
-                            actualPointer,
                             wheelPositions,
                             wheelDeliveries.get(),
                         ),
@@ -177,8 +176,8 @@ class AwtInputDeliveryWitnessTest {
                     witnessed,
                     "production witness did not report the real target wheel delivery; " +
                         wheelDiagnostic(
+                            frame,
                             expected,
-                            actualPointer,
                             wheelPositions,
                             wheelDeliveries.get(),
                         ),
@@ -231,14 +230,61 @@ class AwtInputDeliveryWitnessTest {
         abs(x - expected.x) <= INPUT_POINT_TOLERANCE_PX &&
             abs(y - expected.y) <= INPUT_POINT_TOLERANCE_PX
 
-    private fun wheelDiagnostic(
+    private fun establishNativePointerReadiness(
+        frame: JFrame,
+        target: JPanel,
         expected: Point,
-        actualPointer: Point?,
-        wheelPositions: Collection<Point>,
+        robot: Robot,
+    ) {
+        val motionPositions = ConcurrentLinkedQueue<Point>()
+        val arrivedAtExpected = CountDownLatch(1)
+        val listener =
+            object : MouseMotionAdapter() {
+                override fun mouseMoved(event: MouseEvent) {
+                    val position = Point(event.xOnScreen, event.yOnScreen)
+                    motionPositions.add(position)
+                    if (position.isNear(expected)) arrivedAtExpected.countDown()
+                }
+            }
+        val approach = onEdt {
+            target.addMouseMotionListener(listener)
+            target.locationOnScreen.let { Point(it.x + target.width / 4, it.y + target.height / 2) }
+        }
+        check(!approach.isNear(expected)) { "pointer approach must be distinct from target center" }
+
+        try {
+            robot.mouseMove(approach.x, approach.y)
+            robot.waitForIdle()
+            robot.mouseMove(expected.x, expected.y)
+            robot.waitForIdle()
+            val ready = arrivedAtExpected.await(INPUT_WITNESS_WAIT_MS, TimeUnit.MILLISECONDS)
+            if (!ready) {
+                assertTrue(
+                    ready,
+                    "target did not observe native pointer motion at its center; " +
+                        wheelDiagnostic(frame, expected, motionPositions, deliveries = 0),
+                )
+            }
+        } finally {
+            onEdt { target.removeMouseMotionListener(listener) }
+        }
+    }
+
+    private fun wheelDiagnostic(
+        frame: JFrame,
+        expected: Point,
+        observedPositions: Collection<Point>,
         deliveries: Int,
-    ): String =
-        "expected point=$expected, actual pointer=$actualPointer, " +
-            "observed wheel positions=${wheelPositions.toList()}, target deliveries=$deliveries"
+    ): String {
+        val actualPointer = MouseInfo.getPointerInfo()?.location
+        val focus = onEdt {
+            val owner = frame.focusOwner
+            "window focused=${frame.isFocused}, window active=${frame.isActive}, " +
+                "focus owner=${owner?.javaClass?.name}:${owner?.name}"
+        }
+        return "expected point=$expected, actual pointer=$actualPointer, $focus, " +
+            "observed positions=${observedPositions.toList()}, target deliveries=$deliveries"
+    }
 
     private fun <T> onEdt(action: () -> T): T {
         if (SwingUtilities.isEventDispatchThread()) return action()
