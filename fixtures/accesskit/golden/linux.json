@@ -1,0 +1,10 @@
+{
+  "windowRole": "frame",
+  "buttonRole": "push button",
+  "checkboxRole": "check box",
+  "textRole": "entry",
+  "textValue": null,
+  "popoverRole": "dialog",
+  "checkedState": "checked",
+  "disabledState": "disabled"
+}
