@@ -25,9 +25,11 @@ jobs:
       - name: Verify and apply the cloud candidate
         shell: bash
         run: |
-          echo 'd879ecf7525c170ff05aa877d290d073789dba40c1781e1b3f3bc37c55c1f861  ../diagnostics/marker-verification.patch' | sha256sum --check
-          git -c core.autocrlf=false apply --index ../diagnostics/marker-verification.patch
+          git -C ../diagnostics show HEAD:marker-verification.patch > ../marker-exact.diff
+          echo 'd879ecf7525c170ff05aa877d290d073789dba40c1781e1b3f3bc37c55c1f861  ../marker-exact.diff' | sha256sum --check
+          git apply --cached ../marker-exact.diff
           test "$(git write-tree)" = e76928ffb22c7a14da53728e61ae4787ecb52133
+          git checkout-index --force --all
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
