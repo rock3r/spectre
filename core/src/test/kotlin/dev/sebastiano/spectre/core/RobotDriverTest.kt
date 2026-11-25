@@ -160,7 +160,7 @@ class RobotDriverTest {
     fun `typeText with Caps Lock on compensates letter Shift and does not mutate lock`() = runTest {
         // #396: ambient Caps Lock must not invert requested letter case. Spectre does not write
         // locking-key state (unreliable across JVMs); it inverts Shift on letters instead.
-        val robot = RecordingRobotAdapter(initialCapsLockOn = true)
+        val robot = RecordingRobotAdapter(initialCapsLockOn = true, deliversRealOsInput = true)
         val driver = RobotDriver(robot, RecordingClipboardAdapter())
 
         driver.typeText("xY")
@@ -920,6 +920,7 @@ private class RecordingRobotAdapter(
     initialCapsLockOn: Boolean = false,
     private val allowCapsLockWrite: Boolean = true,
     private val platformCapture: Boolean = false,
+    override val deliversRealOsInput: Boolean = false,
 ) : RobotAdapter {
     override val gatesMacOsScreenRecordingTcc: Boolean
         get() = platformCapture

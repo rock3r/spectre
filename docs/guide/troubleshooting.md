@@ -213,6 +213,14 @@ using it.
 
 `typeText` sends key press and release events without using the clipboard.
 It supports ASCII letters, digits, space, newline, and common US keyboard punctuation.
+For real OS input, text containing letters fails before dispatch if Caps Lock cannot be read;
+digits and punctuation do not require that check, and synthetic input has deterministic case.
+`clearAndTypeText` performs the same validation before deleting the existing value.
+It also refuses before dispatching any key when the backend cannot guarantee a reliable
+select-all chord. This currently applies to the Wayland portal and seat-socket helpers, whose
+separate key messages may drop Ctrl before A; the existing field contents remain untouched. Use an
+explicit field-state API where available, or select and edit through a backend that preserves
+modifier state. Other Wayland input operations remain available.
 For Unicode or large text, `pasteText` writes to the clipboard. It sends
 <kbd>Cmd</kbd>+<kbd>V</kbd> on macOS or <kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere.
 It waits for the paste, then restores the previous clipboard content.
@@ -241,8 +249,10 @@ Check these possible failures:
   Spectre polls the clipboard until it reads back the requested text before
   dispatching <kbd>Cmd</kbd>+<kbd>V</kbd>. If the environment has a clipboard
   manager or another process actively rewriting the clipboard, the poll can time
-  out and the paste lands stale. Disable clipboard managers in the test
-  environment.
+  out and Spectre throws before dispatching the paste shortcut. Disable clipboard managers in the
+  test environment. Clipboard save, read, and restore errors are also reported; when the paste
+  already failed, a restore error is attached as a suppressed exception so the primary failure is
+  preserved.
 - **`RobotDriver.headless()` throws on `typeText` and `pasteText`.** Every input,
   clipboard, and screenshot call throws `UnsupportedOperationException`.
   See [Driving input](interactions.md#real-vs-synthetic-input). For input, use

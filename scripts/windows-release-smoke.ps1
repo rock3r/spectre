@@ -205,7 +205,7 @@ function Invoke-Gradle {
     )
     $gradlew = Join-Path $RepoRoot "gradlew.bat"
     if (-not (Test-Path -LiteralPath $gradlew)) { throw "gradlew.bat not found at $gradlew" }
-    $allArgs = [string[]](@($GradleArgs) + @("--console=plain"))
+    $allArgs = [string[]](@($GradleArgs) + @("--no-daemon", "--console=plain"))
     Invoke-Native -FilePath $gradlew -Arguments $allArgs -WorkingDirectory $RepoRoot -TimeoutSeconds $TimeoutSeconds -LogName $LogName
 }
 
@@ -1059,7 +1059,8 @@ try {
                 "--app-name", "ComposeFixtureMain",
                 "--",
                 $gradlew,
-                ":agent-test-fixture:run"
+                ":agent-test-fixture:run",
+                "--no-daemon"
             )
         }
         [void]$results.Add($step)
