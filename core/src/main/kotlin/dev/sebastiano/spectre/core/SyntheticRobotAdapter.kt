@@ -34,7 +34,8 @@ import javax.swing.SwingUtilities
  * driver. Where windows overlap, the newer one wins, and while a modal dialog is showing, the
  * windows it blocks get no synthetic input, as with real input. A null [rootWindow] is the
  * no-window factory used by `RobotDriver.synthetic()`: hit testing still walks the live AWT
- * hierarchy, and key events fall back to the first showing window.
+ * hierarchy. Key events require either an eligible AWT focus owner or a showing Compose surface
+ * whose semantics tree contains the focused node.
  *
  * Clipboard access is left as the system clipboard — paste-based [RobotDriver.pasteText] still
  * works with synthetic Cmd/Ctrl+V keystrokes.
@@ -94,6 +95,11 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
     }
 
     override fun mousePress(buttons: Int) {
+        val previousPressedButtons = pressedButtons
+        val previousLastClickX = lastClickX
+        val previousLastClickY = lastClickY
+        val previousLastClickTimeMs = lastClickTimeMs
+        val previousLastClickCount = lastClickCount
         pressedButtons = pressedButtons or buttons
         pressX = lastX
         pressY = lastY
@@ -115,11 +121,25 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
         lastClickX = lastX
         lastClickY = lastY
         lastClickTimeMs = now
-        dispatchMouse(
-            type = MouseEvent.MOUSE_PRESSED,
-            button = buttonNumber(buttons),
-            modifiers = mouseModifiers(),
-        )
+        var acquired = false
+        try {
+            dispatchMouse(
+                type = MouseEvent.MOUSE_PRESSED,
+                button = buttonNumber(buttons),
+                modifiers = mouseModifiers(),
+            )
+            acquired = true
+        } finally {
+            if (!acquired) {
+                pressedButtons = previousPressedButtons
+                grabTarget = null
+                releaseTarget = null
+                lastClickX = previousLastClickX
+                lastClickY = previousLastClickY
+                lastClickTimeMs = previousLastClickTimeMs
+                lastClickCount = previousLastClickCount
+            }
+        }
     }
 
     override fun mouseRelease(buttons: Int) {
@@ -127,23 +147,24 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
         // matches AWT's wire-protocol convention.
         val released = buttons
         pressedButtons = pressedButtons and released.inv()
-        dispatchMouse(
-            type = MouseEvent.MOUSE_RELEASED,
-            button = buttonNumber(released),
-            modifiers = mouseModifiers(),
-        )
-        // MOUSE_CLICKED only fires when the pointer didn't move between press and release —
-        // otherwise this is a drag and AWT suppresses the click. Skipping the synthetic click
-        // here is what stops `RobotDriver.swipe(...)` from triggering a spurious click at its
-        // end target.
-        if (lastX == pressX && lastY == pressY) {
+        try {
             dispatchMouse(
-                type = MouseEvent.MOUSE_CLICKED,
+                type = MouseEvent.MOUSE_RELEASED,
                 button = buttonNumber(released),
                 modifiers = mouseModifiers(),
             )
+            // MOUSE_CLICKED only fires when the pointer didn't move between press and release.
+            if (lastX == pressX && lastY == pressY) {
+                dispatchMouse(
+                    type = MouseEvent.MOUSE_CLICKED,
+                    button = buttonNumber(released),
+                    modifiers = mouseModifiers(),
+                )
+            }
+        } finally {
+            grabTarget = null
+            releaseTarget = null
         }
-        releaseTarget = null
     }
 
     private fun mouseModifiers(): Int = pressedButtons or heldKeyModifiers
@@ -170,34 +191,44 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
         }
 
     override fun mouseWheel(wheelClicks: Int) {
-        val window = findWindowAt(lastX, lastY) ?: return
-        val target = findDeepestComponentAt(window, lastX, lastY) ?: window
-        val origin = target.locationOnScreen
-        // AWT's getUnitsToScroll() returns scrollAmount * wheelRotation. To keep that product
-        // equal to the signed `wheelClicks` contract (and avoid the wheelClicks² blow-up that
-        // both Codex and Bugbot flagged on the cb5d560 review), keep scrollAmount fixed at 1
-        // unit per click and put the signed click count in wheelRotation.
-        val event =
-            MouseWheelEvent(
-                target,
-                MouseEvent.MOUSE_WHEEL,
-                System.currentTimeMillis(),
-                mouseModifiers(),
-                lastX - origin.x,
-                lastY - origin.y,
-                0, // clickCount
-                false, // popupTrigger
-                MouseWheelEvent.WHEEL_UNIT_SCROLL,
-                1, // scrollAmount: one unit per click (matches OS wheel behaviour)
-                wheelClicks, // wheelRotation: signed, positive away from the user
-            )
-        runOnEdt { target.dispatchEvent(event) }
+        runOnEdt {
+            val window = findWindowAt(lastX, lastY) ?: undeliverablePointer("mouse wheel")
+            val target = findDeepestComponentAt(window, lastX, lastY) ?: window
+            check(target.canReceiveMouseInput()) {
+                "Cannot deliver synthetic mouse wheel input: the intended recipient is not " +
+                    "showing or is modal-blocked."
+            }
+            val origin = target.locationOnScreen
+            val event =
+                MouseWheelEvent(
+                    target,
+                    MouseEvent.MOUSE_WHEEL,
+                    System.currentTimeMillis(),
+                    mouseModifiers(),
+                    lastX - origin.x,
+                    lastY - origin.y,
+                    0,
+                    false,
+                    MouseWheelEvent.WHEEL_UNIT_SCROLL,
+                    1,
+                    wheelClicks,
+                )
+            target.dispatchEvent(event)
+        }
     }
 
     override fun keyPress(keyCode: Int) {
         val modifierBit = modifierMaskFor(keyCode)
         if (modifierBit != 0) heldKeyModifiers = heldKeyModifiers or modifierBit
-        dispatchKey(type = KeyEvent.KEY_PRESSED, keyCode = keyCode)
+        var delivered = false
+        try {
+            dispatchKey(type = KeyEvent.KEY_PRESSED, keyCode = keyCode)
+            delivered = true
+        } finally {
+            if (!delivered && modifierBit != 0) {
+                heldKeyModifiers = heldKeyModifiers and modifierBit.inv()
+            }
+        }
         // Real AWT emits KEY_TYPED after KEY_PRESSED for printable keys (with keyCode=UNDEFINED
         // and keyChar set to the produced character). Listeners that consume typed events
         // (search-as-you-type filters, character-counting validators) would miss input through
@@ -213,9 +244,12 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
     }
 
     override fun keyRelease(keyCode: Int) {
-        dispatchKey(type = KeyEvent.KEY_RELEASED, keyCode = keyCode)
         val modifierBit = modifierMaskFor(keyCode)
-        if (modifierBit != 0) heldKeyModifiers = heldKeyModifiers and modifierBit.inv()
+        try {
+            dispatchKey(type = KeyEvent.KEY_RELEASED, keyCode = keyCode)
+        } finally {
+            if (modifierBit != 0) heldKeyModifiers = heldKeyModifiers and modifierBit.inv()
+        }
     }
 
     override fun waitForIdle() {
@@ -228,24 +262,25 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
     }
 
     private fun dispatchMouse(type: Int, button: Int, modifiers: Int) {
-        val targetComponent = mouseTarget(type) ?: return
-        if (!targetComponent.canReceiveMouseInput()) return
-        val origin = targetComponent.locationOnScreen
-        val localX = lastX - origin.x
-        val localY = lastY - origin.y
-        val event =
-            MouseEvent(
-                targetComponent,
-                type,
-                System.currentTimeMillis(),
-                modifiers,
-                localX,
-                localY,
-                clickCountFor(type, lastClickCount),
-                false, // popupTrigger
-                button,
-            )
         runOnEdt {
+            val targetComponent = mouseTarget(type) ?: undeliverablePointer(mouseAction(type))
+            check(targetComponent.canReceiveMouseInput()) {
+                "Cannot deliver synthetic ${mouseAction(type)} input: the intended recipient is " +
+                    "not showing or is modal-blocked."
+            }
+            val origin = targetComponent.locationOnScreen
+            val event =
+                MouseEvent(
+                    targetComponent,
+                    type,
+                    System.currentTimeMillis(),
+                    modifiers,
+                    lastX - origin.x,
+                    lastY - origin.y,
+                    clickCountFor(type, lastClickCount),
+                    false,
+                    button,
+                )
             targetComponent.dispatchEvent(event)
             if (type == MouseEvent.MOUSE_PRESSED) targetComponent.focusComposeCanvasOnPress()
         }
@@ -304,21 +339,17 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
         // real Compose hierarchies and works for any plain-Swing fixture (test or otherwise) that
         // registers its own key listener.
         val windows = allWindows()
-        val pointerTarget = hitTestComponent()
-        return windows.asSequence().mapNotNull { it.focusOwner }.firstOrNull()
-            ?: pointerTarget?.findKeyListenerSelfOrDescendant()
-            ?: pointerTarget?.composeHostAncestorOrSelf()?.findKeyListenerSelfOrDescendant()
-            ?: pointerTarget
-            ?: findComposeKeyEventTarget(windows)?.let {
-                it.findKeyListenerSelfOrDescendant() ?: it
-            }
-            ?: rootWindow?.takeIf { it in windows }
-            ?: activeModalDialog()
-            ?: windows.firstOrNull { it.isShowing }
-            ?: windows.firstOrNull()
+        return windows
+            .asSequence()
+            .mapNotNull { it.focusOwner }
+            .firstOrNull { it.canReceiveKeyInput() }
+            ?: findComposeKeyEventTarget(windows)
+                ?.takeIf { it.canReceiveKeyInput() }
+                ?.findKeyListenerSelfOrDescendant()
             ?: error(
-                "RobotDriver.synthetic() has no AWT window to deliver key events to. " +
-                    "Create the Compose/Swing window first, or pass RobotDriver.synthetic(rootWindow)."
+                "RobotDriver.synthetic() has no showing, enabled, focused key recipient to " +
+                    "deliver key events to. Focus a Swing component or key-listening Compose " +
+                    "surface first."
             )
     }
 
@@ -328,7 +359,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
         // Without this, a popup that sits on top of its owner would route synthetic input to the
         // owner — exactly the regression Codex flagged on the cb5d560 review.
         allWindows().asReversed().firstOrNull { window ->
-            window.isVisible &&
+            window.isShowing &&
                 runCatching {
                         val origin = window.locationOnScreen
                         val size = window.size
@@ -344,8 +375,27 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
                     .getOrDefault(false)
         }
 
-    private fun allWindows(): List<Window> = syntheticInputWindows()
+    private fun allWindows(): List<Window> {
+        val windows = syntheticInputWindows()
+        return if (rootWindow == null || rootWindow in windows) windows else windows + rootWindow
+    }
 }
+
+private fun undeliverablePointer(action: String): Nothing =
+    error(
+        "Cannot deliver synthetic $action input: no showing, unblocked AWT recipient exists at " +
+            "the requested pointer location."
+    )
+
+private fun mouseAction(type: Int): String =
+    when (type) {
+        MouseEvent.MOUSE_MOVED -> "pointer move"
+        MouseEvent.MOUSE_DRAGGED -> "pointer drag"
+        MouseEvent.MOUSE_PRESSED -> "mouse press"
+        MouseEvent.MOUSE_RELEASED -> "mouse release"
+        MouseEvent.MOUSE_CLICKED -> "mouse click"
+        else -> "mouse event"
+    }
 
 /**
  * Dispatches [block] on the AWT EDT, running inline if the caller is already on the EDT.

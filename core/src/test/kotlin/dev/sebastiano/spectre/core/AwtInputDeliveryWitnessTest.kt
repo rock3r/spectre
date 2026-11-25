@@ -1,8 +1,21 @@
 package dev.sebastiano.spectre.core
 
+import java.awt.Component
+import java.awt.MouseInfo
 import java.awt.Panel
+import java.awt.Point
+import java.awt.Robot
 import java.awt.Toolkit
+import java.awt.event.InputEvent
 import java.awt.event.MouseEvent
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import javax.swing.JFrame
+import javax.swing.JPanel
+import javax.swing.SwingUtilities
+import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -33,12 +46,165 @@ class AwtInputDeliveryWitnessTest {
                     1,
                     1,
                     false,
+                    MouseEvent.BUTTON1,
                 )
             Toolkit.getDefaultToolkit().systemEventQueue.postEvent(press)
             val dispatched = watch.awaitDelivery(INPUT_WITNESS_WAIT_MS)
             println("AWT click verdict: dispatched in this JVM (posted MOUSE_PRESSED)=$dispatched")
             assertTrue(dispatched, "posted MOUSE_PRESSED must count as dispatched in this JVM")
         }
+    }
+
+    @Test
+    fun `listener rejects wrong button and wrong screen position`() {
+        val observation =
+            AwtInputDeliveryWitness.attachListener(
+                DispatchedInput.Press,
+                screenX = 100,
+                screenY = 200,
+            )
+        assumeTrue(observation != null, "toolkit refused the AWT listener")
+        checkNotNull(observation).use { watch ->
+            postPress(Panel(), MouseEvent.BUTTON3, 100, 200)
+            postPress(Panel(), MouseEvent.BUTTON1, 120, 200)
+            assertFalse(watch.awaitDelivery(NO_EVENT_WAIT_MS))
+        }
+    }
+
+    @Test
+    fun `listener accepts only a primary press at the requested visible host and position`() {
+        assumeTrue(!java.awt.GraphicsEnvironment.isHeadless(), "requires a headed AWT display")
+        val frame = JFrame("input witness fixture")
+        val target = JPanel()
+        val child = JPanel()
+        val unrelated = JPanel()
+        target.add(child)
+        frame.contentPane.add(target)
+        frame.setSize(160, 120)
+        frame.setLocationRelativeTo(null)
+        frame.isVisible = true
+        try {
+            val point = child.locationOnScreen
+            val x = point.x + 1
+            val y = point.y + 1
+            val observation =
+                AwtInputDeliveryWitness.attachListener(DispatchedInput.Press, target, x, y)
+            assumeTrue(observation != null, "toolkit refused the AWT listener")
+            checkNotNull(observation).use { watch ->
+                postPress(unrelated, MouseEvent.BUTTON1, x, y)
+                postPress(child, MouseEvent.BUTTON3, x, y)
+                postPress(child, MouseEvent.BUTTON1, x + 20, y)
+                assertTrue(watch.awaitQueueDrain(DRAIN_WAIT_MS))
+                assertFalse(watch.awaitDelivery(0))
+                postPress(child, MouseEvent.BUTTON1, x, y)
+                assertTrue(watch.awaitDelivery(INPUT_WITNESS_WAIT_MS))
+            }
+        } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
+    fun `real wheel input is delivered as a targeted AWT wheel event`() {
+        assumeTrue(!java.awt.GraphicsEnvironment.isHeadless(), "requires a headed AWT display")
+        val osName = System.getProperty("os.name").orEmpty()
+        assumeTrue(
+            osName.contains("linux", ignoreCase = true) ||
+                osName.contains("mac", ignoreCase = true),
+            "wheel backend fixture is for Linux and macOS",
+        )
+        val wheelDeliveries = AtomicInteger()
+        val wheelPositions = ConcurrentLinkedQueue<Point>()
+        val wheelDelivered = CountDownLatch(1)
+        val (frame, target) =
+            onEdt {
+                val target = JPanel()
+                target.addMouseWheelListener { event ->
+                    wheelDeliveries.incrementAndGet()
+                    wheelPositions.add(Point(event.xOnScreen, event.yOnScreen))
+                    wheelDelivered.countDown()
+                }
+                val frame = JFrame("wheel witness fixture")
+                frame.contentPane.add(target)
+                frame.setSize(160, 120)
+                frame.setLocationRelativeTo(null)
+                frame.isVisible = true
+                frame to target
+            }
+        try {
+            requestAndVerifyWindowFocus(frame)
+            val expected = onEdt {
+                check(target.isShowing && target.width > 0 && target.height > 0) {
+                    "wheel target must be showing and laid out before input is injected"
+                }
+                target.locationOnScreen.let {
+                    Point(it.x + target.width / 2, it.y + target.height / 2)
+                }
+            }
+            val observation =
+                AwtInputDeliveryWitness.attachListener(
+                    DispatchedInput.Wheel,
+                    target,
+                    expected.x,
+                    expected.y,
+                )
+            assumeTrue(observation != null, "toolkit refused the AWT listener")
+            checkNotNull(observation).use { watch ->
+                val robot = Robot()
+                robot.mouseMove(expected.x, expected.y)
+                robot.waitForIdle()
+                val actualPointer = MouseInfo.getPointerInfo()?.location
+                assertTrue(
+                    actualPointer != null && actualPointer.isNear(expected),
+                    wheelDiagnostic(expected, actualPointer, wheelPositions, wheelDeliveries.get()),
+                )
+
+                robot.mouseWheel(1)
+                val targetReceived =
+                    wheelDelivered.await(INPUT_WITNESS_WAIT_MS, TimeUnit.MILLISECONDS)
+                val witnessed = watch.awaitDelivery(0)
+                assertTrue(
+                    targetReceived && wheelDeliveries.get() > 0,
+                    "pointed-at target did not receive the commanded real wheel; " +
+                        wheelDiagnostic(
+                            expected,
+                            actualPointer,
+                            wheelPositions,
+                            wheelDeliveries.get(),
+                        ),
+                )
+                assertTrue(
+                    witnessed,
+                    "production witness did not report the real target wheel delivery; " +
+                        wheelDiagnostic(
+                            expected,
+                            actualPointer,
+                            wheelPositions,
+                            wheelDeliveries.get(),
+                        ),
+                )
+            }
+        } finally {
+            onEdt { frame.dispose() }
+        }
+    }
+
+    private fun postPress(component: Component, button: Int, x: Int, y: Int) {
+        val event =
+            MouseEvent(
+                component,
+                MouseEvent.MOUSE_PRESSED,
+                System.currentTimeMillis(),
+                InputEvent.getMaskForButton(button),
+                1,
+                1,
+                x,
+                y,
+                1,
+                false,
+                button,
+            )
+        Toolkit.getDefaultToolkit().systemEventQueue.postEvent(event)
     }
 
     @Test
@@ -61,9 +227,31 @@ class AwtInputDeliveryWitnessTest {
         }
     }
 
+    private fun Point.isNear(expected: Point): Boolean =
+        abs(x - expected.x) <= INPUT_POINT_TOLERANCE_PX &&
+            abs(y - expected.y) <= INPUT_POINT_TOLERANCE_PX
+
+    private fun wheelDiagnostic(
+        expected: Point,
+        actualPointer: Point?,
+        wheelPositions: Collection<Point>,
+        deliveries: Int,
+    ): String =
+        "expected point=$expected, actual pointer=$actualPointer, " +
+            "observed wheel positions=${wheelPositions.toList()}, target deliveries=$deliveries"
+
+    private fun <T> onEdt(action: () -> T): T {
+        if (SwingUtilities.isEventDispatchThread()) return action()
+
+        var result: Result<T>? = null
+        SwingUtilities.invokeAndWait { result = runCatching(action) }
+        return checkNotNull(result).getOrThrow()
+    }
+
     private companion object {
         const val INPUT_WITNESS_WAIT_MS = 2_000L
         const val NO_EVENT_WAIT_MS = 50L
         const val DRAIN_WAIT_MS = 500L
+        const val INPUT_POINT_TOLERANCE_PX = 2
     }
 }

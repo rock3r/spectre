@@ -634,17 +634,24 @@ needs and throws on first use if either is denied:
   `pressKey(...)`, etc. and asks `System Events` (via `osascript`) for the active
   process. A "not allowed assistive access" denial throws with an actionable
   message naming the wrapping app to grant; an inconclusive probe (no `osascript`,
-  AppleEvents/Automation refusal, etc.) prints a one-shot stderr warning and
-  proceeds.
+  AppleEvents/Automation refusal, etc.) fails with an inconclusive diagnostic.
 - **Screen Recording** — required for `Robot.createScreenCapture` to return real
   pixels. Without it the call silently returns an all-black image. A locked
   screen can produce the same symptom, so the probe first checks whether macOS
   reports the console session as locked; if so, unlock the screen and retry. If
   the session is unlocked, the probe captures a small region near the screen
-  origin (which on macOS overlaps the menu bar) and treats an all-black result as
-  denial. False positives are rare; if the screen really is fully
-  black at the origin, switch to `RobotDriver.headless()` for tests or grant
-  Screen Recording to silence the probe.
+  origin (which on macOS overlaps the menu bar). An all-black result is
+  inconclusive rather than proof of denial because legitimate pixels can be
+  black too. A cached Robot grant is rechecked after an unexpectedly black Robot
+  capture, while a conclusively granted and unlocked state preserves naturally
+  black content.
+
+Native window stills use the separately signed ScreenCaptureKit helper. Its
+Screen Recording grant belongs to the helper app, not the target JVM or the app
+that launched that JVM. Spectre therefore never asks for or probes the JVM's
+Robot Screen Recording permission to validate a successful helper image,
+including a naturally black window. Helper permission diagnostics come from the
+helper's own preflight/capture result; lock status remains independent.
 
 Open System Settings → Privacy & Security. Grant Accessibility or Screen &
 System Audio Recording to the app that launched the JVM. It may be IntelliJ,

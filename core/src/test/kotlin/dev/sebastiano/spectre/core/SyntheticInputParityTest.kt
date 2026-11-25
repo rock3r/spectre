@@ -18,16 +18,21 @@ import java.awt.event.MouseMotionListener
 import java.awt.event.MouseWheelEvent
 import java.awt.event.MouseWheelListener
 import java.awt.image.BufferedImage
+import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
+import javax.swing.AbstractAction
 import javax.swing.JFrame
 import javax.swing.JPanel
+import javax.swing.KeyStroke
 import javax.swing.SwingUtilities
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Timeout
 
 /**
@@ -44,6 +49,107 @@ import org.junit.jupiter.api.Timeout
  * - `@Timeout` backstops every test so a regression doesn't pin the JVM via a non-daemon EDT.
  */
 class SyntheticInputParityTest {
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `pointer verbs throw when no showing recipient exists and recover for the next click`() {
+        assumeLiveAwtAvailable()
+        val adapter = SyntheticRobotAdapter()
+        assertEdtDeliveryFailure { adapter.mouseMove(-10_000, -10_000) }
+        assertEdtDeliveryFailure { adapter.mousePress(java.awt.event.InputEvent.BUTTON1_DOWN_MASK) }
+
+        val target = MouseTargetPanel()
+        val frame = showFrameOnEdt(target)
+        try {
+            val (cx, cy) = frame.targetCenterOnScreen(target)
+            adapter.mouseMove(cx, cy)
+            adapter.mousePress(java.awt.event.InputEvent.BUTTON1_DOWN_MASK)
+            adapter.mouseRelease(java.awt.event.InputEvent.BUTTON1_DOWN_MASK)
+            assertTrue(
+                target.events.none { it.id == MouseEvent.MOUSE_DRAGGED },
+                "a failed press must not poison the next pointer move or click",
+            )
+            assertTrue(target.events.any { it.id == MouseEvent.MOUSE_CLICKED })
+        } finally {
+            disposeFrame(frame.frame)
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `failed modifier press does not modify the next delivered key`() {
+        assumeLiveAwtAvailable()
+        val adapter = SyntheticRobotAdapter()
+        assertEdtDeliveryFailure { adapter.keyPress(KeyEvent.VK_CONTROL) }
+
+        val events: MutableList<KeyEvent> = CopyOnWriteArrayList()
+        val target =
+            JPanel().apply {
+                isFocusable = true
+                addKeyListener(KeyEventRecorder(events))
+            }
+        val frame = showFrameOnEdt(target)
+        try {
+            focusOnEdt(frame.frame, target)
+            adapter.keyPress(KeyEvent.VK_A)
+            adapter.keyRelease(KeyEvent.VK_A)
+            val pressed = events.first { it.id == KeyEvent.KEY_PRESSED }
+            assertEquals(0, pressed.modifiersEx and KeyEvent.CTRL_DOWN_MASK)
+        } finally {
+            disposeFrame(frame.frame)
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `focused Swing key binding works without an AWT KeyListener`() {
+        assumeLiveAwtAvailable()
+        var invocations = 0
+        val target =
+            JPanel().apply {
+                isFocusable = true
+                inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_A, 0), "invoke")
+                actionMap.put(
+                    "invoke",
+                    object : AbstractAction() {
+                        override fun actionPerformed(event: java.awt.event.ActionEvent?) {
+                            invocations++
+                        }
+                    },
+                )
+            }
+        val frame = showFrameOnEdt(target)
+        try {
+            focusOnEdt(frame.frame, target)
+            assertTrue(target.keyListeners.isEmpty())
+            val adapter = SyntheticRobotAdapter(frame.frame)
+            adapter.keyPress(KeyEvent.VK_A)
+            adapter.keyRelease(KeyEvent.VK_A)
+            assertEquals(1, invocations)
+        } finally {
+            disposeFrame(frame.frame)
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `key listener lookup ignores a hidden focused-surface descendant`() {
+        assumeLiveAwtAvailable()
+        val hidden = JPanel().apply { addKeyListener(KeyEventRecorder(CopyOnWriteArrayList())) }
+        val showing = JPanel().apply { addKeyListener(KeyEventRecorder(CopyOnWriteArrayList())) }
+        val host =
+            JPanel().apply {
+                add(hidden)
+                add(showing)
+            }
+        val frame = showFrameOnEdt(host)
+        try {
+            SwingUtilities.invokeAndWait { hidden.isVisible = false }
+            assertEquals(showing, host.findKeyListenerSelfOrDescendant())
+        } finally {
+            disposeFrame(frame.frame)
+        }
+    }
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
@@ -233,7 +339,7 @@ class SyntheticInputParityTest {
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
-    fun `key events fall back to the last pointer target when AWT has no focus owner`() {
+    fun `key events reject the last pointer target when AWT has no focus owner`() {
         assumeLiveAwtAvailable()
         val events: MutableList<KeyEvent> = CopyOnWriteArrayList()
         val target =
@@ -249,19 +355,9 @@ class SyntheticInputParityTest {
             )
             val (cx, cy) = frame.targetCenterOnScreen(target)
             val driver = RobotDriver.synthetic(frame.frame)
-            runBlocking {
-                driver.click(cx, cy)
-                driver.pressKey(KeyEvent.VK_A)
-            }
-            drainEdt()
-
-            val pressed = events.firstOrNull {
-                it.id == KeyEvent.KEY_PRESSED && it.keyCode == KeyEvent.VK_A
-            }
-            assertNotNull(
-                pressed,
-                "expected KEY_PRESSED to route to the last pointer target when no AWT focus owner exists",
-            )
+            runBlocking { driver.click(cx, cy) }
+            assertEdtDeliveryFailure { runBlocking { driver.pressKey(KeyEvent.VK_A) } }
+            assertTrue(events.isEmpty(), "no key event may be routed by pointer fallback")
         } finally {
             disposeFrame(frame.frame)
         }
@@ -269,7 +365,7 @@ class SyntheticInputParityTest {
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
-    fun `key events descend from pointer target into a key-listening descendant`() {
+    fun `key events do not descend from an unfocused pointer target`() {
         // Models the real Compose Desktop topology where the pointer target is a wrapper that
         // doesn't own the AWT KeyListener (e.g. `ComposeWindowPanel`) but a descendant does
         // (the inner Skiko canvas, where `ComposeSceneMediator` registers its key listener).
@@ -304,25 +400,9 @@ class SyntheticInputParityTest {
             // scenario where the pointer target is the wrapper and the adapter has to descend.
             val (cx, cy) = frame.targetCenterOnScreen(wrapper)
             val driver = RobotDriver.synthetic(frame.frame)
-            runBlocking {
-                driver.click(cx, cy)
-                driver.pressKey(KeyEvent.VK_B)
-            }
-            drainEdt()
-
-            val pressed = innerEvents.firstOrNull {
-                it.id == KeyEvent.KEY_PRESSED && it.keyCode == KeyEvent.VK_B
-            }
-            assertNotNull(
-                pressed,
-                "expected KEY_PRESSED to descend from the wrapper pointer target into the " +
-                    "key-listening inner component; innerEvents=$innerEvents",
-            )
-            assertEquals(
-                inner,
-                pressed.source,
-                "expected the KeyEvent source to be the inner component, not the wrapper",
-            )
+            runBlocking { driver.click(cx, cy) }
+            assertEdtDeliveryFailure { runBlocking { driver.pressKey(KeyEvent.VK_B) } }
+            assertTrue(innerEvents.isEmpty(), "unfocused descendants must receive no keys")
         } finally {
             disposeFrame(frame.frame)
         }
@@ -496,6 +576,28 @@ class SyntheticInputParityTest {
         // catches anything those events themselves posted (synthetic dispatch routes through
         // runOnEdt, and Compose-style listeners can repost).
         repeat(2) { SwingUtilities.invokeAndWait {} }
+    }
+
+    private fun focusOnEdt(frame: JFrame, target: JPanel) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(SHOW_TIMEOUT_SECONDS)
+        while (System.nanoTime() < deadline && frame.focusOwner !== target) {
+            SwingUtilities.invokeAndWait {
+                frame.toFront()
+                frame.requestFocus()
+                target.requestFocus()
+            }
+            drainEdt()
+            if (frame.focusOwner !== target) Thread.sleep(POLL_INTERVAL_MS)
+        }
+        assumeTrue(
+            frame.focusOwner === target,
+            "the headed environment did not grant the test frame AWT focus",
+        )
+    }
+
+    private fun assertEdtDeliveryFailure(block: () -> Unit) {
+        val failure = assertFailsWith<InvocationTargetException>(block = block)
+        assertTrue(failure.targetException is IllegalStateException)
     }
 
     private fun disposeFrame(frame: JFrame) {
