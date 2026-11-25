@@ -46,7 +46,14 @@ internal sealed class WindowsUiaTreeReader : IAccessibilityTreeReader
 
     private static IReadOnlyList<AutomationElement> FindRoots(AccessibilityTarget target)
     {
-        if (target.WindowHandle is { } handle) return [AutomationElement.FromHandle(handle)];
+        if (target.WindowHandle is { } handle)
+        {
+            AutomationElement? root;
+            try { root = AutomationElement.FromHandle(handle); }
+            catch (ElementNotAvailableException e) { throw MissingWindow(handle, e); }
+            if (root is null) throw MissingWindow(handle);
+            return [root];
+        }
 
         Condition? owner = null;
         if (target.ProcessId is { } pid)
@@ -68,6 +75,9 @@ internal sealed class WindowsUiaTreeReader : IAccessibilityTreeReader
             throw new AccessibilityTargetException("target-ambiguous", $"More than one top-level window has title '{target.WindowTitle}'");
         return matches;
     }
+
+    private static AccessibilityTargetException MissingWindow(nint handle, Exception? cause = null) =>
+        new("target-not-found", $"Window handle {handle} does not identify a live UI Automation window{(cause is null ? "" : $": {cause.Message}")}");
 
     internal static CacheRequest CreateCacheRequest()
     {

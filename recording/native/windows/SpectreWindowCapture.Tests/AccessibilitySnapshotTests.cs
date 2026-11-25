@@ -79,6 +79,18 @@ public sealed class AccessibilitySnapshotTests
     }
 
     [Fact]
+    public void MissingWindowHandleReturnsTargetNotFound()
+    {
+        var reader = new WindowsUiaTreeReader();
+        var target = new AccessibilityTarget("window-id", null, new nint(-1), null);
+        var limits = new AccessibilityReadLimits(8, 50, 1000, () => 0);
+
+        var error = Assert.Throws<AccessibilityTargetException>(() => reader.Read(target, limits));
+
+        Assert.Equal("target-not-found", error.Code);
+    }
+
+    [Fact]
     public void EditableComboRetainsExpandedStateWhileValueIsItsDisplayValue()
     {
         var patterns = WindowsUiaTreeReader.MapPatterns(

@@ -78,6 +78,14 @@ try {
       throw "window-title with correct owner $ownerId did not select the fixture"
     }
   }
+  $closedWindow = Wait-ForFixtureWindow $duplicateProcess.Id $fixtureTitle
+  $closedHandle = $closedWindow.Current.NativeWindowHandle.ToString()
+  Stop-Process -Id $duplicateProcess.Id -Force
+  $duplicateProcess.WaitForExit()
+  $missing = (Invoke-Helper (Request "window-id" $closedHandle)).Json
+  if ($missing.ok -or $missing.error.code -ne "target-not-found") {
+    throw "closed fixture window-id did not return target-not-found"
+  }
   $wrongOwner = (Invoke-Helper (Request "window-title" $fixtureTitle -Owner $PID)).Json
   if ($wrongOwner.ok -or $wrongOwner.error.code -ne "target-not-found") { throw "window-title matched a different owner" }
   $wrongTitle = (Invoke-Helper (Request "window-title" "Absent fixture title" -Owner $fixtureProcess.Id)).Json
