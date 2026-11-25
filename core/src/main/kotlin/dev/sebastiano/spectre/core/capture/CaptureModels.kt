@@ -17,6 +17,15 @@ public data class CaptureDocument(
     public val nodes: List<CaptureNode>,
     public val summary: CaptureSummary,
 ) {
+    /** Binary/source-compatible schema-v1 constructor. New captures still encode as v2. */
+    public constructor(
+        schemaVersion: Int,
+        capturedAt: String,
+        window: CaptureWindow,
+        nodes: List<CaptureNode>,
+        summary: CaptureSummary,
+    ) : this(schemaVersion, CaptureSource.ComposeSemantics, capturedAt, window, nodes, summary)
+
     public companion object {
         public const val SCHEMA_VERSION: Int = 2
     }
@@ -34,7 +43,31 @@ public data class CaptureWindow(
     public val densityScaleY: Double,
     public val imageWidth: Int,
     public val imageHeight: Int,
-)
+) {
+    /** Binary/source-compatible schema-v1 constructor. */
+    public constructor(
+        index: Int,
+        surfaceId: String,
+        title: String?,
+        isPopup: Boolean,
+        boundsScreen: CaptureRect,
+        densityScaleX: Double,
+        densityScaleY: Double,
+        imageWidth: Int,
+        imageHeight: Int,
+    ) : this(
+        index,
+        surfaceId,
+        title,
+        isPopup,
+        boundsScreen,
+        BoundsSpace.Screen,
+        densityScaleX,
+        densityScaleY,
+        imageWidth,
+        imageHeight,
+    )
+}
 
 /**
  * One semantics node in the capture tree.
@@ -62,7 +95,44 @@ public data class CaptureNode(
     public val boundsImage: CaptureRect,
     public val boundsScreen: CaptureRect,
     public val onScreen: Boolean = true,
-)
+) {
+    /** Binary/source-compatible schema-v1 constructor. */
+    public constructor(
+        key: String,
+        testTag: String?,
+        text: String?,
+        texts: List<String>,
+        editableText: String?,
+        contentDescription: String?,
+        role: String?,
+        enabled: Boolean,
+        clickable: Boolean,
+        focused: Boolean,
+        selected: Boolean,
+        boundsImage: CaptureRect,
+        boundsScreen: CaptureRect,
+    ) : this(
+        key,
+        null,
+        testTag,
+        testTag,
+        text,
+        texts,
+        editableText,
+        contentDescription,
+        role,
+        null,
+        emptyList(),
+        null,
+        enabled,
+        clickable,
+        focused,
+        selected,
+        boundsImage,
+        boundsScreen,
+        true,
+    )
+}
 
 public enum class CaptureSource(public val wireName: String) {
     ComposeSemantics("compose-semantics"),

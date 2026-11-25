@@ -33,7 +33,41 @@ public data class CaptureNodeSnapshot(
     public val focused: Boolean,
     public val selected: Boolean,
     public val boundsScreen: Rectangle,
-)
+) {
+    /** Binary/source-compatible schema-v1 constructor. */
+    public constructor(
+        key: String,
+        testTag: String?,
+        text: String?,
+        texts: List<String>,
+        editableText: String?,
+        contentDescription: String?,
+        role: String?,
+        enabled: Boolean,
+        clickable: Boolean,
+        focused: Boolean,
+        selected: Boolean,
+        boundsScreen: Rectangle,
+    ) : this(
+        key,
+        null,
+        testTag,
+        testTag,
+        text,
+        texts,
+        editableText,
+        contentDescription,
+        role,
+        null,
+        emptyList(),
+        null,
+        enabled,
+        clickable,
+        focused,
+        selected,
+        boundsScreen,
+    )
+}
 
 /**
  * Builds an [AtomicCapture] from pre-snapshotted nodes, window metadata, and a PNG image.

@@ -1,20 +1,39 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.recording.locateAccessibilityHelper
 import java.nio.file.Path
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
+import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.locks.LockSupport
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 private const val ACCESSIBILITY_COMMAND = "accessibility-snapshot"
 private const val PROCESS_GRACE_MS = 250L
+private const val PROCESS_POLL_MS = 5L
+private const val NANOS_PER_MILLISECOND = 1_000_000L
 
 @Serializable
 internal sealed interface Target {
-    @Serializable @SerialName("process-id") data class ProcessId(val value: Long) : Target
+    @Serializable
+    @SerialName("process-id")
+    data class ProcessId(val value: Long) : Target {
+        init {
+            require(value > 0) { "Process id must be positive" }
+        }
+    }
 
-    @Serializable @SerialName("window-id") data class WindowId(val value: String) : Target
+    @Serializable
+    @SerialName("window-id")
+    data class WindowId(val value: String) : Target {
+        init {
+            require(value.isNotBlank()) { "Window id must not be blank" }
+        }
+    }
 }
 
 @Serializable
@@ -98,7 +117,8 @@ internal fun interface AccessibilityHelperRunner {
 
 /** Runs the already-packaged platform helper and validates its one-request/one-response JSON. */
 internal class AccessibilityHelperClient(
-    private val runner: AccessibilityHelperRunner = AccessibilityHelperRunner(::runHelper)
+    private val command: (Path) -> List<String> = { listOf(it.toString()) },
+    private val runner: AccessibilityHelperRunner = AccessibilityHelperRunner(::runHelper),
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -108,44 +128,117 @@ internal class AccessibilityHelperClient(
     ): AccessibilitySnapshotResponse {
         val input = json.encodeToString(AccessibilitySnapshotRequest.serializer(), request)
         val output =
-            runner.run(
-                listOf(helperExecutable.toString(), ACCESSIBILITY_COMMAND),
-                input,
-                request.timeoutMs,
-            )
+            runner.run(command(helperExecutable) + ACCESSIBILITY_COMMAND, input, request.timeoutMs)
         val envelope = json.decodeFromString(HelperEnvelope.serializer(), output)
+        require(
+            envelope.ok == (envelope.snapshot != null) && envelope.ok != (envelope.error != null)
+        ) {
+            "Helper response must contain exactly one coherent success or error payload"
+        }
         return if (envelope.ok) {
-            AccessibilitySnapshotResponse.Success(
-                requireNotNull(envelope.snapshot) { "Successful helper response has no snapshot" }
-            )
+            val snapshot = requireNotNull(envelope.snapshot)
+            validateSnapshot(snapshot)
+            AccessibilitySnapshotResponse.Success(snapshot)
         } else {
-            AccessibilitySnapshotResponse.Failure(
-                requireNotNull(envelope.error) { "Failed helper response has no error" }
-            )
+            val error = requireNotNull(envelope.error)
+            if (error.code == "limit-reached") {
+                validateSnapshot(
+                    requireNotNull(error.partialSnapshot) {
+                        "limit-reached response must contain a partial snapshot"
+                    }
+                )
+            } else {
+                error.partialSnapshot?.let(::validateSnapshot)
+            }
+            AccessibilitySnapshotResponse.Failure(error)
+        }
+    }
+}
+
+private fun validateSnapshot(snapshot: AccessibilitySnapshot) {
+    require(snapshot.schemaVersion == 2) { "Unsupported schemaVersion ${snapshot.schemaVersion}" }
+    require(snapshot.source == "os-accessibility") {
+        "Invalid snapshot source '${snapshot.source}'"
+    }
+    val windowKeys = snapshot.windows.mapTo(mutableSetOf()) { it.key }
+    require(windowKeys.size == snapshot.windows.size) { "Snapshot contains duplicate window keys" }
+    val nodeKeys = snapshot.nodes.mapTo(mutableSetOf()) { it.key }
+    require(nodeKeys.size == snapshot.nodes.size) { "Snapshot contains duplicate node keys" }
+    snapshot.nodes.forEach { node ->
+        require(node.parentKey == null || node.parentKey in nodeKeys) {
+            "Node '${node.key}' refers to missing parent '${node.parentKey}'"
+        }
+        require(windowKeys.any { node.key == it || node.key.startsWith("$it/") }) {
+            "Node '${node.key}' does not belong to a snapshot window"
         }
     }
 }
 
 private fun runHelper(argv: List<String>, stdin: String, timeoutMs: Long): String {
     val process = ProcessBuilder(argv).redirectError(ProcessBuilder.Redirect.INHERIT).start()
-    process.outputStream.bufferedWriter().use { it.write(stdin) }
-    val executor = Executors.newSingleThreadExecutor()
+    val executor = Executors.newFixedThreadPool(2, DaemonThreadFactory)
+    val deadlineNanos = System.nanoTime() + (timeoutMs + PROCESS_GRACE_MS) * NANOS_PER_MILLISECOND
     val output =
         executor.submit<String> { process.inputStream.bufferedReader().use { it.readText() } }
-    check(process.waitFor(timeoutMs + PROCESS_GRACE_MS, TimeUnit.MILLISECONDS)) {
-        process.destroyForcibly()
-        "Accessibility helper exceeded its ${timeoutMs}ms deadline"
-    }
+    val input =
+        executor.submit<Unit> { process.outputStream.bufferedWriter().use { it.write(stdin) } }
+    var interrupted = false
     try {
+        input.get(remainingMillis(deadlineNanos), TimeUnit.MILLISECONDS)
+        check(process.waitFor(remainingMillis(deadlineNanos), TimeUnit.MILLISECONDS)) {
+            "Accessibility helper exceeded its ${timeoutMs}ms deadline"
+        }
         check(process.exitValue() == 0) { "Accessibility helper exited ${process.exitValue()}" }
-        return output.get(PROCESS_GRACE_MS, TimeUnit.MILLISECONDS)
+        return output.get(remainingMillis(deadlineNanos), TimeUnit.MILLISECONDS)
+    } catch (exception: InterruptedException) {
+        interrupted = true
+        throw exception
+    } catch (exception: TimeoutException) {
+        throw IllegalStateException(
+            "Accessibility helper exceeded its ${timeoutMs}ms deadline",
+            exception,
+        )
+    } catch (exception: ExecutionException) {
+        throw exception.cause ?: exception
     } finally {
+        // waitFor and awaitTermination return immediately when interrupted. Clear the flag while
+        // cleanup runs, then restore it so callers observe both bounded reaping and interruption.
+        interrupted = interrupted || Thread.interrupted()
+        val cleanupDeadline = System.nanoTime() + PROCESS_GRACE_MS * NANOS_PER_MILLISECOND
+        val descendants = process.descendants().toList().asReversed()
+        descendants.forEach { it.destroyForcibly() }
+        descendants.forEach { interrupted = waitForExit(it, cleanupDeadline) || interrupted }
+        process.destroyForcibly()
+        interrupted = waitForExit(process.toHandle(), cleanupDeadline) || interrupted
+        input.cancel(true)
+        output.cancel(true)
         executor.shutdownNow()
+        try {
+            executor.awaitTermination(remainingMillis(cleanupDeadline), TimeUnit.MILLISECONDS)
+        } catch (cleanupInterrupted: InterruptedException) {
+            interrupted = true
+        }
+        if (interrupted) Thread.currentThread().interrupt()
     }
 }
 
-private fun defaultHelperExecutable(): Path =
-    Path.of(
-        System.getenv("SPECTRE_CAPTURE_HELPER")
-            ?: error("SPECTRE_CAPTURE_HELPER must point to the packaged native helper")
-    )
+private fun waitForExit(handle: ProcessHandle, deadlineNanos: Long): Boolean {
+    var interrupted = false
+    while (handle.isAlive && System.nanoTime() < deadlineNanos) {
+        LockSupport.parkNanos(
+            minOf(PROCESS_POLL_MS * NANOS_PER_MILLISECOND, deadlineNanos - System.nanoTime())
+        )
+        interrupted = Thread.interrupted() || interrupted
+    }
+    return interrupted
+}
+
+private fun remainingMillis(deadlineNanos: Long): Long =
+    ((deadlineNanos - System.nanoTime()) / NANOS_PER_MILLISECOND).coerceAtLeast(1)
+
+private object DaemonThreadFactory : ThreadFactory {
+    override fun newThread(task: Runnable): Thread =
+        Thread(task, "spectre-accessibility-helper-io").apply { isDaemon = true }
+}
+
+private fun defaultHelperExecutable(): Path = locateAccessibilityHelper()

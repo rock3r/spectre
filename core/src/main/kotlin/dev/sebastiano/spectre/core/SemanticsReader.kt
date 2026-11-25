@@ -195,8 +195,10 @@ internal class SemanticsReader : TreeSource {
 
 internal fun snapshotPathSegment(id: String?, siblingIds: List<String?>, childIndex: Int): String =
     id?.takeIf { candidate -> siblingIds.count { it == candidate } == 1 }
-        ?.replace("~", "~0")
-        ?.replace("/", "~1") ?: childIndex.coerceAtLeast(0).toString()
+        ?.let { uniqueId ->
+            val escaped = uniqueId.replace("~", "~0").replace("/", "~1")
+            if (uniqueId.all(Char::isDigit) && uniqueId.isNotEmpty()) "~2$escaped" else escaped
+        } ?: childIndex.coerceAtLeast(0).toString()
 
 private data class NodeEntry(
     val key: NodeKey,
