@@ -470,6 +470,11 @@ public object SpectreMcpServer {
                 )
         ) {
             is DaemonResponse.Capture -> captureToolResult(response, includeImage)
+            is DaemonResponse.AccessibilityErrorResult ->
+                CallToolResult(
+                    listOf(TextContent(MCP_JSON.encodeToString(response.error))),
+                    isError = true,
+                )
             is DaemonResponse.Error ->
                 CallToolResult(listOf(TextContent(response.message)), isError = true)
             else ->

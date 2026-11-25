@@ -2,19 +2,70 @@ package dev.sebastiano.spectre.cli.daemon
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import java.io.File
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.Channels
+import java.nio.channels.ServerSocketChannel
 import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 
 @OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonClientTest {
+    @Test
+    fun `accessibility capture rejects an old daemon before sending the capture request`() {
+        val socketPath = temporaryDaemonClientSocketPath()
+        val receivedAfterHello = AtomicReference<DaemonRequest?>()
+        Files.createDirectories(socketPath.parent)
+        ServerSocketChannel.open(StandardProtocolFamily.UNIX).use { server ->
+            server.bind(UnixDomainSocketAddress.of(socketPath))
+            val daemon = Thread {
+                server.accept().use { channel ->
+                    val input = Channels.newInputStream(channel)
+                    val output = Channels.newOutputStream(channel)
+                    assertEquals(
+                        DaemonRequest.Hello(DaemonProtocolVersion(1, 15)),
+                        DaemonWireCodec.readRequest(input),
+                    )
+                    DaemonWireCodec.writeResponse(
+                        output,
+                        DaemonResponse.Hello(
+                            daemonVersion = DaemonProtocolVersion(1, 14),
+                            maxFrameBytes = null,
+                            inputCoordination = null,
+                        ),
+                    )
+                    receivedAfterHello.set(DaemonWireCodec.readRequest(input))
+                }
+            }
+            daemon.start()
+
+            assertFailsWith<java.io.IOException> {
+                DaemonClient(socketPath)
+                    .request(
+                        DaemonRequest.Capture(
+                            sessionId = "pid-42",
+                            source = DaemonCaptureSource.Accessibility,
+                        )
+                    )
+            }
+            daemon.join(2_000)
+            assertTrue(!daemon.isAlive, "fake daemon did not observe the rejected connection close")
+            assertNull(receivedAfterHello.get(), "capture must not reach an incompatible daemon")
+        }
+        deleteTemporaryDaemonClientSocketPath(socketPath)
+    }
+
     @Test
     fun `explains how to replace a daemon that rejects a newer hello`() {
         assertEquals(

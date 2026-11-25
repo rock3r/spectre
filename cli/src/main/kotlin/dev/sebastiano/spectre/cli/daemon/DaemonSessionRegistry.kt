@@ -729,7 +729,7 @@ private fun writeCapture(
     automator: DaemonSessionAutomator,
     liveSessionIds: Set<String>,
     accessibilityHandler: AccessibilityDaemonHandler,
-): DaemonResponse.Capture {
+): DaemonResponse {
     if (request.source == DaemonCaptureSource.Compose) {
         return CaptureArtifactStore.write(
             request.sessionId,
@@ -751,14 +751,13 @@ private fun writeCapture(
             CaptureArtifactStore.writeAccessibility(
                 sessionId = request.sessionId,
                 windowIndex = request.windowIndex,
-                pngBytes = automator.screenshot(windowIndex = request.windowIndex),
+                pngBytes = automator.capture(request.windowIndex).pngBytes,
                 snapshot = tree.snapshot,
                 outDir = request.outDir,
                 liveSessionIds = liveSessionIds,
             )
-        is DaemonResponse.AccessibilityErrorResult ->
-            throw IOException("${tree.error.code}: ${tree.error.message}")
-        is DaemonResponse.Error -> throw IOException(tree.message)
+        is DaemonResponse.AccessibilityErrorResult,
+        is DaemonResponse.Error -> tree
         else -> error("unexpected accessibility response")
     }
 }

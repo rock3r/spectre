@@ -1,6 +1,6 @@
 package dev.sebastiano.spectre.cli.daemon
 
-import dev.sebastiano.spectre.recording.AccessibilityHelperExecutable
+import dev.sebastiano.spectre.recording.locateAccessibilityHelper
 import java.nio.file.Path
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
@@ -138,7 +138,7 @@ internal fun interface AccessibilityHelperRunner {
 
 /** Runs the already-packaged platform helper and validates its one-request/one-response JSON. */
 internal class AccessibilityHelperClient(
-    private val helperExecutable: () -> Path = AccessibilityHelperExecutable::resolve,
+    private val helperExecutable: () -> Path = ::locateAccessibilityHelper,
     private val command: (Path) -> List<String> = { listOf(it.toString()) },
     private val runner: AccessibilityHelperRunner = AccessibilityHelperRunner(::runHelper),
 ) {

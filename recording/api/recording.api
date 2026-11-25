@@ -1,6 +1,5 @@
-public final class dev/sebastiano/spectre/recording/AccessibilityHelperExecutable {
-	public static final field INSTANCE Ldev/sebastiano/spectre/recording/AccessibilityHelperExecutable;
-	public final fun resolve ()Ljava/nio/file/Path;
+public final class dev/sebastiano/spectre/recording/AccessibilityHelperExecutableKt {
+	public static final fun locateAccessibilityHelper ()Ljava/nio/file/Path;
 }
 
 public final class dev/sebastiano/spectre/recording/AutoRecorder {

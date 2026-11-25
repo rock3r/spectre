@@ -5,8 +5,8 @@ import dev.sebastiano.spectre.recording.screencapturekit.HelperBinaryExtractor
 import dev.sebastiano.spectre.recording.windows.WindowsGraphicsCaptureHelperBinaryExtractor
 import java.nio.file.Path
 
-/** Resolves the packaged native helper used for daemon-owned accessibility snapshots. */
-public object AccessibilityHelperExecutable {
+/** Internal accessor behind the stable public helper locator. */
+internal object AccessibilityHelperExecutable {
     /** Extracts and returns the helper executable for the current platform. */
     public fun resolve(): Path =
         when {
@@ -22,3 +22,6 @@ public object AccessibilityHelperExecutable {
                 )
         }
 }
+
+/** Resolves the packaged native helper which also implements the accessibility protocol. */
+public fun locateAccessibilityHelper(): Path = AccessibilityHelperExecutable.resolve()

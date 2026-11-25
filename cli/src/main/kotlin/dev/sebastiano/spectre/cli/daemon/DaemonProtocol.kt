@@ -88,8 +88,7 @@ public object DaemonProtocol {
             is DaemonRequest.RecordingStatus -> versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
             // Each still op needs the minor that introduced it *and* the minor its pixels
             // changed in: an older daemon answers these "successfully" but with dp-sized stills.
-            is DaemonRequest.Capture ->
-                versionFor(maxOf(CAPTURE_INTRODUCED_MINOR, SCREEN_PIXEL_STILLS_INTRODUCED_MINOR))
+            is DaemonRequest.Capture -> captureVersion(request)
             is DaemonRequest.Screenshot ->
                 versionFor(
                     maxOf(
@@ -107,6 +106,14 @@ public object DaemonProtocol {
             versionFor(RECORDING_FULLSCREEN_INTRODUCED_MINOR)
         } else {
             versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
+        }
+
+    /** Accessibility is a 1.15 source; Compose keeps its historical screen-pixel floor. */
+    private fun captureVersion(request: DaemonRequest.Capture): DaemonProtocolVersion =
+        if (request.source == DaemonCaptureSource.Accessibility) {
+            versionFor(ACCESSIBILITY_INTRODUCED_MINOR)
+        } else {
+            versionFor(maxOf(CAPTURE_INTRODUCED_MINOR, SCREEN_PIXEL_STILLS_INTRODUCED_MINOR))
         }
 
     private fun versionFor(minor: Int): DaemonProtocolVersion =

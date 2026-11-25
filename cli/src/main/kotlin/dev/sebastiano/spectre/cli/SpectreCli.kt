@@ -553,6 +553,13 @@ private class CaptureCommand(
         val capture =
             when (response) {
                 is DaemonResponse.Capture -> response
+                is DaemonResponse.AccessibilityErrorResult ->
+                    throw DaemonCommandException(
+                        DaemonResponse.Error(
+                            DaemonErrorCode.OperationFailed,
+                            "${response.error.code}: ${response.error.message}",
+                        )
+                    )
                 is DaemonResponse.Error -> throw DaemonCommandException(response)
                 else -> error("Daemon returned an unexpected response to capture")
             }
