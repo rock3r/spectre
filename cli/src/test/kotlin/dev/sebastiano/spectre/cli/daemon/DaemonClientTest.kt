@@ -223,6 +223,7 @@ private fun temporaryDaemonClientSocketPath(): Path =
 
 private fun deleteTemporaryDaemonClientSocketPath(socketPath: Path) {
     Files.deleteIfExists(socketPath)
+    Files.deleteIfExists(socketPath.resolveSibling("spectre-daemon.log"))
     Files.deleteIfExists(socketPath.parent)
     Files.deleteIfExists(socketPath.parent.parent)
 }

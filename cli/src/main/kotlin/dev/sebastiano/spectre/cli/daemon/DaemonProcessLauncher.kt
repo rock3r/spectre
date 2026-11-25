@@ -8,6 +8,7 @@ import dev.sebastiano.spectre.cli.bootstrap.SpectreBootstrap
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermissions
 
 /** Starts a detached JVM hosting [DaemonMain] for one local socket endpoint. */
 @OptIn(ExperimentalSpectreAgentApi::class)
@@ -32,12 +33,19 @@ public class DaemonProcessLauncher(
     /** Launches the daemon process without inheriting this client's standard streams. */
     @Throws(IOException::class)
     public fun start(): Process {
-        val errorLog = Files.createTempFile("spectre-daemon-startup-", ".log")
+        Files.createDirectories(socketPath.parent)
+        runCatching {
+            Files.setPosixFilePermissions(
+                socketPath.parent,
+                PosixFilePermissions.fromString("rwx------"),
+            )
+        }
+        val errorLog = socketPath.resolveSibling("spectre-daemon.log")
         startupErrorLog = errorLog
         return processBuilder()
             .also { restoreBundledRuntimeExecutePermissions() }
-            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-            .redirectError(errorLog.toFile())
+            .redirectOutput(ProcessBuilder.Redirect.appendTo(errorLog.toFile()))
+            .redirectError(ProcessBuilder.Redirect.appendTo(errorLog.toFile()))
             .start()
             .also { daemonProcess = it }
     }
@@ -47,21 +55,11 @@ public class DaemonProcessLauncher(
         startupErrorLog
             ?.takeIf { daemonProcess?.isAlive != true }
             ?.let { errorLog ->
-                runCatching { Files.readString(errorLog).trim().ifEmpty { null } }
-                    .getOrNull()
-                    .also { Files.deleteIfExists(errorLog) }
+                runCatching { Files.readString(errorLog).trim().ifEmpty { null } }.getOrNull()
             }
 
-    /** Removes the startup diagnostic after a confirmed daemon exits. */
-    public fun discardStartupError() {
-        val errorLog = startupErrorLog ?: return
-        val process = daemonProcess
-        if (process?.isAlive == true) {
-            process.onExit().thenRun { Files.deleteIfExists(errorLog) }
-        } else {
-            Files.deleteIfExists(errorLog)
-        }
-    }
+    /** Keeps the persistent diagnostic log after startup and daemon exit. */
+    public fun discardStartupError(): Unit = Unit
 
     /**
      * The builder for the daemon process: the isolated command, started in a new session where the
@@ -187,7 +185,7 @@ public class DaemonProcessLauncher(
             "dev.sebastiano.spectre.cli.daemon.DaemonMainKt"
 
         /** System properties the daemon reads, and therefore has to be handed. */
-        private val FORWARDED_PROPERTIES: List<String> =
+        internal val FORWARDED_PROPERTIES: List<String> =
             listOf(
                 "dev.sebastiano.spectre.agent.runtimeJar",
                 AttachInputCoordination.PROPERTY,

@@ -188,7 +188,14 @@ public constructor(
                 while (running.get()) {
                     val request = DaemonWireCodec.readRequest(input) ?: return
                     synchronized(activityLock) { lastActivityNanos = System.nanoTime() }
-                    val response = handleRequest(request, handshakeComplete, handshakeVersion)
+                    val response =
+                        try {
+                            handleRequest(request, handshakeComplete, handshakeVersion)
+                        } catch (exception: IOException) {
+                            operationFailure(exception)
+                        } catch (exception: RuntimeException) {
+                            operationFailure(exception)
+                        }
                     if (request is DaemonRequest.Hello) {
                         handshakeComplete = response is DaemonResponse.Hello
                         handshakeVersion = request.clientVersion.takeIf { handshakeComplete }
@@ -208,6 +215,16 @@ public constructor(
             // Defer server close until this client channel is fully released so socket ancestor
             // dirs can be unlinked; always run when Shutdown was handled (write may have failed).
             if (shutdownAfterResponse) close()
+        }
+
+        private fun operationFailure(exception: Exception): DaemonResponse.Error {
+            logConnectionFailure(exception)
+            return DaemonResponse.Error(
+                code = DaemonErrorCode.OperationFailed,
+                message =
+                    "${exception.javaClass.simpleName}: " +
+                        (exception.message ?: "daemon operation failed"),
+            )
         }
     }
 

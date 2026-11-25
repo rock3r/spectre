@@ -44,26 +44,38 @@ internal class CaptureLedger(private val ledgerFile: Path) {
         if (paths.isEmpty()) return
         withLedgerLock {
             if (!Files.isRegularFile(ledgerFile)) return@withLedgerLock
-            val remaining = readAllUnlocked().filterNot { it.path in paths }
+            val remaining = readLinesUnlocked().filterNot { line -> line.entry?.path in paths }
             rewriteUnlocked(remaining)
         }
     }
 
     private fun readAllUnlocked(): List<CaptureLedgerEntry> {
         if (!Files.isRegularFile(ledgerFile)) return emptyList()
-        return Files.readAllLines(ledgerFile, StandardCharsets.UTF_8).mapNotNull { line ->
+        return readLinesUnlocked().mapNotNull { it.entry }
+    }
+
+    private data class LedgerLine(val raw: String, val entry: CaptureLedgerEntry?)
+
+    private fun readLinesUnlocked(): List<LedgerLine> {
+        if (!Files.isRegularFile(ledgerFile)) return emptyList()
+        return Files.readAllLines(ledgerFile, StandardCharsets.UTF_8).map { line ->
             val trimmed = line.trim()
-            if (trimmed.isEmpty()) return@mapNotNull null
-            runCatching { JSON.decodeFromString(CaptureLedgerEntry.serializer(), trimmed) }
-                .getOrNull()
+            val entry =
+                trimmed
+                    .takeIf { it.isNotEmpty() }
+                    ?.let {
+                        runCatching { JSON.decodeFromString(CaptureLedgerEntry.serializer(), it) }
+                            .getOrNull()
+                    }
+            LedgerLine(raw = line, entry = entry)
         }
     }
 
-    private fun rewriteUnlocked(entries: List<CaptureLedgerEntry>) {
+    private fun rewriteUnlocked(entries: List<LedgerLine>) {
         Files.createDirectories(ledgerFile.parent)
         val content = buildString {
-            entries.forEach { entry ->
-                append(JSON.encodeToString(entry))
+            entries.forEach { line ->
+                append(line.entry?.let(JSON::encodeToString) ?: line.raw)
                 append('\n')
             }
         }

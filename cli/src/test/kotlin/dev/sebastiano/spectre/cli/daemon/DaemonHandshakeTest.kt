@@ -15,7 +15,11 @@ import kotlinx.serialization.ExperimentalSerializationApi
 class DaemonHandshakeTest {
     @Test
     fun `hello request round trips through cbor with current protocol version`() {
-        val wire: DaemonRequest = DaemonRequest.Hello(clientVersion = DaemonProtocol.CurrentVersion)
+        val wire: DaemonRequest =
+            DaemonRequest.Hello(
+                clientVersion = DaemonProtocol.CurrentVersion,
+                configuration = mapOf("java.io.tmpdir" to "/caller/tmp"),
+            )
 
         val bytes = DaemonProtocol.cbor.encodeToByteArray(DaemonRequest.serializer(), wire)
         val decoded = DaemonProtocol.cbor.decodeFromByteArray(DaemonRequest.serializer(), bytes)
@@ -23,6 +27,7 @@ class DaemonHandshakeTest {
         val hello = assertIs<DaemonRequest.Hello>(decoded)
         assertEquals(1, hello.clientVersion.major)
         assertEquals(DaemonProtocol.CurrentVersion.minor, hello.clientVersion.minor)
+        assertEquals("/caller/tmp", hello.configuration["java.io.tmpdir"])
     }
 
     @Test

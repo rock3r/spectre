@@ -12,7 +12,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 14)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 15)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -162,7 +162,10 @@ public enum class VersionCompatibility {
 @Serializable
 public sealed interface DaemonRequest {
     @Serializable
-    public data class Hello(public val clientVersion: DaemonProtocolVersion) : DaemonRequest
+    public data class Hello(
+        public val clientVersion: DaemonProtocolVersion,
+        public val configuration: Map<String, String?> = emptyMap(),
+    ) : DaemonRequest
 
     @Serializable
     @SerialName("attach")
@@ -390,6 +393,7 @@ public sealed interface DaemonResponse {
         public val daemonVersion: DaemonProtocolVersion,
         public val maxFrameBytes: Int? = null,
         public val inputCoordination: String? = null,
+        public val configuration: Map<String, String?> = emptyMap(),
     ) : DaemonResponse
 
     @Serializable

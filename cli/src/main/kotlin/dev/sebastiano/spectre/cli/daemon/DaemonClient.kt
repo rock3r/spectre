@@ -66,7 +66,11 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
         request: DaemonRequest,
     ) {
         val requiredVersion = DaemonProtocol.minimumDaemonVersion(request)
-        DaemonWireCodec.writeRequest(output, DaemonRequest.Hello(requiredVersion))
+        val configuration = daemonConfiguration()
+        DaemonWireCodec.writeRequest(
+            output,
+            DaemonRequest.Hello(requiredVersion, configuration = configuration),
+        )
         when (val response = DaemonWireCodec.readResponse(input)) {
             is DaemonResponse.Hello -> {
                 val compatibility =
@@ -93,6 +97,11 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
                         )
                         ?.let { throw IOException(it) }
                 }
+                if (request !is DaemonRequest.Shutdown && response.configuration != configuration) {
+                    throw IOException(
+                        configurationMismatchFailure(configuration, response.configuration)
+                    )
+                }
             }
             is DaemonResponse.Error ->
                 throw IOException(daemonHandshakeFailure(requiredVersion, response))
@@ -110,6 +119,24 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
             if (Files.exists(socketPath)) throw exception
             throw NoSuchFileException(socketPath.toString()).also { it.initCause(exception) }
         }
+}
+
+internal fun daemonConfiguration(): Map<String, String?> =
+    DaemonProcessLauncher.FORWARDED_PROPERTIES.associateWith(System::getProperty)
+
+internal fun configurationMismatchFailure(
+    requested: Map<String, String?>,
+    running: Map<String, String?>,
+): String {
+    val differences =
+        (requested.keys + running.keys)
+            .sorted()
+            .filter { requested[it] != running[it] }
+            .joinToString { name ->
+                "$name: caller=${requested[name] ?: "<unset>"}, daemon=${running[name] ?: "<unset>"}"
+            }
+    return "The running Spectre daemon has different JVM configuration ($differences). " +
+        "Run `spectre daemon kill` and retry so the requested configuration takes effect."
 }
 
 internal class DaemonConnectionClosedException(cause: Throwable? = null) :

@@ -77,6 +77,7 @@ internal constructor(
                     // Resolved from this JVM's properties, which do not change while it lives, so
                     // this is the mode every attach this daemon makes will use.
                     inputCoordination = AttachInputCoordination.fromProperty().wireValue,
+                    configuration = daemonConfiguration(),
                 )
             is DaemonRequest.Attach -> error("attach must use attach() outside the monitor")
             is DaemonRequest.Detach -> error("detach must use handleDetachOutsideLock")

@@ -1,5 +1,17 @@
 # CLI
 
+## Daemon configuration and diagnostics
+
+The per-user daemon validates JVM settings that affect captures, attachment, and input on every
+connection. If `java.io.tmpdir`, `user.home`, `java.awt.headless`, the agent runtime override, or
+input coordination differs from the running daemon, the command fails with the differing values
+and asks you to run `spectre daemon kill` before retrying. Settings are never silently applied only
+to the short-lived CLI process.
+
+Daemon stdout and stderr are retained next to the daemon socket in `spectre-daemon.log`, including
+warnings from attachment and platform recording helpers. Unexpected operation failures are also
+returned to the invoking client instead of appearing only as a closed connection.
+
 ## Inspecting and recovering the desktop input lease
 
 !!! warning "Experimental control surface"
