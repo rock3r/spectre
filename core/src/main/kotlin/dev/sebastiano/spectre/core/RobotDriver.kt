@@ -214,22 +214,8 @@ internal constructor(
     public suspend fun typeText(text: String) {
         tccGuard.requireAccessibility()
         runOffEdt("typeText") {
-            // Read once per call: ambient Caps Lock is stable for a short typeText burst, and we
-            // intentionally do not write locking-key state (see KDoc).
-            val capsLockOn = robot.getLockingKeyState(KeyEvent.VK_CAPS_LOCK) == true
-            for (char in text) {
-                inputCoordination.checkpoint()
-                val stroke = keyStrokeForChar(char, capsLockOn = capsLockOn)
-                for (modifier in stroke.modifiers) robot.keyPress(modifier)
-                try {
-                    robot.keyPress(stroke.keyCode)
-                    robot.keyRelease(stroke.keyCode)
-                } finally {
-                    for (modifier in stroke.modifiers.asReversed()) {
-                        runCatching { robot.keyRelease(modifier) }
-                    }
-                }
-            }
+            val prepared = prepareTextInput(robot, text)
+            typePreparedText(robot, prepared) { inputCoordination.checkpoint() }
         }
     }
 
@@ -252,8 +238,8 @@ internal constructor(
     public suspend fun pasteText(text: String) {
         tccGuard.requireAccessibility()
         runOffEdt("pasteText", CoordinatedResource.SYSTEM_CLIPBOARD) {
-            val previousContents = runCatching { clipboard.getContents() }.getOrNull()
-            try {
+            val previousContents = saveClipboardContents(clipboard)
+            withRestoredClipboard(clipboard, previousContents) {
                 clipboard.setContents(StringSelection(text))
                 // OS pasteboard writes (notably macOS NSPasteboard) are asynchronous:
                 // setContents returns immediately, but readers can observe the previous value
@@ -295,10 +281,6 @@ internal constructor(
                     delay(POST_PASTE_SETTLE_MS.milliseconds)
                     repeat(POST_PASTE_EDT_PUMPS) { robot.waitForIdle() }
                 }
-            } finally {
-                if (previousContents != null) {
-                    runCatching { clipboard.setContents(previousContents) }
-                }
             }
         }
     }
@@ -306,16 +288,24 @@ internal constructor(
     private suspend fun awaitClipboardContents(expected: String, timeoutMs: Long, pollMs: Long) {
         val deadline = System.nanoTime() + timeoutMs * NANOS_PER_MILLI
         while (true) {
+            val read = runCatching {
+                clipboard.getContents()?.getTransferData(DataFlavor.stringFlavor) as? String
+            }
+            val readFailure = read.exceptionOrNull()
             val current =
-                runCatching { clipboard.getContents()?.getTransferData(DataFlavor.stringFlavor) }
-                    .recover { error ->
-                        // UnsupportedFlavorException means another writer just clobbered the
-                        // clipboard with non-string data — treat as "not yet" and keep polling.
-                        if (error is UnsupportedFlavorException) null else throw error
-                    }
-                    .getOrNull() as? String
+                when (readFailure) {
+                    null -> read.getOrNull()
+                    is UnsupportedFlavorException -> null
+                    else ->
+                        throw IllegalStateException(
+                            "pasteText could not read the clipboard",
+                            readFailure,
+                        )
+                }
             if (current == expected) return
-            if (System.nanoTime() >= deadline) return
+            if (System.nanoTime() >= deadline) {
+                error("pasteText clipboard did not settle before the timeout")
+            }
             delay(pollMs.milliseconds)
             inputCoordination.checkpoint()
         }
@@ -323,8 +313,7 @@ internal constructor(
 
     /**
      * Selects all content in the focused field, deletes it, then types [text]. Select-all is
-     * Ctrl/Cmd+A, then a Home + Shift+End line-select fallback (Wayland portal keysyms often do not
-     * apply Control as a sticky modifier), then Backspace. The second half uses [typeText].
+     * Ctrl/Cmd+A followed by Backspace. The second half uses [typeText].
      *
      * Useful for overwriting a `TextField`'s current value without the caller having to compute
      * cursor / selection state. Same caveats as [typeText] for supported characters apply.
@@ -336,9 +325,14 @@ internal constructor(
     public suspend fun clearAndTypeText(text: String) {
         inputCoordination.withOperation("clearAndTypeText", CoordinatedResource.REAL_INPUT) {
             tccGuard.requireAccessibility()
+            var prepared: Result<List<KeyStrokeSpec>>? = null
+            runOffEdt("preflightText") { prepared = runCatching { prepareTextInput(robot, text) } }
+            val strokes = checkNotNull(prepared).getOrThrow()
             val selectAllModifier = shortcutModifierKeyCode(detectMacOs())
             runOffEdt("clearText") { robot.clearFocusedField(selectAllModifier) }
-            typeText(text)
+            runOffEdt("typeText") {
+                typePreparedText(robot, strokes) { inputCoordination.checkpoint() }
+            }
         }
     }
 
@@ -636,15 +630,6 @@ internal interface RobotAdapter : ScreenCaptureAdapter {
 
     /** True when pointer/keyboard go through a real OS input path (AWT Robot or Wayland helper). */
     val deliversRealOsInput: Boolean
-        get() = false
-
-    /**
-     * True when Ctrl/Cmd+A cannot be relied on to select the whole field. Wayland portal keysyms
-     * often do not apply Control as a sticky modifier, so [clearAndTypeText] then adds Home +
-     * Shift+End. Default is false so a successful full-field select-all is not collapsed to one
-     * line.
-     */
-    val needsSelectAllLineFallback: Boolean
         get() = false
 
     fun mouseMove(x: Int, y: Int)

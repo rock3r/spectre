@@ -27,7 +27,6 @@ internal class WaylandSeatSocketAdapter(
     override val autoDelayMs: Int = 0
     override val requiresOffEdt: Boolean = true
     override val deliversRealOsInput: Boolean = true
-    override val needsSelectAllLineFallback: Boolean = true
     override val shouldDrainAfterClipboardPaste: Boolean
         get() = true
 

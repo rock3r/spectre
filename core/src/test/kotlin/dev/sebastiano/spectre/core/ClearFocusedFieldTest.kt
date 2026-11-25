@@ -6,6 +6,7 @@ import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlinx.coroutines.test.runTest
 
 class ClearFocusedFieldTest {
@@ -38,45 +39,44 @@ class ClearFocusedFieldTest {
     }
 
     @Test
-    fun `clearAndTypeText uses Home Shift End only when the adapter needs a line fallback`() =
-        runTest {
-            val robot = RecordingClearRobotAdapter(needsSelectAllLineFallback = true)
-            val driver = RobotDriver(robot, EmptyClipboardAdapter())
-            val selectAll = shortcutModifierKeyCode(detectMacOs())
+    fun `clearAndTypeText never narrows a successful multiline select all to one line`() = runTest {
+        val robot = RecordingClearRobotAdapter()
+        val driver = RobotDriver(robot, EmptyClipboardAdapter())
+        val selectAll = shortcutModifierKeyCode(detectMacOs())
 
-            driver.clearAndTypeText("ab")
+        driver.clearAndTypeText("ab")
 
-            assertEquals(
-                listOf(
-                    "keyPress($selectAll)",
-                    "keyPress(${KeyEvent.VK_A})",
-                    "keyRelease(${KeyEvent.VK_A})",
-                    "keyRelease($selectAll)",
-                    "waitForIdle()",
-                    "keyPress(${KeyEvent.VK_HOME})",
-                    "keyRelease(${KeyEvent.VK_HOME})",
-                    "keyPress(${KeyEvent.VK_SHIFT})",
-                    "keyPress(${KeyEvent.VK_END})",
-                    "keyRelease(${KeyEvent.VK_END})",
-                    "keyRelease(${KeyEvent.VK_SHIFT})",
-                    "waitForIdle()",
-                    "keyPress(${KeyEvent.VK_BACK_SPACE})",
-                    "keyRelease(${KeyEvent.VK_BACK_SPACE})",
-                    "waitForIdle()",
-                    "keyPress(${KeyEvent.VK_A})",
-                    "keyRelease(${KeyEvent.VK_A})",
-                    "keyPress(${KeyEvent.VK_B})",
-                    "keyRelease(${KeyEvent.VK_B})",
-                ),
-                robot.events,
-            )
-        }
+        assertEquals(
+            listOf(
+                "keyPress($selectAll)",
+                "keyPress(${KeyEvent.VK_A})",
+                "keyRelease(${KeyEvent.VK_A})",
+                "keyRelease($selectAll)",
+                "waitForIdle()",
+                "keyPress(${KeyEvent.VK_BACK_SPACE})",
+                "keyRelease(${KeyEvent.VK_BACK_SPACE})",
+                "waitForIdle()",
+                "keyPress(${KeyEvent.VK_A})",
+                "keyRelease(${KeyEvent.VK_A})",
+                "keyPress(${KeyEvent.VK_B})",
+                "keyRelease(${KeyEvent.VK_B})",
+            ),
+            robot.events,
+        )
+    }
+
+    @Test
+    fun `clearAndTypeText preflights unsupported text before clearing`() = runTest {
+        val robot = RecordingClearRobotAdapter()
+        val driver = RobotDriver(robot, EmptyClipboardAdapter())
+
+        assertFailsWith<IllegalArgumentException> { driver.clearAndTypeText("valid then é") }
+
+        assertEquals(emptyList(), robot.events)
+    }
 }
 
-private class RecordingClearRobotAdapter(
-    override val autoDelayMs: Int = 0,
-    override val needsSelectAllLineFallback: Boolean = false,
-) : RobotAdapter {
+private class RecordingClearRobotAdapter(override val autoDelayMs: Int = 0) : RobotAdapter {
     override val requiresOffEdt: Boolean = false
     val events = mutableListOf<String>()
 
