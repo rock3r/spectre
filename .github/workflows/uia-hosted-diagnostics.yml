@@ -9,13 +9,11 @@ permissions:
 
 jobs:
   windows-helper-tests:
-    name: UIA diagnostics (${{ matrix.fixture.label }})
+    name: UIA diagnostics (${{ matrix.publishMode }})
     strategy:
       fail-fast: false
       matrix:
-        fixture:
-          - {label: existing-pin, commit: 4ed264d6897cb6b41ce216250b0bda5b9e6f0b06}
-          - {label: current-fixture, commit: 96cd6cb20e44d5d26a4cfb93d8a3f8e1b6375aa8}
+        publishMode: [framework-dependent, bundled-windows-app-sdk]
     runs-on: windows-latest
     timeout-minutes: 15
 
@@ -46,15 +44,48 @@ jobs:
         run: |
           $fixture = "$env:RUNNER_TEMP\accesskit-fixture"
           git init $fixture
-          git -C $fixture fetch --depth 1 https://github.com/rock3r/spectre.git ${{ matrix.fixture.commit }}
+          git -C $fixture fetch --depth 1 https://github.com/rock3r/spectre.git 96cd6cb20e44d5d26a4cfb93d8a3f8e1b6375aa8
           git -C $fixture checkout --detach FETCH_HEAD
 
       - name: Build helper and AccessKit fixture
         shell: pwsh
         run: |
-          dotnet publish recording/native/windows/SpectreWindowCapture.csproj -c Release -r win-x64 --self-contained false -o "$env:RUNNER_TEMP\spectre-helper"
+          dotnet --list-runtimes
+          $registered = @(Get-AppxPackage -Name 'Microsoft.WindowsAppRuntime*')
+          Write-Host "Registered Windows App Runtime packages: $($registered.Count)"
+          $registered | Select-Object Name, Version | Format-Table
+          $bundle = '${{ matrix.publishMode }}' -eq 'bundled-windows-app-sdk'
+          dotnet publish recording/native/windows/SpectreWindowCapture.csproj -c Release -r win-x64 --self-contained false -p:WindowsAppSDKSelfContained=$bundle -o "$env:RUNNER_TEMP\spectre-helper"
           cargo build --locked --release --manifest-path "$env:RUNNER_TEMP\accesskit-fixture\fixtures\accesskit\Cargo.toml"
 
+      - name: Probe managed startup before a UIA call
+        shell: pwsh
+        run: |
+          Get-Content "$env:RUNNER_TEMP\spectre-helper\SpectreWindowCapture.runtimeconfig.json"
+          $start = [Diagnostics.ProcessStartInfo]::new("$env:RUNNER_TEMP\spectre-helper\SpectreWindowCapture.exe", 'accessibility-snapshot')
+          $start.UseShellExecute = $false
+          $start.RedirectStandardInput = $true
+          $start.RedirectStandardOutput = $true
+          $start.RedirectStandardError = $true
+          $start.Environment['COREHOST_TRACE'] = '1'
+          $trace = "$env:RUNNER_TEMP\uia-host-startup.log"
+          $start.Environment['COREHOST_TRACEFILE'] = $trace
+          $start.Environment['DOTNET_DISABLE_GUI_ERRORS'] = '1'
+          $proc = [Diagnostics.Process]::Start($start)
+          $stdout = $proc.StandardOutput.ReadToEndAsync()
+          $stderr = $proc.StandardError.ReadToEndAsync()
+          $proc.StandardInput.Write('{}')
+          $proc.StandardInput.Close()
+          if (-not $proc.WaitForExit(10000)) {
+            $proc.Refresh()
+            Write-Host "Startup stalled: hwnd=$($proc.MainWindowHandle) title=$($proc.MainWindowTitle)"
+            $proc.Kill($true)
+            $proc.WaitForExit()
+          }
+          Write-Host "Invalid-request probe exited $($proc.ExitCode)"
+          Write-Host $stdout.GetAwaiter().GetResult()
+          Write-Host $stderr.GetAwaiter().GetResult()
+          if (Test-Path $trace) { Get-Content $trace -Tail 6 | ForEach-Object { $_.Substring(0,[Math]::Min(350,$_.Length)) } }
       - name: Read the live AccessKit fixture through UI Automation
         shell: pwsh
         run: |
