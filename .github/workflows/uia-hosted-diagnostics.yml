@@ -1,95 +1,79 @@
-name: Windows accessibility runner diagnostics
-
+name: Windows release diagnostics
 on:
   push:
     branches: [release-0.10/uia-hosted-smoke]
-
 permissions:
   contents: read
-
 jobs:
-  windows-helper-tests:
-    name: UIA diagnostics (${{ matrix.publishMode }})
-    strategy:
-      fail-fast: false
-      matrix:
-        publishMode: [framework-dependent, bundled-windows-app-sdk]
+  installed-runtime:
+    name: Shipped UIA helper with documented Windows runtime
     runs-on: windows-latest
     timeout-minutes: 15
-
     steps:
-      - name: Check out repository
+      - uses: actions/checkout@v6
+        with:
+          ref: 62daeaa6fa951351fe6e94b23fa952c5815a8d01
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+      - name: Install the Microsoft-signed runtime pinned to the helper SDK
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'WindowsAppRuntimeInstall-x64.exe'
+          Invoke-WebRequest 'https://aka.ms/windowsappsdk/1.8/1.8.260209005/windowsappruntimeinstall-x64.exe' -OutFile $path
+          $signature = Get-AuthenticodeSignature $path
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(?:^|, )O=Microsoft Corporation(?:,|$)') { throw "Invalid Microsoft signature: $($signature.Status)" }
+          $install = Start-Process $path -ArgumentList '--quiet' -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Runtime installation failed with exit $($install.ExitCode)" }
+          $framework = Get-AppxPackage -Name 'Microsoft.WindowsAppRuntime.1.8' | Where-Object Architecture -eq X64
+          if (-not $framework) { throw 'Missing x64 Windows App Runtime 1.8 after installation' }
+          $framework | Select-Object Name,Version,Architecture
+      - name: Check out the fixture pinned by the public PR
         uses: actions/checkout@v6
         with:
+          ref: 4ed264d6897cb6b41ce216250b0bda5b9e6f0b06
+          path: fixture-checkout
           persist-credentials: false
-
-      - name: Apply cloud diagnostic instrumentation
+      - name: Build and run the public PowerShell fixture and release helper
         shell: pwsh
         run: |
-          git apply .github/scripts/uia-hosted-diagnostic.diff
+          $fixture = Join-Path $PWD 'fixture-checkout/fixtures/accesskit'
+          $helper = Join-Path $env:RUNNER_TEMP 'spectre-helper'
+          dotnet publish recording/native/windows/SpectreWindowCapture.csproj -c Release -r win-x64 --self-contained false -o $helper
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $probe = "recording/native/windows/test-accesskit-fixture.ps1"
-          (Get-Content $probe) -notmatch 'ProviderDescriptionProperty' | Set-Content $probe
-
-      - name: Set up .NET 8
-        uses: actions/setup-dotnet@v5
+          cargo build --locked --release --manifest-path "$fixture/Cargo.toml"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          recording/native/windows/test-accesskit-fixture.ps1 -Helper "$helper/SpectreWindowCapture.exe" -Fixture "$fixture/target/release/spectre-accesskit-fixture.exe" -Golden "$fixture/golden/windows.json"
+  gradle-overlap:
+    name: Hosted Gradle marker ownership with diagnostics
+    runs-on: windows-latest
+    timeout-minutes: 48
+    steps:
+      - uses: actions/checkout@v6
         with:
-          dotnet-version: "8.0.x"
-
-      - name: Run Windows Graphics Capture helper unit tests
-        run: dotnet test recording/native/windows/SpectreWindowCapture.Tests/SpectreWindowCapture.Tests.csproj
-
-      - name: Check out AccessKit fixture at its pinned commit
+          ref: d859918ac7ba39e74d18b9db0749f4f19cd9f461
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Exercise the marker test in the normal full check
+        run: ./gradlew check
+        shell: bash
+        timeout-minutes: 40
+      - name: Read the owned Gradle marker fixture report
+        if: always()
         shell: pwsh
         run: |
-          $fixture = "$env:RUNNER_TEMP\accesskit-fixture"
-          git init $fixture
-          git -C $fixture fetch --depth 1 https://github.com/rock3r/spectre.git 96cd6cb20e44d5d26a4cfb93d8a3f8e1b6375aa8
-          git -C $fixture checkout --detach FETCH_HEAD
-
-      - name: Build helper and AccessKit fixture
-        shell: pwsh
-        run: |
-          dotnet --list-runtimes
-          $registered = @(Get-AppxPackage -Name 'Microsoft.WindowsAppRuntime*')
-          Write-Host "Registered Windows App Runtime packages: $($registered.Count)"
-          $registered | Select-Object Name, Version | Format-Table
-          $bundle = '${{ matrix.publishMode }}' -eq 'bundled-windows-app-sdk'
-          dotnet publish recording/native/windows/SpectreWindowCapture.csproj -c Release -r win-x64 --self-contained false -p:WindowsAppSDKSelfContained=$bundle -o "$env:RUNNER_TEMP\spectre-helper"
-          cargo build --locked --release --manifest-path "$env:RUNNER_TEMP\accesskit-fixture\fixtures\accesskit\Cargo.toml"
-
-      - name: Probe managed startup before a UIA call
-        shell: pwsh
-        run: |
-          Get-Content "$env:RUNNER_TEMP\spectre-helper\SpectreWindowCapture.runtimeconfig.json"
-          $start = [Diagnostics.ProcessStartInfo]::new("$env:RUNNER_TEMP\spectre-helper\SpectreWindowCapture.exe", 'accessibility-snapshot')
-          $start.UseShellExecute = $false
-          $start.RedirectStandardInput = $true
-          $start.RedirectStandardOutput = $true
-          $start.RedirectStandardError = $true
-          $start.Environment['COREHOST_TRACE'] = '1'
-          $trace = "$env:RUNNER_TEMP\uia-host-startup.log"
-          $start.Environment['COREHOST_TRACEFILE'] = $trace
-          $start.Environment['DOTNET_DISABLE_GUI_ERRORS'] = '1'
-          $proc = [Diagnostics.Process]::Start($start)
-          $stdout = $proc.StandardOutput.ReadToEndAsync()
-          $stderr = $proc.StandardError.ReadToEndAsync()
-          $proc.StandardInput.Write('{}')
-          $proc.StandardInput.Close()
-          if (-not $proc.WaitForExit(10000)) {
-            $proc.Refresh()
-            Write-Host "Startup stalled: hwnd=$($proc.MainWindowHandle) title=$($proc.MainWindowTitle)"
-            $proc.Kill($true)
-            $proc.WaitForExit()
+          $p = Get-ChildItem 'agent/build/test-results/test' -Filter '*GradleLaunchMarkerIntegrationTest.xml' | Select-Object -First 1
+          if (-not $p) { throw 'Missing marker fixture test XML' }
+          [xml]$xml = Get-Content -LiteralPath $p.FullName -Raw
+          foreach ($test in $xml.testsuite.testcase) {
+            Write-Host "$($test.name): $($test.time) s"
+            if ($test.failure) { Write-Host $test.failure.message }
           }
-          Write-Host "Invalid-request probe exited $($proc.ExitCode)"
-          Write-Host $stdout.GetAwaiter().GetResult()
-          Write-Host $stderr.GetAwaiter().GetResult()
-          if (Test-Path $trace) { Get-Content $trace -Tail 6 | ForEach-Object { $_.Substring(0,[Math]::Min(350,$_.Length)) } }
-      - name: Read the live AccessKit fixture through UI Automation
-        shell: pwsh
-        run: |
-          recording/native/windows/test-accesskit-fixture.ps1 `
-            -Helper "$env:RUNNER_TEMP\spectre-helper\SpectreWindowCapture.exe" `
-            -Fixture "$env:RUNNER_TEMP\accesskit-fixture\fixtures\accesskit\target\release\spectre-accesskit-fixture.exe" `
-            -Golden "$env:RUNNER_TEMP\accesskit-fixture\fixtures\accesskit\golden\windows.json"
