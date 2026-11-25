@@ -21,7 +21,9 @@ import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
+import dev.sebastiano.spectre.cli.daemon.AccessibilitySnapshot
 import dev.sebastiano.spectre.cli.daemon.CaptureSessionReport
+import dev.sebastiano.spectre.cli.daemon.DaemonCaptureSource
 import dev.sebastiano.spectre.cli.daemon.DaemonClient
 import dev.sebastiano.spectre.cli.daemon.DaemonEndpoint
 import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
@@ -249,6 +251,7 @@ private class RootCommand(
             LaunchCommand(output, errorOutput),
             WindowsCommand(request, output),
             TreeCommand(request, output),
+            AccessibilityCommand(request, output, errorOutput),
             FindCommand(request, output),
             FindByTextCommand(request, output),
             WaitForNodeCommand(request, output),
@@ -317,6 +320,74 @@ private class RootCommand(
                 throw CliktError(exception.message ?: "invalid --max-frame-bytes", exception)
             }
         }
+    }
+}
+
+private class AccessibilityCommand(
+    request: (DaemonRequest) -> DaemonResponse,
+    output: Appendable,
+    errorOutput: Appendable,
+) : CliktCommand(name = "a11y") {
+    init {
+        subcommands(AccessibilityTreeCommand(request, output, errorOutput))
+    }
+
+    override fun run() = Unit
+}
+
+private class AccessibilityTreeCommand(
+    private val request: (DaemonRequest) -> DaemonResponse,
+    private val output: Appendable,
+    private val errorOutput: Appendable,
+) : CliktCommand(name = "tree") {
+    private val pid: Long? by option("--pid").long()
+    private val windowTitle: String? by option("--window")
+    private val sessionId: String? by option("--session")
+    private val windowIndex: Int by option("--window-index").int().default(0)
+    private val maximumDepth: Int by option("--maximum-depth").int().default(64)
+    private val maximumNodeCount: Int by option("--maximum-node-count").int().default(10_000)
+    private val timeoutMs: Long by option("--timeout-ms").long().default(750)
+
+    override fun run() {
+        if (listOf(pid, windowTitle, sessionId).count { it != null } != 1) {
+            throw CliktError("exactly one of --pid, --window, or --session is required")
+        }
+        require(windowIndex >= 0) { "--window-index must not be negative" }
+        require(maximumDepth > 0 && maximumNodeCount > 0 && timeoutMs > 0) {
+            "accessibility traversal budgets must be positive"
+        }
+        when (
+            val response =
+                request(
+                    DaemonRequest.AccessibilityTree(
+                        pid,
+                        windowTitle,
+                        sessionId,
+                        windowIndex,
+                        maximumDepth,
+                        maximumNodeCount,
+                        timeoutMs,
+                    )
+                )
+        ) {
+            is DaemonResponse.AccessibilitySnapshotResult -> printSnapshot(response.snapshot)
+            is DaemonResponse.AccessibilityErrorResult -> {
+                response.error.partialSnapshot?.let(::printSnapshot)
+                throw DaemonCommandException(
+                    DaemonResponse.Error(
+                        DaemonErrorCode.OperationFailed,
+                        "${response.error.code}: ${response.error.message}",
+                    )
+                )
+            }
+            is DaemonResponse.Error -> throw DaemonCommandException(response)
+            else -> error("Daemon returned an unexpected response to accessibility tree")
+        }
+    }
+
+    private fun printSnapshot(snapshot: AccessibilitySnapshot) {
+        snapshot.notes.forEach { errorOutput.appendLine("notice: $it") }
+        output.append(CLI_JSON.encodeToString(snapshot)).appendLine()
     }
 }
 
@@ -457,6 +528,16 @@ private class CaptureCommand(
     private val sessionId: String by argument()
     private val windowIndex: Int by option("--window").int().default(0)
     private val outDir: Path? by option("--out-dir").path()
+    private val source: DaemonCaptureSource by
+        option("--source")
+            .convert { raw ->
+                when (raw) {
+                    "compose" -> DaemonCaptureSource.Compose
+                    "accessibility" -> DaemonCaptureSource.Accessibility
+                    else -> throw CliktError("--source must be compose or accessibility")
+                }
+            }
+            .default(DaemonCaptureSource.Compose)
     private val json: Boolean by option("--json").flag(default = false)
 
     override fun run() {
@@ -466,6 +547,7 @@ private class CaptureCommand(
                     sessionId = sessionId,
                     windowIndex = windowIndex,
                     outDir = outDir?.toAbsolutePath()?.normalize()?.toString(),
+                    source = source,
                 )
             )
         val capture =

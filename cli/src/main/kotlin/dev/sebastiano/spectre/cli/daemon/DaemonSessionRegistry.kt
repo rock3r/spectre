@@ -24,6 +24,7 @@ internal constructor(
     private val hotReloadSessionFactory: (Long) -> HotReloadCapability? = { targetPid ->
         defaultHotReloadCapability(targetPid)
     },
+    accessibilityHelperClient: AccessibilityHelperClient = AccessibilityHelperClient(),
     // Last so trailing-lambda call sites keep meaning attachAutomator.
     private val attachAutomator: (Long) -> DaemonSessionAutomator = { targetPid ->
         installEmbeddedAgentRuntimeIfNeeded()
@@ -32,6 +33,17 @@ internal constructor(
     },
 ) : AutoCloseable {
     private val sessionsByPid: MutableMap<Long, DaemonSession> = linkedMapOf()
+    private val accessibilityHandler =
+        AccessibilityDaemonHandler(accessibilityHelperClient) { sessionId, windowIndex ->
+            val session =
+                synchronized(this) {
+                    sessionsByPid.values.firstOrNull { it.sessionId == sessionId }
+                } ?: return@AccessibilityDaemonHandler null
+            val window =
+                session.automator.windows().singleOrNull { it.index == windowIndex }
+                    ?: return@AccessibilityDaemonHandler null
+            SessionAccessibilityTarget(session.summary.targetPid, window)
+        }
     /**
      * PIDs whose agent teardown is still running after the session left [sessionsByPid]. Same-PID
      * re-attach waits on these latches so it does not race an in-flight agent Detach (#413).
@@ -58,6 +70,7 @@ internal constructor(
             is DaemonRequest.WaitForVisualIdle,
             is DaemonRequest.WaitForReloadSettled -> handleWaitOutsideLock(request)
             is DaemonRequest.Attach -> attach(request.targetPid)
+            is DaemonRequest.AccessibilityTree -> accessibilityHandler.handle(request)
             is DaemonRequest.Detach -> handleDetachOutsideLock(request.sessionId)
             // close() tears down outside the monitor; must not run under @Synchronized.
             DaemonRequest.Shutdown -> {
@@ -78,6 +91,7 @@ internal constructor(
                     // this is the mode every attach this daemon makes will use.
                     inputCoordination = AttachInputCoordination.fromProperty().wireValue,
                 )
+            is DaemonRequest.AccessibilityTree -> error("accessibility tree must use handle()")
             is DaemonRequest.Attach -> error("attach must use attach() outside the monitor")
             is DaemonRequest.Detach -> error("detach must use handleDetachOutsideLock")
             DaemonRequest.ListSessions ->
@@ -247,11 +261,11 @@ internal constructor(
                 }
             is DaemonRequest.Capture ->
                 invoke(request.sessionId) { automator ->
-                    CaptureArtifactStore.write(
-                        sessionId = request.sessionId,
-                        result = automator.capture(request.windowIndex),
-                        outDir = request.outDir,
-                        liveSessionIds = sessionsByPid.values.map { it.sessionId }.toSet(),
+                    writeCapture(
+                        request,
+                        automator,
+                        sessionsByPid.values.map { it.sessionId }.toSet(),
+                        accessibilityHandler,
                     )
                 }
             is DaemonRequest.StartRecording ->
@@ -707,6 +721,45 @@ private fun awaitCountDownLatch(timeoutMs: Long, latch: () -> CountDownLatch?): 
         val remainingMs = ((deadlineNs - System.nanoTime()) / NANOS_PER_MS).coerceAtLeast(0)
         if (remainingMs == 0L) return false
         if (!gate.await(remainingMs, TimeUnit.MILLISECONDS)) return false
+    }
+}
+
+private fun writeCapture(
+    request: DaemonRequest.Capture,
+    automator: DaemonSessionAutomator,
+    liveSessionIds: Set<String>,
+    accessibilityHandler: AccessibilityDaemonHandler,
+): DaemonResponse.Capture {
+    if (request.source == DaemonCaptureSource.Compose) {
+        return CaptureArtifactStore.write(
+            request.sessionId,
+            automator.capture(request.windowIndex),
+            request.outDir,
+            liveSessionIds,
+        )
+    }
+    return when (
+        val tree =
+            accessibilityHandler.handle(
+                DaemonRequest.AccessibilityTree(
+                    sessionId = request.sessionId,
+                    windowIndex = request.windowIndex,
+                )
+            )
+    ) {
+        is DaemonResponse.AccessibilitySnapshotResult ->
+            CaptureArtifactStore.writeAccessibility(
+                sessionId = request.sessionId,
+                windowIndex = request.windowIndex,
+                pngBytes = automator.screenshot(windowIndex = request.windowIndex),
+                snapshot = tree.snapshot,
+                outDir = request.outDir,
+                liveSessionIds = liveSessionIds,
+            )
+        is DaemonResponse.AccessibilityErrorResult ->
+            throw IOException("${tree.error.code}: ${tree.error.message}")
+        is DaemonResponse.Error -> throw IOException(tree.message)
+        else -> error("unexpected accessibility response")
     }
 }
 

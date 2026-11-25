@@ -1,6 +1,6 @@
 package dev.sebastiano.spectre.cli.daemon
 
-import dev.sebastiano.spectre.recording.locateAccessibilityHelper
+import dev.sebastiano.spectre.recording.AccessibilityHelperExecutable
 import java.nio.file.Path
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
@@ -23,7 +23,17 @@ internal sealed interface Target {
     @SerialName("process-id")
     data class ProcessId(val value: Long) : Target {
         init {
-            require(value > 0) { "Process id must be positive" }
+            require(value > 0) { "process id must be positive" }
+        }
+    }
+
+    /** Exact title target; [processId] disambiguates an attached session's native window. */
+    @Serializable
+    @SerialName("window-title")
+    data class WindowTitle(val value: String, val processId: Long? = null) : Target {
+        init {
+            require(value.isNotBlank()) { "window title must not be blank" }
+            require(processId == null || processId > 0) { "process id must be positive" }
         }
     }
 
@@ -31,7 +41,7 @@ internal sealed interface Target {
     @SerialName("window-id")
     data class WindowId(val value: String) : Target {
         init {
-            require(value.isNotBlank()) { "Window id must not be blank" }
+            require(value.isNotBlank()) { "window id must not be blank" }
         }
     }
 }
@@ -51,16 +61,16 @@ internal data class AccessibilitySnapshotRequest(
 }
 
 @Serializable
-internal enum class BoundsSpace {
+public enum class BoundsSpace {
     @SerialName("screen") Screen,
     @SerialName("window") Window,
 }
 
 @Serializable
-internal data class AccessibilityRect(val x: Int, val y: Int, val width: Int, val height: Int)
+public data class AccessibilityRect(val x: Int, val y: Int, val width: Int, val height: Int)
 
 @Serializable
-internal data class AccessibilityWindow(
+public data class AccessibilityWindow(
     val key: String,
     val title: String?,
     val bounds: AccessibilityRect,
@@ -68,7 +78,7 @@ internal data class AccessibilityWindow(
 )
 
 @Serializable
-internal data class AccessibilityNode(
+public data class AccessibilityNode(
     val key: String,
     val parentKey: String?,
     val id: String?,
@@ -82,7 +92,7 @@ internal data class AccessibilityNode(
 )
 
 @Serializable
-internal data class AccessibilitySnapshot(
+public data class AccessibilitySnapshot(
     val schemaVersion: Int,
     val source: String,
     val capturedAt: String,
@@ -92,8 +102,19 @@ internal data class AccessibilitySnapshot(
 )
 
 @Serializable
-internal data class AccessibilityError(
-    val code: String,
+public enum class AccessibilityErrorCode {
+    @SerialName("permission-missing") PermissionMissing,
+    @SerialName("accessibility-disabled") AccessibilityDisabled,
+    @SerialName("target-not-found") TargetNotFound,
+    @SerialName("no-accessibility-tree") NoAccessibilityTree,
+    @SerialName("limit-reached") LimitReached,
+    @SerialName("timeout") Timeout,
+    @SerialName("unsupported-target") UnsupportedTarget,
+}
+
+@Serializable
+public data class AccessibilityError(
+    val code: AccessibilityErrorCode,
     val message: String,
     val partialSnapshot: AccessibilitySnapshot? = null,
 )
@@ -117,6 +138,7 @@ internal fun interface AccessibilityHelperRunner {
 
 /** Runs the already-packaged platform helper and validates its one-request/one-response JSON. */
 internal class AccessibilityHelperClient(
+    private val helperExecutable: () -> Path = AccessibilityHelperExecutable::resolve,
     private val command: (Path) -> List<String> = { listOf(it.toString()) },
     private val runner: AccessibilityHelperRunner = AccessibilityHelperRunner(::runHelper),
 ) {
@@ -124,7 +146,7 @@ internal class AccessibilityHelperClient(
 
     fun snapshot(
         request: AccessibilitySnapshotRequest,
-        helperExecutable: Path = defaultHelperExecutable(),
+        helperExecutable: Path = this.helperExecutable(),
     ): AccessibilitySnapshotResponse {
         val input = json.encodeToString(AccessibilitySnapshotRequest.serializer(), request)
         val output =
@@ -141,7 +163,7 @@ internal class AccessibilityHelperClient(
             AccessibilitySnapshotResponse.Success(snapshot)
         } else {
             val error = requireNotNull(envelope.error)
-            if (error.code == "limit-reached") {
+            if (error.code == AccessibilityErrorCode.LimitReached) {
                 validateSnapshot(
                     requireNotNull(error.partialSnapshot) {
                         "limit-reached response must contain a partial snapshot"
@@ -240,5 +262,3 @@ private object DaemonThreadFactory : ThreadFactory {
     override fun newThread(task: Runnable): Thread =
         Thread(task, "spectre-accessibility-helper-io").apply { isDaemon = true }
 }
-
-private fun defaultHelperExecutable(): Path = locateAccessibilityHelper()

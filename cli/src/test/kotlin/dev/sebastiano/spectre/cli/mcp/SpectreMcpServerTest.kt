@@ -83,6 +83,7 @@ class SpectreMcpServerTest {
                 "detach",
                 "windows",
                 "tree",
+                "accessibility_tree",
                 "find",
                 "find_text",
                 "wait_for_node",

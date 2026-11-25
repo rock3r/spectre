@@ -12,7 +12,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 14)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 15)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -48,8 +48,18 @@ public object DaemonProtocol {
             handshake.minor < SCREEN_PIXEL_STILLS_INTRODUCED_MINOR
 
     internal fun minimumDaemonVersion(request: DaemonRequest): DaemonProtocolVersion =
+        if (request is DaemonRequest.AccessibilityTree) {
+            versionFor(ACCESSIBILITY_INTRODUCED_MINOR)
+        } else {
+            minimumDaemonVersionBeforeAccessibility(request)
+        }
+
+    private fun minimumDaemonVersionBeforeAccessibility(
+        request: DaemonRequest
+    ): DaemonProtocolVersion =
         when (request) {
-            is DaemonRequest.Hello -> versionFor(MINIMUM_PROTOCOL_MINOR)
+            is DaemonRequest.Hello,
+            is DaemonRequest.AccessibilityTree -> versionFor(MINIMUM_PROTOCOL_MINOR)
             is DaemonRequest.Attach,
             is DaemonRequest.Detach,
             DaemonRequest.ListSessions,
@@ -148,6 +158,7 @@ public object DaemonProtocol {
      * before it rejects the new discriminator.
      */
     private const val FOCUS_WINDOW_INTRODUCED_MINOR: Int = 14
+    private const val ACCESSIBILITY_INTRODUCED_MINOR: Int = 15
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -161,6 +172,18 @@ public enum class VersionCompatibility {
 @OptIn(ExperimentalSpectreAgentApi::class)
 @Serializable
 public sealed interface DaemonRequest {
+    @Serializable
+    @SerialName("accessibilityTree")
+    public data class AccessibilityTree(
+        public val processId: Long? = null,
+        public val windowTitle: String? = null,
+        public val sessionId: String? = null,
+        public val windowIndex: Int = 0,
+        public val maximumDepth: Int = 64,
+        public val maximumNodeCount: Int = 10_000,
+        public val timeoutMs: Long = 750,
+    ) : DaemonRequest
+
     @Serializable
     public data class Hello(public val clientVersion: DaemonProtocolVersion) : DaemonRequest
 
@@ -342,6 +365,7 @@ public sealed interface DaemonRequest {
         public val sessionId: String,
         public val windowIndex: Int = 0,
         public val outDir: String? = null,
+        public val source: DaemonCaptureSource = DaemonCaptureSource.Compose,
     ) : DaemonRequest
 
     @Serializable
@@ -374,6 +398,16 @@ public sealed interface DaemonRequest {
 @OptIn(ExperimentalSpectreAgentApi::class)
 @Serializable
 public sealed interface DaemonResponse {
+    @Serializable
+    @SerialName("accessibilitySnapshot")
+    public data class AccessibilitySnapshotResult(public val snapshot: AccessibilitySnapshot) :
+        DaemonResponse
+
+    @Serializable
+    @SerialName("accessibilityError")
+    public data class AccessibilityErrorResult(public val error: AccessibilityError) :
+        DaemonResponse
+
     /**
      * @property maxFrameBytes the frame write budget this daemon booted with. `null` from a daemon
      *   that predates budget reporting, which is indistinguishable from "not the budget you asked
@@ -513,6 +547,12 @@ public sealed interface DaemonResponse {
 public data class DaemonSessionSummary(public val sessionId: String, public val targetPid: Long)
 
 /** A JVM process that can be targeted through the local daemon. */
+@Serializable
+public enum class DaemonCaptureSource {
+    @SerialName("compose") Compose,
+    @SerialName("accessibility") Accessibility,
+}
+
 @Serializable
 public data class DaemonJvmProcessSummary(public val pid: Long, public val displayName: String)
 
