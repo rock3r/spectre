@@ -87,8 +87,8 @@ public data class AccessibilityNode(
     val name: String?,
     val states: List<String>,
     val value: String?,
-    val bounds: AccessibilityRect,
-    val onScreen: Boolean,
+    val bounds: AccessibilityRect?,
+    val onScreen: Boolean?,
 )
 
 @Serializable

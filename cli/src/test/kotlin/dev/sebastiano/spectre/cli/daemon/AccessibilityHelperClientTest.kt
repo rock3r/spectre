@@ -11,6 +11,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.measureTime
@@ -29,6 +30,8 @@ class AccessibilityHelperClientTest {
         val success = assertIs<AccessibilitySnapshotResponse.Success>(response)
         assertEquals("w0/app/0", success.snapshot.nodes.single().key)
         assertEquals(BoundsSpace.Screen, success.snapshot.windows.single().boundsSpace)
+        assertNull(success.snapshot.nodes.single().bounds)
+        assertNull(success.snapshot.nodes.single().onScreen)
     }
 
     @Test
@@ -45,6 +48,8 @@ class AccessibilityHelperClientTest {
         assertEquals(2, snapshot?.schemaVersion)
         assertEquals("os-accessibility", snapshot?.source)
         assertEquals("w0/root", snapshot?.nodes?.single()?.key)
+        assertNull(snapshot?.nodes?.single()?.bounds)
+        assertNull(snapshot?.nodes?.single()?.onScreen)
     }
 
     @Test

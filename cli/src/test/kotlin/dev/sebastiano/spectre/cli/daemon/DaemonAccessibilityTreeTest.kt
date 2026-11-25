@@ -119,6 +119,26 @@ class DaemonAccessibilityTreeTest {
     }
 
     @Test
+    fun `dropped attached target returns operation failure instead of escaping`() {
+        val fixture =
+            fixture(
+                automator =
+                    TestDaemonSessionAutomator(
+                        windowsResult = { throw java.io.IOException("agent connection dropped") }
+                    )
+            )
+        assertIs<DaemonResponse.Attached>(fixture.registry.handle(DaemonRequest.Attach(44)))
+
+        val response =
+            assertIs<DaemonResponse.Error>(
+                fixture.registry.handle(DaemonRequest.AccessibilityTree(sessionId = "pid-44"))
+            )
+
+        assertEquals(DaemonErrorCode.OperationFailed, response.code)
+        assertEquals("agent connection dropped", response.message)
+    }
+
+    @Test
     fun `native ambiguity failure remains typed and never becomes success`() {
         val fixture =
             fixture(

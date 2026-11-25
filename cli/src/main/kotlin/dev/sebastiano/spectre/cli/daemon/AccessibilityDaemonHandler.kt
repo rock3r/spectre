@@ -40,6 +40,13 @@ internal class AccessibilityDaemonHandler(
             TargetResolution.Error(
                 protocolError(exception.message ?: "invalid accessibility target")
             )
+        } catch (exception: java.io.IOException) {
+            TargetResolution.Error(
+                DaemonResponse.Error(
+                    DaemonErrorCode.OperationFailed,
+                    exception.message ?: "session operation failed",
+                )
+            )
         }
 
     private fun resolveSession(request: DaemonRequest.AccessibilityTree): TargetResolution {
