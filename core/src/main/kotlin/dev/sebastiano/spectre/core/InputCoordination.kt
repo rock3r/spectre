@@ -162,6 +162,7 @@ internal class InputLeaseGuard(
     private val capabilities: InputCapabilities,
     private val coordinator: InputLeaseCoordinator,
 ) {
+    private val optionsBinding = AtomicReference<InputLeaseOptions?>()
     private val boundLease = AtomicReference<CoordinatedInputLease?>()
     private val blockingContext = ThreadLocal<BlockingLeaseContext?>()
     private val operationMutex = Mutex()
@@ -169,7 +170,7 @@ internal class InputLeaseGuard(
     suspend fun <T> withOperation(
         currentOperation: String,
         resource: CoordinatedResource,
-        options: InputLeaseOptions = InputLeaseOptions(),
+        options: InputLeaseOptions? = null,
         block: suspend () -> T,
     ): T {
         val operationContext = coroutineContext[LeaseContext]
@@ -194,7 +195,11 @@ internal class InputLeaseGuard(
             val immediate = SwingUtilities.isEventDispatchThread()
             val lease =
                 try {
-                    coordinator.acquire(options, currentOperation, immediate)
+                    coordinator.acquire(
+                        options ?: optionsBinding.get() ?: InputLeaseOptions(),
+                        currentOperation,
+                        immediate,
+                    )
                 } catch (failure: InputCoordinatorException) {
                     if (
                         policy == InputLeasePolicy.Auto &&
@@ -219,6 +224,13 @@ internal class InputLeaseGuard(
                 lease.close()
             }
         }
+    }
+
+    fun bindOptions(options: InputLeaseOptions): AutoCloseable {
+        check(optionsBinding.compareAndSet(null, options)) {
+            "This RobotDriver is already bound to live per-invocation input lease options"
+        }
+        return AutoCloseable { optionsBinding.compareAndSet(options, null) }
     }
 
     fun <T> withBlockingOperation(
@@ -347,8 +359,7 @@ internal class InputLeaseGuard(
     }
 
     private companion object {
-        val AUTO_DEGRADE_ERROR_CODES: Set<String> =
-            setOf("COORDINATOR_PROVIDER_MISSING", "COORDINATOR_SESSION_UNAVAILABLE")
+        val AUTO_DEGRADE_ERROR_CODES: Set<String> = setOf("COORDINATOR_PROVIDER_MISSING")
 
         /**
          * Failures that mean no coordinator could be reached at all, as opposed to one that
@@ -415,6 +426,8 @@ internal class DriverInputCoordination(private val guard: InputLeaseGuard) {
 
     fun bind(lease: CoordinatedInputLease): AutoCloseable = guard.bind(lease)
 
+    fun bindOptions(options: InputLeaseOptions): AutoCloseable = guard.bindOptions(options)
+
     fun <T> withBlockingInput(operation: String, block: () -> T): T =
         guard.withBlockingOperation(operation, CoordinatedResource.FOCUS, block)
 }
@@ -426,6 +439,9 @@ internal suspend fun <T> RobotDriver.withExclusiveInput(
 
 internal fun RobotDriver.bindInputLease(lease: CoordinatedInputLease): AutoCloseable =
     inputCoordination.bind(lease)
+
+internal fun RobotDriver.bindInputLeaseOptions(options: InputLeaseOptions): AutoCloseable =
+    inputCoordination.bindOptions(options)
 
 internal fun <T> RobotDriver.withBlockingInput(operation: String, block: () -> T): T =
     inputCoordination.withBlockingInput(operation, block)

@@ -5,10 +5,17 @@ package dev.sebastiano.spectre.input
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class DesktopIdentityResolverTest {
 
-    private val resolver = DesktopIdentityResolver { path -> Path.of("canonical-${path.fileName}") }
+    private val resolver =
+        DesktopIdentityResolver(
+            canonicalPathResolver = { path -> Path.of("canonical-${path.fileName}") },
+            linuxDisplayProbe = { LinuxDisplayEvidence.PureX11 },
+        )
 
     @Test
     fun `equivalent local X11 display spellings resolve to one resource`() {
@@ -80,6 +87,132 @@ class DesktopIdentityResolverTest {
     }
 
     @Test
+    fun `positive Xvfb evidence keeps a local display on its X11 lease`() {
+        val key = linux(":99")
+
+        assertEquals("user:1000/x11-local:99", key.value)
+    }
+
+    @Test
+    fun `Xwayland and native Wayland clients share the proven compositor lease`() {
+        val resolver =
+            DesktopIdentityResolver(
+                canonicalPathResolver = { path -> Path.of("canonical-${path.fileName}") },
+                linuxDisplayProbe = {
+                    LinuxDisplayEvidence.Xwayland(Path.of("/run/user/1000/wayland-1"))
+                },
+            )
+
+        val xwayland =
+            resolver.resolve(
+                DesktopIdentityEnvironment(
+                    DesktopPlatform.LINUX,
+                    "1000",
+                    mapOf("DISPLAY" to ":7"),
+                )
+            )
+        val native =
+            resolver.resolve(
+                DesktopIdentityEnvironment(
+                    DesktopPlatform.LINUX,
+                    "1000",
+                    mapOf(
+                        "WAYLAND_DISPLAY" to "wayland-1",
+                        "XDG_RUNTIME_DIR" to "/run/user/1000",
+                    ),
+                )
+            )
+
+        assertEquals(native, xwayland)
+    }
+
+    @Test
+    fun `hidden proc or unreadable lineage fails visibly instead of inventing X11`() {
+        val resolver =
+            DesktopIdentityResolver(
+                canonicalPathResolver = { it },
+                linuxDisplayProbe = {
+                    LinuxDisplayEvidence.Unknown("process command lines were unreadable")
+                },
+            )
+
+        val failure =
+            assertFailsWith<IllegalStateException> {
+                resolver.resolve(
+                    DesktopIdentityEnvironment(
+                        DesktopPlatform.LINUX,
+                        "1000",
+                        mapOf("DISPLAY" to ":0"),
+                    )
+                )
+            }
+
+        assertTrue(failure.message.orEmpty().contains("Cannot prove"), failure.message)
+        assertTrue(failure.message.orEmpty().contains("unreadable"), failure.message)
+    }
+
+    @Test
+    fun `relative Wayland display without runtime directory fails visibly`() {
+        val failure =
+            assertFailsWith<IllegalStateException> {
+                resolver.resolve(
+                    DesktopIdentityEnvironment(
+                        DesktopPlatform.LINUX,
+                        "1000",
+                        mapOf("WAYLAND_DISPLAY" to "wayland-0"),
+                    )
+                )
+            }
+
+        assertTrue(failure.message.orEmpty().contains("XDG_RUNTIME_DIR"), failure.message)
+    }
+
+    @Test
+    fun `canonical Wayland socket failure is not replaced by a lexical identity`() {
+        val resolver =
+            DesktopIdentityResolver(
+                canonicalPathResolver = { throw java.io.IOException("unreadable") },
+                linuxDisplayProbe = { LinuxDisplayEvidence.PureX11 },
+            )
+
+        val failure =
+            assertFailsWith<IllegalStateException> {
+                resolver.resolve(
+                    DesktopIdentityEnvironment(
+                        DesktopPlatform.LINUX,
+                        "1000",
+                        mapOf("WAYLAND_DISPLAY" to "/run/user/1000/wayland-0"),
+                    )
+                )
+            }
+
+        assertTrue(failure.message.orEmpty().contains("canonicalize"), failure.message)
+    }
+
+    @Test
+    fun `non X server executable cannot qualify by mentioning Xorg and a display`() {
+        assertNull(
+            displayServerFor(
+                arguments = listOf("python3", "worker.py", "/usr/bin/Xorg", ":88"),
+                token = ":88",
+                executable = Path.of("/usr/bin/python3"),
+            )
+        )
+    }
+
+    @Test
+    fun `recognized X server executable qualifies with matching display argument`() {
+        assertEquals(
+            "Xvfb",
+            displayServerFor(
+                arguments = listOf("/usr/bin/Xvfb", ":88", "-screen", "0", "1024x768x24"),
+                token = ":88",
+                executable = Path.of("/usr/bin/Xvfb"),
+            ),
+        )
+    }
+
+    @Test
     fun `macOS conservatively serializes per console user`() {
         val key =
             resolver.resolve(
@@ -121,6 +254,30 @@ class DesktopIdentityResolverTest {
         assertEquals("user:seb/windows-session:7", withSession.value)
         assertEquals("user:seb/windows-user", transportName.value)
         assertEquals("user:seb/windows-user", fallback.value)
+    }
+
+    @Test
+    fun `display server names in innocent process arguments are ignored`() {
+        assertEquals(
+            null,
+            displayServerFor(
+                arguments = listOf("/usr/bin/java", "Xwayland", ":7"),
+                executable = Path.of("/usr/bin/java"),
+                token = ":7",
+            ),
+        )
+    }
+
+    @Test
+    fun `proc executable can establish display server identity`() {
+        assertEquals(
+            "Xorg",
+            displayServerFor(
+                arguments = listOf("desktop-wrapper", ":7"),
+                executable = Path.of("/usr/libexec/Xorg"),
+                token = ":7",
+            ),
+        )
     }
 
     private fun linux(display: String): DesktopResourceKey =

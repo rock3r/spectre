@@ -315,13 +315,13 @@ class InputLeaseGuardTest {
     }
 
     @Test
-    fun `auto on EDT degrades when no coordinator session can be established`() {
+    fun `auto on EDT fails when a coordinator exists but no session can be established`() {
         val coordinator =
             ProductionInputLeaseCoordinator(
                 connectClient = {
                     throw InputCoordinatorException(
-                        "COORDINATOR_PROVIDER_MISSING",
-                        "runtime artifact unavailable",
+                        "COORDINATOR_SESSION_UNAVAILABLE",
+                        "coordinator exists but no session is connected",
                     )
                 }
             )
@@ -333,7 +333,11 @@ class InputLeaseGuardTest {
         }
 
         coordinator.close()
-        assertEquals(null, failure)
+        assertTrue(failure is ContendedEdtInputLeaseException, "was $failure")
+        assertEquals(
+            "COORDINATOR_SESSION_UNAVAILABLE",
+            (failure?.cause as InputCoordinatorException).errorCode,
+        )
     }
 
     @Test
@@ -938,7 +942,7 @@ private class RecordingCoordinatedInputLease(private val failCheckpointAt: Int?)
     override fun close(): Unit = Unit
 }
 
-private open class LeaseTestRobotAdapter : RobotAdapter {
+internal open class LeaseTestRobotAdapter : RobotAdapter {
     val events = mutableListOf<String>()
     override val autoDelayMs: Int = 0
     override val requiresOffEdt: Boolean = false
