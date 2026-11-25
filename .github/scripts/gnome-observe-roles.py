@@ -29,7 +29,9 @@ def application_root(pid):
 
 
 def inspect_tree(pid):
-    pending = [application_root(pid)]
+    service, path = application_root(pid)
+    root = dbus.Interface(bus.get_object(service, path), accessible)
+    pending = list(root.GetChildren())
     records = []
     seen = set()
     while pending:
@@ -41,9 +43,20 @@ def inspect_tree(pid):
         obj = bus.get_object(service, path)
         iface = dbus.Interface(obj, accessible)
         properties = dbus.Interface(obj, "org.freedesktop.DBus.Properties")
-        attrs = dict(iface.GetAttributes())
+        try:
+            attrs = dict(iface.GetAttributes())
+        except dbus.DBusException as error:
+            if error.get_dbus_name() != "org.freedesktop.DBus.Error.UnknownMethod":
+                raise
+            attrs = {}
+        try:
+            role_name = str(iface.GetRoleName())
+            role_name_error = None
+        except dbus.DBusException as error:
+            role_name = None
+            role_name_error = str(error)
         records.append({"path": str(path), "name": str(properties.Get(accessible, "Name")), "attributes": attrs,
-                        "role": int(iface.GetRole()), "roleName": str(iface.GetRoleName()),
+                        "role": int(iface.GetRole()), "roleName": role_name, "roleNameError": role_name_error,
                         "stateWords": [int(w) for w in iface.GetState()]})
         pending.extend(iface.GetChildren())
     return records
@@ -60,7 +73,7 @@ for tag, pid in zip(("fixture", "gtk"), map(int, sys.argv[1:])):
     (artifacts / f"{tag}-role-comparison.json").write_text(json.dumps(
         {"pid": pid, "directATSPi": records, "spectre": snapshot["snapshot"]}, indent=2))
     if tag == "fixture":
-        candidates = [r for r in records if "account-name" in r["attributes"].values()]
+        candidates = [r for r in records if "account-name" in r["attributes"].values() or r["name"] == "Account name"]
         assert candidates, records
     else:
         candidates = [r for r in records if r["name"] == "Complete proof"]
