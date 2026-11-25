@@ -141,7 +141,11 @@ class WaylandPortalRecorderLifecycleTest {
         assertEquals(true, handle.isStopped)
     }
 
-    private fun output(): Path = Files.createTempFile("spectre-r2", ".mp4").also(tempOutputs::add)
+    private fun output(): Path =
+        Files.createTempFile("spectre-r2", ".mp4").also {
+            Files.write(it, byteArrayOf(1))
+            tempOutputs.add(it)
+        }
 
     private fun recorder(
         fake: FakeHelperProcess,

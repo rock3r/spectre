@@ -1141,6 +1141,7 @@ private class DetachCommand(
                 CLI_JSON.encodeToString(
                     DetachJson(
                         id = detached.sessionId,
+                        finalizedRecordingPath = detached.finalizedRecordingPath,
                         captureCount = detached.captureCount,
                         captureBytes = detached.captureBytes,
                         capturePaths = detached.capturePaths,
@@ -1151,6 +1152,10 @@ private class DetachCommand(
             )
         } else {
             output.append("Detached ${detached.sessionId}.")
+            detached.finalizedRecordingPath?.let { path ->
+                output.appendLine()
+                output.append("Finalized active recording: $path")
+            }
             if (detached.captureCount > 0) {
                 output.appendLine()
                 output.append(
@@ -1317,6 +1322,7 @@ private data class AttachJson(
 private data class DetachJson(
     val version: Int = JSON_VERSION,
     val id: String,
+    val finalizedRecordingPath: String? = null,
     val captureCount: Int = 0,
     val captureBytes: Long = 0L,
     val capturePaths: List<String> = emptyList(),

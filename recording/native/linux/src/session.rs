@@ -455,6 +455,11 @@ fn run_recording_start(
     start: StartCommand,
     client_id: u64,
 ) -> Result<Event> {
+    if start.cursor_mode != crate::protocol::CursorMode::Embedded {
+        anyhow::bail!(
+            "the active Wayland RemoteDesktop grant embeds the cursor; hidden cursor capture cannot be honored"
+        );
+    }
     let mut guard = state.lock().expect("session mutex");
     if guard.recording.is_some() {
         anyhow::bail!("a recording is already running on the Spectre Wayland session");

@@ -1153,8 +1153,11 @@ internal static class Program
                     "Windows.Graphics.Capture.GraphicsCaptureSession",
                     "IsCursorCaptureEnabled"))
             {
-                Console.Error.WriteLine(
-                    "IsCursorCaptureEnabled is not present; leaving the default cursor capture.");
+                if (!captureCursor)
+                {
+                    throw new PlatformNotSupportedException(
+                        "This Windows build cannot disable cursor capture as requested.");
+                }
                 return;
             }
 
@@ -1164,9 +1167,12 @@ internal static class Program
             }
             catch (ArgumentException e)
             {
-                Console.Error.WriteLine(
-                    $"IsCursorCaptureEnabled={captureCursor} was rejected ({e.Message}); " +
-                    "continuing with the default.");
+                if (!captureCursor)
+                {
+                    throw new InvalidOperationException(
+                        "Windows rejected the request to disable cursor capture.", e);
+                }
+                Console.Error.WriteLine($"IsCursorCaptureEnabled=true was rejected: {e.Message}");
             }
         }
     }

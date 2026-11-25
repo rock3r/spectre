@@ -704,6 +704,19 @@ final class Recorder {
         return dominant?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
     }
 
+    /// Match an SCDisplay to NSScreen by the stable Core Graphics display identifier rather than
+    /// intersecting frames expressed in ScreenCaptureKit's top-left and AppKit's bottom-left
+    /// coordinate systems.
+    private func backingScaleFactor(for display: SCDisplay) -> CGFloat {
+        let screen = NSScreen.screens.first { candidate in
+            guard let number = candidate.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
+                as? NSNumber
+            else { return false }
+            return CGDirectDisplayID(number.uint32Value) == display.displayID
+        }
+        return screen?.backingScaleFactor ?? 1.0
+    }
+
     /// Refuse to overwrite a directory if the caller mistakenly passed one as `--output`.
     /// AVAssetWriter would later fail on this anyway, but `try? FileManager.removeItem` would
     /// silently `rm -rf` the directory first — much worse failure mode for a typo. Run this
@@ -850,8 +863,9 @@ final class Recorder {
                 height = max(2, Int((targetWindow.frame.height * scale).rounded()))
             }
         case .region(let display, let region):
-            width = max(2, region.width)
-            height = max(2, region.height)
+            let scale = backingScaleFactor(for: display)
+            width = max(2, Int((CGFloat(region.width) * scale).rounded()))
+            height = max(2, Int((CGFloat(region.height) * scale).rounded()))
             filter = SCContentFilter(display: display, excludingWindows: [])
             sourceRect = region.sourceRect()
         }

@@ -27,6 +27,7 @@ class FfmpegWindowRecorderTest {
             FfmpegWindowRecorder(ffmpegPath = FfmpegRecorder.PROBE_PATH, processFactory = factory)
         val window = WindowFakeTitledWindow(title = "Spectre Sample")
         val output = Files.createTempFile("spectre-window-recorder-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         try {
             recorder.start(
                 window = window,
@@ -54,6 +55,7 @@ class FfmpegWindowRecorderTest {
         val recorder =
             FfmpegWindowRecorder(ffmpegPath = FfmpegRecorder.PROBE_PATH, processFactory = factory)
         val output = Files.createTempFile("spectre-window-recorder-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         try {
             assertFailsWith<IllegalArgumentException> {
                 recorder.start(
@@ -115,6 +117,7 @@ class FfmpegWindowRecorderTest {
                 processFactory = WindowProcessFactoryReturning(process),
             )
         val output = Files.createTempFile("spectre-window-recorder-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         try {
             val handle =
                 recorder.start(
@@ -144,6 +147,7 @@ class FfmpegWindowRecorderTest {
                 processFactory = WindowProcessFactoryReturning(InstantlyExitingWindowFakeProcess()),
             )
         val output = Files.createTempFile("spectre-window-recorder-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         try {
             assertFailsWith<IllegalStateException> {
                     recorder.start(

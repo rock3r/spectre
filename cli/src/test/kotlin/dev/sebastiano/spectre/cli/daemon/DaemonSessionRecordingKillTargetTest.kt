@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -78,6 +79,34 @@ class DaemonSessionRecordingKillTargetTest {
         recording.start(outputPath = output.toString(), windowIndex = 0)
         recording.finalizeIfActive(liveSessionIds = emptySet())
         assertEquals(1, stopCount.get())
+        assertFalse(recording.status().active)
+        Files.deleteIfExists(output)
+    }
+
+    @Test
+    fun `finalizeIfActive reports a recording stop failure`() {
+        val output = Files.createTempFile("spectre-finalize-failure-", ".mp4")
+        val identity = uniqueIdentity(title = "Finalize Failure Fixture")
+        val failingHandle =
+            object : RecordingHandle {
+                override val output: Path = output
+                override val isStopped: Boolean = false
+
+                override fun stop(): Unit = error("output was empty")
+            }
+        val recording =
+            DaemonSessionRecording(
+                sessionId = "session-finalize-failure",
+                targetPid = 100L,
+                windowIdentities = { listOf(identity) },
+                requireScreenCaptureAccess = {},
+                startWindowByTitle = { _, _, _, _, _, _ -> failingHandle },
+            )
+        recording.start(outputPath = output.toString(), windowIndex = 0)
+
+        val failure = assertFailsWith<IOException> { recording.finalizeIfActive(emptySet()) }
+
+        assertTrue(failure.message.orEmpty().contains("output was empty"))
         assertFalse(recording.status().active)
         Files.deleteIfExists(output)
     }

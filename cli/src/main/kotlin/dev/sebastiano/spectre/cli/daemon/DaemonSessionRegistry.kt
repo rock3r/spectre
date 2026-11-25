@@ -394,11 +394,15 @@ internal constructor(
             // Finalize while other sessions remain known live (#185); then close so in-flight waits
             // observe a closed automator and fail closed instead of hanging on the full wait
             // budget.
+            val activeRecording = session.automator.recordingStatus().outputPath
             session.automator.finalizeRecording(remainingLive)
             session.hotReloadSession?.close()
             session.automator.close()
             session.awaitIdleWaits()
-            return CaptureSessionReport.forDetach(sessionId)
+            return CaptureSessionReport.forDetach(
+                sessionId,
+                finalizedRecordingPath = activeRecording,
+            )
         } finally {
             synchronized(this) {
                 if (detachingByPid[targetPid] === gate) detachingByPid.remove(targetPid)

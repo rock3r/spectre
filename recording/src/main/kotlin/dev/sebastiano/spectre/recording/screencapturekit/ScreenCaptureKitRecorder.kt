@@ -4,6 +4,7 @@ import dev.sebastiano.spectre.recording.HelperStillSessions
 import dev.sebastiano.spectre.recording.Recorder
 import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
+import dev.sebastiano.spectre.recording.validateRecordingOutput
 import java.awt.Rectangle
 import java.io.IOException
 import java.nio.file.Files
@@ -503,6 +504,7 @@ private class ScreenCaptureKitRecordingHandle(
             )
         }
         failIfHelperCrashed()
+        validateRecordingOutput(output)
     }
 
     private fun failIfHelperCrashed() {

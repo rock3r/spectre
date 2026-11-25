@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.recording.portal
 import dev.sebastiano.spectre.recording.Recorder
 import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
+import dev.sebastiano.spectre.recording.validateRecordingOutput
 import dev.sebastiano.spectre.recording.withWaylandHelperEnvironment
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
@@ -465,6 +466,7 @@ internal class SessionRecordingHandle(
                 check(event is Event.Stopped) {
                     "spectre-wayland-helper session did not stop recording: $event"
                 }
+                validateRecordingOutput(output, event.outputSizeBytes)
             }
             result.set(Result.success(Unit))
         } catch (t: Throwable) {
@@ -580,6 +582,7 @@ private class GstRecordingHandle(
                     "process's stderr) for the underlying cause."
             )
         }
+        validateRecordingOutput(output, stoppedRef.get()?.outputSizeBytes)
     }
 
     private fun waitForGracefulExitOrReap(

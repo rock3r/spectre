@@ -194,8 +194,7 @@ internal class DaemonSessionRecording(
 
     /** Finalize any active recording (detach / close). Safe if idle. */
     fun finalizeIfActive(liveSessionIds: Set<String>) {
-        if (recording != null) runCatching { stop(liveSessionIds) }
-        clear()
+        if (recording != null) stop(liveSessionIds)
     }
 
     private fun clear() {

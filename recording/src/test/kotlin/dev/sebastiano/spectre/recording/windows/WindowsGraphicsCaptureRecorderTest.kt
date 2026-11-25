@@ -25,6 +25,7 @@ class WindowsGraphicsCaptureRecorderTest {
     fun `start spawns helper and waits for ready marker`() {
         val helper = Files.createTempFile("spectre-window-capture", ".exe")
         val output = Files.createTempFile("spectre-wgc-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         val factory = RecordingProcessFactory(FakeRecordingProcess())
         val recorder =
             WindowsGraphicsCaptureRecorder(
@@ -76,6 +77,7 @@ class WindowsGraphicsCaptureRecorderTest {
     fun `start region spawns helper with region source and rectangle`() {
         val helper = Files.createTempFile("spectre-window-capture", ".exe")
         val output = Files.createTempFile("spectre-wgc-region-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         val factory = RecordingProcessFactory(FakeRecordingProcess())
         val recorder =
             WindowsGraphicsCaptureRecorder(
@@ -311,6 +313,7 @@ class WindowsGraphicsCaptureRecorderTest {
     @Test
     fun `stop writes q and waits for helper`() {
         val output = Files.createTempFile("spectre-wgc-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         val process = FakeRecordingProcess()
         val recorder =
             WindowsGraphicsCaptureRecorder(
@@ -338,6 +341,7 @@ class WindowsGraphicsCaptureRecorderTest {
     @Test
     fun `stop succeeds when helper already exited cleanly before q write`() {
         val output = Files.createTempFile("spectre-wgc-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         val process = AlreadyExitedProcess(exit = 0)
         val recorder =
             WindowsGraphicsCaptureRecorder(
@@ -361,8 +365,9 @@ class WindowsGraphicsCaptureRecorderTest {
     }
 
     @Test
-    fun `stop treats self-issued destroy as expected`() {
+    fun `stop fails when the helper has to be killed after its grace period`() {
         val output = Files.createTempFile("spectre-wgc-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         val process = StubbornRecordingProcess(exitAfterDestroy = 1)
         val recorder =
             WindowsGraphicsCaptureRecorder(
@@ -377,9 +382,10 @@ class WindowsGraphicsCaptureRecorderTest {
         try {
             val handle = recorder.start(Window(title = "Spectre"), 4242, output, RecordingOptions())
 
-            handle.stop()
+            val error = assertFailsWith<IllegalStateException> { handle.stop() }
 
-            assertTrue(handle.isStopped)
+            assertTrue(error.message.orEmpty().contains("had to be terminated"))
+            assertFalse(handle.isStopped)
             assertTrue(process.destroyCalled)
         } finally {
             output.deleteIfExists()
@@ -389,6 +395,7 @@ class WindowsGraphicsCaptureRecorderTest {
     @Test
     fun `stop fails if helper remains alive after destroyForcibly`() {
         val output = Files.createTempFile("spectre-wgc-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         val process = NeverExitingRecordingProcess()
         val recorder =
             WindowsGraphicsCaptureRecorder(

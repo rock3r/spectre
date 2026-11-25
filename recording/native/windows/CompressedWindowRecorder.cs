@@ -25,6 +25,7 @@ internal interface IRecordingFrameSource
 /// </summary>
 internal sealed class CompressedWindowRecorder
 {
+    private static readonly TimeSpan FirstFrameTimeout = TimeSpan.FromSeconds(10);
     // MF_MT_DEFAULT_STRIDE (mfapi.h): bytes per row; the sign gives the row order.
     private static readonly Guid MfMtDefaultStride = new("644b4e48-1e02-4516-b0eb-c01ca9d49ac6");
 
@@ -121,7 +122,13 @@ internal sealed class CompressedWindowRecorder
         if (lastFrame is null)
         {
             // The timeline starts at the first captured frame.
-            bytes = frameSource.WaitForFrameBytes(stopToken);
+            using var firstFrameTimeout = CancellationTokenSource.CreateLinkedTokenSource(stopToken);
+            firstFrameTimeout.CancelAfter(FirstFrameTimeout);
+            bytes = frameSource.WaitForFrameBytes(firstFrameTimeout.Token);
+            if (bytes is null && !stopToken.IsCancellationRequested)
+            {
+                throw new TimeoutException("No capture frame arrived within 10 seconds.");
+            }
             sinceFirstSample.Start();
             slot = clock.NextSlot(TimeSpan.Zero);
         }

@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import dev.sebastiano.spectre.recording.screencapturekit.WindowRecorder
+import dev.sebastiano.spectre.recording.validateRecordingOutput
 import java.awt.Rectangle
 import java.io.BufferedReader
 import java.io.IOException
@@ -241,7 +242,7 @@ private class WindowsGraphicsCaptureRecordingHandle(
 
     private fun stopInternal() {
         var interrupted = false
-        var sentTerminationOurselves = false
+        var stopTimedOut = false
         if (process.isAlive) {
             try {
                 process.outputStream.use { stdin ->
@@ -260,7 +261,7 @@ private class WindowsGraphicsCaptureRecordingHandle(
                     false
                 }
             if (!gracefulExit) {
-                sentTerminationOurselves = true
+                stopTimedOut = true
                 process.destroy()
                 val terminatedAfterDestroy =
                     try {
@@ -292,7 +293,11 @@ private class WindowsGraphicsCaptureRecordingHandle(
             error("spectre-window-capture is still running after stop. Argv: $argv")
         }
         val exit = process.exitValue()
-        check(exit == 0 || sentTerminationOurselves) {
+        check(!stopTimedOut) {
+            "spectre-window-capture did not exit within ${STOP_TIMEOUT_SECONDS}s of stop(); " +
+                "the helper had to be terminated and output at $output may be unfinalised."
+        }
+        check(exit == 0) {
             val stderr = helperFailureDetail(process)
             appendHelperStderr(
                 messageForWindowsGraphicsCaptureHelperExit(
@@ -304,6 +309,7 @@ private class WindowsGraphicsCaptureRecordingHandle(
                 stderr,
             ) + " The helper may also have been terminated externally after stop was requested."
         }
+        validateRecordingOutput(output)
     }
 
     private companion object {

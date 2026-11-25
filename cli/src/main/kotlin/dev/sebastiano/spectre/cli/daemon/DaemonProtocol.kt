@@ -401,6 +401,8 @@ public sealed interface DaemonResponse {
     @SerialName("detached")
     public data class Detached(
         public val sessionId: String,
+        /** Recording finalized automatically while detaching, if one was active. */
+        public val finalizedRecordingPath: String? = null,
         /** Captures this session left on disk (existing directories only). */
         public val captureCount: Int = 0,
         public val captureBytes: Long = 0L,

@@ -410,6 +410,24 @@ class SpectreCliTest {
     }
 
     @Test
+    fun `detach reports an automatically finalized recording`() {
+        val output = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = {
+                    DaemonResponse.Detached(
+                        sessionId = "pid-42",
+                        finalizedRecordingPath = "/tmp/recording.mp4",
+                    )
+                },
+                output = output,
+            )
+
+        assertEquals(0, cli.run(listOf("detach", "pid-42")))
+        assertTrue(output.toString().contains("Finalized active recording: /tmp/recording.mp4"))
+    }
+
+    @Test
     fun `attach prints stable JSON session output`() {
         val output = StringBuilder()
         val cli =

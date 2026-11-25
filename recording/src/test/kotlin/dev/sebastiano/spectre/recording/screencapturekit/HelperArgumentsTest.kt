@@ -10,6 +10,24 @@ import kotlin.test.assertTrue
 class HelperArgumentsTest {
 
     @Test
+    fun `recording rejects output extensions whose container cannot be honored`() {
+        val args =
+            HelperArguments(
+                source = HelperSource.Window,
+                pid = 1,
+                titleContains = "x",
+                output = Path.of("/tmp/out.webm"),
+                fps = 30,
+                captureCursor = true,
+                discoveryTimeoutMs = 0,
+            )
+
+        assertFailsWith<IllegalArgumentException> {
+            args.toArgv(Path.of("/tmp/spectre-screencapture"))
+        }
+    }
+
+    @Test
     fun `toArgv places helper path first and output last`() {
         val helper = Path.of("/tmp/spectre-screencapture")
         val output = Path.of("/tmp/recording.mov")
