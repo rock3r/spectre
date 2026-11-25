@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.agent.launch
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -31,5 +32,21 @@ class LaunchOptionCompatibilityTest {
                 )
             }
         assertTrue(error.message!!.contains("requireSpectreCoreOnClasspath"))
+    }
+
+    @Test
+    fun `classpath requirement inspects classpath supplied by extra JVM args`() {
+        val error =
+            assertFailsWith<SpectreCoreMissingOnClasspathException> {
+                LaunchAndAttach.launch(
+                    LaunchSpec(
+                        command = listOf("java", "example.Main"),
+                        extraJvmArgs = listOf("-cp", "application.jar"),
+                        requireSpectreCoreOnClasspath = true,
+                    )
+                )
+            }
+
+        assertEquals("application.jar", error.classpath)
     }
 }

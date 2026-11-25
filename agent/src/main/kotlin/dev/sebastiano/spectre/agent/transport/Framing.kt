@@ -70,12 +70,16 @@ public object FrameLimits {
     /** Environment variable that overrides [DEFAULT_MAX_FRAME_BYTES]. */
     public const val ENV_VAR: String = "SPECTRE_MAX_FRAME_BYTES"
 
-    @Volatile private var request: Int? = resolveRequest(System::getenv)
-    @Volatile private var budget: Int = request ?: DEFAULT_MAX_FRAME_BYTES
+    @Volatile private var initialized: Boolean = false
+    @Volatile private var request: Int? = null
+    @Volatile private var budget: Int = DEFAULT_MAX_FRAME_BYTES
 
     /** Largest payload this process will write into a single frame. */
     public val maxFrameBytes: Int
-        get() = budget
+        get() {
+            ensureInitialized()
+            return budget
+        }
 
     /**
      * The budget this process was explicitly asked for, or `null` when nothing asked.
@@ -87,7 +91,10 @@ public object FrameLimits {
      * environment that says otherwise.
      */
     public val requestedMaxFrameBytes: Int?
-        get() = request
+        get() {
+            ensureInitialized()
+            return request
+        }
 
     /**
      * Overrides the write budget for this process, and records it as an explicit request.
@@ -104,14 +111,32 @@ public object FrameLimits {
             "$ENV_VAR=$bytes exceeds the frame ceiling $MAX_FRAME_BYTES_CEILING; " +
                 "readers would refuse frames that large"
         }
-        budget = bytes
-        request = bytes
+        synchronized(this) {
+            budget = bytes
+            request = bytes
+            initialized = true
+        }
     }
 
     /** Drops any [configure] call and re-resolves from the environment, as at process start. */
     public fun resetToEnvironment() {
-        request = resolveRequest(System::getenv)
-        budget = request ?: DEFAULT_MAX_FRAME_BYTES
+        val environmentRequest = resolveRequest(System::getenv)
+        synchronized(this) {
+            request = environmentRequest
+            budget = environmentRequest ?: DEFAULT_MAX_FRAME_BYTES
+            initialized = true
+        }
+    }
+
+    private fun ensureInitialized() {
+        if (initialized) return
+        synchronized(this) {
+            if (initialized) return
+            val environmentRequest = resolveRequest(System::getenv)
+            request = environmentRequest
+            budget = environmentRequest ?: DEFAULT_MAX_FRAME_BYTES
+            initialized = true
+        }
     }
 
     /**

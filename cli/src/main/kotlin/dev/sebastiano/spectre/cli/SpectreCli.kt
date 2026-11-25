@@ -309,10 +309,12 @@ private class RootCommand(
         // Re-resolve per invocation: SpectreCli.run can be called repeatedly in one process, and a
         // --max-frame-bytes from an earlier call would otherwise leave this one silently requesting
         // a budget it never asked for — enough to fail the daemon handshake or boot a daemon on it.
-        FrameLimits.resetToEnvironment()
-        maxFrameBytes?.let { budget ->
+        val explicitBudget = maxFrameBytes
+        if (explicitBudget == null) {
+            FrameLimits.resetToEnvironment()
+        } else {
             try {
-                FrameLimits.configure(budget)
+                FrameLimits.configure(explicitBudget)
             } catch (exception: IllegalArgumentException) {
                 throw CliktError(exception.message ?: "invalid --max-frame-bytes", exception)
             }

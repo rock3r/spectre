@@ -109,7 +109,7 @@ public object LaunchAndAttach {
             "extraJvmArgs cannot be applied to non-java command '${spec.command.first()}'"
         }
         if (spec.requireSpectreCoreOnClasspath) {
-            require(directJvm && LaunchCommandRewriter.extractClasspath(spec.command) != null) {
+            require(directJvm) {
                 "requireSpectreCoreOnClasspath cannot inspect this command form; use an explicit " +
                     "java -cp/--class-path launch or disable the check"
             }
@@ -129,7 +129,11 @@ public object LaunchAndAttach {
 
     private fun maybeRequireSpectreCore(spec: LaunchSpec, command: List<String>) {
         if (!spec.requireSpectreCoreOnClasspath) return
-        val cp = checkNotNull(LaunchCommandRewriter.extractClasspath(command))
+        val cp =
+            requireNotNull(LaunchCommandRewriter.extractClasspath(command)) {
+                "requireSpectreCoreOnClasspath cannot inspect this command form; use an explicit " +
+                    "java -cp/--class-path launch or disable the check"
+            }
         if (!LaunchCommandRewriter.classpathContainsSpectreCore(cp)) {
             throw SpectreCoreMissingOnClasspathException(cp)
         }
