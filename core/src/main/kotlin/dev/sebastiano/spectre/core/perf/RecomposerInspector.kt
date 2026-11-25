@@ -12,11 +12,10 @@ import java.awt.Window
  * Resolves the [Recomposer] that drives a Compose Desktop surface.
  *
  * The traversal mirrors `OverlayLayerInspector`: walk the private CMP host chain by field name, so
- * a renamed internal field degrades gracefully (returns `null`) instead of crashing the rest of the
- * automator. Same multi-version policy as overlays (#322): single pinned-Compose chain,
- * degrade-to-empty/null — no adapter matrix for 1.0
- * (`docs/spikes/209-injection/overlay-adapter-policy.md`). CMP 1.12 moved the live [Recomposer]
- * onto `ComposeSceneMediator.frameRecomposer`; the chain is:
+ * a renamed internal field fails closed with the detected Compose version instead of silently
+ * disabling monitoring. Same multi-version policy as overlays (#322): one pinned-Compose chain,
+ * with no adapter matrix for 1.0 (`docs/spikes/209-injection/overlay-adapter-policy.md`). CMP 1.12
+ * moved the live [Recomposer] onto `ComposeSceneMediator.frameRecomposer`; the chain is:
  * ```
  * ComposeWindow / ComposeDialog .composePanel  (ComposeWindowPanel)
  *   ._composeContainer         (ComposeContainer)
@@ -74,25 +73,39 @@ public object RecomposerInspector {
      */
     internal fun findRecomposerInHostChain(host: Any?): Recomposer? {
         if (host == null) return null
-        val composePanel = readField(host, COMPOSE_PANEL_FIELD) ?: return null
+        val composePanel = requireField(host, COMPOSE_PANEL_FIELD)
         return findRecomposerInHostChainBelowComposeContainer(composePanel)
     }
 
     private fun findRecomposerInHostChainBelowComposeContainer(panelHost: Any): Recomposer? {
-        val composeContainer = readField(panelHost, COMPOSE_CONTAINER_FIELD) ?: return null
-        val mediator = readField(composeContainer, MEDIATOR_FIELD) ?: return null
+        val composeContainer = requireField(panelHost, COMPOSE_CONTAINER_FIELD)
+        val mediator = requireField(composeContainer, MEDIATOR_FIELD)
         // CMP 1.12 stores the live Recomposer on FrameRecomposer. The field is private; the
         // getter is public and is the fallback when a host only exposes the accessor.
         val frameRecomposer =
             readField(mediator, FRAME_RECOMPOSER_FIELD)
                 ?: invokeGetter(mediator, FRAME_RECOMPOSER_GETTER)
-                ?: return null
+                ?: incomplete(FRAME_RECOMPOSER_FIELD, mediator)
         if (frameRecomposer is Recomposer) return frameRecomposer
         val recomposer =
             readField(frameRecomposer, RECOMPOSER_FIELD)
                 ?: invokeGetter(frameRecomposer, COMPOSITION_CONTEXT_GETTER)
-        return recomposer as? Recomposer
+        return recomposer as? Recomposer ?: incomplete(RECOMPOSER_FIELD, frameRecomposer)
     }
+
+    private fun requireField(target: Any, fieldName: String): Any =
+        readField(target, fieldName) ?: incomplete(fieldName, target)
+
+    private fun incomplete(fieldName: String, target: Any): Nothing =
+        error(
+            "Incomplete Compose inspection: expected '$fieldName' on ${target.javaClass.name} " +
+                "for Compose ${composeVersion(target)}"
+        )
+
+    private fun composeVersion(target: Any): String =
+        target.javaClass.`package`?.implementationVersion
+            ?: Recomposer::class.java.`package`?.implementationVersion
+            ?: "unknown version"
 
     private fun invokeGetter(target: Any, methodName: String): Any? {
         var cls: Class<*>? = target.javaClass

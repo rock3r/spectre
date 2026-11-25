@@ -138,12 +138,12 @@ class RecompositionMonitorTest {
             // while the elapsed-time check still uses wall clock, producing false timeouts.
             val monitor = RecompositionMonitor(windowDuration = 1.seconds)
             val under = monitor.awaitRateBelow(threshold = 1.0, timeout = 100.milliseconds)
-            assertTrue(under)
+            assertFalse(under)
             monitor.close()
         }
 
     @Test
-    fun `awaitCompositionIdle returns true when there are no attached recomposers`() = runBlocking {
+    fun `awaitCompositionIdle fails when there are no attached recomposers`() = runBlocking {
         // With nothing attached, "any pending work" is vacuously false and the quiet period
         // begins counting from t=0 — the wait must return true within timeout. runBlocking
         // (not runTest) so the wall-clock TimeSource the monitor uses internally lines up
@@ -155,7 +155,7 @@ class RecompositionMonitorTest {
                 timeout = 500.milliseconds,
                 pollInterval = 5.milliseconds,
             )
-        assertTrue(idle)
+        assertFalse(idle)
         monitor.close()
     }
 }

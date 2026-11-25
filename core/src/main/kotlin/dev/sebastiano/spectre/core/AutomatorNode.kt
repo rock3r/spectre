@@ -114,7 +114,9 @@ internal constructor(
      */
     public val progressBarRangeInfo: ProgressBarRangeInfo? =
         semanticsNode.config.progressBarRangeInfoOrNull()
-    public val isVisible: Boolean = true
+    /** False when Compose marks this semantics node as invisible to users. */
+    public val isVisible: Boolean =
+        semanticsNode.config.getOrNull(SemanticsProperties.InvisibleToUser) == null
 
     // Geometry is always read live: layout can change between node lookup and action,
     // so a snapshot would let click/screenshot drift to stale coordinates after scrolling

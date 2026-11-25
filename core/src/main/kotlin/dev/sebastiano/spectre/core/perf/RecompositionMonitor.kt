@@ -81,6 +81,7 @@ internal constructor(
      * [Recomposer.hasPendingWork] without re-resolving it via reflection on every poll.
      */
     private val attachments = ConcurrentHashMap<String, Attachment>()
+    private val unresolvedSurfaces = ConcurrentHashMap.newKeySet<String>()
 
     @Volatile private var closed: Boolean = false
 
@@ -164,8 +165,8 @@ internal constructor(
      * attachments on every change: surfaces that appear are resolved to a [Recomposer] via
      * [RecomposerInspector] and attached; surfaces that disappear are detached. Surfaces whose
      * recomposer cannot be resolved (overlay popups in this MVP) are skipped silently —
-     * `RecomposerInspector.findRecomposer` returns `null` and the monitor leaves them off the
-     * per-surface map.
+     * `RecomposerInspector.findRecomposer` returns `null`; the monitor records those surfaces as
+     * unresolved so waits fail rather than declaring partial monitoring idle.
      */
     internal fun subscribeTo(windowTracker: WindowTracker) {
         windowTracker.trackedWindows
@@ -179,14 +180,22 @@ internal constructor(
             .onEach { (prev, curr) ->
                 val departed = prev - curr
                 val arrived = curr - prev
-                departed.forEach { detach(it.surfaceId) }
+                departed.forEach {
+                    detach(it.surfaceId)
+                    unresolvedSurfaces.remove(it.surfaceId)
+                }
                 // Recomposer discovery reflects through Compose Desktop internals and may invoke
                 // `getScene()` (a `by lazy` accessor that touches scene state). The collector
                 // runs on Dispatchers.Default but live UI access in Spectre is EDT-marshalled —
                 // hop onto the EDT for the resolve+attach so reflection sees consistent state.
                 arrived.forEach { tracked ->
                     val recomposer = readOnEdt { RecomposerInspector.findRecomposer(tracked) }
-                    if (recomposer != null) attach(tracked.surfaceId, recomposer)
+                    if (recomposer != null) {
+                        unresolvedSurfaces.remove(tracked.surfaceId)
+                        attach(tracked.surfaceId, recomposer)
+                    } else {
+                        unresolvedSurfaces.add(tracked.surfaceId)
+                    }
                 }
             }
             .launchIn(scopeForTests)
@@ -209,6 +218,7 @@ internal constructor(
         timeout: Duration = DEFAULT_AWAIT_TIMEOUT,
         pollInterval: Duration = DEFAULT_POLL_INTERVAL,
     ): Boolean {
+        if (attachments.isEmpty() || unresolvedSurfaces.isNotEmpty()) return false
         val result =
             withTimeoutOrNull(timeout) {
                 var lastTotal = total
@@ -241,6 +251,7 @@ internal constructor(
         timeout: Duration = DEFAULT_AWAIT_TIMEOUT,
         pollInterval: Duration = DEFAULT_POLL_INTERVAL,
     ): Boolean {
+        if (attachments.isEmpty() || unresolvedSurfaces.isNotEmpty()) return false
         val result =
             withTimeoutOrNull(timeout) {
                 while (ratePerSecond >= threshold) {
@@ -279,6 +290,7 @@ internal constructor(
         if (closed) return
         closed = true
         attachments.keys.toList().forEach { detach(it) }
+        unresolvedSurfaces.clear()
         scopeForTests.cancel()
     }
 

@@ -10,7 +10,7 @@ import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
 import org.junit.jupiter.api.Assumptions.assumeFalse
 
 /**
@@ -58,28 +58,17 @@ class ReflectiveAutomatorHandlerWindowsAgreementTest {
     }
 
     @Test
-    fun `Windows op keeps surface when composeSurfaceBoundsOnScreen throws`() {
+    fun `Windows op fails when surface bounds cannot be read`() {
         val trackedWindow =
             AgreementFakeTrackedWindowThrowingBounds(
                 surfaceIdValue = "window:0",
                 isPopupValue = false,
-                windowTitleValue = "Still listed",
+                windowTitleValue = "Not silently listed",
             )
-        val automator = AgreementFakeAutomator(windowsValue = listOf(trackedWindow))
-        val handler = ReflectiveAutomatorHandler(automator)
+        val handler =
+            ReflectiveAutomatorHandler(AgreementFakeAutomator(windowsValue = listOf(trackedWindow)))
 
-        val response = handler.handle(AgentRequest.Windows)
-        check(response is AgentResponse.Windows) {
-            "expected AgentResponse.Windows, got ${response::class.simpleName}: $response"
-        }
-        assertEquals(1, response.windows.size)
-        val dto = response.windows.single()
-        assertEquals("window:0", dto.surfaceId)
-        assertEquals("Still listed", dto.title)
-        assertEquals(false, dto.isPopup)
-        assertEquals(0, dto.bounds.width)
-        assertEquals(0, dto.bounds.height)
-        assertTrue(dto.surfaceId.startsWith("window:"))
+        assertFailsWith<IllegalArgumentException> { handler.handle(AgentRequest.Windows) }
     }
 
     @Test
