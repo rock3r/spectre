@@ -16,7 +16,7 @@ import kotlin.test.assertTrue
  * Fullscreen stills must carry screen pixels so a `spectre screenshot --fullscreen` PNG matches a
  * recording of the same desktop. The handler reaches the target's `ComposeAutomator` reflectively
  * and agent/target can ship different Spectre versions, so the device-scale call is preferred when
- * present and the logical one remains a working fallback.
+ * present and the handler fails rather than silently changing resolution.
  */
 class ReflectiveAutomatorStillScaleTest {
 
@@ -56,7 +56,7 @@ class ReflectiveAutomatorStillScaleTest {
     }
 
     @Test
-    fun `fullscreen falls back when the target predates device-scale stills`() {
+    fun `fullscreen fails when the target predates device-scale stills`() {
         var receivedArg: Any? = NOT_INVOKED
         val automator =
             FakeLegacyStillAutomator(
@@ -69,18 +69,14 @@ class ReflectiveAutomatorStillScaleTest {
 
         val response = handler.handle(AgentRequest.Screenshot(fullscreen = true))
 
-        check(response is AgentResponse.Screenshot) {
-            "expected Screenshot, got ${response::class.simpleName}: $response"
-        }
-        assertEquals(
-            null,
-            receivedArg,
-            "older injected cores must still serve fullscreen via screenshot(Rectangle?)",
-        )
+        val error = assertIs<AgentResponse.Error>(response)
+        assertEquals(AgentErrorCategory.UnsupportedOperation.wireName, error.category)
+        assertEquals(NOT_INVOKED, receivedArg)
+        assertTrue(error.message.contains("device-scale"), error.message)
     }
 
     @Test
-    fun `fullscreen drops to the logical still when the device-scale PNG will not fit the frame`() {
+    fun `fullscreen fails when the device-scale PNG will not fit the frame`() {
         var logicalCalls = 0
         // Incompressible device-scale still (hundreds of KiB) against a trivially small logical
         // one, so the budget below sits unambiguously between the two encoded sizes.
@@ -96,15 +92,10 @@ class ReflectiveAutomatorStillScaleTest {
 
         val response = handler.handle(AgentRequest.Screenshot(fullscreen = true))
 
-        check(response is AgentResponse.Screenshot) {
-            "expected Screenshot, got ${response::class.simpleName}: $response"
-        }
-        assertEquals(1, logicalCalls, "oversized stills must retry through the logical capture")
-        assertEquals(
-            LOGICAL_EDGE,
-            decodePngWidth(response.pngBytes),
-            "an oversized fullscreen still must degrade in resolution, not fail the request",
-        )
+        val error = assertIs<AgentResponse.Error>(response)
+        assertEquals(AgentErrorCategory.PayloadTooLarge.wireName, error.category)
+        assertEquals(0, logicalCalls, "must not retry at an unrequested logical resolution")
+        assertTrue(error.message.contains("device-scale"), error.message)
     }
 
     @Test

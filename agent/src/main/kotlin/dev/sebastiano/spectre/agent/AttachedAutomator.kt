@@ -218,9 +218,10 @@ internal constructor(
      * Window/surface targets (default, [windowIndex], or [surfaceId]) fail closed on the attach
      * path (#359): they would crop occlusion-prone desktop pixels rather than a native window
      * surface. Only [fullscreen] is supported, as an explicit whole-desktop capture mode whose PNG
-     * is screen-pixel sized rather than dp sized. Prefer in-process
-     * `ComposeAutomator.screenshot(windowIndex)` with the recording native backend for
-     * occlusion-safe window stills.
+     * is screen-pixel sized rather than dp sized. The request fails if the target core cannot
+     * produce device-scale pixels or the PNG exceeds the IPC frame budget; it never silently
+     * returns logical resolution. Prefer in-process `ComposeAutomator.screenshot(windowIndex)` with
+     * the recording native backend for occlusion-safe window stills.
      *
      * @return raw PNG bytes
      */

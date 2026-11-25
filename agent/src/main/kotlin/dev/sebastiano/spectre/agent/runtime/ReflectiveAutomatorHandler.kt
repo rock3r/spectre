@@ -469,29 +469,18 @@ internal class ReflectiveAutomatorHandler(
         return fullscreenStill(deviceScaleMethod, regionMethod)
     }
 
-    /**
-     * Encodes the fullscreen still, preferring screen pixels but staying inside the frame budget.
-     *
-     * Screen-pixel stills carry 4x the pixels of the logical ones on a 2x display, and the whole
-     * virtual desktop is the one still whose size no caller bounds — a multi-monitor HiDPI desktop
-     * can encode past the frame budget, which would fail the request outright. Dropping to the
-     * logical still keeps a command that works today working.
-     *
-     * That fallback is best-effort, not a guarantee: with a small budget no desktop screenshot fits
-     * at any resolution, so there is nothing to degrade to. When even the logical still overruns,
-     * this reports [AgentErrorCategory.PayloadTooLarge] naming the flag that fixes it, rather than
-     * letting the framing layer substitute its own generic message further downstream.
-     */
+    /** Encodes the fullscreen still at screen-pixel resolution or fails. */
     private fun fullscreenStill(deviceScaleMethod: Method?, regionMethod: Method?): AgentResponse {
-        // Older injected cores expose only screenshot(Rectangle?). The caller rejects the request
-        // before this point when neither method is present, so one of the two is always non-null.
-        if (deviceScaleMethod != null) {
-            val deviceScalePng = encodeFullscreenStill(deviceScaleMethod)
-            if (regionMethod == null || deviceScalePng.size <= maxStillPngBytes) {
-                return stillWithinBudget(deviceScalePng)
-            }
+        if (deviceScaleMethod == null) {
+            checkNotNull(regionMethod)
+            return AgentResponse.Error(
+                message =
+                    "This target core cannot produce the promised device-scale fullscreen still. " +
+                        "Upgrade spectre-core; Spectre will not silently return logical resolution.",
+                category = AgentErrorCategory.UnsupportedOperation.wireName,
+            )
         }
-        return stillWithinBudget(encodeFullscreenStill(checkNotNull(regionMethod)))
+        return stillWithinBudget(encodeFullscreenStill(deviceScaleMethod))
     }
 
     private fun stillWithinBudget(png: ByteArray): AgentResponse =
@@ -501,7 +490,7 @@ internal class ReflectiveAutomatorHandler(
             AgentResponse.Error(
                 message =
                     "Fullscreen still is too large for the agent IPC frame limit " +
-                        "(png=${png.size}B, max≈${maxStillPngBytes}B) even at logical resolution. " +
+                        "(device-scale png=${png.size}B, max≈${maxStillPngBytes}B). " +
                         "Raise the budget with --max-frame-bytes / SPECTRE_MAX_FRAME_BYTES, or " +
                         "capture a window instead of the whole desktop.",
                 category = AgentErrorCategory.PayloadTooLarge.wireName,

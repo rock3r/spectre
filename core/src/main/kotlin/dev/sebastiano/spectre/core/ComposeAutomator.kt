@@ -672,16 +672,30 @@ private constructor(
         timeout: Duration = DEFAULT_WAIT_TIMEOUT,
         stableFrames: Int = DEFAULT_STABLE_FRAMES,
         pollInterval: Duration = DEFAULT_POLL_INTERVAL,
+    ): Unit = waitForVisualIdle(timeout, stableFrames, pollInterval, false)
+
+    /**
+     * Waits for stable surface pixels. Native, occlusion-safe window capture is required unless
+     * [allowScreenRegionFallback] explicitly permits desktop-region sampling.
+     */
+    public suspend fun waitForVisualIdle(
+        timeout: Duration = DEFAULT_WAIT_TIMEOUT,
+        stableFrames: Int = DEFAULT_STABLE_FRAMES,
+        pollInterval: Duration = DEFAULT_POLL_INTERVAL,
+        allowScreenRegionFallback: Boolean,
     ) {
         rejectEdtCaller("waitForVisualIdle")
         withNativeCaptureWaitScope(javaClass.classLoader, robotDriver.allowsPlatformCapture) { scope
             ->
+            requireVisualIdleNativeCapture(scope.unavailableReason(), allowScreenRegionFallback)
             waitForVisualIdleInternal(
                 timeout = timeout,
                 stableFrames = stableFrames,
                 pollInterval = pollInterval,
                 frameHash =
-                    BoundedFrameHasher(FRAME_HASH_BUDGET_MS) { sampleFrameHash(it, scope) }::hash,
+                    BoundedFrameHasher(FRAME_HASH_BUDGET_MS) {
+                        sampleFrameHash(it, scope, allowScreenRegionFallback)
+                    }::hash,
             )
         }
     }
@@ -740,6 +754,7 @@ private constructor(
     private suspend fun sampleFrameHash(
         budgetMs: Long,
         captureScope: NativeCaptureWaitScope,
+        allowScreenRegionFallback: Boolean,
     ): Int? {
         // Hash tracked Compose surfaces independently: a virtual-desktop capture would let
         // unrelated windows, notifications, or the cursor outside the app reset the streak.
@@ -772,6 +787,7 @@ private constructor(
                         frameInsetsFor = { geometry.getValue(it).second },
                         backend = screenCaptureBackend,
                         nativeWindowCaptureAvailable = captureScope.isAvailable(),
+                        allowScreenRegionFallback = allowScreenRegionFallback,
                     )
                 }
             }

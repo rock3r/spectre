@@ -32,11 +32,13 @@ internal class WaitOpsReflectiveMapper(
         Long::class.javaPrimitiveType ?: error("Long primitive type missing")
     private val intPrimitive: Class<*> =
         Int::class.javaPrimitiveType ?: error("Int primitive type missing")
+    private val booleanPrimitive: Class<*> =
+        Boolean::class.javaPrimitiveType ?: error("Boolean primitive type missing")
 
     private val waitForNodeSuspendMethod: Method? =
         automatorClass.methods.firstOrNull {
             it.name.startsWith("waitForNode") &&
-                it.parameterTypes.size == 5 &&
+                it.parameterTypes.size == VISUAL_IDLE_OPT_IN_PARAMETER_COUNT &&
                 it.parameterTypes[0] == String::class.java &&
                 it.parameterTypes[1] == String::class.java &&
                 it.parameterTypes[2] == longPrimitive &&
@@ -52,7 +54,7 @@ internal class WaitOpsReflectiveMapper(
     private val waitUntilGoneSuspendMethod: Method? =
         automatorClass.methods.firstOrNull {
             it.name.startsWith("waitUntilGone") &&
-                it.parameterTypes.size == 5 &&
+                it.parameterTypes.size == VISUAL_IDLE_OPT_IN_PARAMETER_COUNT &&
                 it.parameterTypes[0] == String::class.java &&
                 it.parameterTypes[1] == String::class.java &&
                 it.parameterTypes[2] == longPrimitive &&
@@ -63,11 +65,14 @@ internal class WaitOpsReflectiveMapper(
     private val waitForVisualIdleSuspendMethod: Method? =
         automatorClass.methods.firstOrNull {
             it.name.startsWith("waitForVisualIdle") &&
-                it.parameterTypes.size == 4 &&
+                it.parameterTypes.size in 4..VISUAL_IDLE_OPT_IN_PARAMETER_COUNT &&
                 it.parameterTypes[0] == longPrimitive &&
                 it.parameterTypes[1] == intPrimitive &&
                 it.parameterTypes[2] == longPrimitive &&
-                it.parameterTypes[3].name == CONTINUATION_FQN
+                ((it.parameterTypes.size == 4 && it.parameterTypes[3].name == CONTINUATION_FQN) ||
+                    (it.parameterTypes.size == VISUAL_IDLE_OPT_IN_PARAMETER_COUNT &&
+                        it.parameterTypes[3] == booleanPrimitive &&
+                        it.parameterTypes[4].name == CONTINUATION_FQN))
         }
 
     /** `waitForIdle(timeout, quietPeriod, pollInterval)` — three Durations + Continuation. */
@@ -167,14 +172,26 @@ internal class WaitOpsReflectiveMapper(
         val pollMs = request.pollIntervalMs ?: DEFAULT_VISUAL_POLL_MS
         val stableFrames = request.stableFrames ?: DEFAULT_STABLE_FRAMES
         return runWait {
-            suspendInvoker.invoke(
-                method,
-                automator,
-                durationStorageFromMs(timeoutMs),
-                stableFrames,
-                durationStorageFromMs(pollMs),
-                timeoutMsOverride = timeoutMs + SUSPEND_BRIDGE_SLACK_MS,
-            )
+            if (method.parameterTypes.size == VISUAL_IDLE_OPT_IN_PARAMETER_COUNT) {
+                suspendInvoker.invoke(
+                    method,
+                    automator,
+                    durationStorageFromMs(timeoutMs),
+                    stableFrames,
+                    durationStorageFromMs(pollMs),
+                    false,
+                    timeoutMsOverride = timeoutMs + SUSPEND_BRIDGE_SLACK_MS,
+                )
+            } else {
+                suspendInvoker.invoke(
+                    method,
+                    automator,
+                    durationStorageFromMs(timeoutMs),
+                    stableFrames,
+                    durationStorageFromMs(pollMs),
+                    timeoutMsOverride = timeoutMs + SUSPEND_BRIDGE_SLACK_MS,
+                )
+            }
             AgentResponse.Ok
         }
     }
@@ -232,6 +249,7 @@ internal class WaitOpsReflectiveMapper(
         )
 
     private companion object {
+        const val VISUAL_IDLE_OPT_IN_PARAMETER_COUNT: Int = 5
         const val CONTINUATION_FQN: String = "kotlin.coroutines.Continuation"
         const val DEFAULT_WAIT_TIMEOUT_MS: Long = 5_000
         const val DEFAULT_WAIT_POLL_MS: Long = 100
