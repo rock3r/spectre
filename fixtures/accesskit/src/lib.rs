@@ -173,7 +173,6 @@ mod tests {
             .nodes
             .iter()
             .all(|(_, node)| node.author_id() == node.html_id()));
-        assert!(update.nodes.iter().any(|(_, node)| node.is_disabled()));
         assert!(update
             .nodes
             .iter()
@@ -182,6 +181,31 @@ mod tests {
             .nodes
             .iter()
             .any(|(_, node)| node.bounds().is_some_and(|bounds| bounds.y0 > 480.0)));
+    }
+
+    #[test]
+    fn disabled_intent_is_source_level_and_not_inferred_from_actions() {
+        let update = initial_tree(false);
+        let find = |id| {
+            update
+                .nodes
+                .iter()
+                .find(|(node_id, _)| *node_id == id)
+                .map(|(_, node)| node)
+                .expect("fixture control must exist")
+        };
+        let disabled = find(DISABLED_ID);
+        let offscreen = find(OFFSCREEN_ID);
+
+        assert_eq!(disabled.author_id(), Some("disabled-button"));
+        assert_eq!(disabled.label(), Some("Unavailable action"));
+        assert_eq!(disabled.role(), Role::Button);
+        assert!(disabled.is_disabled());
+        assert_eq!(offscreen.author_id(), Some("offscreen-button"));
+        assert_eq!(offscreen.label(), Some("Scrolled away"));
+        assert_eq!(offscreen.role(), Role::Button);
+        assert!(!offscreen.is_disabled());
+        assert!(offscreen.bounds().is_some_and(|bounds| bounds.y0 > 480.0));
     }
 
     #[test]

@@ -74,6 +74,14 @@ def assert_role(node, expected, label):
         )
 
 
+def assert_no_action_interface(node, label):
+    try:
+        node.queryAction()
+    except NotImplementedError:
+        return
+    raise AssertionError(f"{label} unexpectedly exposes the AT-SPI Action interface")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--enable", action="store_true")
@@ -105,8 +113,7 @@ def main():
         assert_role(window, golden["windowRole"], "window")
         assert_role(button, golden["buttonRole"], "button")
         assert_role(checkbox, golden["checkboxRole"], "checkbox")
-        assert checkbox.get_state_set().contains(pyatspi.STATE_CHECKED)
-        assert golden["checkedState"] == "checked"
+        assert checkbox.get_state_set().contains(pyatspi.STATE_CHECKED) == golden["checkedState"]
         assert_role(text, golden["textRole"], "text")
         try:
             linux_value = text.queryText().getText(0, -1)
@@ -116,12 +123,12 @@ def main():
         assert len(repeated) == 3
         assert len({node.parent for node in repeated}) == 2
         assert nested_label.parent == nested
-        try:
-            disabled_actions = disabled.queryAction().nActions
-        except NotImplementedError:
-            disabled_actions = 0
-        native_disabled = "disabled" if disabled_actions == 0 else "enabled"
-        assert native_disabled == golden["disabledState"]
+        assert disabled.name == golden["disabledButton"]["label"]
+        assert offscreen.name == golden["offscreenButton"]["label"]
+        assert_role(disabled, golden["disabledButton"]["role"], "disabled fixture button")
+        assert_role(offscreen, golden["offscreenButton"]["role"], "offscreen fixture button")
+        assert_no_action_interface(disabled, "disabled fixture button")
+        assert_no_action_interface(offscreen, "offscreen fixture button")
         assert offscreen.queryComponent().getExtents(pyatspi.DESKTOP_COORDS).y > 480
         trigger.queryAction().doAction(0)
         deadline = time.monotonic() + 5

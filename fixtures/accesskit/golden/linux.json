@@ -5,6 +5,13 @@
   "textRole": { "id": 79, "name": "entry" },
   "textValue": null,
   "popoverRole": { "id": 16, "name": "dialog" },
-  "checkedState": "checked",
-  "disabledState": "disabled"
+  "checkedState": true,
+  "disabledButton": {
+    "label": "Unavailable action",
+    "role": { "id": 43, "name": "button" }
+  },
+  "offscreenButton": {
+    "label": "Scrolled away",
+    "role": { "id": 43, "name": "button" }
+  }
 }

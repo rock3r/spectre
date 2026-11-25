@@ -14,6 +14,14 @@ identity as well as a diagnostic name. The probe compares enum IDs, because AT-S
 `PUSH_BUTTON` to `BUTTON` while retaining the same value (43); display names therefore vary between
 supported distributions without changing the role identity.
 
+On Linux, AccessKit 0.25 exposes the disabled and off-window fixture buttons with the same AT-SPI
+button role and state, and neither object exposes the AT-SPI Action interface. Absence of that
+interface therefore does **not** establish that an object is disabled. The Linux probe asserts only
+what the native API distinguishes: the two platform IDs and labels, their button roles, the
+off-window geometry, and the shared lack of an Action interface. Disabled intent is verified on the
+source-built AccessKit node instead. Windows UIA and macOS AX do expose enabled state, so their
+native probes continue to require the disabled state.
+
 ## Local verification
 
 ```bash

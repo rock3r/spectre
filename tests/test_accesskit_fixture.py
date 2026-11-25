@@ -29,6 +29,17 @@ class LinuxNode:
     def getRoleName(self):
         return self.role_name
 
+
+class LinuxActionNode:
+    def __init__(self, exposes_action):
+        self.exposes_action = exposes_action
+
+    def queryAction(self):
+        if not self.exposes_action:
+            raise NotImplementedError
+        return object()
+
+
 class AccessKitFixtureContractTest(unittest.TestCase):
     def test_fixture_is_private_and_dependencies_are_pinned(self):
         manifest = (FIXTURE / "Cargo.toml").read_text()
@@ -37,9 +48,11 @@ class AccessKitFixtureContractTest(unittest.TestCase):
         self.assertNotIn('include(":accesskit', (ROOT / "settings.gradle.kts").read_text())
 
     def test_every_platform_golden_has_the_reader_contract(self):
-        keys = {"windowRole", "buttonRole", "checkboxRole", "textRole", "textValue", "popoverRole", "checkedState", "disabledState"}
+        common_keys = {"windowRole", "buttonRole", "checkboxRole", "textRole", "textValue", "popoverRole", "checkedState"}
         values = {name: json.loads((FIXTURE / "golden" / f"{name}.json").read_text()) for name in ("linux", "windows", "macos")}
-        for name, value in values.items(): self.assertEqual(keys, set(value), name)
+        self.assertEqual(common_keys | {"disabledButton", "offscreenButton"}, set(values["linux"]))
+        for name in ("windows", "macos"):
+            self.assertEqual(common_keys | {"disabledState"}, set(values[name]), name)
         self.assertIsNone(values["linux"]["textValue"])
         self.assertEqual(
             {
@@ -49,8 +62,13 @@ class AccessKitFixtureContractTest(unittest.TestCase):
                 "textRole": {"id": 79, "name": "entry"},
                 "popoverRole": {"id": 16, "name": "dialog"},
             },
-            {key: values["linux"][key] for key in keys if key.endswith("Role")},
+            {key: values["linux"][key] for key in common_keys if key.endswith("Role")},
         )
+        self.assertIs(values["linux"]["checkedState"], True)
+        self.assertEqual("Unavailable action", values["linux"]["disabledButton"]["label"])
+        self.assertEqual("Scrolled away", values["linux"]["offscreenButton"]["label"])
+        self.assertEqual(values["linux"]["buttonRole"], values["linux"]["disabledButton"]["role"])
+        self.assertEqual(values["linux"]["buttonRole"], values["linux"]["offscreenButton"]["role"])
         self.assertEqual("Ada Lovelace", values["windows"]["textValue"])
         self.assertEqual("Ada Lovelace", values["macos"]["textValue"])
 
@@ -78,6 +96,14 @@ class AccessKitFixtureContractTest(unittest.TestCase):
         self.assertNotIn("getRoleName() ==", reader)
         self.assertIn("expected", reader)
         self.assertIn("observed", reader)
+        self.assertNotIn("native_disabled", reader)
+        self.assertNotIn("disabled_actions", reader)
+
+    def test_linux_action_contract_requires_the_interface_to_be_absent(self):
+        reader = load_linux_reader()
+        reader.assert_no_action_interface(LinuxActionNode(False), "fixture button")
+        with self.assertRaisesRegex(AssertionError, "unexpectedly exposes"):
+            reader.assert_no_action_interface(LinuxActionNode(True), "fixture button")
 
     def test_old_push_button_name_has_stable_button_identity(self):
         load_linux_reader().assert_role(
