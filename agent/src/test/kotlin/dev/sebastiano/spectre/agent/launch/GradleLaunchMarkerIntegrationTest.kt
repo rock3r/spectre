@@ -29,9 +29,10 @@ class GradleLaunchMarkerIntegrationTest {
         assertEquals(0, warmup.waitFor(), "failed to warm a reusable Gradle daemon")
 
         val first = startMarkedFixture(fixtureA)
-        val firstPid = awaitOwnedJvm(first)
-        val second = startMarkedFixture(fixtureB)
+        var second: Launch? = null
         try {
+            val firstPid = awaitOwnedJvm(first)
+            second = startMarkedFixture(fixtureB)
             val secondPid = awaitOwnedJvm(second)
             assertNotEquals(firstPid, secondPid)
             assertTrue(hasLaunchMarker(firstPid, first.marker))
@@ -40,7 +41,7 @@ class GradleLaunchMarkerIntegrationTest {
             assertTrue(!hasLaunchMarker(secondPid, first.marker))
         } finally {
             destroyLaunch(first)
-            destroyLaunch(second)
+            second?.let(::destroyLaunch)
         }
     }
 
@@ -83,6 +84,7 @@ class GradleLaunchMarkerIntegrationTest {
                 |tasks.register('runFixture', JavaExec) {
                 |    classpath = files('.')
                 |    mainClass = 'SameMain'
+                |    args providers.gradleProperty('fixtureReadinessFile').get()
                 |    ${if (disablePerfData) "jvmArgs '-XX:-UsePerfData'" else ""}
                 |}
                 """
@@ -94,6 +96,11 @@ class GradleLaunchMarkerIntegrationTest {
                 """
                 |public final class SameMain {
                 |    public static void main(String[] args) throws Exception {
+                |        java.nio.file.Files.writeString(
+                |            java.nio.file.Path.of(args[0]),
+                |            ProcessHandle.current().pid() + "\n" +
+                |                System.getProperty("${LaunchAndAttach.LAUNCH_MARKER_PROPERTY}", "") + "\n"
+                |        );
                 |        Thread.sleep(120000L);
                 |    }
                 |}
@@ -110,15 +117,16 @@ class GradleLaunchMarkerIntegrationTest {
         fixture: Path,
         noDaemon: Boolean = false,
     ): Launch {
+        val capture = Files.createTempDirectory("spectre-gradle-marker-capture-")
         val command = buildList {
             add(gradlew().toString())
             add("-p")
             add(fixture.toString())
             add("runFixture")
             add("-q")
+            add("-PfixtureReadinessFile=${capture.resolve("fixture.ready")}")
             if (noDaemon) add("--no-daemon")
         }
-        val capture = Files.createTempDirectory("spectre-gradle-marker-capture-")
         val marker = UUID.randomUUID().toString()
         val marked = prepareGradleLaunchCommand(command, capture, marker)
         val startedAt = Instant.now()
@@ -126,10 +134,11 @@ class GradleLaunchMarkerIntegrationTest {
             process =
                 ProcessBuilder(marked)
                     .redirectErrorStream(true)
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectOutput(capture.resolve("gradle.log").toFile())
                     .start(),
             startedAt = startedAt,
             marker = marker,
+            capture = capture,
         )
     }
 
@@ -141,7 +150,8 @@ class GradleLaunchMarkerIntegrationTest {
     }
 
     private fun awaitOwnedJvm(launch: Launch): Long {
-        val deadline = Instant.now().plus(Duration.ofSeconds(60))
+        val fixture = awaitFixtureReadiness(launch)
+        val deadline = Instant.now().plus(MARKER_DISCOVERY_TIMEOUT)
         while (Instant.now().isBefore(deadline)) {
             discoverOwnedAppJvm(
                     clientPid = launch.process.pid(),
@@ -149,13 +159,69 @@ class GradleLaunchMarkerIntegrationTest {
                     clientStart = launch.startedAt,
                     launchMarker = launch.marker,
                 )
-                ?.let {
-                    return it
+                ?.let { discoveredPid ->
+                    assertEquals(
+                        fixture.pid,
+                        discoveredPid,
+                        "ownership discovery selected a different process than the live fixture",
+                    )
+                    return discoveredPid
                 }
-            check(launch.process.isAlive) { "Gradle client exited before marked JavaExec appeared" }
+            check(launch.process.isAlive) { timeoutDiagnostics(launch, fixture) }
             Thread.sleep(100)
         }
-        error("timed out discovering JavaExec owned by ${launch.marker}")
+        error(timeoutDiagnostics(launch, fixture))
+    }
+
+    private fun awaitFixtureReadiness(launch: Launch): FixtureReadiness {
+        val readinessFile = launch.capture.resolve("fixture.ready")
+        val deadline = Instant.now().plus(FIXTURE_READY_TIMEOUT)
+        while (Instant.now().isBefore(deadline)) {
+            if (Files.isRegularFile(readinessFile)) {
+                val lines = Files.readAllLines(readinessFile)
+                if (lines.size >= 2) {
+                    val readiness = FixtureReadiness(lines[0].toLong(), lines[1])
+                    assertEquals(launch.marker, readiness.marker, "fixture inherited wrong marker")
+                    assertTrue(
+                        ProcessHandle.of(readiness.pid).map(ProcessHandle::isAlive).orElse(false),
+                        "fixture reported pid ${readiness.pid}, but it is not alive",
+                    )
+                    return readiness
+                }
+            }
+            check(launch.process.isAlive) { timeoutDiagnostics(launch, null) }
+            Thread.sleep(100)
+        }
+        error(timeoutDiagnostics(launch, null))
+    }
+
+    private fun timeoutDiagnostics(launch: Launch, fixture: FixtureReadiness?): String {
+        val now = Instant.now()
+        val markerPids =
+            ProcessHandle.allProcesses()
+                .filter { hasLaunchMarker(it.pid(), launch.marker) }
+                .map { it.pid().toString() }
+                .toList()
+        val descendants = runCatching {
+            launch.process.descendants().map { it.pid().toString() }.toList()
+        }
+            .getOrDefault(emptyList())
+        val output = runCatching {
+            Files.readString(launch.capture.resolve("gradle.log"))
+        }
+            .getOrDefault("<unavailable>")
+        return """
+            |Gradle fixture timeout
+            |startedAt=${launch.startedAt}
+            |observedAt=$now
+            |clientPid=${launch.process.pid()} clientAlive=${launch.process.isAlive}
+            |fixturePid=${fixture?.pid ?: "<not ready>"}
+            |markerPids=$markerPids
+            |clientDescendants=$descendants
+            |gradleOutput:
+            |$output
+            """
+            .trimMargin()
     }
 
     private fun destroyLaunch(launch: Launch) {
@@ -179,5 +245,17 @@ class GradleLaunchMarkerIntegrationTest {
         error("could not find gradlew")
     }
 
-    private data class Launch(val process: Process, val startedAt: Instant, val marker: String)
+    private data class Launch(
+        val process: Process,
+        val startedAt: Instant,
+        val marker: String,
+        val capture: Path,
+    )
+
+    private data class FixtureReadiness(val pid: Long, val marker: String)
+
+    private companion object {
+        val FIXTURE_READY_TIMEOUT: Duration = Duration.ofSeconds(90)
+        val MARKER_DISCOVERY_TIMEOUT: Duration = Duration.ofSeconds(15)
+    }
 }
