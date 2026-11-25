@@ -239,7 +239,9 @@ class DaemonProcessLauncherTest {
             )
 
         assertEquals(
-            listOf("/usr/bin/setsid") + launcher.command(),
+            listOf("/usr/bin/setsid", "/jdk/bin/java") +
+                "-Ddev.sebastiano.spectre.daemon.processGroupIsolated=true" +
+                launcher.command().drop(1),
             launcher.processBuilder().command(),
         )
     }

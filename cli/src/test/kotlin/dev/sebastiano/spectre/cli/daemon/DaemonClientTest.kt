@@ -223,6 +223,7 @@ private fun temporaryDaemonClientSocketPath(): Path =
 
 private fun deleteTemporaryDaemonClientSocketPath(socketPath: Path) {
     Files.deleteIfExists(socketPath)
+    Files.deleteIfExists(DaemonProcessLauncher.diagnosticPath(socketPath))
     Files.deleteIfExists(socketPath.parent)
     Files.deleteIfExists(socketPath.parent.parent)
 }

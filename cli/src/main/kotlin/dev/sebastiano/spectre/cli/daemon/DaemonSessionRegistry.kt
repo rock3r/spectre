@@ -77,6 +77,22 @@ internal constructor(
                     // Resolved from this JVM's properties, which do not change while it lives, so
                     // this is the mode every attach this daemon makes will use.
                     inputCoordination = AttachInputCoordination.fromProperty().wireValue,
+                    configuration =
+                        if (request.configuration.isEmpty()) emptyMap() else daemonConfiguration(),
+                    warnings =
+                        if (
+                            System.getProperty(
+                                DaemonProcessLauncher.PROCESS_GROUP_ISOLATED_PROPERTY
+                            ) == "false"
+                        ) {
+                            listOf(
+                                "The daemon could not start in an independent process group; " +
+                                    "install setsid or /usr/bin/perl to keep it alive when the " +
+                                    "launching shell exits."
+                            )
+                        } else {
+                            emptyList()
+                        },
                 )
             is DaemonRequest.Attach -> error("attach must use attach() outside the monitor")
             is DaemonRequest.Detach -> error("detach must use handleDetachOutsideLock")
@@ -191,7 +207,8 @@ internal constructor(
                 DaemonResponse.Completed(request.sessionId)
             }
             is DaemonRequest.WaitForReloadSettled -> {
-                val hotReload = session.hotReloadSession
+                val hotReload =
+                    session.hotReloadSession ?: discoverHotReload(session, hotReloadSessionFactory)
                 if (hotReload == null) {
                     DaemonResponse.Error(
                         code = DaemonErrorCode.HotReloadUnavailable,
@@ -400,6 +417,7 @@ internal constructor(
             session.awaitIdleWaits()
             return CaptureSessionReport.forDetach(sessionId)
         } finally {
+            RequestDiagnostics.forget(sessionId)
             synchronized(this) {
                 if (detachingByPid[targetPid] === gate) detachingByPid.remove(targetPid)
             }
@@ -551,6 +569,7 @@ internal constructor(
     }
 
     override fun close() {
+        RequestDiagnostics.clear()
         val snapshot: List<Pair<Long, DaemonSession>>
         val ownedGates: List<Pair<Long, CountDownLatch>>
         val waitGates: List<CountDownLatch>
@@ -605,11 +624,23 @@ private const val ATTACH_WAIT_DETACH_TIMEOUT_MS: Long =
     WAIT_DRAIN_TIMEOUT_MS + WAIT_DRAIN_MARGIN_MS + 120_000
 private const val NANOS_PER_MS: Long = 1_000_000
 
+private fun discoverHotReload(
+    session: DaemonSession,
+    factory: (Long) -> HotReloadCapability?,
+): HotReloadCapability? {
+    val discovered = factory(session.summary.targetPid) ?: return null
+    val guard = session.keyGuard ?: ReloadAwareKeyGuard().also { session.keyGuard = it }
+    discovered.setReloadSettledListener { guard.onReload() }
+    (discovered as? HotReloadSession)?.start()
+    session.hotReloadSession = discovered
+    return discovered
+}
+
 private data class DaemonSession(
     val summary: DaemonSessionSummary,
     val automator: DaemonSessionAutomator,
-    val hotReloadSession: HotReloadCapability? = null,
-    val keyGuard: ReloadAwareKeyGuard? = null,
+    var hotReloadSession: HotReloadCapability? = null,
+    var keyGuard: ReloadAwareKeyGuard? = null,
     val activeWaits: java.util.concurrent.atomic.AtomicInteger =
         java.util.concurrent.atomic.AtomicInteger(0),
     /** Absolute nanoTime deadline for the longest currently tracked outside-lock wait. */

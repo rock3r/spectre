@@ -177,6 +177,7 @@ public constructor(
         }
     }
 
+    @Suppress("TooGenericExceptionCaught") // RPC boundary must preserve an error response.
     private fun handleConnection(client: SocketChannel) {
         var shutdownAfterResponse = false
         try {
@@ -188,7 +189,25 @@ public constructor(
                 while (running.get()) {
                     val request = DaemonWireCodec.readRequest(input) ?: return
                     synchronized(activityLock) { lastActivityNanos = System.nanoTime() }
-                    val response = handleRequest(request, handshakeComplete, handshakeVersion)
+                    val response =
+                        if (request is DaemonRequest.Hello) {
+                            handleRequest(request, handshakeComplete, handshakeVersion)
+                        } else {
+                            val (operationResponse, warnings) =
+                                RequestDiagnostics.capture(diagnosticSessionId(request)) {
+                                    try {
+                                        handleRequest(request, handshakeComplete, handshakeVersion)
+                                    } catch (exception: Exception) {
+                                        logConnectionFailure(exception)
+                                        DaemonResponse.Error(
+                                            DaemonErrorCode.OperationFailed,
+                                            "${exception.javaClass.simpleName}: " +
+                                                (exception.message ?: "daemon operation failed"),
+                                        )
+                                    }
+                                }
+                            diagnosedResponse(operationResponse, warnings, handshakeVersion)
+                        }
                     if (request is DaemonRequest.Hello) {
                         handshakeComplete = response is DaemonResponse.Hello
                         handshakeVersion = request.clientVersion.takeIf { handshakeComplete }
@@ -251,15 +270,30 @@ public constructor(
                 } else {
                     registry.handle(request)
                 }
+            DaemonRequest.Shutdown ->
+                if (handshakeComplete) registry.handle(request) else protocolHandshakeRequired()
             else ->
-                if (handshakeComplete) registry.handle(request)
-                else {
+                if (
+                    handshakeComplete &&
+                        (handshakeVersion?.minor ?: 0) < DaemonProtocol.CurrentVersion.minor
+                ) {
                     DaemonResponse.Error(
                         code = DaemonErrorCode.ProtocolError,
-                        message = "send a compatible Hello request before session commands",
+                        message =
+                            "This Spectre client is too old to preserve daemon configuration " +
+                                "and diagnostics. Upgrade the client and retry.",
                     )
+                } else if (handshakeComplete) registry.handle(request)
+                else {
+                    protocolHandshakeRequired()
                 }
         }
+
+    private fun protocolHandshakeRequired(): DaemonResponse.Error =
+        DaemonResponse.Error(
+            code = DaemonErrorCode.ProtocolError,
+            message = "send a compatible Hello request before session commands",
+        )
 
     private fun logConnectionFailure(exception: Exception) {
         System.err.println(
@@ -404,6 +438,20 @@ public constructor(
         }
     }
 }
+
+private fun diagnosticSessionId(request: DaemonRequest): String? =
+    (request as? DaemonRequest.SessionRequest)?.sessionId
+
+private fun diagnosedResponse(
+    response: DaemonResponse,
+    warnings: List<String>,
+    clientVersion: DaemonProtocolVersion?,
+): DaemonResponse =
+    if (warnings.isEmpty() || (clientVersion?.minor ?: 0) < DaemonProtocol.CurrentVersion.minor) {
+        response
+    } else {
+        DaemonResponse.Diagnosed(response, warnings)
+    }
 
 /** Thrown instead of replacing an existing daemon that is still accepting local connections. */
 public class DaemonAlreadyRunningException(socketPath: Path) :

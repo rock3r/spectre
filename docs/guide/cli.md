@@ -1,5 +1,16 @@
 # CLI
 
+## Daemon configuration, warnings, and diagnostics
+
+The per-user daemon validates JVM settings that affect captures, attachment, and input on every
+connection. If a caller's settings differ from the running daemon, the command fails with the
+differing values and asks you to run `spectre daemon kill` before retrying.
+
+Daemon output is retained in a bounded, owner-only log next to its socket. Each socket has its own
+log, so test and override sockets cannot rotate or remove another daemon's diagnostics. Warnings
+and unexpected operation failures are returned to CLI and MCP callers instead of appearing only as
+a closed connection.
+
 ## Inspecting and recovering the desktop input lease
 
 !!! warning "Experimental control surface"
