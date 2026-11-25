@@ -159,14 +159,19 @@ internal fun configurationMismatchFailure(
     val differences =
         (requested.keys + running.keys)
             .sorted()
-            .filter { requested[it] != running[it] }
+            .filter {
+                requested.containsKey(it) != running.containsKey(it) || requested[it] != running[it]
+            }
             .joinToString { name ->
-                "$name: caller=${requested[name] ?: "<unset>"}, " +
-                    "daemon=${running[name] ?: "<unset>"}"
+                "$name: caller=${configurationValue(requested, name)}, " +
+                    "daemon=${configurationValue(running, name)}"
             }
     return "The running Spectre daemon has different JVM configuration ($differences). " +
         "Run `spectre daemon kill` and retry so the requested configuration takes effect."
 }
+
+private fun configurationValue(configuration: Map<String, String?>, name: String): String =
+    if (configuration.containsKey(name)) configuration[name] ?: "<unset>" else "<missing>"
 
 internal class DaemonConnectionClosedException(cause: Throwable? = null) :
     IOException("Daemon closed the connection during handshake", cause)

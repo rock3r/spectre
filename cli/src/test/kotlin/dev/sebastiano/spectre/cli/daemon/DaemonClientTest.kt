@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.cli.daemon
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.cli.SpectreCli
 import java.io.File
 import java.nio.file.FileSystems
 import java.nio.file.Files
@@ -8,6 +9,8 @@ import java.nio.file.Path
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.condition.EnabledOnOs
@@ -15,6 +18,102 @@ import org.junit.jupiter.api.condition.OS
 
 @OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonClientTest {
+    @Test
+    fun `public CLI prints hello and operation warnings and fails partial operation`() {
+        val property = DaemonProcessLauncher.PROCESS_GROUP_ISOLATED_PROPERTY
+        val original = System.getProperty(property)
+        val socketPath = temporaryDaemonClientSocketPath()
+        System.setProperty(property, "false")
+        val registry = DaemonSessionRegistry {
+            TestDaemonSessionAutomator(
+                windowsResult = {
+                    RequestDiagnostics.report("window enumeration degraded")
+                    throw java.io.IOException("window provider failed")
+                }
+            )
+        }
+        val server = DaemonServer(socketPath, registry)
+        val output = StringBuilder()
+        val errorOutput = StringBuilder()
+
+        try {
+            assertIs<DaemonResponse.Attached>(
+                DaemonClient(socketPath).request(DaemonRequest.Attach(91))
+            )
+            val exit = SpectreCli(output, errorOutput, socketPath).run(listOf("windows", "pid-91"))
+
+            assertNotEquals(0, exit)
+            assertTrue(errorOutput.contains("independent process group"), errorOutput.toString())
+            assertTrue(errorOutput.contains("window enumeration degraded"), errorOutput.toString())
+            assertTrue(errorOutput.contains("window provider failed"), errorOutput.toString())
+        } finally {
+            if (original == null) System.clearProperty(property)
+            else System.setProperty(property, original)
+            server.close()
+            server.awaitTermination()
+            deleteTemporaryDaemonClientSocketPath(socketPath)
+        }
+    }
+
+    @Test
+    fun `hello process isolation warning reaches the public client warning sink`() {
+        val property = DaemonProcessLauncher.PROCESS_GROUP_ISOLATED_PROPERTY
+        val original = System.getProperty(property)
+        val socketPath = temporaryDaemonClientSocketPath()
+        System.setProperty(property, "false")
+        val server = DaemonServer(socketPath, registry = testDaemonSessionRegistry())
+        val warnings = mutableListOf<String>()
+
+        try {
+            assertEquals(
+                DaemonResponse.Sessions(emptyList()),
+                DaemonClient(socketPath, warningSink = warnings::add)
+                    .request(DaemonRequest.ListSessions),
+            )
+            assertTrue(warnings.single().contains("independent process group"))
+        } finally {
+            if (original == null) System.clearProperty(property)
+            else System.setProperty(property, original)
+            server.close()
+            server.awaitTermination()
+            deleteTemporaryDaemonClientSocketPath(socketPath)
+        }
+    }
+
+    @Test
+    fun `configuration mismatch distinguishes an unset value from a missing key`() {
+        val property = "java.io.tmpdir"
+
+        val message = configurationMismatchFailure(mapOf(property to null), emptyMap())
+
+        assertTrue(message.contains("caller=<unset>"), message)
+        assertTrue(message.contains("daemon=<missing>"), message)
+    }
+
+    @Test
+    fun `daemon handshake reports startup configuration after runtime installs embedded agent`() {
+        val property = "dev.sebastiano.spectre.agent.runtimeJar"
+        val original = System.getProperty(property)
+        val socketPath = temporaryDaemonClientSocketPath()
+        System.clearProperty(property)
+        val server = DaemonServer(socketPath, registry = testDaemonSessionRegistry())
+
+        try {
+            System.setProperty(property, "/tmp/extracted-agent-runtime.jar")
+            val failure =
+                assertFailsWith<java.io.IOException> {
+                    DaemonClient(socketPath).request(DaemonRequest.ListSessions)
+                }
+            assertTrue(failure.message.orEmpty().contains(property))
+        } finally {
+            if (original == null) System.clearProperty(property)
+            else System.setProperty(property, original)
+            server.close()
+            server.awaitTermination()
+            deleteTemporaryDaemonClientSocketPath(socketPath)
+        }
+    }
+
     @Test
     fun `explains how to replace a daemon that rejects a newer hello`() {
         assertEquals(

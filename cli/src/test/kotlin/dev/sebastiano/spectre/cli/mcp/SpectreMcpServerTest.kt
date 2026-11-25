@@ -4,9 +4,14 @@ import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.ProgressRangeDto
 import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.cli.SpectreBuildMetadata
+import dev.sebastiano.spectre.cli.daemon.DaemonClient
 import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
+import dev.sebastiano.spectre.cli.daemon.DaemonServer
+import dev.sebastiano.spectre.cli.daemon.DaemonSessionRegistry
+import dev.sebastiano.spectre.cli.daemon.RequestDiagnostics
+import dev.sebastiano.spectre.cli.daemon.TestDaemonSessionAutomator
 import io.modelcontextprotocol.kotlin.sdk.server.ClientConnection
 import io.modelcontextprotocol.kotlin.sdk.shared.RequestOptions
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
@@ -28,6 +33,7 @@ import io.modelcontextprotocol.kotlin.sdk.types.RequestId
 import io.modelcontextprotocol.kotlin.sdk.types.ResourceUpdatedNotification
 import io.modelcontextprotocol.kotlin.sdk.types.ServerNotification
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -43,6 +49,60 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 class SpectreMcpServerTest {
+    @Test
+    fun `real daemon wire carries warnings into generic image and partial MCP results`() =
+        runBlocking {
+            val socketPath =
+                Files.createTempDirectory("spectre-mcp-diagnostics").resolve("daemon.sock")
+            val registry = DaemonSessionRegistry {
+                TestDaemonSessionAutomator(
+                    nodesResult = {
+                        RequestDiagnostics.report("tree degraded")
+                        emptyList()
+                    },
+                    screenshotResult = { _, _, _ ->
+                        RequestDiagnostics.report("screenshot degraded")
+                        byteArrayOf(1, 2, 3)
+                    },
+                    windowsResult = {
+                        RequestDiagnostics.report("windows partial failure")
+                        error("window provider failed")
+                    },
+                )
+            }
+            val daemon = DaemonServer(socketPath, registry)
+            try {
+                val client = DaemonClient(socketPath, retainDiagnostics = true)
+                assertIs<DaemonResponse.Attached>(client.request(DaemonRequest.Attach(42)))
+                val server = SpectreMcpServer.create(client::request)
+                val arguments = buildJsonObject { put("session_id", "pid-42") }
+
+                val tree = invokeTool(server, "tree", arguments)
+                assertEquals("warning: tree degraded", (tree.content.first() as TextContent).text)
+                assertTrue(tree.isError != true)
+
+                val screenshot = invokeTool(server, "screenshot", arguments)
+                assertEquals(
+                    "warning: screenshot degraded",
+                    (screenshot.content.first() as TextContent).text,
+                )
+                assertIs<ImageContent>(screenshot.content.last())
+                assertTrue(screenshot.isError != true)
+
+                val partial = invokeTool(server, "windows", arguments)
+                assertEquals(
+                    "warning: windows partial failure",
+                    (partial.content.first() as TextContent).text,
+                )
+                assertTrue(partial.isError == true, "partial operation failure must be nonzero")
+            } finally {
+                daemon.close()
+                daemon.awaitTermination()
+                Files.deleteIfExists(socketPath.parent.resolve("daemon.log"))
+                Files.deleteIfExists(socketPath.parent)
+            }
+        }
+
     @Test
     fun `find_text accepts JSON booleans and defaults exact only when absent`() = runBlocking {
         for ((arguments, expected) in

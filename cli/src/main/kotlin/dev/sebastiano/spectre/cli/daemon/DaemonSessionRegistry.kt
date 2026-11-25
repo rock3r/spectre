@@ -31,6 +31,7 @@ internal constructor(
         AttachedDaemonSession(delegate = automator, sessionId = "pid-$targetPid")
     },
 ) : AutoCloseable {
+    private val startupConfiguration: Map<String, String?> = daemonConfiguration()
     private val sessionsByPid: MutableMap<Long, DaemonSession> = linkedMapOf()
     /**
      * PIDs whose agent teardown is still running after the session left [sessionsByPid]. Same-PID
@@ -78,7 +79,7 @@ internal constructor(
                     // this is the mode every attach this daemon makes will use.
                     inputCoordination = AttachInputCoordination.fromProperty().wireValue,
                     configuration =
-                        if (request.configuration.isEmpty()) emptyMap() else daemonConfiguration(),
+                        if (request.configuration.isEmpty()) emptyMap() else startupConfiguration,
                     warnings =
                         if (
                             System.getProperty(
@@ -407,12 +408,13 @@ internal constructor(
             session = checkNotNull(sessionsByPid.remove(targetPid))
             detachingByPid[targetPid] = gate
         }
+        val hotReload = session.retire()
         try {
             // Finalize while other sessions remain known live (#185); then close so in-flight waits
             // observe a closed automator and fail closed instead of hanging on the full wait
             // budget.
             session.automator.finalizeRecording(remainingLive)
-            session.hotReloadSession?.close()
+            hotReload?.close()
             session.automator.close()
             session.awaitIdleWaits()
             return CaptureSessionReport.forDetach(sessionId)
@@ -594,9 +596,10 @@ internal constructor(
         snapshot.forEach { (pid, session) ->
             if (pid !in ownedPids) return@forEach
             val ownedGate = ownedGates.first { it.first == pid }.second
+            val hotReload = session.retire()
             try {
                 runCatching { session.automator.finalizeRecording(emptySet()) }
-                session.hotReloadSession?.close()
+                hotReload?.close()
                 session.automator.close()
                 session.awaitIdleWaits()
             } finally {
@@ -627,20 +630,26 @@ private const val NANOS_PER_MS: Long = 1_000_000
 private fun discoverHotReload(
     session: DaemonSession,
     factory: (Long) -> HotReloadCapability?,
-): HotReloadCapability? {
-    val discovered = factory(session.summary.targetPid) ?: return null
-    val guard = session.keyGuard ?: ReloadAwareKeyGuard().also { session.keyGuard = it }
-    discovered.setReloadSettledListener { guard.onReload() }
-    (discovered as? HotReloadSession)?.start()
-    session.hotReloadSession = discovered
-    return discovered
-}
+): HotReloadCapability? =
+    synchronized(session) {
+        session.hotReloadSession?.let {
+            return@synchronized it
+        }
+        if (session.retired) return@synchronized null
+        val discovered = factory(session.summary.targetPid) ?: return@synchronized null
+        val guard = session.keyGuard ?: ReloadAwareKeyGuard().also { session.keyGuard = it }
+        discovered.setReloadSettledListener { guard.onReload() }
+        (discovered as? HotReloadSession)?.start()
+        session.hotReloadSession = discovered
+        discovered
+    }
 
 private data class DaemonSession(
     val summary: DaemonSessionSummary,
     val automator: DaemonSessionAutomator,
     var hotReloadSession: HotReloadCapability? = null,
     var keyGuard: ReloadAwareKeyGuard? = null,
+    var retired: Boolean = false,
     val activeWaits: java.util.concurrent.atomic.AtomicInteger =
         java.util.concurrent.atomic.AtomicInteger(0),
     /** Absolute nanoTime deadline for the longest currently tracked outside-lock wait. */
@@ -654,6 +663,12 @@ private data class DaemonSession(
         val candidate = System.nanoTime() + timeoutMs.coerceAtLeast(0) * NANOS_PER_MS
         waitDeadlineNs.updateAndGet { current -> maxOf(current, candidate) }
     }
+
+    fun retire(): HotReloadCapability? =
+        synchronized(this) {
+            retired = true
+            hotReloadSession
+        }
 
     fun awaitIdleWaits(timeoutMs: Long = WAIT_DRAIN_TIMEOUT_MS) {
         val trackedRemainingMs =
