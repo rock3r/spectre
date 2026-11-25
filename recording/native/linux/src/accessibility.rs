@@ -14,6 +14,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const CALL_TIMEOUT: Duration = Duration::from_millis(750);
+// Keep cleanup inside the JVM client's 250 ms post-deadline grace period.
+const STATUS_RESTORE_TIMEOUT: Duration = Duration::from_millis(100);
 const ATSPI_ROOT: &str = "/org/a11y/atspi/accessible/root";
 
 #[derive(Debug, Deserialize)]
@@ -190,7 +192,11 @@ fn capture_inner(request: &Request) -> std::result::Result<Snapshot, CaptureErro
     }
     let result = capture_with_status(request, deadline, &status, changed);
     if changed {
-        if let Err(restore_error) = set_property(&status, "org.a11y.Status", "IsEnabled", false) {
+        let restore_status =
+            session.with_proxy("org.a11y.Bus", "/org/a11y/bus", STATUS_RESTORE_TIMEOUT);
+        if let Err(restore_error) =
+            set_property(&restore_status, "org.a11y.Status", "IsEnabled", false)
+        {
             let outcome = match &result {
                 Ok(_) => "snapshot succeeded".to_string(),
                 Err((code, message, _)) => format!("snapshot failed with {code}: {message}"),
@@ -298,7 +304,10 @@ fn find_window(
         path: ATSPI_ROOT.into(),
     };
     loop {
-        let apps = children(bus, &root).map_err(|e| timed_err(deadline, e))?;
+        if Instant::now() >= deadline {
+            break;
+        }
+        let apps = children(bus, &root, deadline).map_err(|e| timed_err(deadline, e))?;
         let mut title_matches = Vec::new();
         for app in apps {
             check_deadline(deadline, None)?;
@@ -313,7 +322,7 @@ fn find_window(
             if !matches_process {
                 continue;
             }
-            for window in children(bus, &app).unwrap_or_default() {
+            for window in children(bus, &app, deadline).map_err(|e| timed_err(deadline, e))? {
                 match &request.target {
                     Target::ProcessId { .. } => return Ok(window),
                     Target::WindowTitle { value, .. } => {
@@ -343,17 +352,6 @@ fn find_window(
                 }
                 _ => {}
             }
-        }
-        if let Target::WindowTitle {
-            value,
-            process_id: Some(pid),
-        } = &request.target
-        {
-            return Err((
-                "target-not-found",
-                format!("no window title {value:?} is owned by process {pid}"),
-                None,
-            ));
         }
         if Instant::now() >= deadline {
             break;
@@ -480,17 +478,14 @@ fn walk(
                 .map(|handle| handle.join().unwrap())
                 .collect::<Vec<_>>()
         });
-        for (child, result) in results {
-            child_data.push((
-                child,
-                result.map_err(|e| {
-                    if Instant::now() >= deadline {
-                        ("timeout", e.to_string(), None)
-                    } else {
-                        err("no-accessibility-tree", e)
-                    }
-                })?,
-            ));
+        for (child_address, result) in results {
+            let child_data_result = match result {
+                Ok(data) => data,
+                Err(error) => {
+                    return Err(structural_read_error(error, deadline, snapshot));
+                }
+            };
+            child_data.push((child_address, child_data_result));
         }
     }
     let mut ids = HashMap::new();
@@ -525,6 +520,26 @@ fn walk(
     Ok(())
 }
 
+fn structural_read_error(
+    error: impl std::fmt::Display,
+    deadline: Instant,
+    snapshot: &mut Snapshot,
+) -> CaptureError {
+    let (code, message) = if Instant::now() >= deadline {
+        ("timeout", "accessibility snapshot timed out".to_string())
+    } else {
+        (
+            "no-accessibility-tree",
+            format!("failed to read an AT-SPI child: {error}"),
+        )
+    };
+    (
+        code,
+        message,
+        Some(std::mem::replace(snapshot, empty_snapshot())),
+    )
+}
+
 fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Result<NodeData> {
     if Instant::now() >= deadline {
         anyhow::bail!("deadline exceeded")
@@ -552,7 +567,7 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
                     .ok()
                     .map(|v| role_name(v.0).to_string())
             });
-            let children_result = scope.spawn(|| children(bus, a));
+            let children_result = scope.spawn(|| children(bus, a, deadline));
             let state_words = scope.spawn(|| {
                 let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
                 p.method_call::<(Vec<u32>,), _, _, _>("org.a11y.atspi.Accessible", "GetState", ())
@@ -638,12 +653,16 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
         states,
         value,
         bounds,
-        children: children_result.unwrap_or_default(),
+        children: children_result.context("AT-SPI GetChildren failed")?,
     })
 }
 
-fn children(bus: &SyncConnection, a: &Address) -> Result<Vec<Address>> {
-    let p = bus.with_proxy(&a.bus, a.path.clone(), CALL_TIMEOUT);
+fn children(bus: &SyncConnection, a: &Address, deadline: Instant) -> Result<Vec<Address>> {
+    let timeout = remaining(deadline);
+    if timeout.is_zero() {
+        anyhow::bail!("deadline exceeded before AT-SPI GetChildren")
+    }
+    let p = bus.with_proxy(&a.bus, a.path.clone(), timeout);
     let (items,): (Vec<(String, dbus::Path<'static>)>,) =
         p.method_call("org.a11y.atspi.Accessible", "GetChildren", ())?;
     Ok(items
@@ -686,8 +705,20 @@ fn remaining(deadline: Instant) -> Duration {
         .saturating_duration_since(Instant::now())
         .min(CALL_TIMEOUT)
 }
-fn timed_err(deadline: Instant, error: impl std::fmt::Display) -> CaptureError {
-    if Instant::now() >= deadline {
+fn timed_err(deadline: Instant, error: impl Into<anyhow::Error>) -> CaptureError {
+    let error = error.into();
+    // libdbus uses millisecond timeouts and can report expiration before the Rust deadline.
+    let dbus_timeout = matches!(
+        error
+            .downcast_ref::<dbus::Error>()
+            .and_then(dbus::Error::name),
+        Some(
+            "org.freedesktop.DBus.Error.NoReply"
+                | "org.freedesktop.DBus.Error.Timeout"
+                | "org.freedesktop.DBus.Error.TimedOut"
+        )
+    );
+    if dbus_timeout || Instant::now() >= deadline {
         ("timeout", "accessibility snapshot timed out".into(), None)
     } else {
         err("no-accessibility-tree", error)
@@ -807,6 +838,25 @@ fn decode_states(words: &[u32]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dbus_error_classification_before_deadline() {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        for name in [
+            "org.freedesktop.DBus.Error.NoReply",
+            "org.freedesktop.DBus.Error.Timeout",
+            "org.freedesktop.DBus.Error.TimedOut",
+        ] {
+            let cause = dbus::Error::new_custom(name, "Did not receive a reply.");
+            let error = anyhow::Error::new(cause).context("reading accessibility status");
+            assert_eq!(timed_err(deadline, error).0, "timeout", "{name}");
+        }
+        let error = dbus::Error::new_custom(
+            "org.freedesktop.DBus.Error.AccessDenied",
+            "Did not receive a reply.",
+        );
+        assert_eq!(timed_err(deadline, error).0, "no-accessibility-tree");
+    }
+
     fn request() -> Request {
         serde_json::from_str(r#"{"target":{"type":"process-id","value":1},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#).unwrap()
     }
@@ -902,6 +952,57 @@ mod tests {
             .unwrap()
             .iter()
             .any(|state| state == "disabled"));
+    }
+
+    #[test]
+    fn structural_failure_keeps_the_available_partial_snapshot() {
+        let mut snapshot = empty_snapshot();
+        snapshot.nodes.push(Node {
+            key: "w0/root".into(),
+            parent_key: None,
+            id: None,
+            platform_role: None,
+            role: None,
+            name: Some("available".into()),
+            states: vec![],
+            value: None,
+            bounds: None,
+            on_screen: None,
+        });
+
+        let (code, message, partial) = structural_read_error(
+            "org.example.StructuralFailure",
+            Instant::now() + Duration::from_secs(1),
+            &mut snapshot,
+        );
+
+        assert_eq!(code, "no-accessibility-tree");
+        assert!(message.contains("StructuralFailure"));
+        assert_eq!(partial.unwrap().nodes.len(), 1);
+        assert!(snapshot.nodes.is_empty());
+    }
+
+    #[test]
+    fn stalled_structural_read_is_a_typed_timeout_with_partial_data() {
+        let mut snapshot = empty_snapshot();
+        snapshot.nodes.push(Node {
+            key: "w0/root".into(),
+            parent_key: None,
+            id: None,
+            platform_role: None,
+            role: None,
+            name: None,
+            states: vec![],
+            value: None,
+            bounds: None,
+            on_screen: None,
+        });
+
+        let (code, _, partial) =
+            structural_read_error("deadline exceeded", Instant::now(), &mut snapshot);
+
+        assert_eq!(code, "timeout");
+        assert_eq!(partial.unwrap().nodes.len(), 1);
     }
 
     #[test]

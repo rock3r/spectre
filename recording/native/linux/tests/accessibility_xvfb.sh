@@ -79,8 +79,14 @@ for _ in {1..100}; do grep -q SPECTRE_ACCESSKIT_FIXTURE_READY "$second_log" && b
 grep -q SPECTRE_ACCESSKIT_FIXTURE_READY "$second_log" || { cat "$second_log" >&2; exit 1; }
 ambiguous=$(title_request)
 python3 -c 'import json,sys; r=json.load(sys.stdin); assert not r["ok"] and r["error"]["code"]=="target-not-found" and "ambiguous" in r["error"]["message"], r' <<<"$ambiguous"
+# AccessKit removes its roots when accessibility is disabled and registers them asynchronously
+# after the helper enables it.  The owner-bound scan must keep retrying without dropping its PID
+# filter while that registration is in flight.
+set_status false
 owned=$(title_request "$pid")
 python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["ok"] and r["snapshot"]["windows"][0]["title"]=="Spectre AccessKit Fixture", r' <<<"$owned"
+[[ $(status) == *false* ]]
+set_status true
 wrong_owner=$(title_request $$)
 python3 -c 'import json,sys; r=json.load(sys.stdin); assert not r["ok"] and r["error"]["code"]=="target-not-found" and "owned by process" in r["error"]["message"], r' <<<"$wrong_owner"
 set_status false
