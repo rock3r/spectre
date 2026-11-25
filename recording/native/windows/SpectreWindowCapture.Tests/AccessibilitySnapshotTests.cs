@@ -1,5 +1,5 @@
-using System.Diagnostics;
 using System.Text.Json;
+using System.Windows.Automation;
 using Xunit;
 
 public sealed class AccessibilitySnapshotTests
@@ -78,6 +78,54 @@ public sealed class AccessibilitySnapshotTests
         Assert.Contains(System.Windows.Automation.SelectionItemPattern.IsSelectedProperty, WindowsUiaTreeReader.CachedPatternProperties);
     }
 
+    [Fact]
+    public void EditableComboRetainsExpandedStateWhileValueIsItsDisplayValue()
+    {
+        var patterns = WindowsUiaTreeReader.MapPatterns(
+            "typed text",
+            ToggleState.Off,
+            ExpandCollapseState.Expanded,
+            false);
+
+        Assert.Equal("typed text", patterns.Value);
+        Assert.False(patterns.IsChecked);
+        Assert.True(patterns.IsExpanded);
+        Assert.False(patterns.IsSelected);
+    }
+
+    [Fact]
+    public void SelectedExpandedTreeItemRetainsBothStatesAndChoosesOneDisplayValue()
+    {
+        var patterns = WindowsUiaTreeReader.MapPatterns(
+            null,
+            null,
+            ExpandCollapseState.Expanded,
+            true);
+
+        Assert.Equal("expanded", patterns.Value);
+        Assert.True(patterns.IsExpanded);
+        Assert.True(patterns.IsSelected);
+    }
+
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(true, 2)]
+    public void LateRootAndFinalChildCallsReturnTypedTimeoutWithHonestPartialTree(
+        bool finalChild,
+        int expectedNodes)
+    {
+        var reader = new LateCallReader(finalChild);
+        using var json = JsonDocument.Parse(
+            AccessibilitySnapshotProtocol.RunForTest(Request("process-id", 7, timeout: 10), reader).Output);
+
+        var error = json.RootElement.GetProperty("error");
+        Assert.False(json.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("timeout", error.GetProperty("code").GetString());
+        Assert.Equal(
+            expectedNodes,
+            error.GetProperty("partialSnapshot").GetProperty("nodes").GetArrayLength());
+    }
+
     private static string Request(string type, object value, int depth = 8, int count = 50, int timeout = 1000) =>
         JsonSerializer.Serialize(new { target = new { type, value }, maximumDepth = depth, maximumNodeCount = count, timeoutMs = timeout });
     private static AccessibilityElementData Node(string? id, params AccessibilityElementData[] children) => new(id, "Group", "group", id, null, true, false, false, false, false, false, new(0, 0, 10, 10), children);
@@ -89,4 +137,21 @@ public sealed class AccessibilitySnapshotTests
     }
     private sealed class ThrowingReader(Exception error) : IAccessibilityTreeReader
     { public IReadOnlyList<AccessibilityWindowData> Read(AccessibilityTarget target, AccessibilityReadLimits limits) => throw error; }
+    private sealed class LateCallReader(bool finalChild) : IAccessibilityTreeReader
+    {
+        public IReadOnlyList<AccessibilityWindowData> Read(
+            AccessibilityTarget target,
+            AccessibilityReadLimits limits)
+        {
+            var partial = finalChild
+                ? new[] { Window(Node("root", Node("final-child"))) }
+                : Array.Empty<AccessibilityWindowData>();
+            long elapsed = 9;
+            var deterministic = limits with { ElapsedMilliseconds = () => elapsed };
+            Assert.False(WindowsUiaTreeReader.DeadlineReached(deterministic));
+            elapsed = 10;
+            Assert.True(WindowsUiaTreeReader.DeadlineReached(deterministic));
+            throw new AccessibilityLimitException("timeout", "timeoutMs 10 reached", partial);
+        }
+    }
 }

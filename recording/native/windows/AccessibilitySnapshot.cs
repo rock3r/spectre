@@ -8,7 +8,7 @@ internal sealed record AccessibilityElementData(string? Id, string? PlatformRole
     bool IsExpanded, bool IsSelected, AccessibilityRectangle Bounds, IReadOnlyList<AccessibilityElementData> Children);
 internal sealed record AccessibilityWindowData(string Id, string? Title, AccessibilityRectangle Bounds, AccessibilityElementData Root);
 internal sealed record AccessibilityTarget(string Type, long? ProcessId, nint? WindowHandle, string? WindowTitle);
-internal sealed record AccessibilityReadLimits(int MaximumDepth, int MaximumNodeCount, long TimeoutMs, Stopwatch Stopwatch);
+internal sealed record AccessibilityReadLimits(int MaximumDepth, int MaximumNodeCount, long TimeoutMs, Func<long> ElapsedMilliseconds);
 internal interface IAccessibilityTreeReader { IReadOnlyList<AccessibilityWindowData> Read(AccessibilityTarget target, AccessibilityReadLimits limits); }
 internal sealed class AccessibilityTargetException(string code, string message) : Exception(message) { public string Code { get; } = code; }
 internal sealed class AccessibilityLimitException(string code, string message, IReadOnlyList<AccessibilityWindowData> partial) : Exception(message)
@@ -26,7 +26,7 @@ internal static class AccessibilitySnapshotProtocol
         var watch = Stopwatch.StartNew();
         try
         {
-            var windows = reader.Read(request.Target, new(request.Depth, request.Count, request.Timeout, watch));
+            var windows = reader.Read(request.Target, new(request.Depth, request.Count, request.Timeout, () => watch.ElapsedMilliseconds));
             if (windows.Count == 0) return Fail("target-not-found", "No matching top-level window was found", null);
             return Success(new { ok = true, snapshot = Snapshot(windows) });
         }

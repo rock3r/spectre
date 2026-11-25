@@ -4,6 +4,7 @@ using System.Windows.Automation;
 /// <summary>Reads UIA Control View incrementally, checking protocol limits before expanding a node.</summary>
 internal sealed class WindowsUiaTreeReader : IAccessibilityTreeReader
 {
+    internal readonly record struct PatternSnapshot(string? Value, bool IsChecked, bool IsExpanded, bool IsSelected);
     internal static readonly AutomationProperty[] CachedPatternProperties =
     [
         ValuePattern.ValueProperty,
@@ -21,12 +22,15 @@ internal sealed class WindowsUiaTreeReader : IAccessibilityTreeReader
         limits = readLimits; count = 0; limitCode = null; limitMessage = null;
         try
         {
-            var roots = FindRoots(target); if (roots.Count == 0) throw new AccessibilityTargetException("target-not-found", "No matching top-level UI Automation window was found");
+            var roots = FindRoots(target);
+            if (DeadlineReached(limits)) SetTimeout();
+            if (roots.Count == 0 && limitCode is null) throw new AccessibilityTargetException("target-not-found", "No matching top-level UI Automation window was found");
             var result = new List<AccessibilityWindowData>();
             foreach (var root in roots)
             {
                 if (!CanRead(0)) break;
                 var cached = root.GetUpdatedCache(CreateCacheRequest());
+                if (DeadlineReached(limits)) { SetTimeout(); break; }
                 var bounds = Rectangle(cached.Cached.BoundingRectangle);
                 var element = ReadElement(cached, 0);
                 result.Add(new(cached.Cached.NativeWindowHandle.ToString(System.Globalization.CultureInfo.InvariantCulture), NullIfEmpty(cached.Cached.Name), bounds, element));
@@ -79,34 +83,57 @@ internal sealed class WindowsUiaTreeReader : IAccessibilityTreeReader
     {
         count++;
         var role = element.Cached.ControlType?.ProgrammaticName?.Replace("ControlType.", "", StringComparison.Ordinal);
-        var value = ReadValue(element, out var check, out var expand, out var select);
+        var patterns = ReadPatterns(element);
         var children = new List<AccessibilityElementData>();
         foreach (AutomationElement child in element.CachedChildren)
         {
             if (!CanRead(depth + 1)) break;
-            children.Add(ReadElement(child.GetUpdatedCache(CreateCacheRequest()), depth + 1));
+            var cachedChild = child.GetUpdatedCache(CreateCacheRequest());
+            if (DeadlineReached(limits)) { SetTimeout(); break; }
+            children.Add(ReadElement(cachedChild, depth + 1));
             if (limitCode is not null) break;
         }
-        return new(NullIfEmpty(element.Cached.AutomationId), role, NormalizeRole(role), NullIfEmpty(element.Cached.Name), value,
-            element.Cached.IsEnabled, element.Cached.HasKeyboardFocus, element.Cached.IsKeyboardFocusable, check, expand, select, Rectangle(element.Cached.BoundingRectangle), children);
+        if (DeadlineReached(limits)) SetTimeout();
+        return new(NullIfEmpty(element.Cached.AutomationId), role, NormalizeRole(role), NullIfEmpty(element.Cached.Name), patterns.Value,
+            element.Cached.IsEnabled, element.Cached.HasKeyboardFocus, element.Cached.IsKeyboardFocusable, patterns.IsChecked, patterns.IsExpanded, patterns.IsSelected, Rectangle(element.Cached.BoundingRectangle), children);
     }
 
     private bool CanRead(int depth)
     {
-        if (limits.Stopwatch.ElapsedMilliseconds >= limits.TimeoutMs) { limitCode = "timeout"; limitMessage = $"timeoutMs {limits.TimeoutMs} reached"; return false; }
+        if (DeadlineReached(limits)) { SetTimeout(); return false; }
         if (depth > limits.MaximumDepth) { limitCode = "limit-reached"; limitMessage = $"maximumDepth {limits.MaximumDepth} reached"; return false; }
         if (count >= limits.MaximumNodeCount) { limitCode = "limit-reached"; limitMessage = $"maximumNodeCount {limits.MaximumNodeCount} reached"; return false; }
         return true;
     }
 
-    private static string? ReadValue(AutomationElement e, out bool checkedState, out bool expanded, out bool selected)
+    internal static bool DeadlineReached(AccessibilityReadLimits limits) => limits.ElapsedMilliseconds() >= limits.TimeoutMs;
+
+    private void SetTimeout()
     {
-        checkedState = expanded = selected = false;
-        if (e.TryGetCachedPattern(ValuePattern.Pattern, out var vp)) return NullIfEmpty(((ValuePattern)vp).Cached.Value);
-        if (e.TryGetCachedPattern(TogglePattern.Pattern, out var tp)) { var s = ((TogglePattern)tp).Cached.ToggleState; checkedState = s == ToggleState.On; return s == ToggleState.On ? "on" : s == ToggleState.Off ? "off" : "indeterminate"; }
-        if (e.TryGetCachedPattern(ExpandCollapsePattern.Pattern, out var ep)) { var s = ((ExpandCollapsePattern)ep).Cached.ExpandCollapseState; expanded = s == ExpandCollapseState.Expanded; return s switch { ExpandCollapseState.Expanded => "expanded", ExpandCollapseState.Collapsed => "collapsed", ExpandCollapseState.PartiallyExpanded => "partially-expanded", _ => "leaf-node" }; }
-        if (e.TryGetCachedPattern(SelectionItemPattern.Pattern, out var sp)) { selected = ((SelectionItemPattern)sp).Cached.IsSelected; return selected ? "selected" : "not-selected"; }
-        return null;
+        limitCode = "timeout";
+        limitMessage = $"timeoutMs {limits.TimeoutMs} reached";
+    }
+
+    private static PatternSnapshot ReadPatterns(AutomationElement e)
+    {
+        string? value = null;
+        ToggleState? toggle = null;
+        ExpandCollapseState? expand = null;
+        bool? selected = null;
+        if (e.TryGetCachedPattern(ValuePattern.Pattern, out var vp)) value = ((ValuePattern)vp).Cached.Value;
+        if (e.TryGetCachedPattern(TogglePattern.Pattern, out var tp)) toggle = ((TogglePattern)tp).Cached.ToggleState;
+        if (e.TryGetCachedPattern(ExpandCollapsePattern.Pattern, out var ep)) expand = ((ExpandCollapsePattern)ep).Cached.ExpandCollapseState;
+        if (e.TryGetCachedPattern(SelectionItemPattern.Pattern, out var sp)) selected = ((SelectionItemPattern)sp).Cached.IsSelected;
+        return MapPatterns(value, toggle, expand, selected);
+    }
+
+    internal static PatternSnapshot MapPatterns(string? value, ToggleState? toggle, ExpandCollapseState? expand, bool? selected)
+    {
+        var displayValue = NullIfEmpty(value)
+            ?? (toggle is { } toggleState ? toggleState == ToggleState.On ? "on" : toggleState == ToggleState.Off ? "off" : "indeterminate" : null)
+            ?? (expand is { } expandState ? expandState switch { ExpandCollapseState.Expanded => "expanded", ExpandCollapseState.Collapsed => "collapsed", ExpandCollapseState.PartiallyExpanded => "partially-expanded", _ => "leaf-node" } : null)
+            ?? (selected is { } selectedState ? selectedState ? "selected" : "not-selected" : null);
+        return new(displayValue, toggle == ToggleState.On, expand == ExpandCollapseState.Expanded, selected == true);
     }
     private static string? NormalizeRole(string? role) => role switch { "Button" => "button", "CheckBox" => "checkbox", "ComboBox" => "combobox", "Edit" => "textbox", "Group" => "group", "Hyperlink" => "link", "Image" => "image", "List" => "list", "ListItem" => "listitem", "Menu" => "menu", "MenuItem" => "menuitem", "RadioButton" => "radio", "Slider" => "slider", "Tab" => "tablist", "TabItem" => "tab", "Text" => "text", "Window" => "window", null => null, _ => role.ToLowerInvariant() };
     private static AccessibilityRectangle Rectangle(System.Windows.Rect r) => r.IsEmpty || !double.IsFinite(r.X) || !double.IsFinite(r.Y) || !double.IsFinite(r.Width) || !double.IsFinite(r.Height) ? new(0, 0, 0, 0) : new(Round(r.X), Round(r.Y), Math.Max(0, Round(r.Width)), Math.Max(0, Round(r.Height)));
