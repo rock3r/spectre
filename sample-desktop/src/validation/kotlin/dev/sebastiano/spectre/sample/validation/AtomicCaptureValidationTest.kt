@@ -1,7 +1,9 @@
 package dev.sebastiano.spectre.sample.validation
 
+import dev.sebastiano.spectre.core.capture.BoundsSpace
 import dev.sebastiano.spectre.core.capture.CaptureArtifactsWriter
 import dev.sebastiano.spectre.core.capture.CaptureRect
+import dev.sebastiano.spectre.core.capture.CaptureSource
 import dev.sebastiano.spectre.core.capture.screenRectToImageRect
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
@@ -69,16 +71,20 @@ class AtomicCaptureValidationTest {
             val capture = capture(windowIndex = 0)
             assertTrue(capture.pngBytes.isNotEmpty(), "PNG payload must be non-empty")
             assertTrue(capture.document.nodes.isNotEmpty(), "semantics tree must be non-empty")
-            assertEquals(1, capture.document.schemaVersion)
+            assertEquals(2, capture.document.schemaVersion)
+            assertEquals(CaptureSource.ComposeSemantics, capture.document.source)
 
             val node = capture.document.nodes.firstOrNull { it.testTag == "hidpi.target.40x0" }
             assertNotNull(node, "capture.json must include hidpi.target.40x0")
+            assertEquals(node.testTag, node.id)
+            assertNotNull(node.parentKey, "tagged Compose node must retain its parent link")
             assertTrue(
                 node.clickable || node.enabled,
                 "target node should be interactive or enabled",
             )
 
             val window = capture.document.window
+            assertEquals(BoundsSpace.Screen, window.boundsSpace)
             assertEquals(capture.image.width, window.imageWidth)
             assertEquals(capture.image.height, window.imageHeight)
             assertTrue(window.densityScaleX > 0.0 && window.densityScaleY > 0.0)
@@ -182,8 +188,10 @@ class AtomicCaptureValidationTest {
             assertEquals(png.height, diskPng.height)
             val diskJson = Files.readString(written.captureJsonPath)
             assertTrue(
-                diskJson.contains("\"schemaVersion\": 1") ||
-                    diskJson.contains("\"schemaVersion\":1")
+                diskJson.contains("\"schemaVersion\": 2") &&
+                    diskJson.contains("\"source\": \"compose-semantics\"") &&
+                    diskJson.contains("\"boundsSpace\": \"screen\"") &&
+                    diskJson.contains("\"parentKey\":")
             )
             assertTrue(diskJson.contains("hidpi.target.40x0"))
         }

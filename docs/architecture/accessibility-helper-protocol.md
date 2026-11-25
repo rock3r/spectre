@@ -64,7 +64,7 @@ Linux accessibility bus.
 
 Keys are snapshot-local. Begin with `w<window-index>`, then append the platform `id` at each step.
 When an id is absent **or duplicated among siblings**, append that child's zero-based index instead.
-Escape `/` and `~` in ids as JSON Pointer does (`~1` and `~0`). Stable identity across snapshots is
+To prevent the numeric fallback from colliding with a literal numeric sibling id, prefix an all-decimal id segment with `~2` (id `0` is `~20`, while fallback index 0 remains `0`). Escape `~` and `/` in ids as JSON Pointer does (`~0` and `~1`). Stable identity across snapshots is
 not promised. `parentKey` is null only at a window tree root. `id` preserves `AXIdentifier`,
 `AutomationId`, or `accessible_id`; it is null when absent. Normalised `role` and `states` use
 lowercase ASCII vocabulary; `platformRole` preserves the OS spelling. Optional values are JSON
@@ -78,7 +78,7 @@ null, not omitted. Node order is window order followed by pre-order traversal.
   "error": {
     "code": "limit-reached",
     "message": "maximumNodeCount 10000 reached",
-    "partialSnapshot": { "schemaVersion": 2, "source": "os-accessibility", "windows": [], "nodes": [], "notes": [] }
+    "partialSnapshot": { "schemaVersion": 2, "source": "os-accessibility", "capturedAt": "2026-11-25T12:34:56.789Z", "windows": [], "nodes": [], "notes": [] }
   }
 }
 ```

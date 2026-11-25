@@ -1,6 +1,8 @@
 package dev.sebastiano.spectre.core.capture
 
 import dev.sebastiano.spectre.core.InternalSpectreApi
+import dev.sebastiano.spectre.core.PreCaptureGeometry
+import dev.sebastiano.spectre.core.readPreCaptureSnapshot
 import dev.sebastiano.spectre.core.snapshotPathSegment
 import java.awt.Rectangle
 import kotlin.test.Test
@@ -34,7 +36,13 @@ class TreeSourceTest {
             )
         }
 
-        assertEquals("w0/root", source.snapshot(emptyList()).single().key)
+        val geometry =
+            PreCaptureGeometry(Rectangle(), Rectangle(), java.awt.Insets(0, 0, 0, 0), 1.0, 1.0)
+
+        assertEquals(
+            "w0/root",
+            readPreCaptureSnapshot(emptyList(), geometry, source).nodeSnapshots.single().key,
+        )
     }
 
     @Test
@@ -42,5 +50,12 @@ class TreeSourceTest {
         assertEquals("a~1b~0c", snapshotPathSegment("a/b~c", listOf("a/b~c"), 0))
         assertEquals("1", snapshotPathSegment("same", listOf("same", "same"), 1))
         assertEquals("2", snapshotPathSegment(null, listOf("id", null, null), 2))
+    }
+
+    @Test
+    fun `numeric fallback cannot collide with literal numeric sibling id`() {
+        val ids = listOf(null, "0")
+        assertEquals("0", snapshotPathSegment(ids[0], ids, 0))
+        assertEquals("~20", snapshotPathSegment(ids[1], ids, 1))
     }
 }
