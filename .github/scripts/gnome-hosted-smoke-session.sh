@@ -44,8 +44,13 @@ export QT_QPA_PLATFORM=wayland
 export SPECTRE_CAPTURE_BACKEND=wayland
 export NO_AT_BRIDGE=0
 
-extension_uuid=spectre-window-identity@sebastiano.dev
-extension_source="$SMOKE_REPO/recording/native/linux/gnome-shell-extension/$extension_uuid"
+if [[ "$SMOKE_MODE" == mutter-control ]]; then
+  extension_uuid=spectre-mutter-control-verification@sebastiano.dev
+  extension_source="$(dirname "$0")/../gnome-shell-extensions/$extension_uuid"
+else
+  extension_uuid=spectre-window-identity@sebastiano.dev
+  extension_source="$SMOKE_REPO/recording/native/linux/gnome-shell-extension/$extension_uuid"
+fi
 extension_target="$HOME/.local/share/gnome-shell/extensions/$extension_uuid"
 mkdir -p "$(dirname "$extension_target")"
 cp -a "$extension_source" "$extension_target"
@@ -85,6 +90,9 @@ dbus-update-activation-environment --systemd XDG_CURRENT_DESKTOP XDG_SESSION_TYP
 timeout 5s gdbus wait --session org.gnome.Mutter.ScreenCast
 gnome-extensions enable "$extension_uuid"
 gnome-extensions list --enabled | grep -Fx "$extension_uuid"
+if [[ "$SMOKE_MODE" == mutter-control ]]; then
+  timeout 10s gdbus wait --session dev.sebastiano.Spectre.MutterControlVerification
+fi
 pw-cli info 0 >"$SMOKE_ARTIFACTS/pipewire-core.txt"
 
 # GTK4 portal dialogs expose their native Wayland tree only when the session's
@@ -109,6 +117,13 @@ if [[ "$SMOKE_MODE" == identity ]]; then
   export GDK_BACKEND=x11
   /usr/bin/python3 "$(dirname "$0")/gnome-window-identity-probe.py" \
     2>&1 | tee "$SMOKE_ARTIFACTS/identity-probe.log"
+  exit 0
+fi
+
+if [[ "$SMOKE_MODE" == mutter-control ]]; then
+  export GDK_BACKEND=x11
+  /usr/bin/python3 "$(dirname "$0")/gnome-mutter-control-probe.py" \
+    2>&1 | tee "$SMOKE_ARTIFACTS/mutter-control-probe.log"
   exit 0
 fi
 

@@ -1,0 +1,7 @@
+{
+  "uuid": "spectre-mutter-control-verification@sebastiano.dev",
+  "name": "Spectre Mutter Control Verification Service",
+  "description": "Ephemeral hosted-VM service for verifying typed Mutter RecordWindow control.",
+  "shell-version": ["46"],
+  "version": 1
+}

@@ -14,6 +14,8 @@ BRANCH = "release-0.10/gnome-hosted-smoke"
 CANDIDATE = "7ececf7a7ac361d87417bb07108cc475f7cf890e"
 ATSPI_SHA = "f4044ce86653ba2f60153e2759d208e7e759e3ae"
 IDENTITY = ROOT / ".github/scripts/gnome-window-identity-probe.py"
+MUTTER_CONTROL = ROOT / ".github/scripts/gnome-mutter-control-probe.py"
+VERIFICATION_EXTENSION = ROOT / ".github/gnome-shell-extensions/spectre-mutter-control-verification@sebastiano.dev/extension.js"
 WARMUP = ROOT / ".github/scripts/gnome-portal-dialog-warmup.py"
 
 
@@ -76,12 +78,32 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
 
     def test_identity_is_independent_public_api_evidence(self):
         identity = IDENTITY.read_text()
-        self.assertIn("mode: [portal, capture, accessibility, identity]", self.workflow)
+        self.assertIn("mode: [portal, capture, accessibility, identity, mutter-control]", self.workflow)
         self.assertIn("SMOKE_MODE\" == identity", self.session)
         for contract in ("LookupWindow", "RecordWindow", "PipeWireStreamAdded", "gst-launch-1.0",
                          "focusSamples", "focusObservedXids", "interiorColorCounts", "pipeWireNode"):
             self.assertIn(contract, identity)
         self.assertNotIn("runWaylandMutterWindowSmoke", identity)
+
+    def test_mutter_control_uses_separate_caller_owned_verification_service(self):
+        probe = MUTTER_CONTROL.read_text()
+        extension = VERIFICATION_EXTENSION.read_text()
+        self.assertIn("mode: [portal, capture, accessibility, identity, mutter-control]", self.workflow)
+        self.assertIn('SMOKE_MODE" == mutter-control', self.session)
+        for contract in (
+            "GetConnectionUnixProcessID", "get_client_type()", "Meta.WindowClientType.X11",
+            "get_description()", "/^0x[0-9a-fA-F]+$/", "get_id()", "new GLib.Variant('(t)'",
+        ):
+            self.assertIn(contract, extension)
+        for contract in (
+            "LookupOwnedX11Window", 'GLib.Variant(option_type, window_id',
+            "wrong-type-blue-control", "prove_cross_pid_denied", "blue_is_focused",
+            "RecordWindow", "interiorColorCounts",
+        ):
+            self.assertIn(contract, probe)
+        self.assertNotIn("get_xwindow", extension)
+        self.assertNotIn("owner_pid", extension)
+        self.assertIn("../gnome-shell-extensions/$extension_uuid", self.session)
 
     def test_portal_warmup_drives_public_api_then_candidate_helper(self):
         warmup = WARMUP.read_text()
