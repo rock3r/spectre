@@ -36,6 +36,7 @@ internal constructor(
     private val consentPrompt: () -> WaylandConsentPrompt = {
         waylandConsentPrompt(System::getProperty, envLookup)
     },
+    private val screenshotSender: ((Command) -> Event)? = null,
 ) {
     constructor() :
         this(
@@ -79,12 +80,11 @@ internal constructor(
     fun screenshot(region: Rectangle): BufferedImage {
         val output = Files.createTempFile("spectre-wayland-session-", ".png")
         try {
-            send(
+            (screenshotSender ?: ::send)(
                 Command.Screenshot(
                     backend = CaptureBackend.WAYLAND_PORTAL,
                     target = CaptureTarget.REGION,
                     sourceTypes = listOf(SourceType.MONITOR),
-                    cursorMode = CursorMode.HIDDEN,
                     region = Region(region.x, region.y, region.width, region.height),
                     screenSize = awtDisplayBoundsContaining(region)?.toWire(),
                     output = output.toAbsolutePath().toString(),

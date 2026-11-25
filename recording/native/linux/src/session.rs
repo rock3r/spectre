@@ -440,11 +440,7 @@ fn with_state(
 }
 
 fn run_screenshot(state: &Mutex<SessionState>, command: ScreenshotCommand) -> Result<u64> {
-    if command.cursor_mode != crate::protocol::CursorMode::Embedded {
-        anyhow::bail!(
-            "the active Wayland RemoteDesktop grant embeds the cursor; hidden cursor screenshot cannot be honored"
-        );
-    }
+    session_screenshot_cursor_mode(&command)?;
     let output = PathBuf::from(&command.output);
     let (stream, owned) = {
         let guard = state.lock().expect("session mutex");
@@ -453,6 +449,19 @@ fn run_screenshot(state: &Mutex<SessionState>, command: ScreenshotCommand) -> Re
     };
     crate::screenshot::capture_from_stream(&stream, owned.as_raw_fd(), &command, &output)?;
     Ok(std::fs::metadata(&output)?.len())
+}
+
+fn session_screenshot_cursor_mode(
+    command: &ScreenshotCommand,
+) -> Result<crate::protocol::CursorMode> {
+    match command.cursor_mode {
+        None | Some(crate::protocol::CursorMode::Embedded) => {
+            Ok(crate::protocol::CursorMode::Embedded)
+        }
+        Some(requested) => anyhow::bail!(
+            "explicit cursor_mode {requested:?} cannot be honored: the active Wayland RemoteDesktop stream embeds the compositor cursor"
+        ),
+    }
 }
 
 fn run_recording_start(
@@ -676,6 +685,34 @@ mod tests {
     use crate::portal::response_timeout_error;
     use std::collections::{BTreeSet, HashMap};
     use std::time::Duration;
+
+    #[test]
+    fn session_screenshot_distinguishes_default_from_explicit_cursor_modes() {
+        use crate::protocol::{CursorMode, ScreenshotCommand};
+
+        fn parse(cursor: &str) -> ScreenshotCommand {
+            serde_json::from_str(&format!(
+                r#"{{"backend":"wayland_portal","target":"region","source_types":["monitor"],{cursor}"region":{{"x":0,"y":0,"width":10,"height":10}},"output":"/tmp/frame.png"}}"#
+            ))
+            .unwrap()
+        }
+
+        assert!(super::session_screenshot_cursor_mode(&parse("")).is_ok());
+        assert!(
+            super::session_screenshot_cursor_mode(&parse(r#""cursor_mode":"embedded","#)).is_ok()
+        );
+        for mode in ["hidden", "metadata"] {
+            let error = super::session_screenshot_cursor_mode(&parse(&format!(
+                r#""cursor_mode":"{mode}","#
+            )))
+            .unwrap_err();
+            assert!(format!("{error:#}").contains("explicit cursor_mode"));
+        }
+        assert_eq!(
+            super::session_screenshot_cursor_mode(&parse("")).unwrap(),
+            CursorMode::Embedded
+        );
+    }
 
     #[test]
     fn consent_failures_exit_with_the_consent_status() {

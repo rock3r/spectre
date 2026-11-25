@@ -35,6 +35,7 @@ internal sealed class CompressedWindowRecorder
     private readonly System.Diagnostics.Stopwatch sinceFirstSample = new();
     private byte[]? lastFrame;
     private Exception? sampleError;
+    private bool finalSampleSupplied;
 
     private CompressedWindowRecorder(
         int fps,
@@ -171,19 +172,35 @@ internal sealed class CompressedWindowRecorder
         {
             if (stopToken.IsCancellationRequested)
             {
-                args.Request.Sample = null;
-                return;
-            }
+                if (finalSampleSupplied)
+                {
+                    args.Request.Sample = null;
+                    return;
+                }
 
-            slot = clock.NextSlot(sinceFirstSample.Elapsed);
-            var delay = SampleClock.DelayUntil(slot, sinceFirstSample.Elapsed);
-            if (delay > TimeSpan.Zero && stopToken.WaitHandle.WaitOne(delay))
+                // Media Foundation does not reliably make a playable H.264 stream when EOS
+                // immediately follows the first sample. Close the timeline with one duplicate at
+                // the next timestamp, including its full duration, before signalling EOS.
+                finalSampleSupplied = true;
+                slot = clock.NextSlot(sinceFirstSample.Elapsed);
+                bytes = lastFrame!;
+            }
+            else
             {
-                args.Request.Sample = null;
-                return;
+                slot = clock.NextSlot(sinceFirstSample.Elapsed);
+                var delay = SampleClock.DelayUntil(slot, sinceFirstSample.Elapsed);
+                if (delay > TimeSpan.Zero && stopToken.WaitHandle.WaitOne(delay))
+                {
+                    // Cancellation while waiting for the next slot follows the same ordering:
+                    // submit this final, duration-bearing sample, then EOS on the next request.
+                    finalSampleSupplied = true;
+                    bytes = lastFrame!;
+                }
+                else
+                {
+                    bytes = frameSource.LatestFrameBytes() ?? lastFrame!;
+                }
             }
-
-            bytes = frameSource.LatestFrameBytes() ?? lastFrame!;
         }
 
         lastFrame = bytes;

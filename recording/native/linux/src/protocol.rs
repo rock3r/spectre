@@ -110,7 +110,9 @@ pub struct ScreenshotCommand {
     /// `_NET_WM_PID` names another process.
     #[serde(default)]
     pub window_owner_pid: Option<u32>,
-    pub cursor_mode: CursorMode,
+    /// Explicit cursor requirement. Omitted accepts an existing session stream's semantics.
+    #[serde(default)]
+    pub cursor_mode: Option<CursorMode>,
     pub region: Region,
     /// AWT bounds of the display that contains [region], when known (`x,y,w,h`).
     #[serde(default)]
