@@ -121,6 +121,28 @@ jobs:
       - name: Run Windows Graphics Capture helper unit tests
         run: dotnet test recording/native/windows/SpectreWindowCapture.Tests/SpectreWindowCapture.Tests.csproj
 
+      - name: Check out AccessKit fixture at its pinned commit
+        shell: pwsh
+        run: |
+          $fixture = "$env:RUNNER_TEMP\accesskit-fixture"
+          git init $fixture
+          git -C $fixture fetch --depth 1 https://github.com/rock3r/spectre.git 4ed264d6897cb6b41ce216250b0bda5b9e6f0b06
+          git -C $fixture checkout --detach FETCH_HEAD
+
+      - name: Build helper and AccessKit fixture
+        shell: pwsh
+        run: |
+          dotnet publish recording/native/windows/SpectreWindowCapture.csproj -c Release -r win-x64 --self-contained false -o "$env:RUNNER_TEMP\spectre-helper"
+          cargo build --locked --release --manifest-path "$env:RUNNER_TEMP\accesskit-fixture\fixtures\accesskit\Cargo.toml"
+
+      - name: Read the live AccessKit fixture through UI Automation
+        shell: pwsh
+        run: |
+          recording/native/windows/test-accesskit-fixture.ps1 `
+            -Helper "$env:RUNNER_TEMP\spectre-helper\SpectreWindowCapture.exe" `
+            -Fixture "$env:RUNNER_TEMP\accesskit-fixture\fixtures\accesskit\target\release\spectre-accesskit-fixture.exe" `
+            -Golden "$env:RUNNER_TEMP\accesskit-fixture\fixtures\accesskit\golden\windows.json"
+
   check-windows:
     runs-on: windows-latest
     # 40-minute Gradle step + ≥15 minutes for setup and dump-jvm-stacks.sh.
