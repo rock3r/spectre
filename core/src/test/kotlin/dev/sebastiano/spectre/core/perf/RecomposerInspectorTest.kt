@@ -69,6 +69,11 @@ class RecomposerInspectorTest {
             }
         assertTrue(error.message.orEmpty().contains("recomposer"))
     }
+
+    @Test
+    fun `temporarily uninitialized valid host remains unresolved`() {
+        assertNull(RecomposerInspector.findRecomposerInHostChain(FakeUninitializedHost()))
+    }
 }
 
 private class FakeComposeWindow(recomposer: Recomposer) {
@@ -93,6 +98,10 @@ private class FakeFrameRecomposer(@JvmField val recomposer: Recomposer)
 
 private class FakeHostWithDeadEnd {
     @JvmField val composePanel: Any = Any()
+}
+
+private class FakeUninitializedHost {
+    @JvmField val composePanel: Any? = null
 }
 
 private class FakeComposeWindowWithWrongTerminal {

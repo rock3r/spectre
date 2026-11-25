@@ -1,7 +1,12 @@
-@file:OptIn(ExperimentalSpectreApi::class)
+@file:OptIn(
+    ExperimentalSpectreApi::class,
+    dev.sebastiano.spectre.core.InternalSpectreApi::class,
+    kotlinx.coroutines.ExperimentalCoroutinesApi::class,
+)
 
 package dev.sebastiano.spectre.core.perf
 
+import dev.sebastiano.spectre.core.WindowTracker
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -11,6 +16,10 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TestTimeSource
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runTest
 
 /**
  * Unit tests for [RecompositionMonitor]'s counter math via the internal `recordRecomposition` seam.
@@ -156,6 +165,30 @@ class RecompositionMonitorTest {
                 pollInterval = 5.milliseconds,
             )
         assertFalse(idle)
+        monitor.close()
+    }
+
+    @Test
+    fun `wait timeout includes initial tracker reconciliation`() = runTest {
+        val reconciliationScheduler = TestCoroutineScheduler()
+        val monitor =
+            RecompositionMonitor(
+                windowDuration = 1.seconds,
+                dispatcher = StandardTestDispatcher(reconciliationScheduler),
+            )
+        val tracker = WindowTracker(allWindows = { emptyArray() }, requiresEdt = false)
+        monitor.subscribeTo(tracker)
+
+        val startedAt = currentTime
+        val result =
+            monitor.awaitRateBelow(
+                threshold = 1.0,
+                timeout = 100.milliseconds,
+                pollInterval = 10.milliseconds,
+            )
+
+        assertFalse(result)
+        assertEquals(100L, currentTime - startedAt)
         monitor.close()
     }
 }

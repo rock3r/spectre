@@ -919,6 +919,9 @@ private class FakeTrackedWindow(
 
     // Real TrackedWindow.getWindow() returns java.awt.Window; title is Frame or Dialog.
     @Suppress("unused") fun getWindow(): java.awt.Window? = windowValue
+
+    // Compatibility shape used by older core versions when no AWT Window is exposed.
+    @Suppress("unused", "FunctionOnlyReturningConstant") fun isShowing(): Boolean = true
 }
 
 @Suppress("LongParameterList")

@@ -20,6 +20,16 @@ import org.junit.jupiter.api.Assumptions.assumeFalse
 class ReflectiveAutomatorHandlerWindowsAgreementTest {
 
     @Test
+    fun `Windows op reports a clear error when isShowing cannot be read`() {
+        val tracked = AgreementFakeTrackedWindowMissingShowing()
+        val handler =
+            ReflectiveAutomatorHandler(AgreementFakeAutomator(windowsValue = listOf(tracked)))
+
+        val error = assertFailsWith<IllegalStateException> { handler.handle(AgentRequest.Windows) }
+        kotlin.test.assertTrue(error.message.orEmpty().contains("isShowing could not be read"))
+    }
+
+    @Test
     fun `Windows op extracts title from Dialog and windowTitle property`() {
         assumeFalse(
             GraphicsEnvironment.isHeadless(),
@@ -58,17 +68,19 @@ class ReflectiveAutomatorHandlerWindowsAgreementTest {
     }
 
     @Test
-    fun `Windows op fails when surface bounds cannot be read`() {
+    fun `Windows op fails when composeSurfaceBoundsOnScreen throws`() {
         val trackedWindow =
             AgreementFakeTrackedWindowThrowingBounds(
                 surfaceIdValue = "window:0",
                 isPopupValue = false,
                 windowTitleValue = "Not silently listed",
             )
-        val handler =
-            ReflectiveAutomatorHandler(AgreementFakeAutomator(windowsValue = listOf(trackedWindow)))
+        val automator = AgreementFakeAutomator(windowsValue = listOf(trackedWindow))
+        val handler = ReflectiveAutomatorHandler(automator)
 
-        assertFailsWith<IllegalArgumentException> { handler.handle(AgentRequest.Windows) }
+        val response = handler.handle(AgentRequest.Windows)
+        check(response is AgentResponse.Error)
+        kotlin.test.assertTrue(response.message.contains("simulated locationOnScreen failure"))
     }
 
     @Test
@@ -114,6 +126,17 @@ class ReflectiveAutomatorHandlerWindowsAgreementTest {
     }
 }
 
+private class AgreementFakeTrackedWindowMissingShowing {
+    @Suppress("unused", "FunctionOnlyReturningConstant")
+    fun getSurfaceId(): String = "window:missing-showing"
+
+    @Suppress("unused", "FunctionOnlyReturningConstant") fun isPopup(): Boolean = false
+
+    @Suppress("unused") fun getComposeSurfaceBoundsOnScreen(): Rectangle = Rectangle(0, 0, 1, 1)
+
+    @Suppress("unused", "FunctionOnlyReturningConstant") fun getWindow(): Any? = null
+}
+
 private class AgreementFakeTrackedWindow(
     private val surfaceIdValue: String,
     private val isPopupValue: Boolean,
@@ -146,6 +169,8 @@ private class AgreementFakeTrackedWindowWithTitle(
     @Suppress("unused") fun getWindowTitle(): String? = windowTitleValue
 
     @Suppress("unused", "FunctionOnlyReturningConstant") fun getWindow(): java.awt.Window? = null
+
+    @Suppress("unused", "FunctionOnlyReturningConstant") fun isShowing(): Boolean = true
 }
 
 private class AgreementFakeTrackedWindowThrowingBounds(

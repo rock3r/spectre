@@ -743,10 +743,7 @@ internal class ReflectiveAutomatorHandler(
         val klass = trackedWindow.javaClass
         val surfaceId = klass.getMethod("getSurfaceId").invoke(trackedWindow) as String
         val isPopup = klass.getMethod("isPopup").invoke(trackedWindow) as Boolean
-        val bounds = runCatching {
-            klass.getMethod("getComposeSurfaceBoundsOnScreen").invoke(trackedWindow)
-        }
-            .getOrNull()
+        val bounds = klass.getMethod("getComposeSurfaceBoundsOnScreen").invoke(trackedWindow)
         val title = extractWindowTitle(trackedWindow, klass)
         return WindowSummaryDto(
             index = index,
@@ -758,17 +755,25 @@ internal class ReflectiveAutomatorHandler(
         )
     }
 
-    /** Reads AWT `Window.isShowing`; an unreadable state must not become a visible window. */
+    /** Reads AWT `Window.isShowing`; an unreadable state is an incomplete snapshot. */
     private fun extractIsShowing(trackedWindow: Any, klass: Class<*>): Boolean {
         val windowGetter =
             klass.methods.firstOrNull { it.name == "getWindow" && it.parameterCount == 0 }
-                ?: return false
-        val window = windowGetter.invoke(trackedWindow) ?: return false
+                ?: error("Incomplete window snapshot: getWindow could not be read")
+        val window = windowGetter.invoke(trackedWindow)
+        if (window == null) {
+            val legacyGetter =
+                klass.methods.firstOrNull { it.name == "isShowing" && it.parameterCount == 0 }
+                    ?: error("Incomplete window snapshot: isShowing could not be read")
+            return legacyGetter.invoke(trackedWindow) as? Boolean
+                ?: error("Incomplete window snapshot: isShowing was not Boolean")
+        }
         val getter =
             window.javaClass.methods.firstOrNull {
                 it.name == "isShowing" && it.parameterCount == 0
-            } ?: return false
-        return getter.invoke(window) as? Boolean ?: false
+            } ?: error("Incomplete window snapshot: isShowing could not be read")
+        return getter.invoke(window) as? Boolean
+            ?: error("Incomplete window snapshot: isShowing was not Boolean")
     }
 
     /**

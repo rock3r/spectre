@@ -21,17 +21,16 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.DurationUnit
 import kotlin.time.TimeSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -82,6 +81,8 @@ internal constructor(
      */
     private val attachments = ConcurrentHashMap<String, Attachment>()
     private val unresolvedSurfaces = ConcurrentHashMap.newKeySet<String>()
+
+    @Volatile private var reconciliationState: ReconciliationState = ReconciliationState.Reconciling
 
     @Volatile private var closed: Boolean = false
 
@@ -166,29 +167,31 @@ internal constructor(
      * [RecomposerInspector] and attached; surfaces that disappear are detached. Surfaces whose
      * recomposer cannot be resolved (overlay popups in this MVP) are marked unresolved —
      * `RecomposerInspector.findRecomposer` returns `null`; the monitor records those surfaces as
-     * unresolved so waits fail rather than declaring partial monitoring idle.
+     * unresolved so waits fail rather than declaring partial monitoring idle. Each emission is a
+     * transaction from the waits' perspective: they cannot succeed while reconciliation is in
+     * progress, and a failed snapshot is retried when a later tracker emission arrives.
      */
     internal fun subscribeTo(windowTracker: WindowTracker) {
-        windowTracker.trackedWindows
-            .map { it.toSet() }
-            .scan<Set<TrackedWindow>, Pair<Set<TrackedWindow>, Set<TrackedWindow>>>(
-                emptySet<TrackedWindow>() to emptySet()
-            ) { (_, prev), curr ->
-                prev to curr
-            }
-            .drop(1)
-            .onEach { (prev, curr) ->
-                val departed = prev - curr
-                val arrived = curr - prev
-                departed.forEach {
-                    detach(it.surfaceId)
-                    unresolvedSurfaces.remove(it.surfaceId)
+        windowTracker.trackedWindows.map { it.toSet() }.onEach(::reconcile).launchIn(scopeForTests)
+    }
+
+    private fun reconcile(current: Set<TrackedWindow>) {
+        reconciliationState = ReconciliationState.Reconciling
+        val failure = runCatching {
+            val currentIds = current.mapTo(HashSet()) { it.surfaceId }
+            (attachments.keys + unresolvedSurfaces)
+                .filterNotTo(mutableSetOf()) { it in currentIds }
+                .forEach {
+                    detach(it)
+                    unresolvedSurfaces.remove(it)
                 }
-                // Recomposer discovery reflects through Compose Desktop internals and may invoke
-                // `getScene()` (a `by lazy` accessor that touches scene state). The collector
-                // runs on Dispatchers.Default but live UI access in Spectre is EDT-marshalled —
-                // hop onto the EDT for the resolve+attach so reflection sees consistent state.
-                arrived.forEach { tracked ->
+            // Recomposer discovery reflects through Compose Desktop internals and may invoke
+            // `getScene()` (a `by lazy` accessor that touches scene state). The collector
+            // runs on Dispatchers.Default but live UI access in Spectre is EDT-marshalled —
+            // hop onto the EDT for the resolve+attach so reflection sees consistent state.
+            current
+                .filterNot { attachments.containsKey(it.surfaceId) }
+                .forEach { tracked ->
                     val recomposer = readOnEdt { RecomposerInspector.findRecomposer(tracked) }
                     if (recomposer != null) {
                         unresolvedSurfaces.remove(tracked.surfaceId)
@@ -197,8 +200,18 @@ internal constructor(
                         unresolvedSurfaces.add(tracked.surfaceId)
                     }
                 }
-            }
-            .launchIn(scopeForTests)
+            reconciliationState =
+                if (attachments.isNotEmpty() && unresolvedSurfaces.isEmpty()) {
+                    ReconciliationState.Complete
+                } else {
+                    ReconciliationState.Incomplete
+                }
+        }
+            .exceptionOrNull()
+        if (failure is CancellationException) throw failure
+        if (failure != null) {
+            reconciliationState = ReconciliationState.Failed(failure)
+        }
     }
 
     /**
@@ -218,12 +231,20 @@ internal constructor(
         timeout: Duration = DEFAULT_AWAIT_TIMEOUT,
         pollInterval: Duration = DEFAULT_POLL_INTERVAL,
     ): Boolean {
-        if (attachments.isEmpty() || unresolvedSurfaces.isNotEmpty()) return false
         val result =
             withTimeoutOrNull(timeout) {
                 var lastTotal = total
                 var lastChange = timeSource.markNow()
                 while (true) {
+                    when (reconciliationState) {
+                        ReconciliationState.Reconciling -> {
+                            delay(pollInterval)
+                            continue
+                        }
+                        ReconciliationState.Incomplete,
+                        is ReconciliationState.Failed -> return@withTimeoutOrNull false
+                        ReconciliationState.Complete -> Unit
+                    }
                     val now = timeSource.markNow()
                     val currentTotal = total
                     if (currentTotal != lastTotal) {
@@ -231,7 +252,11 @@ internal constructor(
                         lastChange = now
                     }
                     val anyPending = attachments.values.any { it.recomposer.hasPendingWork }
-                    if (!anyPending && now - lastChange >= quietPeriod) {
+                    if (
+                        reconciliationState == ReconciliationState.Complete &&
+                            !anyPending &&
+                            now - lastChange >= quietPeriod
+                    ) {
                         return@withTimeoutOrNull true
                     }
                     delay(pollInterval)
@@ -251,13 +276,19 @@ internal constructor(
         timeout: Duration = DEFAULT_AWAIT_TIMEOUT,
         pollInterval: Duration = DEFAULT_POLL_INTERVAL,
     ): Boolean {
-        if (attachments.isEmpty() || unresolvedSurfaces.isNotEmpty()) return false
         val result =
             withTimeoutOrNull(timeout) {
-                while (ratePerSecond >= threshold) {
+                while (true) {
+                    when (reconciliationState) {
+                        ReconciliationState.Reconciling -> Unit
+                        ReconciliationState.Incomplete,
+                        is ReconciliationState.Failed -> return@withTimeoutOrNull false
+                        ReconciliationState.Complete ->
+                            if (ratePerSecond < threshold) return@withTimeoutOrNull true
+                    }
                     delay(pollInterval)
                 }
-                true
+                @Suppress("UNREACHABLE_CODE") true
             }
         return result ?: false
     }
@@ -291,7 +322,18 @@ internal constructor(
         closed = true
         attachments.keys.toList().forEach { detach(it) }
         unresolvedSurfaces.clear()
+        reconciliationState = ReconciliationState.Incomplete
         scopeForTests.cancel()
+    }
+
+    private sealed interface ReconciliationState {
+        data object Reconciling : ReconciliationState
+
+        data object Complete : ReconciliationState
+
+        data object Incomplete : ReconciliationState
+
+        data class Failed(val cause: Throwable) : ReconciliationState
     }
 
     private class Attachment(
