@@ -35,7 +35,9 @@ The same `inputIsolation` constructor is available on `ComposeAutomatorRule` for
   use `PerTest` when setup itself needs isolation.
 - `PerInteraction` relies on core operation/scoped leases. The input-isolation-only constructor
   creates a default driver with `InputLeasePolicy.Required`; custom factories must select
-  `InputLeasePolicy.Auto` or `Required` themselves. Legacy no-argument wrappers remain
+  `InputLeasePolicy.Auto` or `Required` themselves. `Auto` only falls back when the coordinator
+  provider artifact is absent; a coordinator session or protocol failure is reported rather than
+  running the interaction without the requested isolation. Legacy no-argument wrappers remain
   uncoordinated. The wrappers close their default coordination-enabled driver after test evidence
   and teardown complete.
 - `Off` declares that coordination is external or intentionally disabled.

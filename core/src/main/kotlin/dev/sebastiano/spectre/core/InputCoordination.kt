@@ -347,8 +347,7 @@ internal class InputLeaseGuard(
     }
 
     private companion object {
-        val AUTO_DEGRADE_ERROR_CODES: Set<String> =
-            setOf("COORDINATOR_PROVIDER_MISSING", "COORDINATOR_SESSION_UNAVAILABLE")
+        val AUTO_DEGRADE_ERROR_CODES: Set<String> = setOf("COORDINATOR_PROVIDER_MISSING")
 
         /**
          * Failures that mean no coordinator could be reached at all, as opposed to one that

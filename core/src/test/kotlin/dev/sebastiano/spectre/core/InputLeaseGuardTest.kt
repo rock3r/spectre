@@ -25,6 +25,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration
@@ -302,6 +303,23 @@ class InputLeaseGuardTest {
     }
 
     @Test
+    fun `auto does not degrade when an existing coordinator session is unavailable`() = runTest {
+        val coordinator =
+            RecordingInputLeaseCoordinator(
+                acquireFailure =
+                    InputCoordinatorException(
+                        "COORDINATOR_SESSION_UNAVAILABLE",
+                        "connected coordinator session is unavailable",
+                    )
+            )
+        val driver = realDriver(coordinator, policy = InputLeasePolicy.Auto)
+
+        val failure = assertFailsWith<InputCoordinatorException> { driver.click(1, 2) }
+
+        assertEquals("COORDINATOR_SESSION_UNAVAILABLE", failure.errorCode)
+    }
+
+    @Test
     fun `auto keeps non-provider coordinator failures loud`() = runTest {
         val coordinator =
             RecordingInputLeaseCoordinator(
@@ -315,7 +333,7 @@ class InputLeaseGuardTest {
     }
 
     @Test
-    fun `auto on EDT degrades when no coordinator session can be established`() {
+    fun `auto on EDT fails when no coordinator session can be established`() {
         val coordinator =
             ProductionInputLeaseCoordinator(
                 connectClient = {
@@ -333,7 +351,9 @@ class InputLeaseGuardTest {
         }
 
         coordinator.close()
-        assertEquals(null, failure)
+        val edtFailure = assertIs<ContendedEdtInputLeaseException>(failure)
+        val coordinationFailure = assertIs<InputCoordinatorException>(edtFailure.cause)
+        assertEquals("COORDINATOR_SESSION_UNAVAILABLE", coordinationFailure.errorCode)
     }
 
     @Test

@@ -187,6 +187,17 @@ class RobotDriverTest {
     }
 
     @Test
+    fun `typeText fails before entering text when Caps Lock state is unknown`() = runTest {
+        val robot = RecordingRobotAdapter(capsLockReadable = false, realOsInput = true)
+        val driver = RobotDriver(robot, RecordingClipboardAdapter())
+
+        val failure = assertFailsWith<IllegalStateException> { driver.typeText("Spectre") }
+
+        assertTrue(failure.message.orEmpty().contains("Caps Lock"))
+        assertEquals(emptyList(), robot.events)
+    }
+
+    @Test
     fun `typeText with Caps Lock off does not mutate lock state`() = runTest {
         val robot = RecordingRobotAdapter(initialCapsLockOn = false)
         val driver = RobotDriver(robot, RecordingClipboardAdapter())
@@ -369,6 +380,18 @@ class RobotDriverTest {
                     "Cmd+V (event log: ${clipboard.eventLog})",
             )
         }
+
+    @Test
+    fun `pasteText fails before paste chord when clipboard never settles`() = runTest {
+        val clipboard = LatentClipboardAdapter(latencyReads = Int.MAX_VALUE)
+        clipboard.setContentsImmediate(StringSelection("previous"))
+        val driver = RobotDriver(clipboard.robotAdapter, clipboard)
+
+        val failure = assertFailsWith<IllegalStateException> { driver.pasteText("spectre") }
+
+        assertTrue(failure.message.orEmpty().contains("clipboard", ignoreCase = true))
+        assertFalse(clipboard.eventLog.any { it.startsWith("robot:keyPress") })
+    }
 
     @Test
     fun `pasteText pumps the EDT after key release before restoring the clipboard`() = runTest {
@@ -825,8 +848,11 @@ private class RecordingRobotAdapter(
     private val drainAfterPaste: Boolean = false,
     initialCapsLockOn: Boolean = false,
     private val allowCapsLockWrite: Boolean = true,
+    private val capsLockReadable: Boolean = true,
+    private val realOsInput: Boolean = false,
 ) : RobotAdapter {
     override val requiresOffEdt: Boolean = false
+    override val deliversRealOsInput: Boolean = realOsInput
     val events = mutableListOf<String>()
     val capsLockWrites = mutableListOf<Boolean>()
     var capsLockOn: Boolean = initialCapsLockOn
@@ -851,7 +877,7 @@ private class RecordingRobotAdapter(
     override fun mouseWheel(wheelClicks: Int) = log("mouseWheel($wheelClicks)")
 
     override fun getLockingKeyState(keyCode: Int): Boolean? =
-        if (keyCode == KeyEvent.VK_CAPS_LOCK) capsLockOn else null
+        if (keyCode == KeyEvent.VK_CAPS_LOCK && capsLockReadable) capsLockOn else null
 
     override fun setLockingKeyState(keyCode: Int, on: Boolean): Boolean {
         if (keyCode != KeyEvent.VK_CAPS_LOCK || !allowCapsLockWrite) return false

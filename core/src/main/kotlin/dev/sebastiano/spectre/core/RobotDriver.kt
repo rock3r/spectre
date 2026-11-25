@@ -205,7 +205,9 @@ internal constructor(
      * so the OS still emits the requested case. Global locking-key state is **not** mutated
      * (Toolkit `setLockingKeyState` is unsupported or a silent no-op on several desktop JVMs, and a
      * false "cleared" read-back still left host key events inverted in physical Windows
-     * validation). Non-letter characters are unaffected by Caps Lock on standard keyboards.
+     * validation). Real OS input fails before dispatch when that state cannot be read, because
+     * assuming Caps Lock is off could enter the opposite case. Non-letter characters are unaffected
+     * by Caps Lock on standard keyboards.
      *
      * EDT callers require coordination to be off, already held, or immediately available;
      * contention fails without blocking. [RobotDriver] moves backend work off the EDT as needed.
@@ -216,7 +218,11 @@ internal constructor(
         runOffEdt("typeText") {
             // Read once per call: ambient Caps Lock is stable for a short typeText burst, and we
             // intentionally do not write locking-key state (see KDoc).
-            val capsLockOn = robot.getLockingKeyState(KeyEvent.VK_CAPS_LOCK) == true
+            val reportedCapsLock = robot.getLockingKeyState(KeyEvent.VK_CAPS_LOCK)
+            check(!robot.deliversRealOsInput || reportedCapsLock != null) {
+                "Cannot type text safely because the Caps Lock state is unavailable"
+            }
+            val capsLockOn = reportedCapsLock == true
             for (char in text) {
                 inputCoordination.checkpoint()
                 val stroke = keyStrokeForChar(char, capsLockOn = capsLockOn)
@@ -247,7 +253,9 @@ internal constructor(
      *
      * EDT callers require coordination to be off, already held, or immediately available;
      * contention fails without blocking. [RobotDriver] moves backend work off the EDT as needed.
-     * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied.
+     * Throws [IllegalStateException] on macOS if Accessibility TCC permission is denied. Also
+     * throws before sending the paste shortcut when clipboard read-back does not settle on [text],
+     * so stale clipboard contents cannot be pasted silently.
      */
     public suspend fun pasteText(text: String) {
         tccGuard.requireAccessibility()
@@ -315,7 +323,10 @@ internal constructor(
                     }
                     .getOrNull() as? String
             if (current == expected) return
-            if (System.nanoTime() >= deadline) return
+            check(System.nanoTime() < deadline) {
+                "The system clipboard did not expose the requested text before the paste timeout; " +
+                    "the paste shortcut was not sent"
+            }
             delay(pollMs.milliseconds)
             inputCoordination.checkpoint()
         }
