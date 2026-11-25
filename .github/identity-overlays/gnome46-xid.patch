@@ -1,0 +1,304 @@
+diff --git a/recording-linux/build.gradle.kts b/recording-linux/build.gradle.kts
+index b9ba853fa88be7c58c48167142111536447c6af1..54dba0f8d24b7dc2b6273df1ad527127c6b733a5 100644
+--- a/recording-linux/build.gradle.kts
++++ b/recording-linux/build.gradle.kts
+@@ -14,114 +14,132 @@ plugins {
+ 
+ kotlin {
+     jvmToolchain(21)
+     explicitApi()
+ }
+ 
+ dependencies {
+     runtimeOnly(projects.recording)
+ 
+     detektPlugins(libs.compose.rules.detekt)
+ 
+     testImplementation(libs.kotlin.testJunit5)
+ }
+ 
+ tasks.withType<Test>().configureEach { useJUnitPlatform() }
+ 
+ val linuxFamily = objects.named<OperatingSystemFamily>(OperatingSystemFamily.LINUX)
+ 
+ configurations
+     .matching { it.name == "apiElements" || it.name == "runtimeElements" }
+     .configureEach {
+         attributes.attribute(OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE, linuxFamily)
+     }
+ 
+ val recordingProject = project(":recording")
++val testGnomeWindowIdentity =
++    tasks.register<Exec>("testGnomeWindowIdentity") {
++        group = "verification"
++        description = "Tests strict Xwayland identity matching in the GNOME Shell extension."
++        workingDir(recordingProject.layout.projectDirectory)
++        commandLine("node", "native/linux/gnome-shell-extension/windowIdentity.test.mjs")
++        inputs.files(
++            recordingProject.file(
++                "native/linux/gnome-shell-extension/" +
++                    "spectre-window-identity@sebastiano.dev/windowIdentity.js"
++            ),
++            recordingProject.file("native/linux/gnome-shell-extension/windowIdentity.test.mjs"),
++        )
++    }
+ val prebuiltLinuxHelpersDir = providers.gradleProperty("prebuiltLinuxHelpersDir")
+ val useAllLinuxArches = providers.gradleProperty("allLinuxArches").isPresent
+ val shouldVerifyLinuxHelpers =
+     prebuiltLinuxHelpersDir.isPresent || OperatingSystem.current().isLinux
+ val expectedLinuxHelperPaths =
+     if (prebuiltLinuxHelpersDir.isPresent || useAllLinuxArches) {
+         listOf(
+             "native/linux/x86_64/spectre-wayland-helper",
+             "native/linux/aarch64/spectre-wayland-helper",
+         )
+     } else {
+         val arch =
+             when (System.getProperty("os.arch").orEmpty().lowercase()) {
+                 "amd64",
+                 "x86_64",
+                 "x64" -> "x86_64"
+                 "aarch64",
+                 "arm64" -> "aarch64"
+                 else -> System.getProperty("os.arch").orEmpty().lowercase()
+             }
+         listOf("native/linux/$arch/spectre-wayland-helper")
+     }
+ 
+ tasks.named<ProcessResources>("processResources") {
+     from(recordingProject.layout.buildDirectory.dir("generated/waylandHelper"))
+     from(recordingProject.layout.projectDirectory.dir("native/linux/gnome-shell-extension")) {
+         into("native/linux/gnome-shell-extension")
+     }
+     when {
+         prebuiltLinuxHelpersDir.isPresent ->
+             dependsOn(recordingProject.tasks.named("stagePrebuiltLinuxHelpers"))
+         OperatingSystem.current().isLinux && useAllLinuxArches ->
+             dependsOn(recordingProject.tasks.named("assembleWaylandHelperAllArches"))
+         OperatingSystem.current().isLinux ->
+             dependsOn(recordingProject.tasks.named("assembleWaylandHelper"))
+     }
+ }
+ 
+ tasks.register("verifyRecordingLinuxHelpers") {
+     group = "verification"
+     description = "Verifies the Linux helper resources are packaged in spectre-recording-linux."
+     enabled = shouldVerifyLinuxHelpers
+     dependsOn(tasks.named("jar"))
+ 
+     val jarFile = tasks.named<Jar>("jar").flatMap { it.archiveFile }
+     val expectedHelpers = expectedLinuxHelperPaths
+     val expectedExtensionPaths =
+         listOf(
+             "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/metadata.json",
+             "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension.js",
++            "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js",
+         )
+     doLast {
+         val jar = jarFile.get().asFile
+         val entries = ZipFile(jar).use { zip -> zip.entries().asSequence().map { it.name }.toSet() }
+         val missing = (expectedHelpers + expectedExtensionPaths).filter { it !in entries }
+         if (missing.isNotEmpty()) {
+             throw GradleException(
+                 "spectre-recording-linux jar is missing helper resources: " + missing.joinToString()
+             )
+         }
+         ZipFile(jar).use { zip ->
+             val metadata =
+                 JsonSlurper().parse(zip.getInputStream(zip.getEntry(expectedExtensionPaths[0])))
+                     as Map<*, *>
+             val supported = (metadata["shell-version"] as List<*>).map(Any?::toString)
+             val expected = (45..50).map(Int::toString)
+             if (supported != expected) {
+                 throw GradleException(
+                     "GNOME identity extension supports $supported; expected $expected"
+                 )
+             }
+             val source =
+                 zip.getInputStream(zip.getEntry(expectedExtensionPaths[1])).bufferedReader().use {
+                     it.readText()
+                 }
+             val requiredAsyncReplies =
+                 listOf("return_value", "return_dbus_error", ".AccessDenied", ".NotFound")
+             val missingReplies = requiredAsyncReplies.filter { it !in source }
+             if (missingReplies.isNotEmpty()) {
+                 throw GradleException(
+                     "GNOME identity extension is missing explicit async D-Bus replies: " +
+                         missingReplies.joinToString()
+                 )
+             }
+         }
+     }
+ }
+ 
+-tasks.named("check") { dependsOn("verifyRecordingLinuxHelpers") }
++tasks.named("check") {
++    dependsOn("testGnomeWindowIdentity")
++    dependsOn("verifyRecordingLinuxHelpers")
++}
+diff --git a/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension.js b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension.js
+index 46b277f8792ce7bb1e5b443b03755ae31b3446d4..395c8f1d46c9b7b7515d321de613cef028c5e0ba 100644
+--- a/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension.js
++++ b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension.js
+@@ -1,73 +1,74 @@
+ import Gio from 'gi://Gio';
+ import GLib from 'gi://GLib';
++import Meta from 'gi://Meta';
+ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
++import {windowMatchesXid} from './windowIdentity.js';
+ 
+ const XML = `<node><interface name="dev.sebastiano.Spectre.WindowIdentity">
+   <method name="LookupWindow"><arg type="u" direction="in" name="owner_pid"/>
+   <arg type="t" direction="in" name="xid"/><arg type="u" direction="out" name="window_id"/></method>
+ </interface></node>`;
+ const BUS = 'dev.sebastiano.Spectre.WindowIdentity';
+ const PATH = '/dev/sebastiano/Spectre/WindowIdentity';
+ const ERROR = `${BUS}.Error`;
+ 
+ function parentPid(pid) {
+     try {
+         const [, bytes] = GLib.file_get_contents(`/proc/${pid}/status`);
+         const match = new TextDecoder().decode(bytes).match(/^PPid:\s+(\d+)$/m);
+         return match ? Number(match[1]) : 0;
+     } catch (_) { return 0; }
+ }
+ 
+ function isAncestor(ancestor, child) {
+     for (let pid = child, depth = 0; pid > 1 && depth < 32; depth++) {
+         if (pid === ancestor) return true;
+         pid = parentPid(pid);
+     }
+     return false;
+ }
+ 
+ export default class SpectreWindowIdentity extends Extension {
+     enable() {
+         const service = {
+             LookupWindowAsync: async ([ownerPid, xid], invocation) => {
+                 try {
+                     const sender = invocation.get_sender();
+                     const reply = await Gio.DBus.session.call(
+                         'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
+                         'GetConnectionUnixProcessID', new GLib.Variant('(s)', [sender]),
+                         new GLib.VariantType('(u)'), Gio.DBusCallFlags.NONE, 3000, null);
+                     const callerPid = reply.deepUnpack()[0];
+                     if (!isAncestor(ownerPid, callerPid)) {
+                         invocation.return_dbus_error(`${ERROR}.AccessDenied`,
+                             `PID ${ownerPid} is not the caller or its ancestor`);
+                         return;
+                     }
+                     const matches = global.get_window_actors().map(a => a.meta_window).filter(w => {
+-                        const windowXid = w.get_xwindow();
+-                        return w.get_pid() === ownerPid && windowXid !== null &&
+-                            BigInt(windowXid) === BigInt(xid);
++                        return windowMatchesXid(
++                            w, ownerPid, xid, Meta.WindowClientType.X11);
+                     });
+                     if (matches.length !== 1) {
+                         invocation.return_dbus_error(`${ERROR}.NotFound`,
+                             `expected exactly one owned window for PID ${ownerPid}, XID ${xid}; found ${matches.length}`);
+                         return;
+                     }
+                     invocation.return_value(new GLib.Variant('(u)', [matches[0].get_id()]));
+                 } catch (error) {
+                     // An Async wrapper must complete the invocation itself on every path. Merely
+                     // rejecting this promise leaves gdbus callers waiting until their timeout.
+                     invocation.return_dbus_error(`${ERROR}.Failed`, `${error}`);
+                 }
+             },
+         };
+         this._object = Gio.DBusExportedObject.wrapJSObject(XML, service);
+         this._object.export(Gio.DBus.session, PATH);
+         this._name = Gio.bus_own_name_on_connection(Gio.DBus.session, BUS, Gio.BusNameOwnerFlags.NONE, null, null);
+     }
+     disable() {
+         if (this._name) Gio.bus_unown_name(this._name);
+         this._name = 0;
+         this._object?.unexport();
+         this._object = null;
+     }
+ }
+diff --git a/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..fab420947376de983bd125add71c71d6dd28be2d
+--- /dev/null
++++ b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js
+@@ -0,0 +1,17 @@
++const X11_DESCRIPTION = /^0x([0-9a-fA-F]+)(?: \([\s\S]*\))?$/;
++
++/**
++ * Mutter 45/46 uses `0x%lx`; Mutter 47 and newer appends ` (%s)` with the title.
++ * Match the complete description so title text can never be mistaken for all or part of an XID.
++ */
++export function parseX11WindowDescription(description) {
++    if (typeof description !== 'string') return null;
++    const match = description.match(X11_DESCRIPTION);
++    return match === null ? null : BigInt(`0x${match[1]}`);
++}
++
++export function windowMatchesXid(window, ownerPid, xid, x11ClientType) {
++    if (window.get_client_type() !== x11ClientType || window.get_pid() !== ownerPid) return false;
++    const windowXid = parseX11WindowDescription(window.get_description());
++    return windowXid !== null && windowXid === BigInt(xid);
++}
+diff --git a/recording/native/linux/gnome-shell-extension/windowIdentity.test.mjs b/recording/native/linux/gnome-shell-extension/windowIdentity.test.mjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..b5076b0e039806ae18fb8dbc678162e602821690
+--- /dev/null
++++ b/recording/native/linux/gnome-shell-extension/windowIdentity.test.mjs
+@@ -0,0 +1,55 @@
++import assert from 'node:assert/strict';
++import {
++    parseX11WindowDescription,
++    windowMatchesXid,
++} from './spectre-window-identity@sebastiano.dev/windowIdentity.js';
++
++const X11 = 1;
++const WAYLAND = 0;
++
++function window({clientType = X11, description = '0x2a', pid = 1234} = {}) {
++    return {
++        get_client_type: () => clientType,
++        get_description: () => description,
++        get_pid: () => pid,
++    };
++}
++
++assert.equal(parseX11WindowDescription('0x2a'), 0x2an);
++assert.equal(parseX11WindowDescription('0x2a (Window title)'), 0x2an);
++assert.equal(parseX11WindowDescription('0x2a ()'), 0x2an);
++
++for (const description of [
++    '2a',
++    'prefix 0x2a',
++    '0x2a title',
++    '0x2a (title) trailing',
++    '0x2aZZ',
++    '0x2a (title',
++    '0x2a) title',
++]) {
++    assert.equal(parseX11WindowDescription(description), null, description);
++}
++
++assert.equal(windowMatchesXid(window(), 1234, 0x2an, X11), true);
++assert.equal(windowMatchesXid(window({description: '0x2a (same title)'}), 1234, 0x2an, X11), true);
++assert.equal(windowMatchesXid(window({description: '0x2a (same title)'}), 1234, 0x2bn, X11), false);
++assert.equal(windowMatchesXid(window({pid: 4321}), 1234, 0x2an, X11), false);
++
++let waylandDescriptionRead = false;
++const wayland = window({clientType: WAYLAND});
++wayland.get_description = () => {
++    waylandDescriptionRead = true;
++    return '0x2a (desktop metadata)';
++};
++assert.equal(windowMatchesXid(wayland, 1234, 0x2an, X11), false);
++assert.equal(waylandDescriptionRead, false);
++
++assert.equal(
++    [window(), window()].filter(candidate => windowMatchesXid(candidate, 1234, 0x2an, X11)).length,
++    2,
++);
++assert.equal(
++    [window({pid: 4321})].filter(candidate => windowMatchesXid(candidate, 1234, 0x2an, X11)).length,
++    0,
++);

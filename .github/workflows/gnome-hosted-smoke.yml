@@ -67,7 +67,7 @@ jobs:
           path: fixture
 
       - name: Apply pinned cloud candidate overlays
-        if: matrix.mode == 'capture' || matrix.mode == 'identity'
+        if: matrix.mode == 'capture'
         working-directory: smoke-tooling/.github/smoke-overlays
         run: |
           sha256sum -c SHA256SUMS
@@ -77,6 +77,16 @@ jobs:
           git -C "$GITHUB_WORKSPACE/candidate" diff --cached --check
           git -C "$GITHUB_WORKSPACE/candidate" write-tree
           git -C "$GITHUB_WORKSPACE/candidate" diff --cached --stat
+
+      - name: Apply standalone caller-owned window identity candidate
+        if: matrix.mode == 'identity'
+        working-directory: candidate
+        run: |
+          patch="$GITHUB_WORKSPACE/smoke-tooling/.github/identity-overlays/gnome46-xid.patch"
+          printf '%s  %s\n' 818970f0ecb4ce23c6d6d91aaeabd939641c03f57d3f21befd948a106fab907a "$patch" | sha256sum -c -
+          git apply --index "$patch"
+          git diff --cached --check
+          git write-tree
 
       - name: Set up JDK 25
         uses: actions/setup-java@v5
