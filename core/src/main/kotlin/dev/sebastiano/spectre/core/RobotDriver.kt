@@ -56,7 +56,7 @@ internal constructor(
 
     /** Whether callers may use a platform capture backend instead of this driver's adapter. */
     internal val allowsPlatformCapture: Boolean
-        get() = screenCapture !== HeadlessThrowingScreenCaptureAdapter
+        get() = screenCapture.gatesMacOsScreenRecordingTcc
 
     // Public surface: the no-argument constructor is the explicit real-OS opt-in
     // (fresh AWT Robot + system clipboard). `ComposeAutomator.inProcess()` defaults to

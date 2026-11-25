@@ -487,6 +487,30 @@ class RobotDriverTest {
     }
 
     @Test
+    fun `injected screenshot adapter does not route through macOS native capture`() {
+        val capture = RecordingScreenCaptureAdapter()
+        var nativeCalls = 0
+        val driver =
+            RobotDriver(
+                robot = RecordingRobotAdapter(),
+                clipboard = RecordingClipboardAdapter(),
+                tccGuard = RecordingTccGuard(),
+                screenCapture = capture,
+                nativeRegionCapture = {
+                    nativeCalls++
+                    BufferedImage(8, 8, BufferedImage.TYPE_INT_ARGB)
+                },
+                isMacOs = { true },
+            )
+
+        driver.screenshot(Rectangle(0, 0, 4, 4))
+
+        assertEquals(1, capture.captureCalls)
+        assertEquals(0, nativeCalls)
+        assertFalse(driver.allowsPlatformCapture)
+    }
+
+    @Test
     fun `screenshot that fails the screen-recording check does not capture`() {
         val guard = RecordingTccGuard(screenRecordingThrows = true)
         val robot = RecordingRobotAdapter()
@@ -796,7 +820,7 @@ class MacOsRegionScreenshotRoutingTest {
 
     @Test
     fun `macOS screenshot routes through native region capture without Robot or TCC probe`() {
-        val robot = RecordingRobotAdapter()
+        val robot = RecordingRobotAdapter(platformCapture = true)
         var tccCalls = 0
         val guard =
             object : MacOsTccGuard({ TccStatus.Granted }, { TccStatus.Granted }) {
@@ -832,7 +856,7 @@ class MacOsRegionScreenshotRoutingTest {
         val native = BufferedImage(60, 40, BufferedImage.TYPE_INT_ARGB)
         val driver =
             RobotDriver(
-                robot = RecordingRobotAdapter(),
+                robot = RecordingRobotAdapter(platformCapture = true),
                 clipboard = RecordingClipboardAdapter(),
                 nativeRegionCapture = { native },
                 isMacOs = { true },
@@ -895,7 +919,11 @@ private class RecordingRobotAdapter(
     private val drainAfterPaste: Boolean = false,
     initialCapsLockOn: Boolean = false,
     private val allowCapsLockWrite: Boolean = true,
+    private val platformCapture: Boolean = false,
 ) : RobotAdapter {
+    override val gatesMacOsScreenRecordingTcc: Boolean
+        get() = platformCapture
+
     override val requiresOffEdt: Boolean = false
     val events = mutableListOf<String>()
     val capsLockWrites = mutableListOf<Boolean>()

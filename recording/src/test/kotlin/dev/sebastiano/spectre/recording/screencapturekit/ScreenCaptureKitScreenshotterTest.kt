@@ -14,8 +14,10 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.io.TempDir
 
 class ScreenCaptureKitScreenshotterTest {
+    @TempDir lateinit var tempDir: Path
 
     @Test
     fun `captureRegion invokes ScreenCaptureKit region source without cursor`() {
@@ -23,7 +25,7 @@ class ScreenCaptureKitScreenshotterTest {
         var accessChecks = 0
         val screenshotter =
             ScreenCaptureKitScreenshotter(
-                helperExtractor = testExtractor(),
+                helperExtractor = testExtractor(tempDir),
                 processFactory = factory,
                 requireScreenCaptureAccess = { accessChecks += 1 },
             )
@@ -52,7 +54,7 @@ class ScreenCaptureKitScreenshotterTest {
                         materialLocator = {
                             helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf())
                         },
-                        targetDirProvider = { Path.of("/tmp") },
+                        targetDirProvider = { tempDir },
                     ),
                 processFactory = factory,
                 requireScreenCaptureAccess = {},
@@ -82,7 +84,7 @@ class ScreenCaptureKitScreenshotterTest {
                         infoPlist = byteArrayOf(),
                     )
                 },
-                targetDirProvider = { Path.of("/tmp") },
+                targetDirProvider = { tempDir },
             )
         val screenshotter =
             ScreenCaptureKitScreenshotter(
@@ -122,7 +124,7 @@ class ScreenCaptureKitScreenshotterTest {
                         infoPlist = byteArrayOf(),
                     )
                 },
-                targetDirProvider = { Path.of("/tmp") },
+                targetDirProvider = { tempDir },
             )
         val screenshotter =
             ScreenCaptureKitScreenshotter(
@@ -158,7 +160,7 @@ class ScreenCaptureKitScreenshotterTest {
                                 infoPlist = byteArrayOf(),
                             )
                         },
-                        targetDirProvider = { Path.of("/tmp") },
+                        targetDirProvider = { tempDir },
                     ),
                 processFactory = ScreenshotHelperProcessFactory(process),
                 requireScreenCaptureAccess = {},
@@ -175,12 +177,12 @@ class ScreenCaptureKitScreenshotterTest {
     }
 }
 
-private fun testExtractor(): HelperBinaryExtractor =
+private fun testExtractor(tempDir: Path): HelperBinaryExtractor =
     HelperBinaryExtractor(
         envLookup = { null },
         sysPropLookup = { null },
         materialLocator = { helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf()) },
-        targetDirProvider = { Path.of("/tmp") },
+        targetDirProvider = { tempDir },
     )
 
 private class ScreenshotFakeTitledWindow(initialTitle: String?) : TitledWindow {

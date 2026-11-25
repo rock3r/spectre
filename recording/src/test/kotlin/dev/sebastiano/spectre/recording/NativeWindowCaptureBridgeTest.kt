@@ -1,10 +1,12 @@
 package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
+import java.awt.Color
 import java.awt.EventQueue
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
+import java.awt.image.BufferedImage
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import javax.swing.JWindow
@@ -18,6 +20,96 @@ import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Assumptions.assumeTrue
 
 class NativeWindowCaptureBridgeTest {
+    @Test
+    fun `vertical mixed-scale displays are composed in desktop coordinates`() {
+        val displays =
+            listOf(
+                RegionDisplay(0, Rectangle(0, 0, 100, 100), 2.0, 2.0),
+                RegionDisplay(1, Rectangle(0, 100, 100, 100), 1.0, 1.0),
+            )
+        val calls = mutableListOf<Pair<Rectangle, Int>>()
+
+        val image =
+            composeScreenRegion(Rectangle(10, 90, 20, 20), displays, 1.0, 1.0) { local, index ->
+                calls += Rectangle(local) to index
+                BufferedImage(
+                        local.width * displays[index].scaleX.toInt(),
+                        local.height * displays[index].scaleY.toInt(),
+                        BufferedImage.TYPE_INT_ARGB,
+                    )
+                    .apply {
+                        val graphics = createGraphics()
+                        try {
+                            graphics.color = if (index == 0) Color.RED else Color.BLUE
+                            graphics.fillRect(0, 0, width, height)
+                        } finally {
+                            graphics.dispose()
+                        }
+                    }
+            }
+
+        assertEquals(listOf(Rectangle(10, 90, 20, 10) to 0, Rectangle(10, 0, 20, 10) to 1), calls)
+        assertEquals(20, image.width)
+        assertEquals(20, image.height)
+        assertEquals(Color.RED.rgb, image.getRGB(5, 5))
+        assertEquals(Color.BLUE.rgb, image.getRGB(5, 15))
+    }
+
+    @Test
+    fun `display gaps fail with requested and uncovered rectangles`() {
+        val displays =
+            listOf(
+                RegionDisplay(0, Rectangle(0, 0, 100, 90), 1.0, 1.0),
+                RegionDisplay(1, Rectangle(0, 100, 100, 100), 1.0, 1.0),
+            )
+
+        val failure =
+            assertFailsWith<IllegalArgumentException> {
+                composeScreenRegion(Rectangle(10, 80, 20, 30), displays, 1.0, 1.0) { _, _ ->
+                    error("capture must not start before coverage validation")
+                }
+            }
+
+        assertTrue(failure.message.orEmpty().contains("x=10,y=80,width=20,height=30"))
+        assertTrue(failure.message.orEmpty().contains("x=10,y=90,width=20,height=10"))
+    }
+
+    @Test
+    fun `wrong native dimensions fail before pixels are scaled`() {
+        val display = RegionDisplay(4, Rectangle(0, 0, 100, 100), 2.0, 2.0)
+
+        val failure =
+            assertFailsWith<IllegalArgumentException> {
+                composeScreenRegion(Rectangle(10, 10, 20, 10), listOf(display), 1.0, 1.0) { _, _ ->
+                    BufferedImage(39, 20, BufferedImage.TYPE_INT_ARGB)
+                }
+            }
+
+        assertTrue(failure.message.orEmpty().contains("39x20"))
+        assertTrue(failure.message.orEmpty().contains("expected 40x20"))
+    }
+
+    @Test
+    fun `mirrored displays do not shift native display indices`() {
+        val displays =
+            uniqueRegionDisplays(
+                listOf(
+                    RegionDisplay(0, Rectangle(0, 0, 20, 20), 1.0, 1.0),
+                    RegionDisplay(0, Rectangle(0, 0, 20, 20), 1.0, 1.0),
+                    RegionDisplay(0, Rectangle(20, 0, 20, 20), 1.0, 1.0),
+                )
+            )
+        var capturedIndex = -1
+
+        composeScreenRegion(Rectangle(20, 0, 20, 20), displays, 1.0, 1.0) { local, index ->
+            capturedIndex = index
+            BufferedImage(local.width, local.height, BufferedImage.TYPE_INT_ARGB)
+        }
+
+        assertEquals(2, displays.size)
+        assertEquals(1, capturedIndex)
+    }
+
     @Test
     fun `capture lock does not use the frame monitor`() {
         assumeLiveAwtAvailable()

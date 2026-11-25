@@ -34,6 +34,8 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(projects.inputCoordinatorServer)
     testRuntimeOnly(projects.recording)
+    // The opt-in native fixture exercises the same bundled helper resource as :agent tests.
+    testRuntimeOnly(projects.recordingMacos)
 }
 
 tasks.withType<Test>().configureEach {
@@ -50,6 +52,9 @@ tasks.withType<Test>().configureEach {
     }
     providers.systemProperty("spectre.test.physicalTypeText").orNull?.let { value ->
         systemProperty("spectre.test.physicalTypeText", value)
+    }
+    providers.systemProperty("spectre.test.nativeMacCapture").orNull?.let { value ->
+        systemProperty("spectre.test.nativeMacCapture", value)
     }
     // Docs contract tests read repo-root markdown at runtime; register them as inputs so
     // :core:test is not UP-TO-DATE/cache-hit after spike/guide docs change (#209).
