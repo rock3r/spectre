@@ -17,22 +17,22 @@ import kotlin.time.TimeSource
  */
 public data class CaptureNodeSnapshot(
     public val key: String,
-    public val parentKey: String?,
-    public val id: String?,
     public val testTag: String?,
     public val text: String?,
     public val texts: List<String>,
     public val editableText: String?,
     public val contentDescription: String?,
     public val role: String?,
-    public val platformRole: String?,
-    public val states: List<String>,
-    public val value: String?,
     public val enabled: Boolean,
     public val clickable: Boolean,
     public val focused: Boolean,
     public val selected: Boolean,
     public val boundsScreen: Rectangle,
+    public val parentKey: String? = null,
+    public val id: String? = null,
+    public val platformRole: String? = null,
+    public val states: List<String> = emptyList(),
+    public val value: String? = null,
 ) {
     /** Binary/source-compatible schema-v1 constructor. */
     public constructor(
@@ -50,23 +50,59 @@ public data class CaptureNodeSnapshot(
         boundsScreen: Rectangle,
     ) : this(
         key,
-        null,
-        testTag,
         testTag,
         text,
         texts,
         editableText,
         contentDescription,
         role,
-        null,
-        emptyList(),
-        null,
         enabled,
         clickable,
         focused,
         selected,
         boundsScreen,
+        null,
+        testTag,
+        null,
+        emptyList(),
+        null,
     )
+
+    /** JVM bridge for callers compiled against the schema-v1 data-class copy function. */
+    @JvmName("copy")
+    public fun copyV1(
+        key: String = this.key,
+        testTag: String? = this.testTag,
+        text: String? = this.text,
+        texts: List<String> = this.texts,
+        editableText: String? = this.editableText,
+        contentDescription: String? = this.contentDescription,
+        role: String? = this.role,
+        enabled: Boolean = this.enabled,
+        clickable: Boolean = this.clickable,
+        focused: Boolean = this.focused,
+        selected: Boolean = this.selected,
+        boundsScreen: Rectangle = this.boundsScreen,
+    ): CaptureNodeSnapshot =
+        CaptureNodeSnapshot(
+            key,
+            testTag,
+            text,
+            texts,
+            editableText,
+            contentDescription,
+            role,
+            enabled,
+            clickable,
+            focused,
+            selected,
+            boundsScreen,
+            parentKey,
+            id,
+            platformRole,
+            states,
+            value,
+        )
 }
 
 /**

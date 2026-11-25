@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.core.capture
 
+import java.awt.Rectangle
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -41,6 +42,20 @@ class CaptureModelsAbiCompatibilityTest {
         assertEquals<Boolean>(false, node.component11())
         assertEquals<CaptureRect>(RECT, node.component12())
         assertEquals<CaptureRect>(RECT, node.component13())
+
+        val snapshot = historicalSnapshot()
+        assertEquals<String>("key", snapshot.component1())
+        assertEquals<String?>("tag", snapshot.component2())
+        assertEquals<String?>("text", snapshot.component3())
+        assertEquals<List<String>>(listOf("text"), snapshot.component4())
+        assertEquals<String?>(null, snapshot.component5())
+        assertEquals<String?>(null, snapshot.component6())
+        assertEquals<String?>("Button", snapshot.component7())
+        assertEquals<Boolean>(true, snapshot.component8())
+        assertEquals<Boolean>(true, snapshot.component9())
+        assertEquals<Boolean>(false, snapshot.component10())
+        assertEquals<Boolean>(false, snapshot.component11())
+        assertEquals<Rectangle>(AWT_RECT, snapshot.component12())
     }
 
     @Test
@@ -50,9 +65,94 @@ class CaptureModelsAbiCompatibilityTest {
         assertEquals("updated", document.window.copyV1(title = "updated").title)
         assertEquals("updated", document.nodes.single().copyV1(text = "updated").text)
 
+        val snapshot = historicalSnapshot()
+        val historicalCopy =
+            CaptureNodeSnapshot::class
+                .java
+                .getDeclaredMethod(
+                    "copy",
+                    String::class.java,
+                    String::class.java,
+                    String::class.java,
+                    List::class.java,
+                    String::class.java,
+                    String::class.java,
+                    String::class.java,
+                    Boolean::class.javaPrimitiveType,
+                    Boolean::class.javaPrimitiveType,
+                    Boolean::class.javaPrimitiveType,
+                    Boolean::class.javaPrimitiveType,
+                    Rectangle::class.java,
+                )
+        val copied =
+            historicalCopy.invoke(
+                snapshot,
+                "copied",
+                "tag",
+                "text",
+                listOf("text"),
+                null,
+                null,
+                "Button",
+                true,
+                true,
+                false,
+                false,
+                AWT_RECT,
+            ) as CaptureNodeSnapshot
+        assertEquals("copied", copied.key)
+
+        val historicalDefaultCopy =
+            CaptureNodeSnapshot::class
+                .java
+                .getDeclaredMethod(
+                    "copy\$default",
+                    CaptureNodeSnapshot::class.java,
+                    String::class.java,
+                    String::class.java,
+                    String::class.java,
+                    List::class.java,
+                    String::class.java,
+                    String::class.java,
+                    String::class.java,
+                    Boolean::class.javaPrimitiveType,
+                    Boolean::class.javaPrimitiveType,
+                    Boolean::class.javaPrimitiveType,
+                    Boolean::class.javaPrimitiveType,
+                    Rectangle::class.java,
+                    Int::class.javaPrimitiveType,
+                    Any::class.java,
+                )
+        val defaultCopied =
+            historicalDefaultCopy.invoke(
+                null,
+                snapshot,
+                "ignored",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                false,
+                false,
+                false,
+                null,
+                0xfff,
+                null,
+            ) as CaptureNodeSnapshot
+        assertEquals(snapshot, defaultCopied)
+
         assertHistoricalCopyMethods(CaptureDocument::class.java, 5)
         assertHistoricalCopyMethods(CaptureWindow::class.java, 9)
         assertHistoricalCopyMethods(CaptureNode::class.java, 13)
+        assertHistoricalCopyMethods(CaptureNodeSnapshot::class.java, 12)
+
+        assertHistoricalConstructor(CaptureDocument::class.java, 5)
+        assertHistoricalConstructor(CaptureWindow::class.java, 9)
+        assertHistoricalConstructor(CaptureNode::class.java, 13)
+        assertHistoricalConstructor(CaptureNodeSnapshot::class.java, 12)
     }
 
     @Test
@@ -75,6 +175,12 @@ class CaptureModelsAbiCompatibilityTest {
             type.declaredMethods.singleOrNull {
                 it.name == "copy\$default" && it.parameterCount == parameterCount + 3
             }
+        )
+    }
+
+    private fun assertHistoricalConstructor(type: Class<*>, parameterCount: Int) {
+        assertNotNull(
+            type.declaredConstructors.singleOrNull { it.parameterCount == parameterCount }
         )
     }
 
@@ -105,7 +211,24 @@ class CaptureModelsAbiCompatibilityTest {
         )
     }
 
+    private fun historicalSnapshot(): CaptureNodeSnapshot =
+        CaptureNodeSnapshot(
+            "key",
+            "tag",
+            "text",
+            listOf("text"),
+            null,
+            null,
+            "Button",
+            true,
+            true,
+            false,
+            false,
+            AWT_RECT,
+        )
+
     private companion object {
         val RECT = CaptureRect(0, 0, 10, 10)
+        val AWT_RECT = Rectangle(0, 0, 10, 10)
     }
 }
