@@ -4,6 +4,7 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 
 class AccessibilityHelperClientTest {
     @Test
@@ -36,5 +37,20 @@ class AccessibilityHelperClientTest {
 
         assertIs<AccessibilitySnapshotResponse.Failure>(response)
         assertEquals(true, stdin.contains("\"maximumNodeCount\":5"))
+    }
+
+    @Test
+    fun `decodes successful nodes with unknown geometry`() {
+        val response = AccessibilityHelperClient { _, _, _ ->
+            javaClass.getResource("/accessibility/unknown-geometry.json")!!.readText()
+        }
+            .snapshot(
+                AccessibilitySnapshotRequest(Target.ProcessId(42), 20, 2_000, 750),
+                java.nio.file.Path.of("recorded-helper"),
+            )
+
+        val node = assertIs<AccessibilitySnapshotResponse.Success>(response).snapshot.nodes.single()
+        assertNull(node.bounds)
+        assertNull(node.onScreen)
     }
 }

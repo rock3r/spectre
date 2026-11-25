@@ -455,11 +455,21 @@ fn walk(
         ));
     }
 
+    let prefetch_count = child_prefetch_count(
+        snapshot.nodes.len(),
+        request.maximum_node_count,
+        data.children.len(),
+    );
+    if prefetch_count == 0 && !data.children.is_empty() {
+        return node_limit_error(request.maximum_node_count, snapshot);
+    }
+    let children_truncated = prefetch_count < data.children.len();
+
     // Fetch siblings in bounded parallel batches. Joining in input order keeps key assignment and
     // the final traversal deterministic while avoiding a serial GetRole/GetState/GetInterfaces
     // property farm. Eight workers also bounds outstanding D-Bus calls and memory.
     let mut child_data = Vec::new();
-    for batch in data.children.chunks(8) {
+    for batch in data.children[..prefetch_count].chunks(8) {
         check_deadline(deadline, Some(snapshot))?;
         let results = std::thread::scope(|scope| {
             let handles: Vec<_> = batch
@@ -503,7 +513,12 @@ fn walk(
         let child_key = format!(
             "{}/{}",
             key,
-            segment(child_node.id.as_deref(), index, duplicate)
+            child_segment(
+                child_node.id.as_deref(),
+                index,
+                duplicate,
+                children_truncated
+            )
         );
         walk(
             bus,
@@ -517,7 +532,31 @@ fn walk(
             snapshot,
         )?;
     }
+    if children_truncated {
+        return node_limit_error(request.maximum_node_count, snapshot);
+    }
     Ok(())
+}
+
+fn child_prefetch_count(current: usize, maximum: usize, child_count: usize) -> usize {
+    maximum.saturating_sub(current).min(child_count)
+}
+
+fn child_segment(id: Option<&str>, index: usize, duplicate: bool, truncated: bool) -> String {
+    // An unread sibling may repeat an apparently unique id. Positional keys make a partial
+    // snapshot agree with a complete traversal in that case.
+    segment(id, index, duplicate || truncated)
+}
+
+fn node_limit_error(
+    maximum_node_count: usize,
+    snapshot: &mut Snapshot,
+) -> std::result::Result<(), CaptureError> {
+    Err((
+        "limit-reached",
+        format!("maximumNodeCount {maximum_node_count} reached"),
+        Some(std::mem::replace(snapshot, empty_snapshot())),
+    ))
 }
 
 fn structural_read_error(
@@ -884,6 +923,17 @@ mod tests {
         assert_eq!(segment(Some("same"), 2, true), "2");
         assert_eq!(segment(None, 3, false), "3");
         assert_eq!(segment(Some("123"), 4, false), "~2123");
+    }
+    #[test]
+    fn tiny_budget_bounds_prefetch_and_keeps_repeated_sibling_key_stable() {
+        assert_eq!(child_prefetch_count(1, 1, 10), 0);
+        assert_eq!(child_prefetch_count(1, 3, 10), 2);
+        assert_eq!(child_prefetch_count(3, 3, 10), 0);
+
+        // A truncated sibling list cannot prove that an id is unique. Use the positional form
+        // that a complete traversal also uses when a later sibling repeats the id.
+        assert_eq!(child_segment(Some("repeated"), 0, false, true), "0");
+        assert_eq!(child_segment(Some("repeated"), 0, true, false), "0");
     }
     #[test]
     fn native_window_id_requires_unique_name_and_object_path() {

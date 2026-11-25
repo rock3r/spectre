@@ -62,6 +62,10 @@ print(f"accessibility-helper-xvfb: nodes={len(nodes)}")
 PY
 echo "accessibility-helper-xvfb: elapsed_ms=$elapsed_ms"
 
+root_only=$(printf '{"target":{"type":"process-id","value":%s},"maximumDepth":64,"maximumNodeCount":1,"timeoutMs":5000,"allowAccessibilityEnable":true}' "$pid" | "$helper" accessibility-snapshot)
+python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["error"]["code"]=="limit-reached" and len(r["error"]["partialSnapshot"]["nodes"])==1, r' <<<"$root_only"
+[[ $(status) == *false* ]]
+
 limited=$(printf '{"target":{"type":"process-id","value":%s},"maximumDepth":64,"maximumNodeCount":2,"timeoutMs":5000,"allowAccessibilityEnable":true}' "$pid" | "$helper" accessibility-snapshot)
 python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["error"]["code"]=="limit-reached" and len(r["error"]["partialSnapshot"]["nodes"])==2, r' <<<"$limited"
 [[ $(status) == *false* ]]
