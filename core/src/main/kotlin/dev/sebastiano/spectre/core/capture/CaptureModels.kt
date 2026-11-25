@@ -11,11 +11,11 @@ import java.nio.file.Path
  */
 public data class CaptureDocument(
     public val schemaVersion: Int,
-    public val source: CaptureSource,
     public val capturedAt: String,
     public val window: CaptureWindow,
     public val nodes: List<CaptureNode>,
     public val summary: CaptureSummary,
+    public val source: CaptureSource = CaptureSource.ComposeSemantics,
 ) {
     /** Binary/source-compatible schema-v1 constructor. New captures still encode as v2. */
     public constructor(
@@ -24,7 +24,17 @@ public data class CaptureDocument(
         window: CaptureWindow,
         nodes: List<CaptureNode>,
         summary: CaptureSummary,
-    ) : this(schemaVersion, CaptureSource.ComposeSemantics, capturedAt, window, nodes, summary)
+    ) : this(schemaVersion, capturedAt, window, nodes, summary, CaptureSource.ComposeSemantics)
+
+    /** JVM bridge for callers compiled against the schema-v1 data-class copy function. */
+    @JvmName("copy")
+    public fun copyV1(
+        schemaVersion: Int = this.schemaVersion,
+        capturedAt: String = this.capturedAt,
+        window: CaptureWindow = this.window,
+        nodes: List<CaptureNode> = this.nodes,
+        summary: CaptureSummary = this.summary,
+    ): CaptureDocument = CaptureDocument(schemaVersion, capturedAt, window, nodes, summary, source)
 
     public companion object {
         public const val SCHEMA_VERSION: Int = 2
@@ -38,11 +48,11 @@ public data class CaptureWindow(
     public val title: String?,
     public val isPopup: Boolean,
     public val boundsScreen: CaptureRect,
-    public val boundsSpace: BoundsSpace,
     public val densityScaleX: Double,
     public val densityScaleY: Double,
     public val imageWidth: Int,
     public val imageHeight: Int,
+    public val boundsSpace: BoundsSpace = BoundsSpace.Screen,
 ) {
     /** Binary/source-compatible schema-v1 constructor. */
     public constructor(
@@ -61,12 +71,38 @@ public data class CaptureWindow(
         title,
         isPopup,
         boundsScreen,
-        BoundsSpace.Screen,
         densityScaleX,
         densityScaleY,
         imageWidth,
         imageHeight,
+        BoundsSpace.Screen,
     )
+
+    /** JVM bridge for callers compiled against the schema-v1 data-class copy function. */
+    @JvmName("copy")
+    public fun copyV1(
+        index: Int = this.index,
+        surfaceId: String = this.surfaceId,
+        title: String? = this.title,
+        isPopup: Boolean = this.isPopup,
+        boundsScreen: CaptureRect = this.boundsScreen,
+        densityScaleX: Double = this.densityScaleX,
+        densityScaleY: Double = this.densityScaleY,
+        imageWidth: Int = this.imageWidth,
+        imageHeight: Int = this.imageHeight,
+    ): CaptureWindow =
+        CaptureWindow(
+            index,
+            surfaceId,
+            title,
+            isPopup,
+            boundsScreen,
+            densityScaleX,
+            densityScaleY,
+            imageWidth,
+            imageHeight,
+            boundsSpace,
+        )
 }
 
 /**
@@ -77,23 +113,23 @@ public data class CaptureWindow(
  */
 public data class CaptureNode(
     public val key: String,
-    public val parentKey: String?,
-    public val id: String?,
     public val testTag: String?,
     public val text: String?,
     public val texts: List<String>,
     public val editableText: String?,
     public val contentDescription: String?,
     public val role: String?,
-    public val platformRole: String?,
-    public val states: List<String>,
-    public val value: String?,
     public val enabled: Boolean,
     public val clickable: Boolean,
     public val focused: Boolean,
     public val selected: Boolean,
     public val boundsImage: CaptureRect,
     public val boundsScreen: CaptureRect,
+    public val parentKey: String? = null,
+    public val id: String? = null,
+    public val platformRole: String? = null,
+    public val states: List<String> = emptyList(),
+    public val value: String? = null,
     public val onScreen: Boolean = true,
 ) {
     /** Binary/source-compatible schema-v1 constructor. */
@@ -113,25 +149,64 @@ public data class CaptureNode(
         boundsScreen: CaptureRect,
     ) : this(
         key,
-        null,
-        testTag,
         testTag,
         text,
         texts,
         editableText,
         contentDescription,
         role,
-        null,
-        emptyList(),
-        null,
         enabled,
         clickable,
         focused,
         selected,
         boundsImage,
         boundsScreen,
+        null,
+        testTag,
+        null,
+        emptyList(),
+        null,
         true,
     )
+
+    /** JVM bridge for callers compiled against the schema-v1 data-class copy function. */
+    @JvmName("copy")
+    public fun copyV1(
+        key: String = this.key,
+        testTag: String? = this.testTag,
+        text: String? = this.text,
+        texts: List<String> = this.texts,
+        editableText: String? = this.editableText,
+        contentDescription: String? = this.contentDescription,
+        role: String? = this.role,
+        enabled: Boolean = this.enabled,
+        clickable: Boolean = this.clickable,
+        focused: Boolean = this.focused,
+        selected: Boolean = this.selected,
+        boundsImage: CaptureRect = this.boundsImage,
+        boundsScreen: CaptureRect = this.boundsScreen,
+    ): CaptureNode =
+        CaptureNode(
+            key,
+            testTag,
+            text,
+            texts,
+            editableText,
+            contentDescription,
+            role,
+            enabled,
+            clickable,
+            focused,
+            selected,
+            boundsImage,
+            boundsScreen,
+            parentKey,
+            id,
+            platformRole,
+            states,
+            value,
+            onScreen,
+        )
 }
 
 public enum class CaptureSource(public val wireName: String) {
