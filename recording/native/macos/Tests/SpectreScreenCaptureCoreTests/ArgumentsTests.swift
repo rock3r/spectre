@@ -92,6 +92,16 @@ final class ArgumentsTests: XCTestCase {
         XCTAssertEqual(args.crop?.height, 200)
     }
 
+
+    func testWindowCropMustFitTheSelectedWindow() {
+        XCTAssertThrowsError(
+            try validateWindowCrop(
+                CaptureRegion(x: 50, y: 20, width: 200, height: 100),
+                windowSize: CGSize(width: 240, height: 200)
+            )
+        )
+    }
+
     func testArgumentsRejectCropOnRegionSource() {
         XCTAssertThrowsError(
             try Arguments.parse([

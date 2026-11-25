@@ -261,6 +261,10 @@ fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
 }
 
 fn run_x11(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
+    if start.target == CaptureTarget::Region {
+        crate::x11_window::validate_region_in_root(start.display_name.as_deref(), start.region)
+            .context("validating X11 region before starting ximagesrc")?;
+    }
     let (target, stream_size, stream_position) = match start.target {
         CaptureTarget::Region => (
             X11CaptureTarget::Region {

@@ -558,7 +558,14 @@ internal static class Program
 
             if (crop.Right > itemBounds.Width || crop.Bottom > itemBounds.Height)
             {
-                // Soft clamp rather than fail hard: HiDPI rounding can overshoot by a pixel.
+                var overflow = Math.Max(crop.Right - itemBounds.Width, crop.Bottom - itemBounds.Height);
+                if (overflow > 1)
+                {
+                    throw new ArgumentException(
+                        $"Window crop {crop.X},{crop.Y} {crop.Width}x{crop.Height} is not fully inside " +
+                        $"capture item 0,0 {itemBounds.Width}x{itemBounds.Height}; overflow={overflow}px.");
+                }
+                // One device pixel can arise when AWT and WGC round a HiDPI edge differently.
                 var width = Math.Min(crop.Width, itemBounds.Width - crop.X);
                 var height = Math.Min(crop.Height, itemBounds.Height - crop.Y);
                 if (width <= 0 || height <= 0)
@@ -1126,6 +1133,15 @@ internal static class Program
                     $"Capture item has invalid size {itemWidth}x{itemHeight}.");
             }
 
+            var overflow = Math.Max(
+                Math.Max(Math.Max(-crop.X, -crop.Y), crop.Right - itemWidth),
+                crop.Bottom - itemHeight);
+            if (overflow > 1)
+            {
+                throw new InvalidOperationException(
+                    $"Region crop {crop.X},{crop.Y} {crop.Width}x{crop.Height} is not fully inside " +
+                    $"capture item 0,0 {itemWidth}x{itemHeight}; overflow={overflow}px.");
+            }
             var x = Math.Clamp(crop.X, 0, Math.Max(itemWidth - 1, 0));
             var y = Math.Clamp(crop.Y, 0, Math.Max(itemHeight - 1, 0));
             var width = Math.Min(crop.Width, itemWidth - x);

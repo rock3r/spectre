@@ -166,11 +166,10 @@ private class WaylandBridgeRobotAdapter(private val bridge: Class<*>) : RobotAda
 
 internal fun screenshotToLogicalSize(image: BufferedImage, region: Rectangle): BufferedImage {
     if (image.width == region.width && image.height == region.height) return image
-    val scaled = BufferedImage(region.width, region.height, BufferedImage.TYPE_INT_ARGB)
-    val graphics = scaled.createGraphics()
-    graphics.drawImage(image, 0, 0, region.width, region.height, null)
-    graphics.dispose()
-    return scaled
+    error(
+        "Wayland screenshot returned ${image.width}x${image.height}, " +
+            "but requested ${region.width}x${region.height}; refusing to stretch a partial capture."
+    )
 }
 
 internal fun awtLockingKeyState(keyCode: Int): Boolean? =

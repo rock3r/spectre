@@ -36,6 +36,10 @@ pub fn run(command: ScreenshotCommand, events: mpsc::Sender<Event>) -> Result<()
 
 fn build_x11_screenshot_argv(command: &ScreenshotCommand, output: &PathBuf) -> Result<Vec<String>> {
     let capture_cursor = matches!(command.cursor_mode, crate::protocol::CursorMode::Embedded);
+    if command.target == CaptureTarget::Region {
+        crate::x11_window::validate_region_in_root(command.display_name.as_deref(), command.region)
+            .context("validating X11 screenshot region before starting ximagesrc")?;
+    }
     let target = match command.target {
         CaptureTarget::Region => X11CaptureTarget::Region {
             display_name: command.display_name.clone(),
@@ -110,8 +114,15 @@ pub(crate) fn capture_from_stream(
         )
         .context("mapping AWT screenshot region onto portal stream")?
     };
-    let argv = build_pipewire_png_argv(stream.node_id, pipewire_fd, stream_relative_region, stream.size, output)?;
-    run_gst_oneshot(&argv).with_context(|| format!("running Wayland screenshot pipeline: {argv:?}"))?;
+    let argv = build_pipewire_png_argv(
+        stream.node_id,
+        pipewire_fd,
+        stream_relative_region,
+        stream.size,
+        output,
+    )?;
+    run_gst_oneshot(&argv)
+        .with_context(|| format!("running Wayland screenshot pipeline: {argv:?}"))?;
     Ok(())
 }
 

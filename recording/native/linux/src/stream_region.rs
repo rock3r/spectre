@@ -9,9 +9,9 @@ use anyhow::{bail, Result};
 /// when the selected AWT display and the stream share an aspect ratio. The optional
 /// [awt_display] is that display's origin + size in AWT pixels — never the primary
 /// `Toolkit.screenSize`, which is wrong for a secondary monitor. Multi-monitor
-/// virtual desktops that do not match the selected stream are left unscaled and
-/// only translated by [stream_position]. A leftover overflow then clamps; a miss
-/// is still an error.
+/// virtual desktops that do not match the selected stream are translated by
+/// [stream_position]. Every result must fit the granted stream; only a one-pixel
+/// rounding discrepancy is tolerated.
 pub fn map_awt_region_to_stream(
     region: Region,
     stream_position: (i32, i32),
@@ -35,7 +35,22 @@ pub fn map_awt_region_to_stream(
             };
             match scale_from_awt_display(display, stream_size) {
                 DisplayScale::Scaled(sx, sy) => scale_region(local, sx, sy),
-                DisplayScale::Identity => local,
+                DisplayScale::Identity => {
+                    if (display.x == 0) != (stream_position.0 == 0)
+                        || (display.y == 0) != (stream_position.1 == 0)
+                    {
+                        bail!(
+                            "requested AWT display ({}, {}, {}x{}) is not the granted stream at ({}, {})",
+                            display.x,
+                            display.y,
+                            display.width,
+                            display.height,
+                            stream_position.0,
+                            stream_position.1
+                        );
+                    }
+                    local
+                }
                 DisplayScale::Unrelated => subtract_origin(region, stream_position),
             }
         }
@@ -102,12 +117,7 @@ pub fn screen_size_to_region(values: [i32; 4]) -> Option<Region> {
 const ASPECT_MATCH_EPSILON: f64 = 0.02;
 const IDENTITY_SCALE_EPSILON: f64 = 0.02;
 
-/// Intersect [region] with [stream_size] and return the visible crop.
-///
-/// Genuinely oversized windows (larger than the shared monitor, or leftover
-/// overflow after mixed-space conversion) clamp to the stream. A region that
-/// misses the stream entirely still fails — that is a placement bug, not
-/// something we can invent pixels for.
+/// Validate [region] against [stream_size], allowing one pixel of rounding overflow per edge.
 pub fn clamp_region_to_stream(region: Region, stream_size: (u32, u32)) -> Result<Region> {
     if region.width <= 0 || region.height <= 0 {
         bail!(
@@ -145,6 +155,22 @@ pub fn clamp_region_to_stream(region: Region, stream_size: (u32, u32)) -> Result
             stream_h
         );
     }
+    let overflow = (clip_left - left)
+        .max(clip_top - top)
+        .max(right - clip_right)
+        .max(bottom - clip_bottom);
+    if overflow > ROUNDING_TOLERANCE_PX {
+        bail!(
+            "region ({}, {}, {}x{}) is not fully inside stream (0, 0, {}x{}); overflow={}px",
+            region.x,
+            region.y,
+            region.width,
+            region.height,
+            stream_w,
+            stream_h,
+            overflow
+        );
+    }
     Ok(Region {
         x: clip_left as i32,
         y: clip_top as i32,
@@ -152,6 +178,8 @@ pub fn clamp_region_to_stream(region: Region, stream_size: (u32, u32)) -> Result
         height: (clip_bottom - clip_top) as i32,
     })
 }
+
+const ROUNDING_TOLERANCE_PX: i64 = 1;
 
 #[cfg(test)]
 mod tests {
@@ -167,30 +195,30 @@ mod tests {
     }
 
     #[test]
-    fn clamps_overflowing_hidpi_window_to_stream() {
-        let clipped = clamp_region_to_stream(region(1362, 0, 480, 240), (1536, 864)).unwrap();
-        assert_eq!(clipped.x, 1362);
-        assert_eq!(clipped.y, 0);
-        assert_eq!(clipped.width, 174);
-        assert_eq!(clipped.height, 240);
+    fn rejects_overflowing_hidpi_window() {
+        let error = clamp_region_to_stream(region(1362, 0, 480, 240), (1536, 864)).unwrap_err();
+        assert!(error.to_string().contains("not fully inside"), "{error:#}");
     }
 
     #[test]
-    fn clamps_window_larger_than_the_stream() {
-        let clipped = clamp_region_to_stream(region(0, 0, 4000, 3000), (1536, 864)).unwrap();
-        assert_eq!(clipped.x, 0);
-        assert_eq!(clipped.y, 0);
-        assert_eq!(clipped.width, 1536);
-        assert_eq!(clipped.height, 864);
+    fn rejects_window_larger_than_the_stream() {
+        let error = clamp_region_to_stream(region(0, 0, 4000, 3000), (1536, 864)).unwrap_err();
+        assert!(error.to_string().contains("not fully inside"), "{error:#}");
+    }
+
+    #[test]
+    fn permits_only_one_pixel_of_rounding_overflow() {
+        assert_eq!(
+            clamp_region_to_stream(region(0, 0, 1537, 865), (1536, 864)).unwrap(),
+            region(0, 0, 1536, 864)
+        );
+        assert!(clamp_region_to_stream(region(0, 0, 1538, 864), (1536, 864)).is_err());
     }
 
     #[test]
     fn rejects_region_that_misses_the_stream() {
         let err = clamp_region_to_stream(region(2000, 0, 480, 240), (1536, 864)).unwrap_err();
-        assert!(
-            err.to_string().contains("does not intersect"),
-            "{err:#}"
-        );
+        assert!(err.to_string().contains("does not intersect"), "{err:#}");
     }
 
     #[test]
@@ -202,10 +230,7 @@ mod tests {
             Some(region(0, 0, 2560, 1440)),
         )
         .unwrap_err();
-        assert!(
-            err.to_string().contains("positive dimensions"),
-            "{err:#}"
-        );
+        assert!(err.to_string().contains("positive dimensions"), "{err:#}");
     }
 
     #[test]
@@ -227,13 +252,9 @@ mod tests {
 
     #[test]
     fn subtracts_stream_position_when_awt_screen_size_is_unknown() {
-        let mapped = map_awt_region_to_stream(
-            region(2000, 80, 400, 300),
-            (1920, 0),
-            (1920, 1080),
-            None,
-        )
-        .unwrap();
+        let mapped =
+            map_awt_region_to_stream(region(2000, 80, 400, 300), (1920, 0), (1920, 1080), None)
+                .unwrap();
         assert_eq!(mapped.x, 80);
         assert_eq!(mapped.y, 80);
         assert_eq!(mapped.width, 400);
@@ -254,6 +275,18 @@ mod tests {
         assert_eq!(mapped.y, 0);
         assert_eq!(mapped.width, 400);
         assert_eq!(mapped.height, 300);
+    }
+
+    #[test]
+    fn rejects_region_on_another_same_aspect_monitor() {
+        let error = map_awt_region_to_stream(
+            region(100, 100, 400, 300),
+            (1920, 0),
+            (1920, 1080),
+            Some(region(0, 0, 1920, 1080)),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("granted stream"), "{error:#}");
     }
 
     #[test]

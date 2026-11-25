@@ -6,9 +6,8 @@ internal readonly record struct PlacedRegion(MonitorRect Monitor, CaptureRect Cr
 /// Maps a screen-space capture rectangle onto one monitor.
 ///
 /// EnumDisplayMonitors and the JVM can disagree by a pixel at a DPI boundary. A region that is
-/// fully inside a monitor keeps its size. A region that only overshoots is clamped to the overlap
-/// so the helper does not fail closed on that pixel. A region that misses every monitor is not
-/// placed.
+/// fully inside a monitor keeps its size. Only a one-pixel DPI-rounding overshoot is clamped;
+/// cross-monitor and larger overflow is rejected.
 /// </summary>
 internal static class RegionPlacement
 {
@@ -22,25 +21,16 @@ internal static class RegionPlacement
             }
         }
 
-        PlacedRegion? best = null;
-        var bestArea = 0;
         foreach (var monitor in monitors)
         {
             var overlap = Intersection(monitor, region);
-            if (overlap is null)
+            if (overlap is null || Overflow(monitor, region) > 1)
             {
                 continue;
             }
-
-            var area = overlap.Width * overlap.Height;
-            if (area > bestArea)
-            {
-                bestArea = area;
-                best = new PlacedRegion(monitor, CropWithin(monitor, overlap));
-            }
+            return new PlacedRegion(monitor, CropWithin(monitor, overlap));
         }
-
-        return best;
+        return null;
     }
 
     private static bool FullyContains(MonitorRect monitor, CaptureRect region) =>
@@ -64,6 +54,11 @@ internal static class RegionPlacement
 
         return new CaptureRect(left, top, width, height);
     }
+
+    private static int Overflow(MonitorRect monitor, CaptureRect region) =>
+        Math.Max(
+            Math.Max(Math.Max(monitor.Left - region.X, 0), Math.Max(monitor.Top - region.Y, 0)),
+            Math.Max(Math.Max(region.Right - monitor.Right, 0), Math.Max(region.Bottom - monitor.Bottom, 0)));
 
     private static CaptureRect CropWithin(MonitorRect monitor, CaptureRect screenRect) =>
         new(

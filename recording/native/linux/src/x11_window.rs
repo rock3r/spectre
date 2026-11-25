@@ -650,6 +650,40 @@ pub fn find_window_by_title(display_name: Option<&str>, title: &str) -> Result<R
     result
 }
 
+/// Reject an invalid region before `ximagesrc` can fall back to the whole desktop.
+pub fn validate_region_in_root(display_name: Option<&str>, region: Region) -> Result<()> {
+    let api = X11Api::load().context("loading libX11.so.6 for region bounds validation")?;
+    with_display(
+        &api,
+        display_name,
+        "the X11 root window",
+        |display| unsafe {
+            let root = (api.default_root_window)(display);
+            let (width, height, _) = window_geometry(&api, display, root)?
+                .ok_or_else(|| anyhow!("X11 root window has no geometry"))?;
+            validate_region_bounds(region, width, height)
+        },
+    )
+}
+
+fn validate_region_bounds(region: Region, root_width: u32, root_height: u32) -> Result<()> {
+    let right = region.x as i64 + region.width as i64;
+    let bottom = region.y as i64 + region.height as i64;
+    if region.x < 0
+        || region.y < 0
+        || region.width <= 0
+        || region.height <= 0
+        || right > root_width as i64
+        || bottom > root_height as i64
+    {
+        bail!(
+            "X11 region ({}, {}, {}x{}) must be fully inside root window (0, 0, {}x{}); refusing ximagesrc full-screen fallback",
+            region.x, region.y, region.width, region.height, root_width, root_height
+        );
+    }
+    Ok(())
+}
+
 unsafe fn find_on_open_display(
     api: &X11Api,
     display: *mut c_void,
@@ -1241,5 +1275,12 @@ mod tests {
             message.contains("root") || message.contains("desktop"),
             "error must mention the silent-root hazard, got: {message}"
         );
+    }
+
+    #[test]
+    fn region_bounds_reject_ximagesrc_overshoot() {
+        assert!(validate_region_bounds(frame(0, 0, 1920, 1080), 1920, 1080).is_ok());
+        let error = validate_region_bounds(frame(1800, 0, 200, 100), 1920, 1080).unwrap_err();
+        assert!(format!("{error:#}").contains("full-screen fallback"));
     }
 }

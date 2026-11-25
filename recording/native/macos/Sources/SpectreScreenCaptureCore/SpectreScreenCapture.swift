@@ -839,11 +839,12 @@ final class Recorder {
             // Display-mode filters leave large black areas outside the window in the buffer.
             filter = SCContentFilter(desktopIndependentWindow: targetWindow)
             if let crop = args.crop {
+                let validatedCrop = try validateWindowCrop(crop, windowSize: targetWindow.frame.size)
                 // Crop is window-relative points (same space as SCWindow.frame / AWT user space).
                 // Fixed at start for v1 — mid-recording resize/move of the surface is not followed.
-                sourceRect = crop.sourceRect()
-                width = max(2, Int((CGFloat(crop.width) * scale).rounded()))
-                height = max(2, Int((CGFloat(crop.height) * scale).rounded()))
+                sourceRect = validatedCrop.sourceRect()
+                width = max(2, Int((CGFloat(validatedCrop.width) * scale).rounded()))
+                height = max(2, Int((CGFloat(validatedCrop.height) * scale).rounded()))
             } else {
                 sourceRect = nil
                 width = max(2, Int((targetWindow.frame.width * scale).rounded()))
@@ -1364,6 +1365,27 @@ final class Recorder {
             )
         }
     }
+}
+
+func validateWindowCrop(_ crop: CaptureRegion, windowSize: CGSize) throws -> CaptureRegion {
+    let overflow = max(
+        max(CGFloat(-crop.x), CGFloat(-crop.y)),
+        max(CGFloat(crop.x + crop.width) - windowSize.width,
+            CGFloat(crop.y + crop.height) - windowSize.height)
+    )
+    if overflow > 1 {
+        throw CLIError(
+            code: 2,
+            message: "window crop \(crop.x),\(crop.y) \(crop.width)x\(crop.height) is not fully inside " +
+                "window 0,0 \(Int(windowSize.width))x\(Int(windowSize.height)); overflow=\(overflow)px"
+        )
+    }
+    return CaptureRegion(
+        x: max(0, crop.x),
+        y: max(0, crop.y),
+        width: min(crop.width, Int(windowSize.width) - max(0, crop.x)),
+        height: min(crop.height, Int(windowSize.height) - max(0, crop.y))
+    )
 }
 
 // SCStreamOutput needs an NSObject conforming class. Hand the buffer off synchronously so the

@@ -43,6 +43,23 @@ See [Still window screenshots](guide/recording.md#still-window-screenshots).
 The following sections explain each platform's limits. See
 [Window-targeted capture](#window-targeted-capture) for movement and occlusion behaviour.
 
+## Exact geometry and rounding tolerance
+
+Region and window-crop requests fail when any edge lies outside their capture source. Spectre
+does not silently clip a request, move it to the monitor with the largest overlap, stretch a
+partial image, or substitute a full-screen capture. Native helpers tolerate at most one pixel at
+an edge for coordinate rounding, and report both the requested and source rectangles otherwise.
+
+- X11 validates regions against the root window before starting `ximagesrc`.
+- Wayland maps from the selected AWT display into the granted stream, including its position and
+  scale; a region on another monitor fails even when the monitors have the same aspect ratio.
+- Windows rejects cross-monitor regions and window crops outside their WGC capture item.
+- macOS rejects a window-relative crop outside the selected ScreenCaptureKit window.
+- Node still capture requires the entire node region to be inside its captured window.
+
+The one-pixel allowance is only a HiDPI edge-rounding tolerance. It is removed from the returned
+crop; larger overflow is always an error.
+
 
 ## Wayland restore_token (agent non-interactive runs)
 

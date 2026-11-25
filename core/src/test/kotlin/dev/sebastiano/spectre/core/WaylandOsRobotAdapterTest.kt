@@ -118,11 +118,13 @@ class WaylandOsRobotAdapterTest {
     }
 
     @Test
-    fun `logical screenshots are resized back to the requested AWT region`() {
+    fun `logical screenshots reject a mismatched capture instead of stretching it`() {
         val device = BufferedImage(288, 144, BufferedImage.TYPE_INT_ARGB)
-        val logical = screenshotToLogicalSize(device, Rectangle(10, 20, 480, 240))
-        assertEquals(480, logical.width)
-        assertEquals(240, logical.height)
+        val error =
+            assertFailsWith<IllegalStateException> {
+                screenshotToLogicalSize(device, Rectangle(10, 20, 480, 240))
+            }
+        assertTrue(error.message.orEmpty().contains("requested 480x240"))
         val alreadyLogical = screenshotToLogicalSize(device, Rectangle(0, 0, 288, 144))
         assertSame(device, alreadyLogical)
     }
