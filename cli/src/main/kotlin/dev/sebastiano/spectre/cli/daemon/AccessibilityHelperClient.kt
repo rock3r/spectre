@@ -176,6 +176,10 @@ private fun validateSnapshot(snapshot: AccessibilitySnapshot) {
 
 private fun runHelper(argv: List<String>, stdin: String, timeoutMs: Long): String {
     val process = ProcessBuilder(argv).redirectError(ProcessBuilder.Redirect.INHERIT).start()
+    return exchangeWithHelper(process, stdin, timeoutMs)
+}
+
+internal fun exchangeWithHelper(process: Process, stdin: String, timeoutMs: Long): String {
     val executor = Executors.newFixedThreadPool(2, DaemonThreadFactory)
     val deadlineNanos = System.nanoTime() + (timeoutMs + PROCESS_GRACE_MS) * NANOS_PER_MILLISECOND
     val output =
@@ -207,9 +211,12 @@ private fun runHelper(argv: List<String>, stdin: String, timeoutMs: Long): Strin
         val cleanupDeadline = System.nanoTime() + PROCESS_GRACE_MS * NANOS_PER_MILLISECOND
         val descendants = process.descendants().toList().asReversed()
         descendants.forEach { it.destroyForcibly() }
-        descendants.forEach { interrupted = waitForExit(it, cleanupDeadline) || interrupted }
+        // Start every owned process terminating before spending the shared grace period waiting.
+        // In particular, ProcessHandle's exit notification can precede Process.waitFor updating the
+        // Process object on Windows, so reap the parent through Process itself below.
         process.destroyForcibly()
-        interrupted = waitForExit(process.toHandle(), cleanupDeadline) || interrupted
+        interrupted = waitForExit(process, cleanupDeadline) || interrupted
+        descendants.forEach { interrupted = waitForExit(it, cleanupDeadline) || interrupted }
         input.cancel(true)
         output.cancel(true)
         executor.shutdownNow()
@@ -218,8 +225,22 @@ private fun runHelper(argv: List<String>, stdin: String, timeoutMs: Long): Strin
         } catch (cleanupInterrupted: InterruptedException) {
             interrupted = true
         }
+        val cleanupFailed = process.isAlive || descendants.any { it.isAlive }
         if (interrupted) Thread.currentThread().interrupt()
+        check(!cleanupFailed) { "Accessibility helper did not stop within its cleanup deadline" }
     }
+}
+
+private fun waitForExit(process: Process, deadlineNanos: Long): Boolean {
+    var interrupted = false
+    while (process.isAlive && System.nanoTime() < deadlineNanos) {
+        try {
+            process.waitFor(remainingMillis(deadlineNanos), TimeUnit.MILLISECONDS)
+        } catch (exception: InterruptedException) {
+            interrupted = true
+        }
+    }
+    return interrupted
 }
 
 private fun waitForExit(handle: ProcessHandle, deadlineNanos: Long): Boolean {
