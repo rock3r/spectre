@@ -1,7 +1,14 @@
 package dev.sebastiano.spectre.recording.windows
 
+import dev.sebastiano.spectre.recording.AutoRecorder
 import dev.sebastiano.spectre.recording.RecordingOptions
+import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
+import dev.sebastiano.spectre.recording.screencapturekit.asFramedWindow
+import dev.sebastiano.spectre.recording.screencapturekit.asTitledWindow
+import dev.sebastiano.spectre.recording.screencapturekit.withSharedSckFrames
+import java.awt.EventQueue
+import java.awt.Frame
 import java.awt.Rectangle
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -20,6 +27,115 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class WindowsGraphicsCaptureRecorderTest {
+
+    private fun withWindowsRecorder(
+        test: (AutoRecorder, WindowsGraphicsCaptureRecorder, RecordingProcessFactory, Path) -> Unit
+    ) {
+        val helper = Files.createTempFile("wgc-frame-", ".exe")
+        val factory = RecordingProcessFactory(FakeRecordingProcess())
+        val wgc =
+            WindowsGraphicsCaptureRecorder(
+                WindowsGraphicsCaptureHelperBinaryExtractor(
+                    resourceLocator = { null },
+                    targetDirProvider = { helper.parent },
+                    getenv = { helper.toString() },
+                    osArch = { "amd64" },
+                ),
+                factory,
+            )
+        val router =
+            AutoRecorder(
+                sckRecorder = wgc,
+                macOsRegionRecorder = wgc,
+                windowsWindowRecorder = wgc,
+                windowsRegionRecorder = null,
+                linuxRegionRecorder = null,
+                linuxWindowRecorder = null,
+                waylandPortalRecorder = null,
+                waylandPortalWindowRecorder = null,
+                waylandPortalRecorderFailure = null,
+                waylandPortalWindowRecorderFailure = null,
+                isWindows = { true },
+                isLinux = { false },
+                isMacOs = { false },
+                isWayland = { false },
+            )
+        try {
+            test(router, wgc, factory, helper.resolveSibling("frame.mp4"))
+        } finally {
+            helper.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `public recording routes preserve the owner and device frame independently of crop`() {
+        withWindowsRecorder { router, _, factory, output ->
+            val window = FramedWindow(Rectangle(5, 10, 100, 80), Rectangle(-80, 20, 200, 160))
+
+            for (crop in listOf(null, Rectangle(4, 6, 40, 30))) {
+                router.startWindow(
+                    window,
+                    output,
+                    windowOwnerPid = 1342,
+                    cropInWindow = crop,
+                    scaleX = 2.0,
+                    scaleY = 1.5,
+                )
+                val args = factory.lastArgv.drop(1).chunked(2).associate { it.first() to it.last() }
+                assertFalse("--title" in args)
+                assertEquals("1342", args["--owner-pid"])
+                assertEquals(
+                    listOf("-80", "20", "200", "160"),
+                    listOf("x", "y", "width", "height").map { args["--frame-" + it] },
+                )
+                assertEquals(
+                    if (crop == null) listOf(null, null, null, null)
+                    else listOf("8", "9", "80", "45"),
+                    listOf("x", "y", "width", "height").map { args["--crop-" + it] },
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `shared titled AWT frames select by device bounds through both public recording APIs`() {
+        withSharedSckFrames { left, right ->
+            withWindowsRecorder { router, wgc, factory, output ->
+                val pid = ProcessHandle.current().pid()
+                fun checkCommand(frame: Frame) {
+                    val expected = frame.asFramedWindow().deviceFrame
+                    val args =
+                        factory.lastArgv.drop(1).chunked(2).associate { it.first() to it.last() }
+                    assertFalse("--title" in args)
+                    assertEquals(pid.toString(), args["--owner-pid"])
+                    assertEquals(
+                        listOf(expected.x, expected.y, expected.width, expected.height),
+                        listOf("x", "y", "width", "height").map {
+                            args.getValue("--frame-" + it).toInt()
+                        },
+                    )
+                }
+                for (sameBounds in listOf(false, true)) {
+                    if (sameBounds) EventQueue.invokeAndWait { right.bounds = left.bounds }
+                    for (frame in listOf(left, right)) {
+                        router.startWindow(frame.asTitledWindow(), output)
+                        checkCommand(frame)
+                        router.startWindow(
+                            frame.asTitledWindow(),
+                            output,
+                            cropInWindow = Rectangle(4, 4, 20, 20),
+                        )
+                        checkCommand(frame)
+                        wgc.start(frame.asTitledWindow(), pid, output, RecordingOptions())
+                        checkCommand(frame)
+                    }
+                }
+                assertFailsWith<IllegalArgumentException> {
+                    router.startWindow(left.asTitledWindow(), output, windowOwnerPid = pid + 1)
+                }
+            }
+        }
+    }
 
     @Test
     fun `start spawns helper and waits for ready marker`() {

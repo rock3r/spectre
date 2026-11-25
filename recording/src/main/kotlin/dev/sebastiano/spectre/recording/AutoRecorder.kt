@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.recording
 import dev.sebastiano.spectre.recording.portal.MutterWindowRecorder
 import dev.sebastiano.spectre.recording.portal.WaylandPortalRecorder
 import dev.sebastiano.spectre.recording.portal.WaylandWindowSourceRecorder
+import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
 import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitRecorder
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
@@ -152,20 +153,14 @@ internal constructor(
         val title = nativeTarget.title
         val recorder = windowsWindowRecorder
         if (isWindows()) {
-            require(
-                nativeTarget is dev.sebastiano.spectre.recording.screencapturekit.FramedWindow ||
-                    !title.isNullOrBlank()
-            ) {
+            require(nativeTarget is FramedWindow || !title.isNullOrBlank()) {
                 "AutoRecorder.startWindow requires a title or frame selector on Windows."
             }
             return recorder?.start(nativeTarget, windowOwnerPid, output, options)
                 ?: throw unavailable("Windows window capture", null)
         }
         if (isLinux()) {
-            require(
-                nativeTarget is dev.sebastiano.spectre.recording.screencapturekit.FramedWindow ||
-                    !title.isNullOrBlank()
-            ) {
+            require(nativeTarget is FramedWindow || !title.isNullOrBlank()) {
                 "AutoRecorder.startWindow requires a title or frame selector on Linux X11."
             }
             return linuxWindowRecorder?.start(nativeTarget, windowOwnerPid, output, options)
@@ -278,9 +273,8 @@ internal constructor(
             }
         }
         if (isWindows()) {
-            val title = window.title
-            require(!title.isNullOrBlank()) {
-                "AutoRecorder.startWindow (cropped) requires a non-blank window title on Windows."
+            require(window is FramedWindow || !window.title.isNullOrBlank()) {
+                "AutoRecorder.startWindow (cropped) requires a title or frame selector on Windows."
             }
             val recorder =
                 windowsWindowRecorder ?: throw unavailable("Windows window+crop capture", null)

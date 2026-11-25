@@ -45,6 +45,7 @@ internal constructor(
     private val waylandWindowCapture: (Window) -> BufferedImage = {
         DefaultWaylandWindowStreams.instance.capture(it)
     },
+    private val waylandRegionCapture: ((Command.Screenshot) -> BufferedImage)? = null,
 ) : WindowScreenshotter, RegionScreenshotter {
 
     public constructor() :
@@ -120,7 +121,7 @@ internal constructor(
                 sourceTypes = if (wayland) listOf(SourceType.MONITOR) else emptyList(),
                 displayName =
                     if (wayland) null else displayNameProvider()?.takeIf { it.isNotBlank() },
-                cursorMode = CursorMode.HIDDEN,
+                cursorMode = if (wayland) null else CursorMode.HIDDEN,
                 region = region.toProtocolRegion(),
                 screenSize = if (wayland) awtDisplayBoundsContaining(region)?.toWire() else null,
                 output = tempPng().toAbsolutePath().toString(),
@@ -196,6 +197,9 @@ internal constructor(
     }
 
     private fun captureViaSession(command: Command.Screenshot): BufferedImage {
+        waylandRegionCapture?.let {
+            return it(command)
+        }
         val output = Path.of(command.output)
         try {
             output.toAbsolutePath().parent?.let(Files::createDirectories)

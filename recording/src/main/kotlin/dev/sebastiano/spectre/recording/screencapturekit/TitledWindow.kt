@@ -27,8 +27,11 @@ internal interface AwtWindowBacked {
     val awtWindow: Window?
 }
 
-/** ScreenCaptureKit matches titles by substring and frames in global logical points. */
-internal fun TitledWindow.screenCaptureKitFrame(ownerPid: Long): FramedWindow? {
+/** Resolve an AWT frame when the backend cannot uniquely select the window by title. */
+internal fun TitledWindow.ownerScopedFrame(
+    ownerPid: Long,
+    matchesSubstring: Boolean,
+): FramedWindow? {
     val awt = (this as? AwtWindowBacked)?.awtWindow ?: return this as? FramedWindow
     require(ownerPid == ProcessHandle.current().pid()) {
         "The AWT capture target belongs to this JVM"
@@ -38,7 +41,7 @@ internal fun TitledWindow.screenCaptureKitFrame(ownerPid: Long): FramedWindow? {
         when {
             this is FramedWindow -> this
             title.isNullOrBlank() ||
-                NativeWindowCaptureBridge.isSharedTitle(awt, title, matchesSubstring = true) ->
+                NativeWindowCaptureBridge.isSharedTitle(awt, title, matchesSubstring) ->
                 awt.asFramedWindow()
             else -> null
         }

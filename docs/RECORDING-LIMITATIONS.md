@@ -252,6 +252,29 @@ X11, macOS, and Windows keep their input and capture paths.
 
   The portal picker exposes no verifiable window identity. Explicit portal window requests fail before a grant or restore token is used.
 
+  Region stills taken by `LinuxNativeScreenshotter.captureRegion()` and the shared Wayland
+  session use that session's compositor-provided `Embedded` cursor stream. Consequently, these
+  ordinary APIs capture the cursor when the compositor supplies it; they do **not** promise a
+  cursor-free image. Their protocol command deliberately omits `cursor_mode`, meaning “use the
+  active session's cursor semantics.” An explicit `Embedded` request is accepted. Explicit
+  `Hidden` and `Metadata` requests fail rather than silently returning pixels with different
+  cursor semantics, because a cursor mode cannot be changed after the portal stream is opened.
+  X11 still capture continues to request a hidden cursor explicitly.
+
+  **`WaylandPortalWindowRecorder` needs `xprop` on `PATH` and GTK/Mutter frame extents.**
+  Mutter includes invisible shadows in window streams, often 25 px per side for
+  GNOME GTK client-side decoration. `Frame.getBounds()` covers only the inner window.
+  `WaylandPortalWindowRecorder` queries `_GTK_FRAME_EXTENTS(CARDINAL)` through `xprop`
+  on the JFrame's XWayland window. It uses that value to place the stream-relative crop.
+  Without the extents, the crop can clip the title bar close button.
+  Debian and Ubuntu provide `xprop` in `x11-utils`. Minimal images may need that package.
+  The recorder throws `IllegalStateException` when `xprop` is missing, the title is blank,
+  or the window manager does not publish `_GTK_FRAME_EXTENTS`.
+  Older Mutter, non-GTK decoration, and KDE Plasma may lack the property.
+  Use `AutoRecorder.startRegion(...)` or `WaylandPortalRecorder` for explicit region capture.
+  Installing `xprop` cannot make Qt, JavaFX, Electron, SDL, KDE, or wlroots windows
+  publish the GTK property.
+
   **HiDPI / mixed AWT and portal coordinates.** On fractional-scale Wayland, AWT/XWayland
   often reports a larger virtual desktop than the ScreenCast stream. For example,
   AWT may report 2560×1440 while the portal supplies 1536×864. Region capture

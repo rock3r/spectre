@@ -1170,6 +1170,16 @@ tasks.register<JavaExec>("runWindowsGraphicsCaptureRecordingSmoke") {
     mainClass.set("dev.sebastiano.spectre.recording.WindowsGraphicsCaptureRecordingSmoke")
 }
 
+tasks.register<JavaExec>("runWindowsDuplicateTitleRecordingSmoke") {
+    group = "verification"
+    description =
+        "Records and decodes two same-title windows with and without a crop (requires ffmpeg)."
+    onlyIf { OperatingSystem.current().isWindows }
+    dependsOn(assembleWindowsScreenshotHelper)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.WindowsDuplicateTitleRecordingSmoke")
+}
+
 tasks.register<JavaExec>("runWindowsGraphicsCaptureRegionSmoke") {
     group = "verification"
     description =

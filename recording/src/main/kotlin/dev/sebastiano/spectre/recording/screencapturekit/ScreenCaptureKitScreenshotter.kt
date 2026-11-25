@@ -31,7 +31,7 @@ internal constructor(
         this(HelperBinaryExtractor(), ScreenCaptureKitRecorder.SystemProcessFactory)
 
     override fun captureWindow(window: TitledWindow, windowOwnerPid: Long): BufferedImage {
-        val framed = window.screenCaptureKitFrame(windowOwnerPid)
+        val framed = window.ownerScopedFrame(windowOwnerPid, matchesSubstring = true)
         if (framed != null) {
             return captureFromSession(windowOwnerPid, titleContains = null, frame = framed)
         }

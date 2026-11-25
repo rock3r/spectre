@@ -60,6 +60,12 @@ public sealed class CompressedWindowRecorderTests
                 .WaitAsync(TimeSpan.FromSeconds(30));
             var decoded = await DecodeFirstFrameAsync(output);
             Assert.True(decoded.PixelAt(Width / 2, Height / 4).IsRed);
+            // Media Foundation reports 66.6333 ms for two 30 fps samples on Windows.
+            // Allow 50 microseconds of mux rounding, well below a single 33.3 ms sample.
+            var twoSamples = TimeSpan.FromTicks(2 * TimeSpan.TicksPerSecond / 30);
+            Assert.True(
+                decoded.Duration >= twoSamples - TimeSpan.FromMicroseconds(50),
+                $"Expected two complete sample durations before end-of-stream; got {decoded.Duration}.");
         }
         finally
         {
@@ -117,7 +123,8 @@ public sealed class CompressedWindowRecorderTests
     {
         var file = await StorageFile.GetFileFromPathAsync(path);
         var composition = new MediaComposition();
-        composition.Clips.Add(await MediaClip.CreateFromFileAsync(file));
+        var clip = await MediaClip.CreateFromFileAsync(file);
+        composition.Clips.Add(clip);
         using var image =
             await composition.GetThumbnailAsync(
                 TimeSpan.Zero,
@@ -132,10 +139,10 @@ public sealed class CompressedWindowRecorderTests
                 new BitmapTransform(),
                 ExifOrientationMode.IgnoreExifOrientation,
                 ColorManagementMode.DoNotColorManage);
-        return new DecodedFrame(pixels.DetachPixelData(), (int)decoder.PixelWidth);
+        return new DecodedFrame(pixels.DetachPixelData(), (int)decoder.PixelWidth, clip.OriginalDuration);
     }
 
-    private sealed record DecodedFrame(byte[] Bgra, int Width)
+    private sealed record DecodedFrame(byte[] Bgra, int Width, TimeSpan Duration)
     {
         public Pixel PixelAt(int x, int y)
         {

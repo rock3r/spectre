@@ -135,7 +135,7 @@ internal constructor(
             )
         }
 
-        val framed = window.screenCaptureKitFrame(windowOwnerPid)
+        val framed = window.ownerScopedFrame(windowOwnerPid, matchesSubstring = true)
         val argv =
             HelperArguments(
                     source = HelperSource.Window,

@@ -292,6 +292,12 @@ internal static class Program
         {
             throw new InvalidOperationException($"The captured window owned by pid {ownerPid} was closed.", error);
         }
+        catch (Exception error) when (options.Crop != null && error.HResult == unchecked((int)0xC00D6D60))
+        {
+            throw new InvalidOperationException(
+                $"Media Foundation could not set a stream type for the {frameSource.Width}x{frameSource.Height} " +
+                "H.264 window crop (MF_E_TRANSFORM_TYPE_NOT_SET, 0xC00D6D60). Try a larger crop.", error);
+        }
         finally
         {
             finished.Cancel();

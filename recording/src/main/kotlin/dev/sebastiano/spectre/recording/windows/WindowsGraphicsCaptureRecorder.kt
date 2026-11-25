@@ -9,6 +9,7 @@ import dev.sebastiano.spectre.recording.RecordingResultProvider
 import dev.sebastiano.spectre.recording.recordingFileStamp
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import dev.sebastiano.spectre.recording.screencapturekit.WindowRecorder
+import dev.sebastiano.spectre.recording.screencapturekit.ownerScopedFrame
 import dev.sebastiano.spectre.recording.validateRecordingOutput
 import java.awt.Rectangle
 import java.io.BufferedReader
@@ -69,9 +70,10 @@ internal constructor(
         options: RecordingOptions,
         cropDevicePixels: Rectangle?,
     ): RecordingHandle {
-        val title = window.title
-        require(!title.isNullOrBlank()) {
-            "WindowsGraphicsCaptureRecorder requires a non-blank window title; got \"$title\"."
+        val frame = window.ownerScopedFrame(windowOwnerPid, matchesSubstring = false)?.deviceFrame
+        val title = if (frame == null) window.title else null
+        require(frame != null || !title.isNullOrBlank()) {
+            "WindowsGraphicsCaptureRecorder requires a frame or a non-blank window title; got \"$title\"."
         }
         validateOptions(options)
         output.toAbsolutePath().parent?.let(Files::createDirectories)
@@ -89,6 +91,7 @@ internal constructor(
                     mode = WindowsGraphicsCaptureMode.Recording,
                     source = WindowsGraphicsCaptureSource.Window,
                     title = title,
+                    frame = frame,
                     ownerPid = windowOwnerPid,
                     crop = cropDevicePixels,
                     output = output,
