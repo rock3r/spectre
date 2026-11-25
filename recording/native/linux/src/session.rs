@@ -440,6 +440,11 @@ fn with_state(
 }
 
 fn run_screenshot(state: &Mutex<SessionState>, command: ScreenshotCommand) -> Result<u64> {
+    if command.cursor_mode != crate::protocol::CursorMode::Embedded {
+        anyhow::bail!(
+            "the active Wayland RemoteDesktop grant embeds the cursor; hidden cursor screenshot cannot be honored"
+        );
+    }
     let output = PathBuf::from(&command.output);
     let (stream, owned) = {
         let guard = state.lock().expect("session mutex");
@@ -455,6 +460,11 @@ fn run_recording_start(
     start: StartCommand,
     client_id: u64,
 ) -> Result<Event> {
+    if start.cursor_mode != crate::protocol::CursorMode::Embedded {
+        anyhow::bail!(
+            "the active Wayland RemoteDesktop grant embeds the cursor; hidden cursor capture cannot be honored"
+        );
+    }
     let mut guard = state.lock().expect("session mutex");
     if guard.recording.is_some() {
         anyhow::bail!("a recording is already running on the Spectre Wayland session");
@@ -527,7 +537,7 @@ fn stop_recording(state: &Mutex<SessionState>) -> Result<u64> {
             if !status.success() {
                 anyhow::bail!("gst-launch exited with status {status:?}");
             }
-            return Ok(std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0));
+            return crate::recorder::finalized_size(&output);
         }
         if std::time::Instant::now() >= deadline {
             let _ = kill(Pid::from_raw(gst_pid_i32(pid)), Signal::SIGKILL);

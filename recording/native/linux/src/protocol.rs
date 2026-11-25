@@ -132,7 +132,7 @@ pub enum CaptureTarget {
     Window,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceType {
     Monitor,
@@ -140,7 +140,7 @@ pub enum SourceType {
     Virtual,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CursorMode {
     /// Cursor not drawn into the captured frames.

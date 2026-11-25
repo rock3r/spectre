@@ -66,7 +66,9 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
         request: DaemonRequest,
     ) {
         val requiredVersion = DaemonProtocol.minimumDaemonVersion(request)
-        DaemonWireCodec.writeRequest(output, DaemonRequest.Hello(requiredVersion))
+        val hello =
+            DaemonRequest.Hello(requiredVersion).also { it.acceptsShutdownRecordings = true }
+        DaemonWireCodec.writeRequest(output, hello)
         when (val response = DaemonWireCodec.readResponse(input)) {
             is DaemonResponse.Hello -> {
                 val compatibility =

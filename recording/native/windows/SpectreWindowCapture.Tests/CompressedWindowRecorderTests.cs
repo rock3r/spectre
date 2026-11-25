@@ -11,6 +11,17 @@ public sealed class CompressedWindowRecorderTests
     private const int Height = 120;
 
     [Fact]
+    public void BitrateScalesWithResolutionAndFrameRate()
+    {
+        var hd = CompressedWindowRecorder.BitrateFor(1280, 720, 30);
+        var fourK = CompressedWindowRecorder.BitrateFor(3840, 2160, 30);
+        var fourKSixty = CompressedWindowRecorder.BitrateFor(3840, 2160, 60);
+
+        Assert.True(fourK > hd);
+        Assert.True(fourKSixty > fourK);
+    }
+
+    [Fact]
     public async Task RecordsFramesTopRowFirst()
     {
         // Top half red, bottom half blue: a vertical flip swaps the two halves.
@@ -35,6 +46,52 @@ public sealed class CompressedWindowRecorderTests
         {
             File.Delete(output);
         }
+    }
+
+    [Fact]
+    public async Task ImmediateStopAfterReadyStillWritesFirstFrame()
+    {
+        var output = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.mp4");
+        try
+        {
+            using var stop = new CancellationTokenSource();
+            var source = new FixedFrameSource(TwoBandFrame(Width, Height), Width, Height, stop, 2);
+            await CompressedWindowRecorder.EncodeAsync(output, 30, source, stop.Token, stop.Cancel)
+                .WaitAsync(TimeSpan.FromSeconds(30));
+            var decoded = await DecodeFirstFrameAsync(output);
+            Assert.True(decoded.PixelAt(Width / 2, Height / 4).IsRed);
+        }
+        finally
+        {
+            File.Delete(output);
+        }
+    }
+
+    [Fact]
+    public async Task MissingFirstFramePreservesExistingFileAndDoesNotAnnounceReady()
+    {
+        var output = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(output, "previous movie");
+            bool ready = false;
+            await Assert.ThrowsAsync<TimeoutException>(() => CompressedWindowRecorder.EncodeAsync(
+                output, 30, new NoFrameSource(), CancellationToken.None, () => ready = true));
+            Assert.False(ready);
+            Assert.Equal("previous movie", await File.ReadAllTextAsync(output));
+        }
+        finally
+        {
+            File.Delete(output);
+        }
+    }
+
+    private sealed class NoFrameSource : IRecordingFrameSource
+    {
+        public int Width => CompressedWindowRecorderTests.Width;
+        public int Height => CompressedWindowRecorderTests.Height;
+        public byte[]? WaitForFrameBytes(CancellationToken token) => null;
+        public byte[]? LatestFrameBytes() => null;
     }
 
     private static byte[] TwoBandFrame(int width, int height)

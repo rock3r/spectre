@@ -5,12 +5,14 @@ internal object CaptureSessionReport {
     fun forDetach(
         sessionId: String,
         ledger: CaptureLedger = CaptureLifecycle.ledger(),
+        finalizedRecordingPath: String? = null,
     ): DaemonResponse.Detached {
         val entries = ledger.entriesForSession(sessionId)
         val bytes = entries.sumOf { it.sizeBytes }
         val paths = entries.map { it.path }
         return DaemonResponse.Detached(
             sessionId = sessionId,
+            finalizedRecordingPath = finalizedRecordingPath,
             captureCount = entries.size,
             captureBytes = bytes,
             capturePaths = paths,

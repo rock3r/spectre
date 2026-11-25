@@ -134,6 +134,22 @@ class SpectreMcpServerTest {
     }
 
     @Test
+    fun `record stop returns backend diagnostics including unavailable values`() = runBlocking {
+        val server = SpectreMcpServer.create { request ->
+            assertIs<DaemonRequest.StopRecording>(request)
+            DaemonResponse.RecordingStopped(request.sessionId, "/capture.mp4").also {
+                it.diagnostics = DaemonResponse.RecordingDiagnostics(null, true)
+            }
+        }
+        val result =
+            invokeTool(server, "record_stop", buildJsonObject { put("session_id", "pid-3") })
+        val body = Json.parseToJsonElement((result.content.single() as TextContent).text).jsonObject
+        val diagnostics = body.getValue("diagnostics").jsonObject
+        assertEquals("null", diagnostics.getValue("droppedFrames").jsonPrimitive.content)
+        assertEquals("true", diagnostics.getValue("cropFixedAtStart").jsonPrimitive.content)
+    }
+
+    @Test
     fun `detach tool returns Detached cleanup summary JSON via daemon protocol`() = runBlocking {
         val seen = mutableListOf<DaemonRequest>()
         val server = SpectreMcpServer.create { request ->

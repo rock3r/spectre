@@ -252,8 +252,59 @@ internal static class Program
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(options.Output)) ?? ".");
-        await RecordAsync(options, frameSource);
+        var ownerPid = options.OwnerPid!.Value;
+        using var owner = OpenProcess(Synchronize, false, checked((uint)ownerPid));
+        // Open the original process handle before READY so PID reuse cannot revive this capture.
+        if (owner.IsInvalid)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), $"Cannot monitor captured window owner {ownerPid}.");
+        bool WindowClosed() => frameSource.CaptureItemClosed || WaitForSingleObject(owner, 0) != WaitTimeout ||
+            !IsWindow(hwnd) || !TryGetWindowThreadProcessId(hwnd, out var pid) || pid != ownerPid;
+
+        var destination = Path.GetFullPath(options.Output);
+        var temporary = Path.Combine(Path.GetDirectoryName(destination)!, $".spectre-{Guid.NewGuid():N}.mp4");
+        using var abort = new CancellationTokenSource();
+        using var finished = new CancellationTokenSource();
+        var monitor = MonitorWindowAsync(WindowClosed, abort, finished.Token);
+        try
+        {
+            await RecordAsync(options with { Output = temporary }, frameSource, abort.Token);
+            if (WindowClosed() || abort.IsCancellationRequested)
+                throw new InvalidOperationException("The captured window was closed.");
+            File.Move(temporary, destination, overwrite: true);
+        }
+        catch (Exception error) when (abort.IsCancellationRequested || WindowClosed())
+        {
+            throw new InvalidOperationException($"The captured window owned by pid {ownerPid} was closed.", error);
+        }
+        finally
+        {
+            finished.Cancel();
+            try { await monitor; }
+            finally { File.Delete(temporary); }
+        }
         return 0;
+    }
+
+    private const uint Synchronize = 0x00100000;
+    private const uint WaitTimeout = 258;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern Microsoft.Win32.SafeHandles.SafeProcessHandle OpenProcess(
+        uint access, bool inheritHandle, uint processId);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint WaitForSingleObject(Microsoft.Win32.SafeHandles.SafeProcessHandle handle, uint milliseconds);
+
+    private static async Task MonitorWindowAsync(
+        Func<bool> windowClosed, CancellationTokenSource abort, CancellationToken finished)
+    {
+        try
+        {
+            while (!windowClosed())
+                await Task.Delay(100, finished);
+            abort.Cancel();
+        }
+        catch (OperationCanceledException) when (finished.IsCancellationRequested) { }
     }
 
     private static async Task RecordRegionAsync(Options options)
@@ -270,9 +321,9 @@ internal static class Program
         await RecordAsync(options, frameSource);
     }
 
-    private static async Task RecordAsync(Options options, WgcFrameSource frameSource)
+    private static async Task RecordAsync(Options options, WgcFrameSource frameSource, CancellationToken abort = default)
     {
-        var stopSignal = new CancellationTokenSource();
+        var stopSignal = CancellationTokenSource.CreateLinkedTokenSource(abort);
         _ = Task.Run(() => WaitForStopCommand(stopSignal));
         try
         {
@@ -285,7 +336,7 @@ internal static class Program
                 {
                     Console.Out.WriteLine("READY");
                     Console.Out.Flush();
-                });
+                }, abort);
         }
         finally
         {
@@ -505,6 +556,10 @@ internal static class Program
         private Direct3D11CaptureFrame? heldFrame;
         private long frameCount;
         private bool disposed;
+        private volatile bool captureItemClosed;
+        public bool CaptureItemClosed => captureItemClosed;
+        private SizeInt32 poolSize;
+        private readonly bool fitWholeWindow;
 
         private WgcFrameSource(
             CanvasDevice canvasDevice,
@@ -513,8 +568,11 @@ internal static class Program
             GraphicsCaptureSession session,
             CaptureRect crop,
             (int Width, int Height) outputSize,
-            bool copyOnRequest)
+            bool copyOnRequest,
+            SizeInt32 initialPoolSize,
+            bool fitWholeWindow)
         {
+            this.fitWholeWindow = fitWholeWindow;
             this.canvasDevice = canvasDevice;
             this.item = item;
             this.framePool = framePool;
@@ -523,6 +581,8 @@ internal static class Program
             this.copyOnRequest = copyOnRequest;
             Width = outputSize.Width;
             Height = outputSize.Height;
+            poolSize = initialPoolSize;
+            item.Closed += OnCaptureItemClosed;
         }
 
         public int Width { get; }
@@ -545,7 +605,8 @@ internal static class Program
                 padToEven
                     ? (Even(crop.Width), Even(crop.Height))
                     : (crop.Width, crop.Height);
-            return Start(canvasDevice, item, captureCursor, crop, outputSize, copyOnRequest);
+            return Start(canvasDevice, item, captureCursor, crop, outputSize, copyOnRequest,
+                fitWholeWindow: cropInWindow is null && padToEven);
         }
 
         private static CaptureRect ClampCropToItem(CaptureRect crop, CaptureRect itemBounds)
@@ -803,9 +864,11 @@ internal static class Program
             bool captureCursor,
             CaptureRect crop,
             (int Width, int Height) outputSize,
-            bool copyOnRequest = false)
+            bool copyOnRequest = false,
+            bool fitWholeWindow = false)
         {
-            if (item.Size.Width <= 0 || item.Size.Height <= 0)
+            var initialSize = item.Size;
+            if (initialSize.Width <= 0 || initialSize.Height <= 0)
             {
                 throw new InvalidOperationException(
                     $"Capture item has invalid size {item.Size.Width}x{item.Size.Height}.");
@@ -816,7 +879,7 @@ internal static class Program
                     canvasDevice,
                     DirectXPixelFormat.B8G8R8A8UIntNormalized,
                     numberOfBuffers: 2,
-                    item.Size);
+                    initialSize);
             var session = framePool.CreateCaptureSession(item);
             TrySetCursorCapture(session, captureCursor);
             try
@@ -828,7 +891,7 @@ internal static class Program
                 Console.Error.WriteLine($"Could not disable the capture border: {e.Message}");
             }
             var source =
-                new WgcFrameSource(canvasDevice, item, framePool, session, crop, outputSize, copyOnRequest);
+                new WgcFrameSource(canvasDevice, item, framePool, session, crop, outputSize, copyOnRequest, initialSize, fitWholeWindow);
             framePool.FrameArrived += source.OnFrameArrived;
             session.StartCapture();
             return source;
@@ -838,6 +901,10 @@ internal static class Program
         {
             while (!stopToken.IsCancellationRequested)
             {
+                if (captureItemClosed)
+                {
+                    throw new InvalidOperationException("The captured window was closed.");
+                }
                 bool hasFrame;
                 try
                 {
@@ -852,6 +919,10 @@ internal static class Program
                 {
                     lock (frameLock)
                     {
+                        if (captureItemClosed)
+                        {
+                            throw new InvalidOperationException("The captured window was closed.");
+                        }
                         return latestFrame?.ToArray();
                     }
                 }
@@ -868,6 +939,10 @@ internal static class Program
         {
             lock (frameLock)
             {
+                if (captureItemClosed)
+                {
+                    throw new InvalidOperationException("The captured window was closed.");
+                }
                 return latestFrame;
             }
         }
@@ -944,12 +1019,24 @@ internal static class Program
                 heldFrame?.Dispose();
                 heldFrame = null;
                 framePool.FrameArrived -= OnFrameArrived;
+                item.Closed -= OnCaptureItemClosed;
                 session.Dispose();
                 framePool.Dispose();
                 canvasDevice.Dispose();
             }
 
             frameAvailable.Dispose();
+        }
+
+        private void OnCaptureItemClosed(GraphicsCaptureItem sender, object args)
+        {
+            lock (frameLock)
+            {
+                if (disposed) return;
+                captureItemClosed = true;
+                Monitor.PulseAll(frameLock);
+                frameAvailable.Set();
+            }
         }
 
         private void OnFrameArrived(Direct3D11CaptureFramePool sender, object args)
@@ -977,19 +1064,45 @@ internal static class Program
                     return;
                 }
 
-                using var frame = sender.TryGetNextFrame();
-                if (frame is null)
+                SizeInt32 size;
+                using (var frame = sender.TryGetNextFrame())
                 {
-                    return;
+                    if (frame is null) return;
+                    size = frame.ContentSize;
+                    if (size.Width <= 0 || size.Height <= 0) return;
+                    if (size.Width == poolSize.Width && size.Height == poolSize.Height)
+                    {
+                        using var bitmap = CanvasBitmap.CreateFromDirect3D11Surface(canvasDevice, frame.Surface);
+                        latestFrame = fitWholeWindow && (size.Width != crop.Width || size.Height != crop.Height)
+                            ? FitResizedWindow(bitmap, size)
+                            : CopyFrameBytes(bitmap, size, crop, Width, Height);
+                        frameAvailable.Set();
+                        return;
+                    }
                 }
 
-                using var bitmap =
-                    CanvasBitmap.CreateFromDirect3D11Surface(canvasDevice, frame.Surface);
-                var bytes = CopyFrameBytes(bitmap, frame.ContentSize, crop, Width, Height);
-                latestFrame = bytes;
-
-                frameAvailable.Set();
+                // Recreate only after releasing the old frame. The next frame covers the new surface.
+                framePool.Recreate(canvasDevice, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, size);
+                poolSize = size;
             }
+        }
+
+        private byte[] FitResizedWindow(CanvasBitmap bitmap, SizeInt32 size)
+        {
+            // Preserve the initial video dimensions and fit the entire new window inside them.
+            using var target = new CanvasRenderTarget(canvasDevice, Width, Height, 96);
+            using (var drawing = target.CreateDrawingSession())
+            {
+                drawing.Clear(Windows.UI.Color.FromArgb(255, 0, 0, 0));
+                var scale = Math.Min((double)Width / size.Width, (double)Height / size.Height);
+                var width = scale * size.Width;
+                var height = scale * size.Height;
+                drawing.DrawImage(bitmap,
+                    new Windows.Foundation.Rect((Width - width) / 2, (Height - height) / 2, width, height),
+                    new Windows.Foundation.Rect(0, 0, size.Width, size.Height));
+            }
+
+            return target.GetPixelBytes();
         }
 
         private static byte[] CopyFrameBytes(
@@ -1024,27 +1137,9 @@ internal static class Program
                     output,
                     destinationRow,
                     copyBytesPerRow);
-                for (var x = sourceWidth; x < outputWidth; x++)
-                {
-                    Buffer.BlockCopy(
-                        output,
-                        destinationRow + (sourceWidth - 1) * 4,
-                        output,
-                        destinationRow + x * 4,
-                        4);
-                }
             }
 
-            for (var y = sourceHeight; y < outputHeight; y++)
-            {
-                Buffer.BlockCopy(
-                    output,
-                    (sourceHeight - 1) * outputStride,
-                    output,
-                    y * outputStride,
-                    outputStride);
-            }
-
+            // Keep the encoded dimensions fixed and pad uncovered pixels after a resize.
             return output;
         }
 
@@ -1153,8 +1248,11 @@ internal static class Program
                     "Windows.Graphics.Capture.GraphicsCaptureSession",
                     "IsCursorCaptureEnabled"))
             {
-                Console.Error.WriteLine(
-                    "IsCursorCaptureEnabled is not present; leaving the default cursor capture.");
+                if (!captureCursor)
+                {
+                    throw new PlatformNotSupportedException(
+                        "This Windows build cannot disable cursor capture as requested.");
+                }
                 return;
             }
 
@@ -1164,9 +1262,12 @@ internal static class Program
             }
             catch (ArgumentException e)
             {
-                Console.Error.WriteLine(
-                    $"IsCursorCaptureEnabled={captureCursor} was rejected ({e.Message}); " +
-                    "continuing with the default.");
+                if (!captureCursor)
+                {
+                    throw new InvalidOperationException(
+                        "Windows rejected the request to disable cursor capture.", e);
+                }
+                Console.Error.WriteLine($"IsCursorCaptureEnabled=true was rejected: {e.Message}");
             }
         }
     }
