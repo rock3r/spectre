@@ -181,7 +181,7 @@ def validate_image(path, wanted):
 def lookup(connection, pid, candidate_xid, label):
     (window_id,) = call(
         connection, BUS, IDENTITY_PATH, BUS, "LookupWindow",
-        GLib.Variant("(ut)", (pid, candidate_xid)), GLib.VariantType.new("(u)"),
+        GLib.Variant("(ut)", (pid, candidate_xid)), GLib.VariantType.new("(t)"),
     )
     log(f"LookupWindow({label}, pid={pid}, xid={candidate_xid}) returned {window_id}")
     return window_id

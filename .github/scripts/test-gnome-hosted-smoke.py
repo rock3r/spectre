@@ -12,11 +12,13 @@ DRIVER = ROOT / ".github/scripts/gnome-hosted-smoke.sh"
 SESSION = ROOT / ".github/scripts/gnome-hosted-smoke-session.sh"
 BRANCH = "release-0.10/gnome-hosted-smoke"
 CANDIDATE = "7ececf7a7ac361d87417bb07108cc475f7cf890e"
-ATSPI_SHA = "f4044ce86653ba2f60153e2759d208e7e759e3ae"
+ATSPI_SHA = "ebda65d1c23604dbea9dccc987293259afe3c0ef"
+FIXTURE_SHA = "96cd6cb20e44d5d26a4cfb93d8a3f8e1b6375aa8"
 IDENTITY = ROOT / ".github/scripts/gnome-window-identity-probe.py"
 MUTTER_CONTROL = ROOT / ".github/scripts/gnome-mutter-control-probe.py"
 VERIFICATION_EXTENSION = ROOT / ".github/gnome-shell-extensions/spectre-mutter-control-verification@sebastiano.dev/extension.js"
 WARMUP = ROOT / ".github/scripts/gnome-portal-dialog-warmup.py"
+ATSPI_OWNERSHIP = ROOT / ".github/scripts/gnome-atspi-ownership-probe.py"
 
 
 class GnomeHostedSmokeContractTest(unittest.TestCase):
@@ -36,12 +38,54 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
         self.assertIn("runs-on: ubuntu-24.04", self.workflow)
 
     def test_candidate_and_atspi_patch_are_immutable(self):
-        self.assertIn(f"ref: {CANDIDATE}", self.workflow)
+        self.assertIn(f"default: {CANDIDATE}", self.workflow)
+        self.assertIn("ref: ${{ inputs.candidate_sha ||", self.workflow)
         self.assertIn(ATSPI_SHA, self.workflow)
+        self.assertIn(FIXTURE_SHA, self.workflow)
         self.assertNotRegex(self.workflow, r"refs/pull/716|pull/716/(head|merge)")
         self.assertIn("path: atspi-reader", self.workflow)
         self.assertIn("path: fixture", self.workflow)
         self.assertIn("tests/accessibility_xvfb.sh", self.session)
+        self.assertIn("candidate_sha:", self.workflow)
+        self.assertIn("CANDIDATE_SHA must be a full lowercase SHA", self.driver)
+
+    def test_atspi_ownership_is_independent_bounded_hosted_evidence(self):
+        probe = ATSPI_OWNERSHIP.read_text()
+        self.assertIn("atspi-ownership", self.workflow)
+        self.assertIn('SMOKE_MODE" == atspi-ownership', self.session)
+        self.assertEqual(
+            self.workflow.count("matrix.mode == 'accessibility' || matrix.mode == 'atspi-ownership'"),
+            3,
+        )
+        for contract in (
+            "REPETITIONS = 8",
+            "QUERY_TIMEOUT_MS = 5000",
+            '"timeoutMs": timeout_ms',
+            '"processId": fixture_pids[0]',
+            '"processId": fixture_pids[1]',
+            '"processId": verification_pid',
+            '"ambiguous-title"',
+            '"deadline-1ms"',
+            'for desired_status in (False, True)',
+            '"settingsBefore"',
+            '"settingsAfter"',
+            '"elapsedMs"',
+            '"fixturePids"',
+            '"reply"',
+            '"summary.json"',
+            '"junit.xml"',
+            "write_bytes(run.stdout)",
+            '"sha": "f4044ce86653ba2f60153e2759d208e7e759e3ae"',
+            '"observationRun": 10',
+            '"typedTimeoutOccurrences"',
+            'if "DISPLAY" in os.environ',
+            "ready PID",
+            'error.get("code") == "target-not-found"',
+            'error.get("code") == "timeout"',
+        ):
+            self.assertIn(contract, probe)
+        self.assertNotIn("pkill", probe)
+        self.assertNotIn("killall", probe)
 
     def test_driver_requires_real_systemd_kvm_and_logind(self):
         for contract in (
@@ -78,7 +122,7 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
 
     def test_identity_is_independent_public_api_evidence(self):
         identity = IDENTITY.read_text()
-        self.assertIn("mode: [portal, capture, accessibility, identity, mutter-control]", self.workflow)
+        self.assertIn("mode: [portal, capture, accessibility, atspi-ownership, identity, mutter-control]", self.workflow)
         self.assertIn("SMOKE_MODE\" == identity", self.session)
         for contract in ("LookupWindow", "RecordWindow", "PipeWireStreamAdded", "gst-launch-1.0",
                          "focusSamples", "focusObservedXids", "interiorColorCounts", "pipeWireNode"):
@@ -88,7 +132,7 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
     def test_mutter_control_uses_separate_caller_owned_verification_service(self):
         probe = MUTTER_CONTROL.read_text()
         extension = VERIFICATION_EXTENSION.read_text()
-        self.assertIn("mode: [portal, capture, accessibility, identity, mutter-control]", self.workflow)
+        self.assertIn("mode: [portal, capture, accessibility, atspi-ownership, identity, mutter-control]", self.workflow)
         self.assertIn('SMOKE_MODE" == mutter-control', self.session)
         for contract in (
             "GetConnectionUnixProcessID", "get_client_type()", "Meta.WindowClientType.X11",

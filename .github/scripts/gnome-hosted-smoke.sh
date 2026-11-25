@@ -51,6 +51,7 @@ apt-get install -y --no-install-recommends \
   gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-pipewire
 
 id "$SMOKE_USER"
+[[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "CANDIDATE_SHA must be a full lowercase SHA" >&2; exit 1; }
 test "$(git -c safe.directory="$SMOKE_REPO" -C "$SMOKE_REPO" rev-parse HEAD)" = "$CANDIDATE_SHA"
 SMOKE_HOME=$(getent passwd "$SMOKE_USER" | cut -d: -f6)
 

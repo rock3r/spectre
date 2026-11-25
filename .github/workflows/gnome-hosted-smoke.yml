@@ -2,6 +2,11 @@ name: Temporary GNOME hosted smoke
 
 on:
   workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Full SHA of the original release-candidate base checkout
+        required: false
+        default: 7ececf7a7ac361d87417bb07108cc475f7cf890e
   push:
     branches: [release-0.10/gnome-hosted-smoke]
     paths-ignore:
@@ -20,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [portal, capture, accessibility, identity, mutter-control]
+        mode: [portal, capture, accessibility, atspi-ownership, identity, mutter-control]
 
     steps:
       - name: Check out temporary workflow tooling
@@ -32,20 +37,29 @@ jobs:
       - name: Check out the release candidate
         uses: actions/checkout@v6
         with:
-          ref: 7ececf7a7ac361d87417bb07108cc475f7cf890e
+          ref: ${{ inputs.candidate_sha || '7ececf7a7ac361d87417bb07108cc475f7cf890e' }}
           persist-credentials: false
           path: candidate
 
       - name: Check out full AT-SPI reader candidate
-        if: matrix.mode == 'accessibility'
+        if: matrix.mode == 'accessibility' || matrix.mode == 'atspi-ownership'
         uses: actions/checkout@v6
         with:
-          ref: f4044ce86653ba2f60153e2759d208e7e759e3ae
+          ref: ebda65d1c23604dbea9dccc987293259afe3c0ef
           persist-credentials: false
           path: atspi-reader
 
+      - name: Apply and verify canonical reader candidate
+        if: matrix.mode == 'accessibility' || matrix.mode == 'atspi-ownership'
+        working-directory: atspi-reader
+        run: |
+          patch="$GITHUB_WORKSPACE/smoke-tooling/.github/reader-overlays/canonical-atspi.patch"
+          printf '%s  %s\n' 63df1beae77c775c5862ddf44ac6f2b23f0e72c2697b15cecd49579c8bc89316 "$patch" | sha256sum -c -
+          git apply --index "$patch"
+          test "$(git write-tree)" = 4f8fbefa6e79a6cbfa86e38789f5f8bf7136e6c7
+
       - name: Check out native accessibility fixture
-        if: matrix.mode == 'accessibility'
+        if: matrix.mode == 'accessibility' || matrix.mode == 'atspi-ownership'
         uses: actions/checkout@v6
         with:
           ref: 96cd6cb20e44d5d26a4cfb93d8a3f8e1b6375aa8
@@ -58,7 +72,7 @@ jobs:
         run: |
           sha256sum -c SHA256SUMS
           while read -r digest overlay; do
-            git -C "$GITHUB_WORKSPACE/candidate" apply --index "$PWD/$overlay"
+            git -C "$GITHUB_WORKSPACE/candidate" apply --3way --index "$PWD/$overlay"
           done < SHA256SUMS
           git -C "$GITHUB_WORKSPACE/candidate" diff --cached --check
           git -C "$GITHUB_WORKSPACE/candidate" write-tree
@@ -80,7 +94,7 @@ jobs:
           ATSPI_REPO: ${{ github.workspace }}/atspi-reader
           FIXTURE_CHECKOUT: ${{ github.workspace }}/fixture
           SMOKE_MODE: ${{ matrix.mode }}
-          CANDIDATE_SHA: 7ececf7a7ac361d87417bb07108cc475f7cf890e
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || '7ececf7a7ac361d87417bb07108cc475f7cf890e' }}
           SMOKE_ARTIFACTS: ${{ runner.temp }}/gnome-hosted-smoke
           SMOKE_REPO: ${{ github.workspace }}/candidate
           SMOKE_SESSION_SCRIPT: ${{ github.workspace }}/smoke-tooling/.github/scripts/gnome-hosted-smoke-session.sh

@@ -180,6 +180,19 @@ PYTHON
   exit 0
 fi
 
+if [[ "$SMOKE_MODE" == atspi-ownership ]]; then
+  cd "$ATSPI_REPO/recording/native/linux"
+  cargo build --locked --manifest-path "$FIXTURE_CHECKOUT/fixtures/accesskit/Cargo.toml"
+  cargo build --locked
+  unset DISPLAY
+  export GDK_BACKEND=wayland GTK_A11Y=atspi
+  /usr/bin/python3 "$(dirname "$0")/gnome-atspi-ownership-probe.py" \
+    --helper "$ATSPI_REPO/recording/native/linux/target/debug/spectre-wayland-helper" \
+    --fixture "$FIXTURE_CHECKOUT/fixtures/accesskit/target/debug/spectre-accesskit-fixture" \
+    --artifacts "$SMOKE_ARTIFACTS"
+  exit 0
+fi
+
 cd "$SMOKE_REPO"
 ./gradlew --no-daemon :recording:assembleWaylandHelper --console=plain \
   2>&1 | tee "$SMOKE_ARTIFACTS/assemble-wayland-helper.log"

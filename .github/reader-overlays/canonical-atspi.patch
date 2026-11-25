@@ -1,0 +1,527 @@
+diff --git a/.github/workflows/linux-helpers.yml b/.github/workflows/linux-helpers.yml
+index 2e7029c..4b16165 100644
+--- a/.github/workflows/linux-helpers.yml
++++ b/.github/workflows/linux-helpers.yml
+@@ -56,7 +56,7 @@ jobs:
+       - name: Install libdbus + pkg-config (for spectre-wayland-helper Rust build)
+         run: |
+           sudo apt-get update
+-          sudo apt-get install -y libdbus-1-dev pkg-config at-spi2-core dbus-x11 xvfb libxcursor1 libxkbcommon-x11-0
++          sudo apt-get install -y libdbus-1-dev pkg-config at-spi2-core dbus-x11 xvfb python3-gi gir1.2-atspi-2.0 zenity libxcursor1 libxkbcommon-x11-0
+ 
+       - name: Set up Rust stable
+         uses: dtolnay/rust-toolchain@stable
+@@ -88,7 +88,7 @@ jobs:
+           FIXTURE_CHECKOUT: ${{ runner.temp }}/spectre-accesskit-fixture
+         run: |
+           git clone --filter=blob:none --no-checkout https://github.com/rock3r/spectre.git "$FIXTURE_CHECKOUT"
+-          git -C "$FIXTURE_CHECKOUT" fetch --depth=1 origin 4ed264d6897cb6b41ce216250b0bda5b9e6f0b06
++          git -C "$FIXTURE_CHECKOUT" fetch --depth=1 origin 96cd6cb20e44d5d26a4cfb93d8a3f8e1b6375aa8
+           git -C "$FIXTURE_CHECKOUT" checkout --detach FETCH_HEAD
+           cargo build --locked --manifest-path "$FIXTURE_CHECKOUT/fixtures/accesskit/Cargo.toml"
+           cargo build --locked --manifest-path recording/native/linux/Cargo.toml
+diff --git a/docs/architecture/accessibility-helper-protocol.md b/docs/architecture/accessibility-helper-protocol.md
+index b8a554d..12c9cc7 100644
+--- a/docs/architecture/accessibility-helper-protocol.md
++++ b/docs/architecture/accessibility-helper-protocol.md
+@@ -70,6 +70,12 @@ not promised. `parentKey` is null only at a window tree root. `id` preserves `AX
+ lowercase ASCII vocabulary; `platformRole` preserves the OS spelling. Optional values are JSON
+ null, not omitted. Node order is window order followed by pre-order traversal.
+ 
++On Linux, `platformRole` uses the provider’s `GetRoleName` result when available and the
++AT-SPI role name for a known numeric ID otherwise. The reader reports `disabled` when a
++nonempty state set lacks both `enabled` and `sensitive`. Some AccessKit buttons expose both
++flags even when the application disables them. Their application-level disability cannot be
++determined from those flags or from the absence of an Action interface.
++
+ ## Errors and partial results
+ 
+ ```json
+diff --git a/recording/native/linux/src/accessibility.rs b/recording/native/linux/src/accessibility.rs
+index 1c22b40..4115560 100644
+--- a/recording/native/linux/src/accessibility.rs
++++ b/recording/native/linux/src/accessibility.rs
+@@ -277,7 +277,8 @@ fn capture_with_status(
+ #[derive(Clone)]
+ struct NodeData {
+     id: Option<String>,
+-    role: Option<String>,
++    raw_role: Option<u32>,
++    platform_role: Option<String>,
+     name: Option<String>,
+     states: Vec<String>,
+     value: Option<String>,
+@@ -439,8 +440,8 @@ fn walk(
+         key: key.clone(),
+         parent_key: parent,
+         id: data.id.clone(),
+-        platform_role: data.role.clone(),
+-        role: data.role.as_deref().map(normalize_role),
++        platform_role: data.platform_role,
++        role: data.raw_role.and_then(normalize_raw_role),
+         name: data.name,
+         states: data.states,
+         value: data.value,
+@@ -602,9 +603,19 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
+             });
+             let role = scope.spawn(|| {
+                 let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
+-                p.method_call::<(u32,), _, _, _>("org.a11y.atspi.Accessible", "GetRole", ())
++                let raw = p
++                    .method_call::<(u32,), _, _, _>("org.a11y.atspi.Accessible", "GetRole", ())
+                     .ok()
+-                    .map(|v| role_name(v.0).to_string())
++                    .map(|value| value.0);
++                let native_name = p
++                    .method_call::<(String,), _, _, _>(
++                        "org.a11y.atspi.Accessible",
++                        "GetRoleName",
++                        (),
++                    )
++                    .ok()
++                    .map(|value| value.0);
++                (raw, native_name)
+             });
+             let children_result = scope.spawn(|| children(bus, a, deadline));
+             let state_words = scope.spawn(|| {
+@@ -655,24 +666,10 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
+         .or_else(|| attributes.get("accessible_id"))
+         .cloned()
+         .filter(|v| !v.is_empty());
+-    let mut states = state_words
++    let states = state_words
+         .as_deref()
+         .map(decode_states)
+         .unwrap_or_default();
+-    // Only infer disabled from a successfully read state set. A failed GetState must remain
+-    // unknown rather than being turned into a false disabled assertion.
+-    if state_words.is_some() {
+-        if role.as_deref() == Some("push button")
+-            && !interfaces
+-                .iter()
+-                .any(|interface| interface.ends_with(".Action"))
+-        {
+-            states.retain(|state| state != "enabled");
+-        }
+-        if !states.iter().any(|state| state == "enabled") {
+-            states.push("disabled".into());
+-        }
+-    }
+     let value = if interfaces
+         .iter()
+         .any(|interface| interface.ends_with(".Text"))
+@@ -687,7 +684,10 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
+     };
+     Ok(NodeData {
+         id,
+-        role,
++        raw_role: role.0,
++        platform_role: role
++            .1
++            .or_else(|| role.0.and_then(role_name).map(str::to_owned)),
+         name,
+         states,
+         value,
+@@ -809,31 +809,157 @@ fn segment(id: Option<&str>, index: usize, duplicate: bool) -> String {
+         }
+     }
+ }
+-fn normalize_role(role: &str) -> String {
+-    match role {
+-        "push button" => "button",
+-        "check box" => "checkbox",
+-        "frame" => "window",
+-        other => other,
+-    }
+-    .to_ascii_lowercase()
+-    .replace(' ', "-")
++// Values are in the exact order of AtspiRole in atspi-constants.h. Keep the raw-role
++// normalization independent of GetRoleName: the latter is the authoritative native platformRole,
++// while this table supplies a stable schema role and covers every protocol value we support.
++const ATSPI_ROLE_NAMES: &[&str] = &[
++    "invalid",
++    "accelerator label",
++    "alert",
++    "animation",
++    "arrow",
++    "calendar",
++    "canvas",
++    "check box",
++    "check menu item",
++    "color chooser",
++    "column header",
++    "combo box",
++    "date editor",
++    "desktop icon",
++    "desktop frame",
++    "dial",
++    "dialog",
++    "directory pane",
++    "drawing area",
++    "file chooser",
++    "filler",
++    "focus traversable",
++    "font chooser",
++    "frame",
++    "glass pane",
++    "html container",
++    "icon",
++    "image",
++    "internal frame",
++    "label",
++    "layered pane",
++    "list",
++    "list item",
++    "menu",
++    "menu bar",
++    "menu item",
++    "option pane",
++    "page tab",
++    "page tab list",
++    "panel",
++    "password text",
++    "popup menu",
++    "progress bar",
++    "button",
++    "radio button",
++    "radio menu item",
++    "root pane",
++    "row header",
++    "scroll bar",
++    "scroll pane",
++    "separator",
++    "slider",
++    "spin button",
++    "split pane",
++    "status bar",
++    "table",
++    "table cell",
++    "table column header",
++    "table row header",
++    "tearoff menu item",
++    "terminal",
++    "text",
++    "toggle button",
++    "tool bar",
++    "tool tip",
++    "tree",
++    "tree table",
++    "unknown",
++    "viewport",
++    "window",
++    "extended",
++    "header",
++    "footer",
++    "paragraph",
++    "ruler",
++    "application",
++    "autocomplete",
++    "editbar",
++    "embedded",
++    "entry",
++    "chart",
++    "caption",
++    "document frame",
++    "heading",
++    "page",
++    "section",
++    "redundant object",
++    "form",
++    "link",
++    "input method window",
++    "table row",
++    "tree item",
++    "document spreadsheet",
++    "document presentation",
++    "document text",
++    "document web",
++    "document email",
++    "comment",
++    "list box",
++    "grouping",
++    "image map",
++    "notification",
++    "info bar",
++    "level bar",
++    "title bar",
++    "block quote",
++    "audio",
++    "video",
++    "definition",
++    "article",
++    "landmark",
++    "log",
++    "marquee",
++    "math",
++    "rating",
++    "timer",
++    "static",
++    "math fraction",
++    "math root",
++    "subscript",
++    "superscript",
++    "description list",
++    "description term",
++    "description value",
++    "footnote",
++    "content deletion",
++    "content insertion",
++    "mark",
++    "suggestion",
++    "push button menu",
++    "switch",
++];
++
++fn role_name(role: u32) -> Option<&'static str> {
++    ATSPI_ROLE_NAMES.get(role as usize).copied()
+ }
+ 
+-fn role_name(role: u32) -> &'static str {
+-    match role {
+-        7 => "check box",
+-        16 => "dialog",
+-        23 => "frame",
+-        29 => "label",
+-        38 => "panel",
+-        43 => "push button",
+-        60 => "text",
+-        75 => "application",
+-        79 => "text",
+-        85 => "section",
+-        _ => "unknown",
+-    }
++fn normalize_raw_role(role: u32) -> Option<String> {
++    role_name(role).map(|name| {
++        match name {
++            "push button menu" => "button-menu",
++            "check box" => "checkbox",
++            "frame" => "window",
++            other => other,
++        }
++        .replace(' ', "-")
++    })
+ }
+ fn intersects(a: &Rect, b: &Rect) -> bool {
+     a.width > 0
+@@ -857,26 +983,108 @@ fn decode_states(words: &[u32]) -> Vec<String> {
+         (10, "expanded"),
+         (11, "focusable"),
+         (12, "focused"),
+-        (24, "selected"),
+-        (26, "showing"),
+-        (31, "visible"),
+-        (35, "required"),
++        (13, "has-tooltip"),
++        (14, "horizontal"),
++        (15, "iconified"),
++        (16, "modal"),
++        (17, "multi-line"),
++        (18, "multiselectable"),
++        (19, "opaque"),
++        (20, "pressed"),
++        (21, "resizable"),
++        (22, "selectable"),
++        (23, "selected"),
++        (24, "sensitive"),
++        (25, "showing"),
++        (26, "single-line"),
++        (27, "stale"),
++        (28, "transient"),
++        (29, "vertical"),
++        (30, "visible"),
++        (31, "manages-descendants"),
++        (32, "indeterminate"),
++        (33, "required"),
++        (34, "truncated"),
++        (35, "animated"),
++        (36, "invalid-entry"),
++        (37, "supports-autocompletion"),
++        (38, "selectable-text"),
++        (39, "is-default"),
++        (40, "visited"),
++        (41, "checkable"),
++        (42, "has-popup"),
++        (43, "read-only"),
++        (44, "default"),
+     ];
+-    NAMES
++    let mut states: Vec<String> = NAMES
+         .iter()
+         .filter(|(bit, _)| {
+             words
+                 .get(bit / 32)
+-                .map(|w| w & (1 << (bit % 32)) != 0)
++                .map(|word| word & (1 << (bit % 32)) != 0)
+                 .unwrap_or(false)
+         })
+-        .map(|(_, n)| (*n).into())
+-        .collect()
++        .map(|(_, name)| (*name).into())
++        .collect();
++    // Some GTK providers expose SENSITIVE without ENABLED. Action support is independent.
++    if !words.is_empty()
++        && !states
++            .iter()
++            .any(|state| state == "enabled" || state == "sensitive")
++    {
++        states.push("disabled".into());
++    }
++    states
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    #[test]
++    fn atspi_roles_cover_protocol_constants_without_aliasing_distinct_widgets() {
++        let cases = [
++            (7, "check box", "checkbox"),
++            (37, "page tab", "page-tab"),
++            (38, "page tab list", "page-tab-list"),
++            (39, "panel", "panel"),
++            (43, "button", "button"),
++            (60, "terminal", "terminal"),
++            (61, "text", "text"),
++            (67, "unknown", "unknown"),
++            (79, "entry", "entry"),
++            (129, "push button menu", "button-menu"),
++        ];
++        for (raw, platform, normalized) in cases {
++            assert_eq!(role_name(raw), Some(platform), "raw role {raw}");
++            assert_eq!(normalize_raw_role(raw), Some(normalized.to_string()));
++        }
++        assert_eq!(role_name(10_000), None);
++        assert_eq!(normalize_raw_role(10_000), None);
++    }
++
++    #[test]
++    fn atspi_state_words_use_the_protocol_bit_offsets() {
++        let words = [(1 << 23) | (1 << 24) | (1 << 25) | (1 << 30), 1 << 1];
++        assert_eq!(
++            decode_states(&words),
++            ["selected", "sensitive", "showing", "visible", "required"]
++        );
++    }
++    #[test]
++    fn sensitive_buttons_preserve_the_provider_state_words() {
++        // GNOME GTK button and AccessKit Save changes, respectively.
++        assert_eq!(
++            decode_states(&[1124075520, 0]),
++            ["focusable", "sensitive", "showing", "visible"]
++        );
++        assert_eq!(
++            decode_states(&[1124075776, 0]),
++            ["enabled", "focusable", "sensitive", "showing", "visible"]
++        );
++        assert!(decode_states(&[]).is_empty());
++        assert_eq!(decode_states(&[0, 0]), ["disabled"]);
++    }
++
+     #[test]
+     fn dbus_error_classification_before_deadline() {
+         let deadline = Instant::now() + Duration::from_secs(30);
+diff --git a/recording/native/linux/tests/accessibility_gtk.py b/recording/native/linux/tests/accessibility_gtk.py
+new file mode 100644
+index 0000000..2cd156f
+--- /dev/null
++++ b/recording/native/linux/tests/accessibility_gtk.py
+@@ -0,0 +1,56 @@
++"""Snapshot a real GTK dialog, then activate the captured button through AT-SPI."""
++import json
++import subprocess
++import sys
++import time
++
++import gi
++
++gi.require_version("Atspi", "2.0")
++from gi.repository import Atspi
++
++
++def walk(node):
++    yield node
++    for index in range(node.get_child_count()):
++        yield from walk(node.get_child_at_index(index))
++
++
++def wait_for_button(pid):
++    desktop = Atspi.get_desktop(0)
++    deadline = time.monotonic() + 10
++    while time.monotonic() < deadline:
++        apps = (desktop.get_child_at_index(i) for i in range(desktop.get_child_count()))
++        for app in apps:
++            if app.get_process_id() == pid:
++                for node in walk(app):
++                    if node.get_role() == Atspi.Role.PUSH_BUTTON and node.get_name() == "Complete proof":
++                        return node
++        time.sleep(0.05)
++    raise AssertionError("Zenity did not publish Complete proof on AT-SPI")
++
++
++dialog = subprocess.Popen(["zenity", "--question", "--title=Spectre GTK regression",
++                           "--text=Verify the native button", "--ok-label=Complete proof"])
++try:
++    button = wait_for_button(dialog.pid)
++    request = {"target": {"type": "process-id", "value": dialog.pid},
++               "maximumDepth": 16, "maximumNodeCount": 100, "timeoutMs": 5000,
++               "allowAccessibilityEnable": True}
++    result = subprocess.run([sys.argv[1], "accessibility-snapshot"], input=json.dumps(request),
++                            capture_output=True, text=True, check=True, timeout=10)
++    response = json.loads(result.stdout)
++    assert response["ok"], response
++    node, = (n for n in response["snapshot"]["nodes"]
++             if n["name"] == "Complete proof" and n["role"] == "button")
++
++    assert node["platformRole"] == button.get_role_name(), node
++    assert "sensitive" in node["states"] and not {"disabled", "selected"}.intersection(node["states"]), node
++    assert ("enabled" in node["states"]) == button.get_state_set().contains(Atspi.StateType.ENABLED), node
++    assert button.do_action(0)
++    assert dialog.wait(timeout=5) == 0
++    print("accessibility-gtk: activated", node["platformRole"], node["states"])
++finally:
++    if dialog.poll() is None:
++        dialog.kill()
++    dialog.wait()
+diff --git a/recording/native/linux/tests/accessibility_xvfb.sh b/recording/native/linux/tests/accessibility_xvfb.sh
+index 9268b10..ebaa3b2 100755
+--- a/recording/native/linux/tests/accessibility_xvfb.sh
++++ b/recording/native/linux/tests/accessibility_xvfb.sh
+@@ -46,15 +46,27 @@ snapshot=$(request true)
+ elapsed_ms=$(( $(date +%s%3N) - started ))
+ [[ $(status) == *false* ]]
+ SNAPSHOT="$snapshot" python3 - <<'PY'
+-import json,os
++import json,os,pathlib
+ r=json.loads(os.environ["SNAPSHOT"]); assert r["ok"], r
+ s=r["snapshot"]; assert s["schemaVersion"] == 2 and s["windows"][0]["boundsSpace"] == "screen"
+ nodes=s["nodes"]; by_id={}
+ for n in nodes: by_id.setdefault(n["id"],[]).append(n)
+-assert by_id["primary-button"][0]["platformRole"] == "push button"
++golden=json.loads((pathlib.Path(os.environ["FIXTURE_CHECKOUT"])/"fixtures/accesskit/golden/linux.json").read_text())
++assert by_id["primary-button"][0]["platformRole"] == golden["buttonRole"]["name"]
++assert by_id["primary-button"][0]["role"] == "button"
+ assert "checked" in by_id["newsletter"][0]["states"]
++assert by_id["newsletter"][0]["platformRole"] == "check box"
++assert by_id["newsletter"][0]["role"] == "checkbox"
++assert by_id["account-name"][0]["platformRole"] == golden["textRole"]["name"]
++assert by_id["account-name"][0]["role"] == "entry"
+ assert by_id["account-name"][0]["value"] is None
+-assert "disabled" in by_id["disabled-button"][0]["states"]
++# Both nodes reported [1124073728, 0] and no Action interface in the direct D-Bus probe.
++# Only the first is disabled in the fixture source. Preserve the states the provider exposes.
++for identifier, name in [("disabled-button", "Unavailable action"), ("offscreen-button", "Scrolled away")]:
++    node, = by_id[identifier]
++    assert (node["name"], node["role"], set(node["states"])) == (
++        name, "button", {"enabled", "sensitive", "showing", "visible"}
++    ), node
+ assert by_id["offscreen-button"][0]["onScreen"] is False
+ assert len(by_id["repeated"]) == 3
+ keys=[n["key"] for n in nodes]; assert len(keys)==len(set(keys))
+@@ -95,4 +107,7 @@ wrong_owner=$(title_request $$)
+ python3 -c 'import json,sys; r=json.load(sys.stdin); assert not r["ok"] and r["error"]["code"]=="target-not-found" and "owned by process" in r["error"]["message"], r' <<<"$wrong_owner"
+ set_status false
+ [[ $(status) == *false* ]]
++set_status true
++/usr/bin/python3 tests/accessibility_gtk.py "$helper"
++set_status false
+ echo accessibility-helper-xvfb: pass
