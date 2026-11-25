@@ -5,55 +5,29 @@ on:
 permissions:
   contents: read
 jobs:
-  installed-runtime:
-    name: Shipped UIA helper with documented Windows runtime
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: 62daeaa6fa951351fe6e94b23fa952c5815a8d01
-          persist-credentials: false
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: 8.0.x
-      - name: Install the Microsoft-signed runtime pinned to the helper SDK
-        shell: pwsh
-        run: |
-          $path = Join-Path $env:RUNNER_TEMP 'WindowsAppRuntimeInstall-x64.exe'
-          Invoke-WebRequest 'https://aka.ms/windowsappsdk/1.8/1.8.260209005/windowsappruntimeinstall-x64.exe' -OutFile $path
-          $signature = Get-AuthenticodeSignature $path
-          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(?:^|, )O=Microsoft Corporation(?:,|$)') { throw "Invalid Microsoft signature: $($signature.Status)" }
-          $install = Start-Process $path -ArgumentList '--quiet' -Wait -PassThru
-          if ($install.ExitCode -ne 0) { throw "Runtime installation failed with exit $($install.ExitCode)" }
-          $framework = Get-AppxPackage -Name 'Microsoft.WindowsAppRuntime.1.8' | Where-Object Architecture -eq X64
-          if (-not $framework) { throw 'Missing x64 Windows App Runtime 1.8 after installation' }
-          $framework | Select-Object Name,Version,Architecture
-      - name: Check out the fixture pinned by the public PR
-        uses: actions/checkout@v6
-        with:
-          ref: 4ed264d6897cb6b41ce216250b0bda5b9e6f0b06
-          path: fixture-checkout
-          persist-credentials: false
-      - name: Build and run the public PowerShell fixture and release helper
-        shell: pwsh
-        run: |
-          $fixture = Join-Path $PWD 'fixture-checkout/fixtures/accesskit'
-          $helper = Join-Path $env:RUNNER_TEMP 'spectre-helper'
-          dotnet publish recording/native/windows/SpectreWindowCapture.csproj -c Release -r win-x64 --self-contained false -o $helper
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo build --locked --release --manifest-path "$fixture/Cargo.toml"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          recording/native/windows/test-accesskit-fixture.ps1 -Helper "$helper/SpectreWindowCapture.exe" -Fixture "$fixture/target/release/spectre-accesskit-fixture.exe" -Golden "$fixture/golden/windows.json"
   gradle-overlap:
     name: Hosted Gradle marker ownership with diagnostics
     runs-on: windows-latest
     timeout-minutes: 48
+    defaults:
+      run:
+        working-directory: candidate
     steps:
       - uses: actions/checkout@v6
         with:
+          path: diagnostics
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          path: candidate
           ref: d859918ac7ba39e74d18b9db0749f4f19cd9f461
           persist-credentials: false
+      - name: Verify and apply the cloud candidate
+        shell: bash
+        run: |
+          echo 'd879ecf7525c170ff05aa877d290d073789dba40c1781e1b3f3bc37c55c1f861  ../diagnostics/marker-verification.patch' | sha256sum --check
+          git -c core.autocrlf=false apply --index ../diagnostics/marker-verification.patch
+          test "$(git write-tree)" = e76928ffb22c7a14da53728e61ae4787ecb52133
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
