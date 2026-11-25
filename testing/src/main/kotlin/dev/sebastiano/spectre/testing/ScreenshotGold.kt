@@ -68,7 +68,8 @@ public fun assertMatchesGold(
     name: String,
     image: BufferedImage,
     tolerance: ScreenshotTolerance = ScreenshotTolerance.Strict,
-    scaleKey: String = currentScaleKey(image),
+    scaleKey: String =
+        currentScaleKey(image, requireUnambiguousEvidence = ScreenshotUpdateMode.isEnabled()),
     invocationKey: String? = null,
 ) {
     val identity = inferTestIdentity()
@@ -101,7 +102,8 @@ public fun assertMatchesGold(
     name: String,
     image: BufferedImage,
     tolerance: ScreenshotTolerance = ScreenshotTolerance.Strict,
-    scaleKey: String = currentScaleKey(image),
+    scaleKey: String =
+        currentScaleKey(image, requireUnambiguousEvidence = ScreenshotUpdateMode.isEnabled()),
     invocationKey: String? = null,
 ) {
     val identity = inferTestIdentity(executingClass = testClass)
@@ -130,11 +132,13 @@ internal fun assertMatchesGold(
     goldRoot: Path = ScreenshotGoldPaths.defaultGoldRoot(),
     reportsRoot: Path = ScreenshotGoldPaths.defaultReportsRoot(),
     osKey: String = ScreenshotGoldPaths.osKey(),
-    scaleKey: String = currentScaleKey(image),
+    scaleKey: String? = null,
     updateEnabled: Boolean = ScreenshotUpdateMode.isEnabled(),
     tolerance: ScreenshotTolerance = ScreenshotTolerance.Strict,
     invocationKey: String? = null,
 ) {
+    val resolvedScaleKey =
+        scaleKey ?: currentScaleKey(image, requireUnambiguousEvidence = updateEnabled)
     val goldFile =
         ScreenshotGoldPaths.goldFile(
             goldRoot,
@@ -142,7 +146,7 @@ internal fun assertMatchesGold(
             testMethodName,
             name,
             osKey,
-            scaleKey,
+            resolvedScaleKey,
             invocationKey,
         )
     val reportDir =
@@ -258,6 +262,7 @@ internal fun currentScaleKey(
     surfaces: List<CaptureSurfaceScale> = liveCaptureSurfaces(),
     fallbackScaleX: Double = fallbackDisplayScale().first,
     fallbackScaleY: Double = fallbackDisplayScale().second,
+    requireUnambiguousEvidence: Boolean = false,
 ): String {
     val matchingScales =
         if (image == null) {
@@ -269,10 +274,26 @@ internal fun currentScaleKey(
                 .distinct()
         }
     val uniqueSurfaceScales = surfaces.map { it.scaleX to it.scaleY }.distinct()
+    val scale = matchingScales.singleOrNull() ?: uniqueSurfaceScales.singleOrNull()
     val (scaleX, scaleY) =
-        matchingScales.singleOrNull()
-            ?: uniqueSurfaceScales.singleOrNull()
-            ?: (fallbackScaleX to fallbackScaleY)
+        scale
+            ?: if (surfaces.isEmpty() && !requireUnambiguousEvidence) {
+                fallbackScaleX to fallbackScaleY
+            } else {
+                error(
+                    "Cannot determine screenshot scale from positive, unambiguous evidence for a gold update: " +
+                        if (surfaces.isEmpty()) {
+                            "no visible display or capture surface supplied scale evidence. " +
+                                "Pass scaleKey explicitly."
+                        } else {
+                            "the image does not identify one of ${surfaces.size} visible surfaces " +
+                                "with mixed scales. Pass scaleKey explicitly."
+                        }
+                )
+            }
+    require(scaleX > 0.0 && scaleY > 0.0 && scaleX.isFinite() && scaleY.isFinite()) {
+        "Screenshot scale evidence must be positive and finite; pass scaleKey explicitly."
+    }
     return ScreenshotGoldPaths.scaleKey(scaleX, scaleY)
 }
 

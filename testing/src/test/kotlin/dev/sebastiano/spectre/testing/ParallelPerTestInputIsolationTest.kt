@@ -156,9 +156,9 @@ class ParallelPerTestInputIsolationTest {
         extension.afterEach(context)
 
         assertEquals(
-            true,
+            null,
             context.storeValue("failureArtifactsCaptured"),
-            "failure evidence capture must actually have run for this to prove anything",
+            "an empty headless capture must remain retryable",
         )
         assertEquals(
             false,

@@ -44,9 +44,7 @@ class PressKeyAfterFocusTest {
     }
 
     @Test
-    fun `exhausts retries and soft-skips only on macOS CI`() {
-        // Soft-skip is macOS CI only (Experimental PressKey cell). Linux CI and all local
-        // runs hard-fail so Supported Linux evidence stays fail-closed.
+    fun `exhausts retries and reports a failure on every platform`() {
         val driver = RecordingDriver(failFocusTimes = 100)
         val result = runCatching {
             PressKeyAfterFocus.run(
@@ -56,17 +54,12 @@ class PressKeyAfterFocusTest {
                 sleeper = {},
             )
         }
-        if (PressKeyAfterFocus.isCi() && PressKeyAfterFocus.isMacOs()) {
-            val detail = result.getOrThrow()
-            assertTrue(detail.startsWith("skipped:os-keyboard-focus-after-3-attempts"), detail)
-        } else {
-            val ex = assertFailsWith<IllegalStateException> { result.getOrThrow() }
-            assertTrue(ex.message!!.contains("failed after 3 attempts"), ex.message)
-            assertTrue(
-                ex.message!!.contains(PressKeyAfterFocus.OS_KEYBOARD_FOCUS_MARKER),
-                ex.message,
-            )
-        }
+        val ex = assertFailsWith<IllegalStateException> { result.getOrThrow() }
+        assertTrue(ex.message!!.contains("failed after 3 attempts"), ex.message)
+        assertTrue(
+            ex.message!!.contains(PressKeyAfterFocus.OS_KEYBOARD_FOCUS_MARKER),
+            ex.message,
+        )
         assertEquals(3, driver.focusWindowCount)
         assertEquals(3, driver.clickCount)
         assertEquals(3, driver.pressKeyCount)

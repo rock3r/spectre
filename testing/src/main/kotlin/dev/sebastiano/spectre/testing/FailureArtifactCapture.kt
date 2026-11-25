@@ -9,6 +9,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.exists
 import kotlin.streams.asSequence
+import kotlinx.serialization.SerializationException
 
 /**
  * Writes one atomic capture directory per known window under a test-method report folder.
@@ -26,6 +27,14 @@ public object FailureArtifactCapture {
         methodDirectory: Path,
         windowCount: Int,
         captureWindow: (windowIndex: Int) -> AtomicCapture,
+    ): List<CaptureArtifactPaths> =
+        captureWindowsWithDiagnostics(methodDirectory, windowCount, captureWindow) {}
+
+    internal fun captureWindowsWithDiagnostics(
+        methodDirectory: Path,
+        windowCount: Int,
+        captureWindow: (windowIndex: Int) -> AtomicCapture,
+        onMissing: (reason: String) -> Unit,
     ): List<CaptureArtifactPaths> {
         // Best-effort purge of prior window-*/run-* trees. Always write under a fresh run-*
         // directory so this attempt cannot share or interleave paths with residual OS-locked
@@ -36,12 +45,18 @@ public object FailureArtifactCapture {
         val written = ArrayList<CaptureArtifactPaths>(windowCount)
         for (index in 0 until windowCount) {
             val directory = FailureArtifactPaths.windowDirectory(writeRoot, index)
-            val paths = runCatching {
+            val result = runCatching {
                 val capture = captureWindow(index)
                 writeCaptureAtomically(directory, capture)
             }
-                .getOrNull()
+            val paths = result.getOrNull()
             if (paths != null) written += paths
+            else {
+                onMissing(
+                    "window-$index capture failed: " +
+                        (result.exceptionOrNull()?.describeForReport() ?: "unknown error")
+                )
+            }
         }
         return written
     }
@@ -86,6 +101,12 @@ public object FailureArtifactCapture {
     public fun captureAllWindows(
         automator: ComposeAutomator,
         methodDirectory: Path,
+    ): List<CaptureArtifactPaths> = captureAllWindowsWithDiagnostics(automator, methodDirectory) {}
+
+    internal fun captureAllWindowsWithDiagnostics(
+        automator: ComposeAutomator,
+        methodDirectory: Path,
+        onMissing: (reason: String) -> Unit,
     ): List<CaptureArtifactPaths> {
         val surfaceIds = runCatching {
             automator.refreshWindows()
@@ -95,9 +116,11 @@ public object FailureArtifactCapture {
                 // Still purge prior window-* so discovery failure cannot leave stale captures
                 // looking like evidence for this failure.
                 clearStaleWindowDirectories(methodDirectory)
+                onMissing("window discovery failed: ${it.describeForReport()}")
                 return emptyList()
             }
-        return captureWindows(
+        if (surfaceIds.isEmpty()) onMissing("window discovery found no tracked windows")
+        return captureWindowsWithDiagnostics(
             methodDirectory = methodDirectory,
             windowCount = surfaceIds.size,
             captureWindow = { index ->
@@ -114,6 +137,7 @@ public object FailureArtifactCapture {
                 }
                 capture
             },
+            onMissing = onMissing,
         )
     }
 
@@ -148,6 +172,11 @@ public object FailureArtifactCapture {
                 pngBytes = capture.pngBytes,
             )
         } catch (error: IOException) {
+            deleteRecursivelyQuietly(directory)
+            throw error
+        } catch (error: SerializationException) {
+            // Serialization and encoder failures are runtime exceptions. They are expected at
+            // this integration boundary and must not leave an empty window-N directory.
             deleteRecursivelyQuietly(directory)
             throw error
         }

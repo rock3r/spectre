@@ -528,14 +528,17 @@ JUnit 4 `Assume` also write none.
 
 On JUnit 5, each written window directory is published as a report entry under the key
 `spectre.failureArtifact` (path string). JUnit 4 has no report-entry API; inspect disk under
-`build/reports/spectre/` (or a custom `reportsRoot`).
+`build/reports/spectre/` (or a custom `reportsRoot`). If no requested still is produced, JUnit 5
+publishes `spectre.failureArtifactMissing` with the discovery, capture, or write reason. JUnit 4
+prints the equivalent diagnostic to stderr.
 
 ### Caveats
 
 - Capture happens **after** the exception. Animations may advance a few frames past the failing
   assertion; treat the PNG as “state at capture time,” not a perfect freeze of the assert line.
-- Capture is **best-effort**. A secondary capture error must never replace the original test
-  failure; if capture cannot run, the test report retains the original failure.
+- Capture is **best-effort**, but not silent. A secondary capture error never replaces the original
+  test failure; the report explains which requested evidence is missing. Teardown errors are added
+  as suppressed exceptions to the original failure.
 - With multiple JUnit rules, keep `ComposeAutomatorRule` **innermost** (last `.around(...)` in
   a `RuleChain`) so outer rules do not close UI or process state before capture runs.
 
@@ -578,8 +581,16 @@ dependencies {
 }
 ```
 
-Without the OS helper, the recorder fails to start and video is **skipped best-effort** (the
-test outcome is never replaced by a recorder error). Stills (`FailureArtifactsConfig`) do not
+Failure video is strictly **window-scoped**. Spectre records the tracked in-process AWT window and
+never falls back to a screen region or display. This avoids capturing unrelated applications or
+private desktop content. The window must exist when the JUnit wrapper starts recording; otherwise
+no video is started. Open the test window before the wrapper lifecycle begins, or use the explicit
+recording API after opening it.
+
+Without the OS helper, a supported AWT window, or recording permission, the recorder does not
+start. The test outcome is never replaced by that secondary error: JUnit 5 publishes
+`spectre.failureVideoMissing`, and both JUnit versions print the reason to stderr. Stills
+(`FailureArtifactsConfig`) do not
 require these helpers for Robot-region fallbacks. Native window stills require them; see
 [Recording](recording.md). Full per-OS packaging and permission notes:
 [Recording limitations](../RECORDING-LIMITATIONS.md).

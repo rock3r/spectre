@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.testing.contract
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -22,7 +23,8 @@ class GatedPressKeyScenarioTest {
                 .results
                 .single { it.id == PressKeyAfterFocus.SCENARIO_ID }
 
-        assertTrue(result.passed, "gated-off press-key row must pass: ${result.detail}")
+        assertFalse(result.passed, "a skipped row must not count as a pass")
+        assertEquals(AutomatorContractCorpus.ScenarioOutcome.Skipped, result.outcome)
         assertEquals(RealKeyboardGate.SKIPPED_DETAIL, result.detail)
         assertEquals(0, driver.textFieldLookups, "gated-off run must not touch the driver for it")
     }

@@ -187,7 +187,7 @@ internal constructor(
                 store.remove(STORE_KEY)
                 store.remove(isolationKey)
                 lastInstance = null
-                isolation.close()
+                runCatching { isolation.close() }.exceptionOrNull()?.let(it::addSuppressed)
             }
             .getOrThrow()
     }
@@ -239,27 +239,35 @@ internal constructor(
                 invocationId =
                     failureArtifacts.invocationId?.takeIf { it.isNotBlank() } ?: context.uniqueId
             )
-        FailureArtifactHooks.recordFailure(
-            automator = automator,
-            config = config,
-            testClassName = testClass,
-            testMethodName = testMethod,
-            publishReport = { key, value -> context.publishReportEntry(key, value) },
-        )
-        store.put(CAPTURED_KEY, true)
+        val captured =
+            FailureArtifactHooks.recordFailure(
+                automator = automator,
+                config = config,
+                testClassName = testClass,
+                testMethodName = testMethod,
+                publishReport = { key, value -> context.publishReportEntry(key, value) },
+            )
+        // A later lifecycle failure may occur after a window appears. Only a successful capture
+        // consumes the one-capture slot.
+        if (captured.isNotEmpty()) store.put(CAPTURED_KEY, true)
     }
 
     override fun afterEach(context: ExtensionContext) {
         // Finalize video before clearing the automator so window-targeted backends still see
         // live windows during stop if needed; then drop the automator.
         val failure = context.executionException.orElse(null)
-        try {
-            finalizeFailureVideo(context, failure)
-        } finally {
+        val teardown = runCatching { finalizeFailureVideo(context, failure) }.exceptionOrNull()
+        val cleanup = runCatching {
             val store = context.getStore(NAMESPACE)
             store.remove(STORE_KEY)
             lastInstance = null
             store.remove(isolationStoreKey(context), InputIsolationSession::class.java)?.close()
+        }
+            .exceptionOrNull()
+        val teardownFailure = teardown ?: cleanup
+        if (teardown != null && cleanup != null) teardown.addSuppressed(cleanup)
+        if (teardownFailure != null) {
+            if (failure != null) failure.addSuppressed(teardownFailure) else throw teardownFailure
         }
     }
 
