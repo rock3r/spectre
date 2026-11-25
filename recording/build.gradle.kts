@@ -1150,6 +1150,16 @@ tasks.register<JavaExec>("runWindowScreenshotSmoke") {
     mainClass.set("dev.sebastiano.spectre.recording.WindowScreenshotSmoke")
 }
 
+tasks.register<JavaExec>("runUntitledWindowScreenshotSmoke") {
+    group = "verification"
+    description =
+        "Captures an untitled AWT window by owner/frame and verifies content, ambiguity, and title stability."
+    onlyIf { OperatingSystem.current().isWindows || OperatingSystem.current().isLinux }
+    dependsOn(assembleWindowsScreenshotHelper, assembleWaylandHelper)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.UntitledWindowScreenshotSmoke")
+}
+
 tasks.register<JavaExec>("runWindowsGraphicsCaptureMoveInputSmoke") {
     group = "verification"
     description =

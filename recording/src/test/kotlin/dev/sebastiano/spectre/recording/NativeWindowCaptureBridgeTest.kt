@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
+import java.awt.Dialog
 import java.awt.EventQueue
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
@@ -53,6 +54,61 @@ class NativeWindowCaptureBridgeTest {
             assertEquals(Rectangle(40, 50, 300, 200), framed.logicalFrame)
         } finally {
             popup.dispose()
+            owner.dispose()
+        }
+    }
+
+    @Test
+    fun `untitled Frame host is captured by its frame`() {
+        assumeLiveAwtAvailable()
+        val frame = Frame().apply { setBounds(41, 52, 303, 204) }
+        frame.isVisible = true
+
+        try {
+            val target =
+                NativeWindowCaptureBridge.captureTargetFor(
+                    frame,
+                    selectsSharedTitlesByFrame = true,
+                    selectsClientArea = false,
+                )
+
+            val framed = assertIs<FramedWindow>(target, "an empty title cannot select a Frame")
+            assertEquals(Rectangle(41, 52, 303, 204), framed.logicalFrame)
+            assertEquals("", frame.title, "selecting the Frame must not stamp a temporary title")
+        } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
+    fun `untitled Dialog host is captured by its client frame on X11`() {
+        assumeLiveAwtAvailable()
+        val owner = Frame("dialog owner").apply { isVisible = true }
+        val dialog = Dialog(owner).apply { setBounds(43, 54, 305, 206) }
+        dialog.isVisible = true
+
+        try {
+            val target =
+                NativeWindowCaptureBridge.captureTargetFor(
+                    dialog,
+                    selectsSharedTitlesByFrame = true,
+                    selectsClientArea = true,
+                )
+
+            val framed = assertIs<FramedWindow>(target, "an empty title cannot select a Dialog")
+            val insets = dialog.insets
+            assertEquals(
+                Rectangle(
+                    43 + insets.left,
+                    54 + insets.top,
+                    305 - insets.left - insets.right,
+                    206 - insets.top - insets.bottom,
+                ),
+                framed.logicalFrame,
+            )
+            assertEquals("", dialog.title, "selecting the Dialog must not stamp a temporary title")
+        } finally {
+            dialog.dispose()
             owner.dispose()
         }
     }

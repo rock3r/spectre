@@ -108,7 +108,7 @@ internal object NativeWindowCaptureBridge {
                 is Dialog -> window.title
                 else -> return window.asFramedWindow()
             }
-        if (selectsSharedTitlesByFrame && isSharedTitle(window, title)) {
+        if (selectsSharedTitlesByFrame && (title.isNullOrBlank() || isSharedTitle(window, title))) {
             return window.asFramedWindow(clientAreaOnly = selectsClientArea)
         }
         return when (window) {
