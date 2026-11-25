@@ -18,7 +18,7 @@ import javax.swing.SwingUtilities
  * While a modal [Dialog] is showing, the windows it blocks are dropped and the dialog's own tree
  * goes last, as AWT does for real input.
  */
-internal fun syntheticInputWindows(): List<Window> {
+internal fun syntheticInputWindows(pinnedRoot: Window? = null): List<Window> {
     val collected = LinkedHashSet<Window>()
     // Walk every top-level window (and its owned tree). The visibility check is applied per-window
     // by the callers rather than here: Swing's `SharedOwnerFrame` (parent of `JDialog(null, …)`)
@@ -28,6 +28,10 @@ internal fun syntheticInputWindows(): List<Window> {
     for (window in Window.getWindows()) {
         if (window.owner == null) collectWindowTree(window, collected)
     }
+    // A host may hand the driver a valid Window that AWT's application-context registry does not
+    // expose. Keep the existing pinned-root fallback, including its owned-window ordering, but put
+    // it through the same modal filter below rather than appending a blocked root after filtering.
+    if (pinnedRoot != null && pinnedRoot !in collected) collectWindowTree(pinnedRoot, collected)
     val modal = activeModalDialog() ?: return collected.toList()
     val modalTree = LinkedHashSet<Window>().also { collectWindowTree(modal, it) }
     return collected.filter { it !in modalTree && !modal.blocks(it) } + modalTree

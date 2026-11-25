@@ -103,6 +103,39 @@ class SyntheticModalAndWindowOrderTest {
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `an overlapping active modal dialog wins hit testing over its pinned owner`() {
+        assumeLiveAwtAvailable()
+        val ownerTarget = RecordingPanel()
+        val dialogTarget = RecordingPanel()
+        try {
+            val owner = showFrame(ownerTarget)
+            val dialog =
+                showModalDialog(owner = owner, content = dialogTarget, x = FRAME_X + OVERLAP_OFFSET)
+            val driver = RobotDriver.synthetic(owner)
+
+            val dialogX = onEdt { owner.x + owner.width - OVERLAP_OFFSET / 2 }
+            val dialogY = onEdt { owner.y + owner.height / 2 }
+            runOffTestThread { runBlocking { driver.click(dialogX, dialogY) } }
+            val blockedOwnerX = onEdt { owner.x + OVERLAP_OFFSET / 2 }
+            val blockedOwnerY = onEdt { owner.y + owner.height / 2 }
+            assertSyntheticRejection {
+                runOffTestThread { runBlocking { driver.click(blockedOwnerX, blockedOwnerY) } }
+            }
+            drainEdt()
+
+            assertTrue(dialog.isShowing, "the modal fixture must remain live for both gestures")
+            assertTrue(dialogTarget.pressed.isNotEmpty(), "the overlap must hit the modal dialog")
+            assertTrue(
+                ownerTarget.pressed.isEmpty(),
+                "the blocked pinned owner must receive neither overlapping nor outside clicks",
+            )
+        } finally {
+            disposeAll()
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `an active modal dialog rejects keys when AWT has no focus owner`() {
         assumeLiveAwtAvailable()
         val recorder = GlobalKeyRecorder().also { it.install() }
@@ -670,6 +703,7 @@ class SyntheticModalAndWindowOrderTest {
         const val POLL_INTERVAL_MS: Long = 25L
         const val FRAME_X: Int = 120
         const val FRAME_Y: Int = 120
+        const val OVERLAP_OFFSET: Int = 100
         const val DIALOG_X: Int = 400
         const val EXCLUDED_X: Int = 680
         val PANEL_SIZE = Dimension(200, 200)

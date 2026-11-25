@@ -418,10 +418,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
                     .getOrDefault(false)
         }
 
-    private fun allWindows(): List<Window> {
-        val windows = syntheticInputWindows()
-        return if (rootWindow == null || rootWindow in windows) windows else windows + rootWindow
-    }
+    private fun allWindows(): List<Window> = syntheticInputWindows(rootWindow)
 }
 
 private fun undeliverablePointer(action: String): Nothing =

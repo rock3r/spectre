@@ -258,8 +258,9 @@ internal suspend fun RobotDriver.swipeVerified(
     endY: Int,
     steps: Int,
     duration: Duration,
+    target: Component,
 ) {
-    verifyingDelivery("swipe", startX, startY, DispatchedInput.Press) {
+    verifyingDelivery("swipe", startX, startY, DispatchedInput.Press, target = target) {
         swipe(startX, startY, endX, endY, steps, duration)
     }
 }

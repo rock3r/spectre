@@ -268,6 +268,7 @@ private constructor(
             toCenter.y,
             steps,
             duration,
+            from.trackedWindow.composeInputTarget,
         )
     }
 

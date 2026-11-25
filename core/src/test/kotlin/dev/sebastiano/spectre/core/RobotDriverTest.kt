@@ -775,6 +775,37 @@ class RobotDriverTest {
         )
 }
 
+/** Focused contracts for component-scoped delivery verification of compound pointer gestures. */
+class SwipeInputDeliveryWitnessTest {
+
+    @Test
+    fun `swipeVerified scopes its opening press to the intended input target`() = runTest {
+        val witness = FakeInputDeliveryWitness(delivered = true)
+        val driver =
+            RobotDriver(
+                robot = RecordingRobotAdapter(),
+                clipboard = RecordingClipboardAdapter(),
+                tccGuard = RecordingTccGuard(),
+                inputCapabilities =
+                    InputCapabilities(realOsInput = true, sharedSystemClipboard = false),
+                deliveryWitness = witness,
+            )
+        val target = java.awt.Panel()
+
+        driver.swipeVerified(
+            startX = 1,
+            startY = 2,
+            endX = 3,
+            endY = 4,
+            steps = 1,
+            duration = ZERO,
+            target = target,
+        )
+
+        assertEquals(target, witness.targets.single())
+    }
+}
+
 /** Reports a fixed verdict so delivery-verification policy can be tested without a real desktop. */
 private class FakeInputDeliveryWitness(
     private val delivered: Boolean,
@@ -784,6 +815,9 @@ private class FakeInputDeliveryWitness(
 
     /** Which event each dispatch asked to watch for — presses for clicks, a wheel for scrolls. */
     val watched: MutableList<DispatchedInput> = mutableListOf()
+
+    /** Component hierarchy each dispatch required, or null for intentionally unscoped input. */
+    val targets: MutableList<java.awt.Component?> = mutableListOf()
 
     var observations: Int = 0
         private set
@@ -800,6 +834,7 @@ private class FakeInputDeliveryWitness(
         if (!canObserve) return null
         observations++
         watched += input
+        targets += target
         return object : InputDeliveryWitness.Observation {
             override fun awaitDelivery(timeoutMs: Long): Boolean = delivered
 
