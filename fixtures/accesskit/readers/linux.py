@@ -62,6 +62,18 @@ def require(by_id, identifier, count=1):
     return matches[0]
 
 
+def assert_role(node, expected, label):
+    observed_id = int(node.getRole())
+    observed_name = node.getRoleName()
+    expected_id = expected["id"]
+    expected_name = expected["name"]
+    if observed_id != expected_id:
+        raise AssertionError(
+            f"{label} role mismatch: expected {expected_name!r} (id {expected_id}), "
+            f"observed {observed_name!r} (id {observed_id})"
+        )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--enable", action="store_true")
@@ -90,12 +102,12 @@ def main():
         nested_label = require(by_id, "nested-label")
         trigger = require(by_id, "popover-trigger")
         repeated = by_id.get("repeated", [])
-        assert window.get_role_name() == golden["windowRole"]
-        assert button.get_role_name() == golden["buttonRole"]
-        assert checkbox.get_role_name() == golden["checkboxRole"]
+        assert_role(window, golden["windowRole"], "window")
+        assert_role(button, golden["buttonRole"], "button")
+        assert_role(checkbox, golden["checkboxRole"], "checkbox")
         assert checkbox.get_state_set().contains(pyatspi.STATE_CHECKED)
         assert golden["checkedState"] == "checked"
-        assert text.get_role_name() == golden["textRole"], text.get_role_name()
+        assert_role(text, golden["textRole"], "text")
         try:
             linux_value = text.queryText().getText(0, -1)
         except NotImplementedError:
@@ -116,7 +128,8 @@ def main():
         while time.monotonic() < deadline:
             nodes = list(walk(window))
             popovers = [node for node in nodes if attr(node, "id") == "details-popover"]
-            if popovers and popovers[0].get_role_name() == golden["popoverRole"]:
+            if popovers:
+                assert_role(popovers[0], golden["popoverRole"], "popover")
                 break
             time.sleep(0.1)
         else:

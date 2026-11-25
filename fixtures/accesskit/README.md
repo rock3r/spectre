@@ -9,7 +9,10 @@ not be reused as reader implementations.
 The tree contains a labelled button, checked checkbox, valued text field, nested groups, a disabled
 button, an off-window node, three elements sharing the `repeated` platform id (including siblings
 and different parents), and a click-opened dialog overlay. Linux deliberately expects no text value
-until AccessKit's AT-SPI adapter exposes one.
+until AccessKit's AT-SPI adapter exposes one. Linux role goldens record the stable AT-SPI wire enum
+identity as well as a diagnostic name. The probe compares enum IDs, because AT-SPI 2.55 renamed
+`PUSH_BUTTON` to `BUTTON` while retaining the same value (43); display names therefore vary between
+supported distributions without changing the role identity.
 
 ## Local verification
 

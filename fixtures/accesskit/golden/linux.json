@@ -1,10 +1,10 @@
 {
-  "windowRole": "frame",
-  "buttonRole": "push button",
-  "checkboxRole": "check box",
-  "textRole": "entry",
+  "windowRole": { "id": 23, "name": "frame" },
+  "buttonRole": { "id": 43, "name": "button" },
+  "checkboxRole": { "id": 7, "name": "check box" },
+  "textRole": { "id": 79, "name": "entry" },
   "textValue": null,
-  "popoverRole": "dialog",
+  "popoverRole": { "id": 16, "name": "dialog" },
   "checkedState": "checked",
   "disabledState": "disabled"
 }
