@@ -111,11 +111,12 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
 
-      - name: Install Xvfb + libdbus + pkg-config
+      - name: Install Xvfb + libdbus + libxkbcommon-x11 + pkg-config
         # Xvfb: display for Compose Desktop + Robot input. libdbus / pkg-config: needed by
         # the spectre-wayland-helper Rust build (`:recording`'s assembleWaylandHelper runs
         # cargo build --release on Linux as part of processResources, and dbus-rs links
-        # libdbus-1). gstreamer supplies gst-launch-1.0 + ximagesrc for the required native
+        # libdbus-1). libxkbcommon-x11 is loaded at runtime by the AccessKit fixture's winit
+        # dependency. gstreamer supplies gst-launch-1.0 + ximagesrc for the required native
         # window screenshot path exercised by validationTest under Xvfb.
         run: |
           sudo apt-get update
@@ -126,6 +127,7 @@ jobs:
             python3-pyatspi \
             gir1.2-atspi-2.0 \
             libdbus-1-dev \
+            libxkbcommon-x11-0 \
             pkg-config \
             gstreamer1.0-tools \
             gstreamer1.0-plugins-base \
