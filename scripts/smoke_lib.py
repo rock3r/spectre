@@ -2325,8 +2325,10 @@ def is_linux_graphical_login_seat(
     uid: int | None = None,
     x11_socket_dir: Path = Path("/tmp/.X11-unix"),
     proc_root: Path = Path("/proc"),
+    authorize_x11: Callable[[Mapping[str, str]], bool] | None = None,
+    process_uid: Callable[[Path], int] | None = None,
 ) -> bool:
-    """Prove that display handles belong to a logged-in Wayland or Xorg seat."""
+    """Prove that display handles belong to an accessible logged-in Wayland or Xorg seat."""
     runtime = environ.get("XDG_RUNTIME_DIR", "").strip()
     wayland = environ.get("WAYLAND_DISPLAY", "").strip()
     if runtime and wayland and (Path(runtime) / wayland).exists():
@@ -2345,11 +2347,15 @@ def is_linux_graphical_login_seat(
         entries = list(Path(proc_root).iterdir())
     except OSError:
         return False
+    expected_display = f":{int(match.group(1))}"
     for entry in entries:
         if not entry.name.isdigit():
             continue
         try:
-            if entry.stat().st_uid != uid:
+            # Xorg may retain root privileges on a genuine login seat. Other users' Xorg
+            # processes remain unrelated even if they happen to use the same display number.
+            owner = (process_uid or (lambda path: path.stat().st_uid))(entry)
+            if owner not in {0, uid}:
                 continue
             raw = (entry / "cmdline").read_bytes()
         except OSError:
@@ -2357,9 +2363,33 @@ def is_linux_graphical_login_seat(
         argv = [part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part]
         if not argv or Path(argv[0]).name not in {"X", "Xorg"}:
             continue
-        if display in argv or f":{int(match.group(1))}" in argv:
-            return True
+        if any(_normalize_local_x_display(arg) == expected_display for arg in argv):
+            return (authorize_x11 or _can_access_x11_display)(environ)
     return False
+
+
+def _normalize_local_x_display(value: str) -> str | None:
+    match = re.fullmatch(r":(\d+)(?:\.\d+)?", value)
+    return f":{int(match.group(1))}" if match else None
+
+
+def _can_access_x11_display(environ: Mapping[str, str]) -> bool:
+    """Ask the installed X11 tooling to complete authentication; do not add a dependency."""
+    executable = shutil.which("xdpyinfo", path=environ.get("PATH"))
+    if executable is None:
+        return False
+    try:
+        completed = subprocess.run(
+            [executable, "-display", environ["DISPLAY"]],
+            env=dict(environ),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+    except (KeyError, OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
 
 
 def discover_linux_seat_env(

@@ -793,6 +793,7 @@ class SmokeLibSchemaTest(unittest.TestCase):
                     uid=os.getuid(),
                     x11_socket_dir=x11,
                     proc_root=proc,
+                    authorize_x11=lambda _env: True,
                 )
             )
             self.assertFalse(
@@ -801,6 +802,76 @@ class SmokeLibSchemaTest(unittest.TestCase):
                     uid=os.getuid(),
                     x11_socket_dir=x11,
                     proc_root=proc,
+                )
+            )
+
+    @unittest.skipUnless(hasattr(os, "getuid"), "X11 seat verification uses POSIX uids")
+    def test_x11_login_seat_verifier_accepts_an_authorized_root_owned_xorg(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            x11 = root / "X11-unix"
+            x11.mkdir()
+            (x11 / "X0").touch()
+            proc = root / "proc"
+            process = proc / "1234"
+            process.mkdir(parents=True)
+            process.joinpath("cmdline").write_bytes(
+                b"/usr/lib/xorg/Xorg\0:0\0-seat\0seat0\0"
+            )
+            authorized = []
+
+            self.assertTrue(
+                smoke_lib.is_linux_graphical_login_seat(
+                    {"DISPLAY": ":0", "XAUTHORITY": "/run/user/1000/gdm/Xauthority"},
+                    uid=1000,
+                    x11_socket_dir=x11,
+                    proc_root=proc,
+                    authorize_x11=lambda env: authorized.append(dict(env)) or True,
+                    process_uid=lambda _path: 0,
+                )
+            )
+            self.assertEqual(":0", authorized[0]["DISPLAY"])
+
+    @unittest.skipUnless(hasattr(os, "getuid"), "X11 seat verification uses POSIX uids")
+    def test_x11_login_seat_verifier_rejects_root_xorg_when_access_is_denied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            x11 = root / "X11-unix"
+            x11.mkdir()
+            (x11 / "X0").touch()
+            proc = root / "proc"
+            process = proc / "1234"
+            process.mkdir(parents=True)
+            process.joinpath("cmdline").write_bytes(b"/usr/lib/xorg/Xorg\0:0\0")
+            self.assertFalse(
+                smoke_lib.is_linux_graphical_login_seat(
+                    {"DISPLAY": ":0", "XAUTHORITY": "/wrong/cookie"},
+                    uid=1000,
+                    x11_socket_dir=x11,
+                    proc_root=proc,
+                    authorize_x11=lambda _env: False,
+                    process_uid=lambda _path: 0,
+                )
+            )
+
+    def test_x11_login_seat_verifier_rejects_authorized_xvfb(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            x11 = root / "X11-unix"
+            x11.mkdir()
+            (x11 / "X0").touch()
+            proc = root / "proc"
+            process = proc / "1234"
+            process.mkdir(parents=True)
+            process.joinpath("cmdline").write_bytes(b"/usr/bin/Xvfb\0:0\0")
+
+            self.assertFalse(
+                smoke_lib.is_linux_graphical_login_seat(
+                    {"DISPLAY": ":0"},
+                    uid=1000,
+                    x11_socket_dir=x11,
+                    proc_root=proc,
+                    authorize_x11=lambda _env: True,
                 )
             )
 
