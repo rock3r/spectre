@@ -4,7 +4,10 @@ package dev.sebastiano.spectre.agent.launch
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.JvmProcessInfo
+import java.nio.file.Files
+import java.nio.file.Path
 import java.time.Instant
+import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -12,6 +15,54 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LaunchDescendantDiscoveryTest {
+    @Test
+    fun `Gradle launch marker is injected into the JavaExec argv instead of JAVA_TOOL_OPTIONS`() {
+        val captureDir = Files.createTempDirectory("spectre-marker-command-")
+        try {
+            val prepared =
+                prepareGradleLaunchCommand(
+                    command = listOf("./gradlew", ":app:run", "--no-daemon"),
+                    captureDirectory = captureDir,
+                    marker = "launch-proof",
+                )
+
+            assertEquals("./gradlew", prepared.first())
+            assertEquals("--init-script", prepared[1])
+            assertEquals(":app:run", prepared[3])
+            assertEquals("--no-daemon", prepared[4])
+            val script = Path.of(prepared[2]).readText()
+            assertTrue(script.contains("JavaExec"))
+            assertTrue(
+                script.contains("-Ddev.sebastiano.spectre.launch.id=launch-proof"),
+                "marker must become a real JavaExec JVM argument: $script",
+            )
+        } finally {
+            captureDir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `ties among owned listed JVMs remain ambiguous rather than choosing max pid`() {
+        val launchedAt = Instant.parse("2026-11-05T13:59:50Z")
+        val selected =
+            LaunchDescendantDiscovery.selectAppJvm(
+                clientPid = 61_100L,
+                nameFilter = "SameMain",
+                clientStart = launchedAt,
+                listed =
+                    listOf(
+                        JvmProcessInfo(61_185L, "example.SameMain"),
+                        JvmProcessInfo(61_457L, "example.SameMain"),
+                    ),
+                descendantsOf = { setOf(61_185L, 61_457L) },
+                parentOf = { null },
+                startInstantOf = { launchedAt.plusSeconds(1) },
+                ownsLaunch = { true },
+                nativeFallback = { _, _, _ -> null },
+            )
+
+        assertNull(selected, "identity ties must keep polling; max pid is not ownership proof")
+    }
 
     @Test
     fun `isGradleDaemonDisplayName matches common daemon banners`() {
@@ -242,7 +293,7 @@ class LaunchDescendantDiscoveryTest {
                 )
                 .readText()
         val nowAt = source.indexOf("Instant.now()")
-        val startAt = source.indexOf("startProcess(prepared.command")
+        val startAt = source.indexOf("startProcess(")
         assertTrue(nowAt in 0..<startAt, "Instant.now()=$nowAt must precede startProcess=$startAt")
     }
 
@@ -569,15 +620,11 @@ class LaunchDescendantDiscoveryTest {
     }
 
     @Test
-    fun `selectAppJvm falls back to the highest matching pid when start times are unknown`() {
-        // Fail-open: with no start times to compare, selection is exactly what it was before the
-        // gate — highest matching pid, leftover included. Worse than the gate, better than no
-        // discovery at all on a platform that hides process start times.
+    fun `selectAppJvm keeps unknown-start matching pids ambiguous`() {
+        // Start time is not identity proof. If the platform hides it, two matching JVMs remain
+        // ambiguous instead of selecting the highest pid and potentially stealing another launch.
         val scenario = GradleLaunchScenario(startTimesKnown = false)
-        assertEquals(
-            scenario.leftoverFixturePid,
-            scenario.select(nameFilter = "ComposeFixtureMain"),
-        )
+        assertNull(scenario.select(nameFilter = "ComposeFixtureMain"))
     }
 
     /**

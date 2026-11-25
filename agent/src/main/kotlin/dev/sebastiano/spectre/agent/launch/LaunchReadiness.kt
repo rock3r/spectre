@@ -62,6 +62,7 @@ internal object LaunchReadiness {
         launchedPid: Long,
         gradleish: Boolean,
         nameFilter: String?,
+        launchMarker: String?,
         timeoutMs: Long,
         stdoutPath: Path,
         stderrPath: Path,
@@ -88,7 +89,13 @@ internal object LaunchReadiness {
             // Gradle-ish: keep discovering after the client exits. The app JVM is often a
             // daemon child (not a ProcessHandle descendant of ./gradlew); tasks that fork and
             // return still need the remaining stage budget to observe the app.
-            val pid = LaunchDescendantDiscovery.discoverAppJvm(launchedPid, nameFilter, clientStart)
+            val pid =
+                discoverOwnedAppJvm(
+                    clientPid = launchedPid,
+                    nameFilter = nameFilter,
+                    clientStart = clientStart,
+                    launchMarker = launchMarker,
+                )
             if (pid != null) return pid
             sleepQuietly(POLL_MS)
         }
@@ -136,7 +143,7 @@ internal object LaunchReadiness {
                     " Prefer a prod-like launch (java -jar / installDist) over ./gradlew when " +
                     "possible; for Gradle, ensure the app has started (cold daemon + compile " +
                     "can take >15s) and that --app-name matches the main class." +
-                    lastDiscoverySnapshot(launchedPid, nameFilter, clientStart),
+                    lastDiscoverySnapshot(launchedPid, nameFilter, launchMarker, clientStart),
         )
     }
 
@@ -504,6 +511,7 @@ internal object LaunchReadiness {
     private fun lastDiscoverySnapshot(
         launchedPid: Long,
         nameFilter: String?,
+        launchMarker: String?,
         clientStart: Instant,
     ): String {
         val captured = StringBuilder()
@@ -512,6 +520,10 @@ internal object LaunchReadiness {
                 clientPid = launchedPid,
                 nameFilter = nameFilter,
                 clientStart = clientStart,
+                ownsLaunch =
+                    launchMarker?.let { marker ->
+                        { pid -> LaunchDescendantDiscovery.commandLineContains(pid, marker) }
+                    } ?: { true },
                 onDiagnostics = { captured.append(it.format()) },
             )
         }
