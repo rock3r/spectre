@@ -45,9 +45,7 @@ internal class WaylandWindowStreams<W : Any>(
     private val runInBackground: (() -> Unit) -> Unit = ::runOnDaemonThread,
     private val isEventDispatchThread: () -> Boolean = EventQueue::isDispatchThread,
 ) {
-    /**
-     * Serialises bindings: each one may move keyboard focus. Held while binding, never on close.
-     */
+    /** Serialises helper bindings. Held while binding, never on close. */
     private val bindLock = Any()
     /** Guards [bound]; held only for map reads and writes, never while waiting on anything. */
     private val mapLock = Any()
@@ -109,8 +107,8 @@ internal class WaylandWindowStreams<W : Any>(
             ?.let {
                 return it
             }
-        // Binding waits on the EDT for focus. On the EDT it could never finish, and waiting for
-        // another thread's binding there would deadlock it.
+        // A helper binding is blocking I/O and waiting for another thread's binding on the EDT can
+        // deadlock window geometry/close callbacks.
         if (isEventDispatchThread()) {
             throw WaylandCaptureUnavailableException(BIND_ON_EDT_MESSAGE)
         }
@@ -160,8 +158,9 @@ internal data class BoundWindowStream(
 )
 
 /**
- * How Spectre attaches a Mutter window stream to a window. [FocusWindowStreamBinder] selects the
- * window by keyboard focus; a lookup by Mutter window id can replace it without touching callers.
+ * How Spectre attaches a Mutter window stream to a window. Production uses
+ * [IdentityWindowStreamBinder]; [FocusWindowStreamBinder] remains only as a compatibility-tested
+ * description of the pre-0.10 fail-closed path.
  */
 internal fun interface WaylandWindowStreamBinder<W : Any> {
     fun bind(window: W, key: String, cursor: CursorMode): BoundWindowStream
@@ -172,11 +171,49 @@ internal interface WaylandWindowStreamSession {
     /** Binds the focused window under [key]; returns the bind event and the first frame. */
     fun bindFocused(key: String, cursorMode: CursorMode): Pair<Event.WindowBound, BufferedImage>
 
+    fun bindWindow(
+        key: String,
+        identity: MutterWindowIdentity,
+        cursorMode: CursorMode,
+    ): Pair<Event.WindowBound, BufferedImage>
+
     fun screenshot(key: String): BufferedImage
 
     fun unbind(key: String)
 
     fun startRecording(command: Command.StartWindowRecording, output: Path): RecordingHandle
+}
+
+internal data class MutterWindowIdentity(val ownerPid: Long, val frame: Region)
+
+/** Binds by the target's PID and X11 client frame; it never reads or changes keyboard focus. */
+internal class IdentityWindowStreamBinder<W : Any>(
+    private val session: WaylandWindowStreamSession,
+    private val identityOf: (W) -> MutterWindowIdentity,
+) : WaylandWindowStreamBinder<W> {
+    override fun bind(window: W, key: String, cursor: CursorMode): BoundWindowStream {
+        val expected = identityOf(window)
+        val (event, frame) = session.bindWindow(key, expected, cursor)
+        val content =
+            opaqueContentBounds(frame)
+                ?: throw WaylandCaptureUnavailableException(
+                    "Mutter bound window identity ${expected.ownerPid}/${expected.frame}, but " +
+                        "its first frame was transparent."
+                )
+        val awtSize = Dimension(expected.frame.width, expected.frame.height)
+        val scale =
+            matchingScale(content, awtSize, streamScale(frame, event))
+                ?: throw WaylandCaptureUnavailableException(
+                    "Mutter returned a stream whose ${content.width}x${content.height} content does not match " +
+                        "the requested identity ${expected.ownerPid}/${expected.frame}."
+                )
+        return BoundWindowStream(
+            key,
+            Point(content.x, content.y),
+            scale,
+            Dimension(frame.width, frame.height),
+        )
+    }
 }
 
 /**
@@ -423,6 +460,20 @@ internal class HelperWindowStreamSession(private val client: WaylandSessionClien
         event to readFrame(output)
     }
 
+    override fun bindWindow(
+        key: String,
+        identity: MutterWindowIdentity,
+        cursorMode: CursorMode,
+    ): Pair<Event.WindowBound, BufferedImage> = withFrameFile { output ->
+        val event = mutterCall {
+            client.send(
+                Command.BindWindow(key, output, identity.ownerPid, identity.frame, cursorMode)
+            )
+        }
+        check(event is Event.WindowBound) { "unexpected reply to bind_window: $event" }
+        event to readFrame(output)
+    }
+
     override fun screenshot(key: String): BufferedImage = withFrameFile { output ->
         mutterCall { client.send(Command.WindowScreenshot(key, output)) }
         readFrame(output)
@@ -547,7 +598,7 @@ internal const val POPUP_UNSUPPORTED_MESSAGE: String =
 
 internal const val BIND_ON_EDT_MESSAGE: String =
     "Spectre cannot bind a GNOME Mutter window stream on the AWT event dispatch thread: binding " +
-        "focuses the window and waits for the event dispatch thread. Capture the window once " +
+        "performs blocking helper I/O and may wait for event-dispatch callbacks. Capture once " +
         "from another thread; later captures of it also work on the event dispatch thread."
 
 internal const val MUTTER_UNAVAILABLE_MESSAGE: String =
@@ -563,13 +614,14 @@ internal object DefaultWaylandWindowStreams {
         WaylandWindowStreams(
             session = session,
             binder =
-                FocusWindowStreamBinder(
-                    session,
-                    AwtWindowFocus(
-                        activate =
-                            HelperWindowActivator(DefaultWaylandSessionClient.instance)::activate
-                    ),
-                ),
+                IdentityWindowStreamBinder(session) { window ->
+                    val frame =
+                        window.asFramedWindow(isWindows = false, clientAreaOnly = true).deviceFrame
+                    MutterWindowIdentity(
+                        ProcessHandle.current().pid(),
+                        Region(frame.x, frame.y, frame.width, frame.height),
+                    )
+                },
             windowSize = ::awtWindowSize,
             onWindowClosed = ::runWhenWindowCloses,
         )

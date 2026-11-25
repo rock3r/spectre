@@ -21,6 +21,22 @@ import kotlin.test.assertTrue
 class WaylandWindowStreamsTest {
 
     @Test
+    fun `identity binder selects the requested window without touching focus`() {
+        val session = FakeSession(frameWindow = Rectangle(25, 25, 400, 300))
+        val identity = MutterWindowIdentity(ownerPid = 42, frame = Region(10, 20, 400, 300))
+        val binder =
+            IdentityWindowStreamBinder<String>(session) { requested ->
+                assertEquals("main", requested)
+                identity
+            }
+
+        val stream = binder.bind("main", "k1", CursorMode.HIDDEN)
+
+        assertEquals(identity, session.lastIdentity)
+        assertEquals(Point(25, 25), stream.origin)
+    }
+
+    @Test
     fun `finds the window in a transparent monitor-sized Mutter frame`() {
         // Seat probe on GNOME 50: a 400x300 window at (25,25) of a 2560x1440 RGBA frame, with a
         // translucent drop shadow around it.
@@ -428,6 +444,7 @@ class WaylandWindowStreamsTest {
         var forgetNextScreenshot = false
         val unbound = mutableListOf<String>()
         val recordings = mutableListOf<Command.StartWindowRecording>()
+        var lastIdentity: MutterWindowIdentity? = null
 
         override fun bindFocused(
             key: String,
@@ -436,6 +453,15 @@ class WaylandWindowStreamsTest {
             binds += 1
             bindCursorModes += cursorMode
             return Event.WindowBound(key, nodeId = 61, logicalSize = listOf(2560, 1440)) to frame()
+        }
+
+        override fun bindWindow(
+            key: String,
+            identity: MutterWindowIdentity,
+            cursorMode: CursorMode,
+        ): Pair<Event.WindowBound, BufferedImage> {
+            lastIdentity = identity
+            return bindFocused(key, cursorMode)
         }
 
         override fun screenshot(key: String): BufferedImage {

@@ -68,6 +68,7 @@ fn main() -> Result<()> {
         | Ok(Command::Key { .. })
         | Ok(Command::PointerAxis { .. })
         | Ok(Command::BindFocusedWindow { .. })
+        | Ok(Command::BindWindow { .. })
         | Ok(Command::WindowScreenshot { .. })
         | Ok(Command::StartWindowRecording(_))
         | Ok(Command::UnbindWindow { .. })

@@ -60,6 +60,9 @@ val expectedLinuxHelperPaths =
 
 tasks.named<ProcessResources>("processResources") {
     from(recordingProject.layout.buildDirectory.dir("generated/waylandHelper"))
+    from(recordingProject.layout.projectDirectory.dir("native/linux/gnome-shell-extension")) {
+        into("native/linux/gnome-shell-extension")
+    }
     when {
         prebuiltLinuxHelpersDir.isPresent ->
             dependsOn(recordingProject.tasks.named("stagePrebuiltLinuxHelpers"))
@@ -78,10 +81,15 @@ tasks.register("verifyRecordingLinuxHelpers") {
 
     val jarFile = tasks.named<Jar>("jar").flatMap { it.archiveFile }
     val expectedHelpers = expectedLinuxHelperPaths
+    val expectedExtensionPaths =
+        listOf(
+            "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/metadata.json",
+            "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension.js",
+        )
     doLast {
         val jar = jarFile.get().asFile
         val entries = ZipFile(jar).use { zip -> zip.entries().asSequence().map { it.name }.toSet() }
-        val missing = expectedHelpers.filter { it !in entries }
+        val missing = (expectedHelpers + expectedExtensionPaths).filter { it !in entries }
         if (missing.isNotEmpty()) {
             throw GradleException(
                 "spectre-recording-linux jar is missing helper resources: " + missing.joinToString()

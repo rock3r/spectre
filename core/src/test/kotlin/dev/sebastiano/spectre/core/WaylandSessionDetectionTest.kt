@@ -9,6 +9,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -16,6 +17,19 @@ import org.junit.jupiter.api.io.TempDir
 
 /** Linux session detection behind [isWaylandSession] (#397, #575, #607). */
 class WaylandSessionDetectionTest {
+    @Test
+    fun `session detection rejects an unproven session instead of guessing X11`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                isWaylandSession(
+                    getenv = { null },
+                    runtimeDirHasWaylandSocket = { false },
+                    displayIsPureX11 = { false },
+                    displayIsXwayland = { false },
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("SPECTRE_CAPTURE_BACKEND"))
+    }
 
     @Test
     fun `Wayland detection recognizes a runtime-directory socket without DISPLAY`() {
@@ -41,7 +55,7 @@ class WaylandSessionDetectionTest {
                     }
                 },
                 runtimeDirHasWaylandSocket = { true },
-                displayIsPureX11 = { false },
+                displayIsPureX11 = { true },
                 displayIsXwayland = { false },
             )
         )
@@ -118,8 +132,13 @@ class WaylandSessionDetectionTest {
     fun `Wayland detection ignores an unreadable runtime directory`() {
         assertFalse(
             isWaylandSession(
-                getenv = { if (it == "XDG_RUNTIME_DIR") "/run/user/1000" else null },
-                runtimeDirHasWaylandSocket = { error("unreadable runtime directory") },
+                getenv = { key ->
+                    if (key == "XDG_SESSION_TYPE") "x11"
+                    else if (key == "XDG_RUNTIME_DIR") "/run/user/1000" else null
+                },
+                runtimeDirHasWaylandSocket = {
+                    error("must not probe after explicit session type")
+                },
             )
         )
     }
@@ -141,7 +160,7 @@ class WaylandSessionDetectionTest {
                     }
                 },
                 runtimeDirHasWaylandSocket = { true },
-                displayIsPureX11 = { false },
+                displayIsPureX11 = { true },
                 displayIsXwayland = { false },
                 waylandSocketExists = { path ->
                     probed.add(path)
@@ -149,7 +168,7 @@ class WaylandSessionDetectionTest {
                 },
             )
         )
-        assertEquals(listOf(Path.of("/run/user/1000", "wayland-1")), probed)
+        assertTrue(probed.isEmpty(), "a proven X11 server needs no socket fallback")
     }
 
     @Test
@@ -224,6 +243,7 @@ class WaylandSessionDetectionTest {
                 getenv = { key ->
                     when (key) {
                         "DISPLAY" -> ":99"
+                        "XDG_SESSION_TYPE" -> "x11"
                         "WAYLAND_DISPLAY" -> "wayland-0"
                         else -> null
                     }
@@ -236,9 +256,9 @@ class WaylandSessionDetectionTest {
     }
 
     @Test
-    fun `Wayland detection checks the default wayland-0 socket for session type alone`() {
+    fun `Wayland detection accepts the default wayland-0 socket for session type alone`() {
         val probed = mutableListOf<Path>()
-        assertFalse(
+        assertTrue(
             isWaylandSession(
                 getenv = { key ->
                     when (key) {
@@ -252,7 +272,7 @@ class WaylandSessionDetectionTest {
                 displayIsXwayland = { false },
                 waylandSocketExists = { path ->
                     probed.add(path)
-                    false
+                    true
                 },
             )
         )
@@ -264,7 +284,7 @@ class WaylandSessionDetectionTest {
         assertFalse(
             isWaylandSession(
                 getenv = { if (it == "DISPLAY") ":99" else null },
-                displayIsPureX11 = { error("no Wayland signal to disprove") },
+                displayIsPureX11 = { true },
                 displayIsXwayland = { false },
                 waylandSocketExists = { error("no Wayland signal to confirm") },
             )

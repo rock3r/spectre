@@ -90,16 +90,12 @@ window recording. They use GNOME Mutter's own `org.gnome.Mutter.ScreenCast` wind
 through the session helper, which need no consent. The portal's window source cannot do
 this: GNOME stores a window grant as the window's app id and title, and gives a Java window
 without a matching `.desktop` file a new `window:<n>` app id, so every new window would show
-a new window picker. Mutter selects the window that has keyboard focus, so Spectre focuses a
-window briefly the first time it captures it, checks the frame size, and gives focus back.
-GNOME ignores a Java window's own focus request when another application, or no window, has
-focus, so Spectre then asks the window manager to activate the window (`_NET_ACTIVE_WINDOW`).
-It does not give focus back to another application's window.
-A window that cannot take focus, a translucent window, or a desktop other than GNOME fails
-with an error. Popup windows (a `JWindow`, or any window that is not a `Frame` or `Dialog`)
-cannot be captured yet: AWT keeps their keyboard focus on the owner frame, so Mutter would record
-the owner. Their capture fails at once with an `UnsupportedOperationException`;
-[#640](https://github.com/rock3r/spectre/issues/640) tracks binding by window identity. Spectre never substitutes a crop of a monitor capture for a window capture.
+a new window picker. Spectre's `spectre-window-identity@sebastiano.dev` GNOME Shell extension
+maps the requesting JVM's PID and exact Xwayland XID to Mutter's internal id. The helper passes
+that id to `RecordWindow`; keyboard focus is neither read nor changed. The extension rejects a
+PID that is not an ancestor of its D-Bus caller and rejects zero or multiple matches, so a wrong
+window is never accepted. A missing extension, translucent first frame, identity mismatch, or a
+desktop other than GNOME fails with an error. Spectre never substitutes a monitor crop.
 GNOME shows its screen-sharing indicator in the top bar while window streams run. Each bound
 stream lives until its window closes or the session helper's client disconnects.
 
@@ -208,8 +204,10 @@ X11, macOS, and Windows keep their input and capture paths.
   default, resolved under `XDG_RUNTIME_DIR` unless the value is an absolute path.
   With no `DISPLAY`, a residual compositor socket indicates Wayland,
   including SSH sessions into a Wayland host.
-  Real Wayland+XWayland still routes to the portal. Override with
-  `SPECTRE_CAPTURE_BACKEND=x11` or `wayland` when probes cannot decide.
+  If none of these probes proves a type, Spectre fails and names
+  `SPECTRE_CAPTURE_BACKEND=x11|wayland`; it never guesses. A proven Xwayland `DISPLAY` is refused
+  by the X11 path even when `x11` was explicitly requested, because successful black capture is
+  not a valid result.
 
   Native Wayland sessions with XWayland are different: Mutter does not expose the composited
   desktop through the XWayland root framebuffer, so root-region `ximagesrc` capture can be black

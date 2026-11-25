@@ -334,6 +334,21 @@ fn dispatch(
             cursor_mode,
             client_id,
         )),
+        Command::BindWindow {
+            key,
+            output,
+            owner_pid,
+            frame,
+            cursor_mode,
+        } => window_event(bind_identity_window(
+            windows,
+            &key,
+            &output,
+            owner_pid,
+            frame,
+            cursor_mode,
+            client_id,
+        )),
         Command::WindowScreenshot { key, output } => {
             window_event(window_screenshot(windows, &key, &output))
         }
@@ -470,7 +485,9 @@ fn run_recording_start(
         start.region,
         stream.position,
         stream.size,
-        start.screen_size.and_then(crate::stream_region::screen_size_to_region),
+        start
+            .screen_size
+            .and_then(crate::stream_region::screen_size_to_region),
     )?;
     let argv = crate::gst::build_pipewire_argv(
         stream.node_id,
@@ -572,6 +589,36 @@ fn bind_focused_window(
     })
 }
 
+fn bind_identity_window(
+    windows: &Mutex<MutterWindowStreams>,
+    key: &str,
+    output: &str,
+    owner_pid: u32,
+    frame: crate::protocol::Region,
+    cursor_mode: crate::protocol::CursorMode,
+    client_id: u64,
+) -> Result<Event> {
+    let xid = crate::x11_window::find_window_by_frame(None, frame, Some(owner_pid))?.xid;
+    let bound = {
+        let mut guard = windows
+            .lock()
+            .map_err(|e| anyhow::anyhow!("window stream mutex poisoned: {e}"))?;
+        guard.bind_identity(key, client_id, owner_pid, xid, cursor_mode)?
+    };
+    let output = PathBuf::from(output);
+    if let Err(e) = write_window_frame(bound.node_id, &output) {
+        if let Ok(mut guard) = windows.lock() {
+            guard.unbind(key);
+        }
+        return Err(e.context("reading the first frame of the identity-bound window"));
+    }
+    Ok(Event::WindowBound {
+        key: key.to_string(),
+        node_id: bound.node_id,
+        logical_size: [bound.logical_size.0, bound.logical_size.1],
+    })
+}
+
 fn window_screenshot(
     windows: &Mutex<MutterWindowStreams>,
     key: &str,
@@ -660,8 +707,8 @@ fn write_event(writer: &mut UnixStream, event: Event) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_held_input, disconnect_cleanup, portal_failure_exit_code, recording_owner_should_reap,
-        ClientInputHold, HeldInput, CONSENT_NOT_GRANTED_EXIT,
+        apply_held_input, disconnect_cleanup, portal_failure_exit_code,
+        recording_owner_should_reap, ClientInputHold, HeldInput, CONSENT_NOT_GRANTED_EXIT,
     };
     use crate::portal::response_timeout_error;
     use std::collections::{BTreeSet, HashMap};
@@ -670,13 +717,19 @@ mod tests {
     #[test]
     fn consent_failures_exit_with_the_consent_status() {
         let err = response_timeout_error(Duration::from_secs(60), "/request/path");
-        assert_eq!(portal_failure_exit_code(&err), Some(CONSENT_NOT_GRANTED_EXIT));
+        assert_eq!(
+            portal_failure_exit_code(&err),
+            Some(CONSENT_NOT_GRANTED_EXIT)
+        );
         assert_eq!(CONSENT_NOT_GRANTED_EXIT, 77);
     }
 
     #[test]
     fn other_portal_failures_keep_the_generic_error_exit() {
-        assert_eq!(portal_failure_exit_code(&anyhow::anyhow!("opening session bus")), None);
+        assert_eq!(
+            portal_failure_exit_code(&anyhow::anyhow!("opening session bus")),
+            None
+        );
     }
 
     #[test]
@@ -689,19 +742,9 @@ mod tests {
     #[test]
     fn disconnect_releases_that_clients_held_button_and_modifier() {
         let mut holds = HashMap::new();
-        apply_held_input(
-            &mut holds,
-            3,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
+        apply_held_input(&mut holds, 3, HeldInput::PointerButton(0x110), true);
         apply_held_input(&mut holds, 3, HeldInput::Key(0xffe3), true);
-        apply_held_input(
-            &mut holds,
-            9,
-            HeldInput::PointerButton(0x111),
-            true,
-        );
+        apply_held_input(&mut holds, 9, HeldInput::PointerButton(0x111), true);
 
         let cleanup = disconnect_cleanup(None, 3, &mut holds);
         assert!(!cleanup.reap_recording);
@@ -713,8 +756,7 @@ mod tests {
             }
         );
         assert_eq!(
-            cleanup.portal_releases,
-            cleanup.held_input,
+            cleanup.portal_releases, cleanup.held_input,
             "sole owner must notify the portal on disconnect"
         );
         assert_eq!(
@@ -728,19 +770,9 @@ mod tests {
     #[test]
     fn disconnect_does_not_release_input_still_held_by_another_client() {
         let mut holds = HashMap::new();
-        apply_held_input(
-            &mut holds,
-            3,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
+        apply_held_input(&mut holds, 3, HeldInput::PointerButton(0x110), true);
         apply_held_input(&mut holds, 3, HeldInput::Key(0xffe3), true);
-        apply_held_input(
-            &mut holds,
-            9,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
+        apply_held_input(&mut holds, 9, HeldInput::PointerButton(0x110), true);
         apply_held_input(&mut holds, 9, HeldInput::Key(0xffe1), true);
 
         let cleanup = disconnect_cleanup(None, 3, &mut holds);
@@ -762,18 +794,8 @@ mod tests {
     #[test]
     fn matching_release_leaves_nothing_to_unwind_on_disconnect() {
         let mut holds = HashMap::new();
-        apply_held_input(
-            &mut holds,
-            4,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
-        apply_held_input(
-            &mut holds,
-            4,
-            HeldInput::PointerButton(0x110),
-            false,
-        );
+        apply_held_input(&mut holds, 4, HeldInput::PointerButton(0x110), true);
+        apply_held_input(&mut holds, 4, HeldInput::PointerButton(0x110), false);
         apply_held_input(&mut holds, 4, HeldInput::Key(0xffe3), true);
         apply_held_input(&mut holds, 4, HeldInput::Key(0xffe3), false);
 

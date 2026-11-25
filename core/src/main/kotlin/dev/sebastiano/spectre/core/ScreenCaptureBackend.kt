@@ -217,30 +217,42 @@ public fun isWaylandSession(
     displayIsXwayland: (String) -> Boolean = ::defaultDisplayIsXwayland,
     waylandSocketExists: (Path) -> Boolean = ::isWaylandSocket,
 ): Boolean {
-    when (getenv("SPECTRE_CAPTURE_BACKEND")?.trim()?.lowercase()) {
-        "x11",
-        "xorg",
-        "xvfb" -> return false
-        "wayland",
-        "portal" -> return true
+    explicitLinuxSession(getenv)?.let {
+        return it
     }
     val display = getenv("DISPLAY")?.takeIf { it.isNotBlank() }
-    val sessionIsWayland = getenv("XDG_SESSION_TYPE").equals("wayland", ignoreCase = true)
+    val sessionType = getenv("XDG_SESSION_TYPE")?.trim()?.lowercase()
+    val sessionIsWayland = sessionType == "wayland"
     val waylandDisplay = getenv("WAYLAND_DISPLAY")?.takeIf { it.isNotBlank() }
+    if (sessionType == "x11") return false
     if (display == null) {
         if (sessionIsWayland || waylandDisplay != null) return true
-        return getenv("XDG_RUNTIME_DIR")?.let(Path::of)?.let {
-            runCatching { runtimeDirHasWaylandSocket(it) }.getOrDefault(false)
-        } == true
+        val socketProvesWayland =
+            getenv("XDG_RUNTIME_DIR")?.let(Path::of)?.let {
+                runCatching { runtimeDirHasWaylandSocket(it) }.getOrDefault(false)
+            } == true
+        if (socketProvesWayland) return true
+        unprovenLinuxSession(display)
     }
     // DISPLAY is set. Xwayland is a Wayland seat even when SSH carried no Wayland env (#607).
     if (displayIsXwayland(display)) return true
     // Residual sockets alone never override DISPLAY (#397).
-    if (!sessionIsWayland && waylandDisplay == null) return false
     if (displayIsPureX11(display)) return false
-    val socket = resolveWaylandSocket(waylandDisplay, getenv("XDG_RUNTIME_DIR")) ?: return false
-    return runCatching { waylandSocketExists(socket) }.getOrDefault(false)
+    if (!sessionIsWayland && waylandDisplay == null) unprovenLinuxSession(display)
+    val socket =
+        resolveWaylandSocket(waylandDisplay, getenv("XDG_RUNTIME_DIR"))
+            ?: unprovenLinuxSession(display)
+    if (probeWaylandSocket(socket, waylandSocketExists)) return true
+    unprovenLinuxSession(display)
 }
+
+private fun unprovenLinuxSession(display: String?): Nothing =
+    error(
+        "Spectre could not prove the Linux session type. " +
+            "DISPLAY=${display ?: "<unset>"}; XDG_SESSION_TYPE, WAYLAND_DISPLAY and the " +
+            "Wayland socket did not prove Wayland, while /proc and xdpyinfo did not prove " +
+            "Xorg or Xwayland. Set SPECTRE_CAPTURE_BACKEND=x11 or wayland explicitly."
+    )
 
 private fun runtimeDirHasWaylandSocket(runtimeDir: Path): Boolean =
     Files.isDirectory(runtimeDir) &&
@@ -303,3 +315,18 @@ internal fun normalizeNativeImage(image: BufferedImage): BufferedImage {
 }
 
 private fun String?.quoteForMessage(): String = "\"${this.orEmpty()}\""
+
+private fun explicitLinuxSession(getenv: (String) -> String?): Boolean? =
+    when (getenv("SPECTRE_CAPTURE_BACKEND")?.trim()?.lowercase()) {
+        "x11",
+        "xorg",
+        "xvfb" -> false
+        "wayland",
+        "portal" -> true
+        else -> null
+    }
+
+private fun probeWaylandSocket(path: Path, exists: (Path) -> Boolean): Boolean = runCatching {
+    exists(path)
+}
+    .getOrDefault(false)
