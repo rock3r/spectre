@@ -225,6 +225,7 @@ class FailureVideoSessionTest {
 
     @Test
     fun `stop failure deletes video even under Always`(@TempDir temp: Path) {
+        val reports = mutableListOf<Pair<String, String>>()
         val session =
             FailureVideoSession(
                 config =
@@ -253,13 +254,18 @@ class FailureVideoSessionTest {
             testMethodName = "m",
         )
         val active = checkNotNull(session.activeOutput)
-        session.finalizeAndApply(FailureVideoOutcome.Failed)
+        session.finalizeAndApply(FailureVideoOutcome.Failed) { key, value ->
+            reports += key to value
+        }
         assertFalse(Files.exists(active), "failed stop must not keep partial video")
         assertFalse(session.hasActiveRecorder)
+        assertEquals(FailureVideoSession.MISSING_REPORT_ENTRY_KEY, reports.single().first)
+        assertTrue(reports.single().second.contains("helper crashed during stop"))
     }
 
     @Test
     fun `start failure is best-effort and leaves no active recorder`(@TempDir temp: Path) {
+        val reports = mutableListOf<Pair<String, String>>()
         val session =
             FailureVideoSession(
                 config =
@@ -287,8 +293,12 @@ class FailureVideoSessionTest {
             },
             "failed start must delete partial video",
         )
-        session.finalizeAndApply(FailureVideoOutcome.Failed)
+        session.finalizeAndApply(FailureVideoOutcome.Failed) { key, value ->
+            reports += key to value
+        }
         assertFalse(session.hasActiveRecorder)
+        assertEquals(FailureVideoSession.MISSING_REPORT_ENTRY_KEY, reports.single().first)
+        assertTrue(reports.single().second.contains("helper missing"))
     }
 
     private fun sessionWithFakeFile(

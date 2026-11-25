@@ -269,10 +269,17 @@ internal fun currentScaleKey(
                 .distinct()
         }
     val uniqueSurfaceScales = surfaces.map { it.scaleX to it.scaleY }.distinct()
+    val scale = matchingScales.singleOrNull() ?: uniqueSurfaceScales.singleOrNull()
     val (scaleX, scaleY) =
-        matchingScales.singleOrNull()
-            ?: uniqueSurfaceScales.singleOrNull()
-            ?: (fallbackScaleX to fallbackScaleY)
+        scale
+            ?: if (surfaces.isEmpty()) {
+                fallbackScaleX to fallbackScaleY
+            } else {
+                error(
+                    "Cannot determine screenshot scale: the image does not identify one of " +
+                        "${surfaces.size} visible surfaces with mixed scales. Pass scaleKey explicitly."
+                )
+            }
     return ScreenshotGoldPaths.scaleKey(scaleX, scaleY)
 }
 
