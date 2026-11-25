@@ -59,6 +59,8 @@ on:
       - "recording-windows/**"
       - "sample-desktop/**"
       - "testing/**"
+      - "fixtures/accesskit/**"
+      - "tests/test_accesskit_fixture.py"
       # Broad gradle/** rather than just libs.versions.toml so wrapper bumps and any other
       # ./gradle/-resident config changes still trigger this validation job. Mirrors the
       # filter shape of validation-windows.yml.
@@ -82,6 +84,8 @@ on:
       - "recording-windows/**"
       - "sample-desktop/**"
       - "testing/**"
+      - "fixtures/accesskit/**"
+      - "tests/test_accesskit_fixture.py"
       - "gradle/**"
       - "settings.gradle.kts"
       - "build.gradle.kts"
@@ -117,6 +121,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             xvfb \
+            at-spi2-core \
+            python3-gi \
+            python3-pyatspi \
+            gir1.2-atspi-2.0 \
             libdbus-1-dev \
             pkg-config \
             gstreamer1.0-tools \
@@ -125,6 +133,11 @@ jobs:
 
       - name: Set up Rust (for spectre-wayland-helper)
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and read AccessKit fixture through AT-SPI
+        run: |
+          cargo build --locked --manifest-path fixtures/accesskit/Cargo.toml
+          dbus-run-session -- xvfb-run -a fixtures/accesskit/run-linux.sh
 
       - name: Run validation tests under Xvfb
         # `--continue` so a failure in one task doesn't skip subsequent tasks — every
