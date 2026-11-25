@@ -240,6 +240,7 @@ def configure_linux_display_mode(
     environ: MutableMapping[str, str] | None = None,
     *,
     discover: Callable[[Mapping[str, str]], dict[str, str]] | None = None,
+    verify: Callable[[Mapping[str, str]], bool] | None = None,
 ) -> str:
     """Apply an explicit Linux display choice before preflight and seat detection."""
     target = os.environ if environ is None else environ
@@ -250,11 +251,10 @@ def configure_linux_display_mode(
     if mode == "seat":
         found = (discover or discover_linux_seat_env)(target)
         target.update(found)
-        if not target.get("DISPLAY", "").strip() and not target.get(
-            "WAYLAND_DISPLAY", ""
-        ).strip():
+        if not (verify or is_linux_graphical_login_seat)(target):
             raise RuntimeError(
-                "--display-mode seat requires a real Linux seat, but none was discovered"
+                "--display-mode seat requires a genuine graphical login seat "
+                "(Wayland or X11), but none was verified"
             )
         return mode
     if mode != "auto":
@@ -2070,11 +2070,20 @@ def linux_wayland_helper_path(root: Path) -> Path | None:
 
 
 def wayland_restore_token_dir(
-    out_dir: Path, environ: Mapping[str, str] | None = None
+    out_dir: Path,
+    environ: Mapping[str, str] | None = None,
+    *,
+    caller_cwd: Path | None = None,
 ) -> Path:
     source = os.environ if environ is None else environ
     inherited = source.get("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR", "").strip()
-    return Path(inherited).expanduser() if inherited else Path(out_dir) / "wayland-restore-tokens"
+    if not inherited:
+        return Path(out_dir) / "wayland-restore-tokens"
+    token_dir = Path(inherited).expanduser()
+    if token_dir.is_absolute():
+        # Keep operator-provided spelling (notably macOS /var versus /private/var).
+        return token_dir
+    return Path(os.path.abspath((caller_cwd or Path.cwd()) / token_dir))
 
 
 def prepare_linux_portal_token_env(
@@ -2308,6 +2317,49 @@ def _seat_x_display(
     if len(sockets) == 1:
         return f":{next(iter(sockets))}"
     return None
+
+
+def is_linux_graphical_login_seat(
+    environ: Mapping[str, str],
+    *,
+    uid: int | None = None,
+    x11_socket_dir: Path = Path("/tmp/.X11-unix"),
+    proc_root: Path = Path("/proc"),
+) -> bool:
+    """Prove that display handles belong to a logged-in Wayland or Xorg seat."""
+    runtime = environ.get("XDG_RUNTIME_DIR", "").strip()
+    wayland = environ.get("WAYLAND_DISPLAY", "").strip()
+    if runtime and wayland and (Path(runtime) / wayland).exists():
+        return True
+
+    display = environ.get("DISPLAY", "").strip()
+    match = re.fullmatch(r":(\d+)(?:\.\d+)?", display)
+    if match is None or not (Path(x11_socket_dir) / f"X{int(match.group(1))}").exists():
+        return False
+    if uid is None:
+        getuid = getattr(os, "getuid", None)
+        if getuid is None:
+            return False
+        uid = int(getuid())
+    try:
+        entries = list(Path(proc_root).iterdir())
+    except OSError:
+        return False
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            if entry.stat().st_uid != uid:
+                continue
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        argv = [part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part]
+        if not argv or Path(argv[0]).name not in {"X", "Xorg"}:
+            continue
+        if display in argv or f":{int(match.group(1))}" in argv:
+            return True
+    return False
 
 
 def discover_linux_seat_env(

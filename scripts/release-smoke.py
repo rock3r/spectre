@@ -15,6 +15,7 @@ See docs/RELEASE-SMOKE.md and scripts/smoke_lib.py for scenario IDs.
 from __future__ import annotations
 
 import argparse
+import os
 import platform
 import subprocess
 import sys
@@ -428,6 +429,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
+    caller_cwd = Path.cwd()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--version",
@@ -493,6 +495,14 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
         ),
     )
     args = parser.parse_args(argv)
+
+    # Freeze a relative operator override before any subprocess can change its cwd. The same
+    # absolute value is then reported and exported to Gradle, the CLI, and portal warmup.
+    inherited_token_dir = os.environ.get("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR", "").strip()
+    if inherited_token_dir:
+        os.environ["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"] = str(
+            wayland_restore_token_dir(Path("."), caller_cwd=caller_cwd)
+        )
 
     system = platform.system()
     if system == "Linux":
