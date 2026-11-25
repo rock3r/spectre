@@ -1,0 +1,122 @@
+name: Temporary hosted Linux release smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [release-0.10/gnome-hosted-smoke]
+    paths:
+      - .github/release-smoke-hosted.env
+      - .github/workflows/release-smoke-hosted.yml
+
+# Verification only: do not grant publication, branch-update, or credential scopes.
+permissions:
+  contents: read
+
+jobs:
+  release-smoke-xvfb:
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke'
+    runs-on: ubuntu-24.04
+    # The committed harness owns an unmodified 7,200-second execution budget. Leave
+    # enough time around it for a clean checkout, tool installation, and report upload.
+    timeout-minutes: 150
+
+    steps:
+      - name: Check out temporary orchestration
+        uses: actions/checkout@v6
+        with:
+          path: orchestration
+          persist-credentials: false
+
+      - name: Read and validate pinned candidate
+        id: control
+        working-directory: orchestration
+        shell: bash
+        run: |
+          set -euo pipefail
+          source .github/release-smoke-hosted.env
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_VERSION" == "0.10.0" ]]
+          [[ "$PHASE" == "REHEARSAL" || "$PHASE" == "CANDIDATE" ]]
+          printf 'candidate_sha=%s\nrelease_version=%s\nphase=%s\n' \
+            "$CANDIDATE_SHA" "$RELEASE_VERSION" "$PHASE" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the exact candidate with full history
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.control.outputs.candidate_sha }}
+          fetch-depth: 0
+          path: candidate
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact clean candidate and record rehearsal identity
+        working-directory: candidate
+        env:
+          EXPECTED_SHA: ${{ steps.control.outputs.candidate_sha }}
+          PHASE: ${{ steps.control.outputs.phase }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          mkdir -p "$RUNNER_TEMP/release-smoke-identity"
+          printf '%s\n' "$EXPECTED_SHA" > "$RUNNER_TEMP/release-smoke-identity/exact-sha.txt"
+          printf '%s\n' "$PHASE" > "$RUNNER_TEMP/release-smoke-identity/phase.txt"
+
+      - name: Set up JDK 21 toolchain
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up default JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle without cache writes
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          build-root-directory: candidate
+          cache-read-only: true
+
+      - name: Install Xorg, recording, and Linux native dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb xauth x11-utils xdotool ffmpeg libxkbcommon-x11-0 python3-pyatspi \
+            libdbus-1-dev pkg-config \
+            gstreamer1.0-tools \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-ugly
+          command -v Xvfb
+          command -v xauth
+          command -v ffmpeg
+          gst-inspect-1.0 ximagesrc
+
+      - name: Set up stable Rust for the Linux native helper
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run the complete committed release smoke under forced Xvfb
+        working-directory: candidate
+        shell: bash
+        run: python3 scripts/release-smoke.py --version 0.10.0 --display-mode xvfb
+
+      - name: Upload release-smoke reports and original per-step logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-smoke-linux-xvfb-${{ steps.control.outputs.phase }}-${{ github.run_attempt }}
+          path: |
+            candidate/build/smoke/release-smoke.json
+            candidate/build/smoke/release-smoke.md
+            candidate/build/smoke/*.log
+            ${{ runner.temp }}/release-smoke-identity/exact-sha.txt
+            ${{ runner.temp }}/release-smoke-identity/phase.txt
+          if-no-files-found: error
+          retention-days: 14
