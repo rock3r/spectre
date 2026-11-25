@@ -109,6 +109,8 @@ SH
   SPECTRE_HELPER="$SMOKE_ARTIFACTS/reader-with-trace" bash "$SMOKE_ARTIFACTS/atspi-wayland.sh" 2>&1 | tee "$SMOKE_ARTIFACTS/atspi-live.log"
   gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
     --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled '<true>'
+  "$FIXTURE_CHECKOUT/fixtures/accesskit/target/debug/spectre-accesskit-fixture" >"$SMOKE_ARTIFACTS/compare-fixture.log" 2>&1 &
+  fixture_pid=$!
   zenity --question --title="Spectre stock GTK proof" --text="Verify the stock GTK dialog" \
     --ok-label="Complete proof" --cancel-label="Cancel proof" >"$SMOKE_ARTIFACTS/stock-gtk-app.log" 2>&1 &
   gtk_pid=$!
@@ -131,6 +133,7 @@ assert window["title"] == "Spectre stock GTK proof" and window["boundsSpace"] ==
 assert any(n["role"] == "button" and n["name"] == "Complete proof" for n in snapshot["nodes"]), snapshot
 print(f"stock GTK Wayland: pid={pid}, nodes={len(snapshot['nodes'])}, window={window}", flush=True)
 PYTHON
+  /usr/bin/python3 "$(dirname "$0")/gnome-observe-roles.py" "$fixture_pid" "$gtk_pid"
   exit 0
 fi
 

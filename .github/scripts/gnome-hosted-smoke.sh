@@ -44,7 +44,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
   at-spi2-core dbus-user-session ffmpeg git gnome-shell gnome-shell-extension-prefs \
   libdbus-1-dev libpipewire-0.3-dev mutter pipewire pipewire-audio-client-libraries \
-  pkg-config python3 zenity wireplumber pipewire-bin xwayland x11-utils xauth \
+  pkg-config python3 python3-dbus zenity wireplumber pipewire-bin xwayland x11-utils xauth \
   libgl1-mesa-dri libegl-mesa0 libxkbcommon-x11-0 xdg-desktop-portal-gnome \
   gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
   gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-pipewire
