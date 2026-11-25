@@ -300,6 +300,10 @@ val verifyAccessKitFixture by
         description = "Checks the private AccessKit fixture and per-OS golden contracts."
         workingDir = rootProject.layout.projectDirectory.asFile
         commandLine("python3", "-m", "unittest", "tests.test_accesskit_fixture")
+        onlyIf("Host with python3") {
+            runCatching { ProcessBuilder("python3", "--version").start().waitFor() == 0 }
+                .getOrDefault(false)
+        }
         inputs.files(
             "tests/test_accesskit_fixture.py",
             fileTree("fixtures/accesskit") { exclude("target/**") },
