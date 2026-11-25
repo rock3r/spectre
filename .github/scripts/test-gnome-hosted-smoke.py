@@ -76,18 +76,44 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
 
     def test_identity_is_independent_public_api_evidence(self):
         identity = IDENTITY.read_text()
-        self.assertIn("mode: [capture, accessibility, identity]", self.workflow)
+        self.assertIn("mode: [portal, capture, accessibility, identity]", self.workflow)
         self.assertIn("SMOKE_MODE\" == identity", self.session)
         for contract in ("LookupWindow", "RecordWindow", "PipeWireStreamAdded", "gst-launch-1.0",
-                         "focusBefore", "focusAfter", "cropColorCounts", "pipeWireNode"):
+                         "focusSamples", "focusObservedXids", "interiorColorCounts", "pipeWireNode"):
             self.assertIn(contract, identity)
         self.assertNotIn("runWaylandMutterWindowSmoke", identity)
 
-    def test_portal_warmup_is_opt_in_and_not_registered(self):
+    def test_portal_warmup_drives_public_api_then_candidate_helper(self):
         warmup = WARMUP.read_text()
-        self.assertIn("SPECTRE_ENABLE_PORTAL_GUI_WARMUP", warmup)
-        self.assertIn("xdg-desktop-portal-gnome", warmup)
-        self.assertNotIn(WARMUP.name, self.workflow + self.session)
+        for contract in (
+            "org.freedesktop.portal.RemoteDesktop",
+            "CreateSession",
+            "SelectDevices",
+            "org.freedesktop.portal.ScreenCast",
+            "SelectSources",
+            'TITLE = "Remote Desktop"',
+            'MONITOR = 1',
+            'KEYBOARD_POINTER = 3',
+            "xdg-desktop-portal-gnome",
+            "portal-atspi-tree.json",
+            "helper-atspi-tree.json",
+            '"--session"',
+        ):
+            self.assertIn(contract, warmup)
+        self.assertIn("SMOKE_MODE\" == portal", self.session)
+        self.assertIn("--mode portal", self.session)
+        self.assertIn("--mode helper", self.session)
+        self.assertIn("SPECTRE_WAYLAND_CONSENT_PROMPT=never", self.session)
+        self.assertLess(self.session.index("--mode helper"),
+                        self.session.index(":recording:runWaylandMutterWindowSmoke"))
+
+    def test_portal_verification_has_no_bypass(self):
+        warmup = WARMUP.read_text()
+        forbidden = ("PermissionStore", "permission-store", "SetPermission", "xdotool")
+        for token in forbidden:
+            self.assertNotIn(token, warmup)
+        self.assertNotRegex(self.session, r"portal-dialog-warmup.py.*\|\|\s*true")
+        self.assertIn("gir1.2-gtk-4.0", self.driver)
 
 
 if __name__ == "__main__":
