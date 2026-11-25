@@ -49,7 +49,7 @@ def retry(description, predicate, timeout=20):
 
 
 def window(name, color, accepts_focus=False):
-    win = Gtk.Window(title=f"{TITLE} - {name}")
+    win = Gtk.Window(title=TITLE if name in ("red", "blue decoy") else f"{TITLE} - {name}")
     win.set_default_size(WIDTH, HEIGHT)
     win.set_accept_focus(accepts_focus)
     win._probe_configured = False
@@ -236,8 +236,6 @@ def main():
     log(f"red XID={red_xid}; blue XID={blue_xid}")
     retry("red mapped and painted", lambda: ready(red, red_xid))
     retry("blue mapped and painted", lambda: ready(blue, blue_xid))
-    blue.present()
-    retry("blue active/in-focus", lambda: blue_is_focused(blue, blue_xid), timeout=30)
 
     connection = Gio.DBusConnection.new_for_address_sync(
         os.environ["DBUS_SESSION_BUS_ADDRESS"],
@@ -246,6 +244,12 @@ def main():
     )
     red_id = lookup(connection, pid, red_xid, "red")
     assert lookup(connection, pid, red_xid, "red-confirmation") == red_id
+
+    # Set up the decoy once, before sampling focus or starting any capture.
+    blue.present()
+    subprocess.run(["xdotool", "windowactivate", "--sync", str(blue_xid)], timeout=4, check=True)
+    subprocess.run(["xdotool", "windowfocus", "--sync", str(blue_xid)], timeout=4, check=True)
+    retry("blue active/in-focus", lambda: blue_is_focused(blue, blue_xid), timeout=30)
 
     focus_samples, measuring = [], True
 

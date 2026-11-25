@@ -135,7 +135,18 @@ def accept_dialog(pid: int, artifact: Path) -> dict:
     if len(selected_sources) != 1 or len(shares) != 1:
         fail("unexpected GNOME 46 monitor/share structure; complete sanitized tree saved at "
              f"{artifact} (selected sources={len(selected_sources)}, Share={len(shares)})")
-    if "enabled" not in state_names(shares[0]):
+    remote_input = [node for node in nodes if node.getRoleName() == "check box"
+                    and node.name == "Allow Remote Interaction"]
+    if len(remote_input) != 1:
+        fail(f"expected the GNOME remote interaction control in the test VM; see {artifact}")
+    if "checked" not in state_names(remote_input[0]):
+        invoke(remote_input[0], accepted=("toggle",))
+    deadline = time.monotonic() + 5
+    while "checked" not in state_names(remote_input[0]) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    if "checked" not in state_names(remote_input[0]):
+        fail("GNOME did not acknowledge the requested remote interaction")
+    if "sensitive" not in state_names(shares[0]):
         fail(f"Share is not enabled after singular monitor auto-selection; see {artifact}")
 
     selected = {"role": selected_sources[0].getRoleName(),
