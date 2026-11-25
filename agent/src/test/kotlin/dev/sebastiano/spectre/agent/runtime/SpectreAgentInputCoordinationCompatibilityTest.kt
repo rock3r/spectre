@@ -11,6 +11,7 @@ import java.nio.file.Path
 import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -38,7 +39,7 @@ class SpectreAgentInputCoordinationCompatibilityTest {
     }
 
     @Test
-    fun `legacy target without InputLeasePolicy falls back to no-argument driver`() {
+    fun `legacy target without InputLeasePolicy fails instead of selecting real OS input`() {
         val legacyLoader =
             object : ClassLoader(javaClass.classLoader) {
                 override fun loadClass(name: String): Class<*> {
@@ -49,13 +50,14 @@ class SpectreAgentInputCoordinationCompatibilityTest {
                 }
             }
 
-        val driver =
-            SpectreAgent.createCoordinatedRobotDriverOrLegacyFallback(
-                legacyLoader,
-                LegacyRobotDriver::class.java,
-            )
-
-        assertIs<LegacyRobotDriver>(driver)
+        val error =
+            assertFailsWith<IllegalStateException> {
+                SpectreAgent.createCoordinatedRobotDriverOrLegacyFallback(
+                    legacyLoader,
+                    LegacyRobotDriver::class.java,
+                )
+            }
+        assertTrue(error.message!!.contains("InputLeasePolicy"))
     }
 
     /**
@@ -71,10 +73,13 @@ class SpectreAgentInputCoordinationCompatibilityTest {
         val driver =
             SpectreAgent.createCoordinatedRobotDriverOrLegacyFallback(
                 javaClass.classLoader,
-                PolicyRecordingRobotDriver::class.java,
+                SyntheticRecordingRobotDriver::class.java,
             )
 
-        assertEquals(InputLeasePolicy.Required, assertIs<PolicyRecordingRobotDriver>(driver).policy)
+        assertEquals(
+            InputLeasePolicy.Required,
+            assertIs<SyntheticRecordingRobotDriver>(driver).policy,
+        )
     }
 
     @Test
@@ -82,11 +87,14 @@ class SpectreAgentInputCoordinationCompatibilityTest {
         val driver =
             SpectreAgent.createCoordinatedRobotDriverOrLegacyFallback(
                 javaClass.classLoader,
-                PolicyRecordingRobotDriver::class.java,
+                SyntheticRecordingRobotDriver::class.java,
                 AttachInputCoordination.Required,
             )
 
-        assertEquals(InputLeasePolicy.Required, assertIs<PolicyRecordingRobotDriver>(driver).policy)
+        assertEquals(
+            InputLeasePolicy.Required,
+            assertIs<SyntheticRecordingRobotDriver>(driver).policy,
+        )
     }
 
     /**
@@ -103,15 +111,15 @@ class SpectreAgentInputCoordinationCompatibilityTest {
         val driver =
             SpectreAgent.createCoordinatedRobotDriverOrLegacyFallback(
                 javaClass.classLoader,
-                PolicyRecordingRobotDriver::class.java,
+                SyntheticRecordingRobotDriver::class.java,
                 AttachInputCoordination.Disabled,
             )
 
-        assertEquals(InputLeasePolicy.Off, assertIs<PolicyRecordingRobotDriver>(driver).policy)
+        assertEquals(InputLeasePolicy.Off, assertIs<SyntheticRecordingRobotDriver>(driver).policy)
     }
 
     @Test
-    fun `a legacy target ignores the escape hatch instead of failing the attach`() {
+    fun `a legacy target cannot use the escape hatch to select real OS input`() {
         val legacyLoader =
             object : ClassLoader(javaClass.classLoader) {
                 override fun loadClass(name: String): Class<*> {
@@ -122,20 +130,16 @@ class SpectreAgentInputCoordinationCompatibilityTest {
                 }
             }
 
-        val driver =
+        assertFailsWith<IllegalStateException> {
             SpectreAgent.createCoordinatedRobotDriverOrLegacyFallback(
                 legacyLoader,
                 LegacyRobotDriver::class.java,
                 AttachInputCoordination.Disabled,
             )
-
-        assertIs<LegacyRobotDriver>(driver)
+        }
     }
 
     private class LegacyRobotDriver
-
-    /** Stands in for `RobotDriver`'s `(InputLeasePolicy)` constructor and records what it got. */
-    private class PolicyRecordingRobotDriver(val policy: InputLeasePolicy)
 
     /**
      * Stands in for current-core `RobotDriver.Companion.synthetic(policy)` so the attach path

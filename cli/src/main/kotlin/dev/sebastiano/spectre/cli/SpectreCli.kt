@@ -1192,10 +1192,24 @@ private class AttachCommand(
             }
         if (json) {
             output.append(
-                CLI_JSON.encodeToString(AttachJson(id = session.sessionId, pid = session.targetPid))
+                CLI_JSON.encodeToString(
+                    AttachJson(
+                        id = session.sessionId,
+                        pid = session.targetPid,
+                        sessionInfo = session.sessionInfo,
+                    )
+                )
             )
         } else {
-            output.append(humanSession(DaemonSessionSummary(session.sessionId, session.targetPid)))
+            output.append(
+                humanSession(
+                    DaemonSessionSummary(
+                        session.sessionId,
+                        session.targetPid,
+                        session.sessionInfo,
+                    )
+                )
+            )
         }
         output.appendLine()
     }
@@ -1311,6 +1325,7 @@ private data class AttachJson(
     val id: String,
     val sessionId: String = id,
     val pid: Long,
+    val sessionInfo: dev.sebastiano.spectre.cli.daemon.DaemonSessionInfo? = null,
 )
 
 @Serializable
@@ -1419,8 +1434,16 @@ private fun printRecording(
     output.appendLine()
 }
 
-private fun humanSession(summary: DaemonSessionSummary): String =
-    "${summary.sessionId} (pid ${summary.targetPid})"
+private fun humanSession(summary: DaemonSessionSummary): String = buildString {
+    append("${summary.sessionId} (pid ${summary.targetPid})")
+    summary.sessionInfo?.let { info ->
+        append(
+            ", driver=${info.driverKind}, lease=${info.inputLeasePolicy}, " +
+                "core=${info.coreProvenance}@${info.coreVersion ?: "unversioned"}"
+        )
+        info.warnings.forEach { append("\nWarning: $it") }
+    }
+}
 
 private fun PsProcessJson(summary: DaemonJvmProcessSummary): PsProcessJson =
     PsProcessJson(pid = summary.pid, displayName = summary.displayName)

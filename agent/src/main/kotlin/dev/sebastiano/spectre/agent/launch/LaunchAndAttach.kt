@@ -77,6 +77,7 @@ public object LaunchAndAttach {
     )
 
     private fun prepareLaunch(spec: LaunchSpec): PreparedLaunch {
+        requireCompatibleOptions(spec)
         val gradleish = LaunchCommandRewriter.isGradleishLaunch(spec.command)
         val warnings =
             if (gradleish) listOf(LaunchCommandRewriter.gradleLaunchWarning()) else emptyList()
@@ -102,6 +103,19 @@ public object LaunchAndAttach {
         )
     }
 
+    private fun requireCompatibleOptions(spec: LaunchSpec) {
+        val directJvm = LaunchCommandRewriter.isDirectJvmLaunch(spec.command)
+        require(directJvm || spec.extraJvmArgs.isEmpty()) {
+            "extraJvmArgs cannot be applied to non-java command '${spec.command.first()}'"
+        }
+        if (spec.requireSpectreCoreOnClasspath) {
+            require(directJvm && LaunchCommandRewriter.extractClasspath(spec.command) != null) {
+                "requireSpectreCoreOnClasspath cannot inspect this command form; use an explicit " +
+                    "java -cp/--class-path launch or disable the check"
+            }
+        }
+    }
+
     private fun rewriteCommand(spec: LaunchSpec): List<String> =
         if (LaunchCommandRewriter.isDirectJvmLaunch(spec.command)) {
             LaunchCommandRewriter.rewriteDirectJvmCommand(
@@ -115,8 +129,7 @@ public object LaunchAndAttach {
 
     private fun maybeRequireSpectreCore(spec: LaunchSpec, command: List<String>) {
         if (!spec.requireSpectreCoreOnClasspath) return
-        if (!LaunchCommandRewriter.isDirectJvmLaunch(command)) return
-        val cp = LaunchCommandRewriter.extractClasspath(command) ?: return
+        val cp = checkNotNull(LaunchCommandRewriter.extractClasspath(command))
         if (!LaunchCommandRewriter.classpathContainsSpectreCore(cp)) {
             throw SpectreCoreMissingOnClasspathException(cp)
         }

@@ -7,6 +7,7 @@ import dev.sebastiano.spectre.cli.SpectreBuildMetadata
 import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
+import dev.sebastiano.spectre.cli.daemon.DaemonSessionInfo
 import io.modelcontextprotocol.kotlin.sdk.server.ClientConnection
 import io.modelcontextprotocol.kotlin.sdk.shared.RequestOptions
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
@@ -130,6 +131,38 @@ class SpectreMcpServerTest {
                 .description
                 .orEmpty()
                 .contains("inline", ignoreCase = true)
+        )
+    }
+
+    @Test
+    fun `attach tool returns negotiated warnings driver and lease through MCP`() = runBlocking {
+        val sessionInfo =
+            DaemonSessionInfo(
+                driverKind = "synthetic",
+                inputLeasePolicy = "Required",
+                coreProvenance = "preinstalled",
+                coreVersion = "0.10.0",
+                warnings = listOf("native handles may be unavailable"),
+            )
+        val server = SpectreMcpServer.create { request ->
+            val attach = assertIs<DaemonRequest.Attach>(request)
+            DaemonResponse.Attached(
+                sessionId = "pid-42",
+                targetPid = attach.targetPid,
+                sessionInfo = sessionInfo,
+            )
+        }
+
+        val result = invokeTool(server, "attach", buildJsonObject { put("pid", 42) })
+
+        assertTrue(result.isError != true, "attach success must not set isError: $result")
+        val body = Json.parseToJsonElement((result.content.single() as TextContent).text).jsonObject
+        val negotiated = body.getValue("sessionInfo").jsonObject
+        assertEquals("synthetic", negotiated.getValue("driverKind").jsonPrimitive.content)
+        assertEquals("Required", negotiated.getValue("inputLeasePolicy").jsonPrimitive.content)
+        assertEquals(
+            listOf("native handles may be unavailable"),
+            negotiated.getValue("warnings").jsonArray.map { it.jsonPrimitive.content },
         )
     }
 

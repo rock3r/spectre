@@ -60,12 +60,35 @@ class ProtocolCompatTest {
 
     @Test
     fun `IpcClient handshake exchanges Hello and HelloAck at CURRENT version`() {
-        IpcServer(udsPath, stubHandler()).use {
+        val expected =
+            AgentSessionInfoDto(
+                driverKind = "synthetic",
+                inputLeasePolicy = "Required",
+                coreProvenance = "preinstalled",
+                coreVersion = "0.10.0",
+            )
+        IpcServer(udsPath, stubHandler(), sessionInfo = expected).use {
             awaitSocket(udsPath)
             // Constructing IpcClient performs the handshake; send Ping proves the session works.
             IpcClient(udsPath).use { client ->
+                assertEquals(expected, client.sessionInfo)
                 assertEquals(AgentResponse.Pong, client.send(AgentRequest.Ping))
             }
+        }
+    }
+
+    @Test
+    fun `session info preserves absent core version instead of calling it unknown`() {
+        val expected =
+            AgentSessionInfoDto(
+                driverKind = "synthetic",
+                inputLeasePolicy = "Required",
+                coreProvenance = "injected",
+                coreVersion = null,
+            )
+        IpcServer(udsPath, stubHandler(), sessionInfo = expected).use {
+            awaitSocket(udsPath)
+            IpcClient(udsPath).use { client -> assertEquals(expected, client.sessionInfo) }
         }
     }
 
