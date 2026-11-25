@@ -84,6 +84,13 @@ gnome-extensions enable "$extension_uuid"
 gnome-extensions list --enabled | grep -Fx "$extension_uuid"
 pw-cli info 0 >"$SMOKE_ARTIFACTS/pipewire-core.txt"
 
+if [[ "$SMOKE_MODE" == identity ]]; then
+  export GDK_BACKEND=x11
+  /usr/bin/python3 "$(dirname "$0")/gnome-window-identity-probe.py" \
+    2>&1 | tee "$SMOKE_ARTIFACTS/identity-probe.log"
+  exit 0
+fi
+
 if [[ "$SMOKE_MODE" == accessibility ]]; then
   cd "$ATSPI_REPO/recording/native/linux"
   cargo build --locked --manifest-path "$FIXTURE_CHECKOUT/fixtures/accesskit/Cargo.toml"

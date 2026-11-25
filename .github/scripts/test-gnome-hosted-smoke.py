@@ -13,6 +13,8 @@ SESSION = ROOT / ".github/scripts/gnome-hosted-smoke-session.sh"
 BRANCH = "release-0.10/gnome-hosted-smoke"
 CANDIDATE = "7ececf7a7ac361d87417bb07108cc475f7cf890e"
 ATSPI_SHA = "f4044ce86653ba2f60153e2759d208e7e759e3ae"
+IDENTITY = ROOT / ".github/scripts/gnome-window-identity-probe.py"
+WARMUP = ROOT / ".github/scripts/gnome-portal-dialog-warmup.py"
 
 
 class GnomeHostedSmokeContractTest(unittest.TestCase):
@@ -71,6 +73,21 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
         self.assertIn("if-no-files-found: error", self.workflow)
         for diagnostic in ("loginctl", "journalctl", "pw-dump", "gnome-shell.log"):
             self.assertIn(diagnostic, self.driver + self.session)
+
+    def test_identity_is_independent_public_api_evidence(self):
+        identity = IDENTITY.read_text()
+        self.assertIn("mode: [capture, accessibility, identity]", self.workflow)
+        self.assertIn("SMOKE_MODE\" == identity", self.session)
+        for contract in ("LookupWindow", "RecordWindow", "PipeWireStreamAdded", "gst-launch-1.0",
+                         "focusBefore", "focusAfter", "cropColorCounts", "pipeWireNode"):
+            self.assertIn(contract, identity)
+        self.assertNotIn("runWaylandMutterWindowSmoke", identity)
+
+    def test_portal_warmup_is_opt_in_and_not_registered(self):
+        warmup = WARMUP.read_text()
+        self.assertIn("SPECTRE_ENABLE_PORTAL_GUI_WARMUP", warmup)
+        self.assertIn("xdg-desktop-portal-gnome", warmup)
+        self.assertNotIn(WARMUP.name, self.workflow + self.session)
 
 
 if __name__ == "__main__":
