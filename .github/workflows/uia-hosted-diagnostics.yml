@@ -26,7 +26,12 @@ jobs:
           persist-credentials: false
 
       - name: Apply cloud diagnostic instrumentation
-        run: git apply .github/scripts/uia-hosted-diagnostic.diff
+        shell: pwsh
+        run: |
+          git apply .github/scripts/uia-hosted-diagnostic.diff
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $probe = "recording/native/windows/test-accesskit-fixture.ps1"
+          (Get-Content $probe) -notmatch 'ProviderDescriptionProperty' | Set-Content $probe
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v5
