@@ -45,6 +45,8 @@ extern "C" {
 
 type XOpenDisplayFn = unsafe extern "C" fn(*const c_char) -> *mut c_void;
 type XCloseDisplayFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type XQueryExtensionFn =
+    unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_int, *mut c_int, *mut c_int) -> c_int;
 type XDefaultRootWindowFn = unsafe extern "C" fn(*mut c_void) -> c_ulong;
 type XInternAtomFn = unsafe extern "C" fn(*mut c_void, *const c_char, c_int) -> c_ulong;
 type XQueryTreeFn = unsafe extern "C" fn(
@@ -130,6 +132,7 @@ struct X11Api {
     handle: *mut c_void,
     open_display: XOpenDisplayFn,
     close_display: XCloseDisplayFn,
+    query_extension: XQueryExtensionFn,
     default_root_window: XDefaultRootWindowFn,
     intern_atom: XInternAtomFn,
     query_tree: XQueryTreeFn,
@@ -145,6 +148,46 @@ struct X11Api {
     destroy_window: XDestroyWindowFn,
     send_event: XSendEventFn,
     sync: XSyncFn,
+}
+
+/// Refuse capture from an Xwayland server by asking the connected X server itself.
+///
+/// This deliberately does not consult `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, or `/proc`: all
+/// three can be absent or misleading across SSH/container boundaries. Xwayland advertises the
+/// `XWAYLAND` protocol extension on the connection that would otherwise be handed to ximagesrc.
+pub fn reject_xwayland_display(display_name: Option<&str>) -> Result<()> {
+    let api = X11Api::load().context("loading libX11.so.6 for Xwayland guard")?;
+    with_display(&api, display_name, "Xwayland capture guard", |display| {
+        let extension = CString::new("XWAYLAND").expect("static extension name");
+        let mut opcode = 0;
+        let mut event = 0;
+        let mut error = 0;
+        let present = unsafe {
+            (api.query_extension)(
+                display,
+                extension.as_ptr(),
+                &mut opcode,
+                &mut event,
+                &mut error,
+            ) != 0
+        };
+        let requested = display_name
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("<default>");
+        reject_xwayland_extension(present, requested)
+    })
+}
+
+fn reject_xwayland_extension(present: bool, display: &str) -> Result<()> {
+    if present {
+        bail!(
+            "Refusing X11 capture from DISPLAY={display}: the connected server advertises the \
+             XWAYLAND extension. Xwayland ximagesrc capture can return black frames; select the \
+             Wayland backend instead."
+        );
+    }
+    Ok(())
 }
 
 impl Drop for X11Api {
@@ -901,6 +944,7 @@ impl X11Api {
                     handle,
                     open_display: load_sym(handle, "XOpenDisplay")?,
                     close_display: load_sym(handle, "XCloseDisplay")?,
+                    query_extension: load_sym(handle, "XQueryExtension")?,
                     default_root_window: load_sym(handle, "XDefaultRootWindow")?,
                     intern_atom: load_sym(handle, "XInternAtom")?,
                     query_tree: load_sym(handle, "XQueryTree")?,
@@ -1241,5 +1285,18 @@ mod tests {
             message.contains("root") || message.contains("desktop"),
             "error must mention the silent-root hazard, got: {message}"
         );
+    }
+
+    #[test]
+    fn xwayland_extension_is_refused_even_when_environment_claims_x11() {
+        let err = reject_xwayland_extension(true, ":99").unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("Xwayland"), "unexpected error: {message}");
+        assert!(message.contains("XWAYLAND"), "unexpected error: {message}");
+    }
+
+    #[test]
+    fn a_real_x_server_without_xwayland_extension_is_accepted() {
+        reject_xwayland_extension(false, ":99").unwrap();
     }
 }

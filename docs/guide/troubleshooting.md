@@ -539,12 +539,27 @@ See [Linux Wayland consent](recording.md#linux-wayland-consent).
 ## "Linux Wayland window capture fails: could not bind a GNOME Mutter window stream"
 
 On Linux Wayland, Spectre captures a window through a GNOME Mutter window stream. Install the
-GNOME Shell extension bundled in the `spectre-recording-linux` jar (the directory
-`native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev`) under
-`~/.local/share/gnome-shell/extensions/`, then enable it and start a new GNOME session:
+GNOME Shell extension bundled in the `spectre-recording-linux` jar, then enable it and start a new
+GNOME session. These commands preserve the UUID directory expected by GNOME Shell:
 
 ```shell
+jar xf spectre-recording-linux-<version>.jar \
+  native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev
+mkdir -p ~/.local/share/gnome-shell/extensions
+cp -R native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev \
+  ~/.local/share/gnome-shell/extensions/
 gnome-extensions enable spectre-window-identity@sebastiano.dev
+```
+
+On a seated GNOME Wayland terminal (not SSH and not Xvfb), run the exact hard smoke below. It opens
+two same-title, same-size windows, keeps the blue decoy focused before and after binding, checks the
+covered red window's pixels, records it, and binds a third window. It must print `PASS`, open no
+Share dialog, and leave its evidence in `/tmp/spectre-mutter-window-smoke/`:
+
+```shell
+echo "$XDG_SESSION_TYPE $WAYLAND_DISPLAY $DISPLAY"
+gnome-extensions info spectre-window-identity@sebastiano.dev
+./gradlew --no-daemon :recording:runWaylandMutterWindowSmoke
 ```
 
 Spectre resolves the JVM PID and exact Xwayland XID through that extension and passes the returned

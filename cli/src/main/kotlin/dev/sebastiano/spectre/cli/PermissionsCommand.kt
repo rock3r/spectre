@@ -52,8 +52,16 @@ internal sealed interface PermissionsPlatform {
         fun current(): PermissionsPlatform =
             when {
                 System.getProperty("os.name").orEmpty().lowercase().contains("mac") -> MacOs
-                WaylandPortalAccess.isApplicable() -> LinuxWayland(DefaultWaylandPermissions)
+                isProvenWayland() -> LinuxWayland(DefaultWaylandPermissions)
                 else -> NotNeeded
+            }
+
+        /** Permission discovery must not make unrelated CLI commands initialize capture. */
+        private fun isProvenWayland(): Boolean =
+            try {
+                WaylandPortalAccess.isApplicable()
+            } catch (_: IllegalStateException) {
+                false
             }
     }
 }

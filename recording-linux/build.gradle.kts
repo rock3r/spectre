@@ -1,3 +1,4 @@
+import groovy.json.JsonSlurper
 import java.util.zip.ZipFile
 import org.gradle.api.GradleException
 import org.gradle.internal.os.OperatingSystem
@@ -94,6 +95,31 @@ tasks.register("verifyRecordingLinuxHelpers") {
             throw GradleException(
                 "spectre-recording-linux jar is missing helper resources: " + missing.joinToString()
             )
+        }
+        ZipFile(jar).use { zip ->
+            val metadata =
+                JsonSlurper().parse(zip.getInputStream(zip.getEntry(expectedExtensionPaths[0])))
+                    as Map<*, *>
+            val supported = (metadata["shell-version"] as List<*>).map(Any?::toString)
+            val expected = (45..50).map(Int::toString)
+            if (supported != expected) {
+                throw GradleException(
+                    "GNOME identity extension supports $supported; expected $expected"
+                )
+            }
+            val source =
+                zip.getInputStream(zip.getEntry(expectedExtensionPaths[1])).bufferedReader().use {
+                    it.readText()
+                }
+            val requiredAsyncReplies =
+                listOf("return_value", "return_dbus_error", ".AccessDenied", ".NotFound")
+            val missingReplies = requiredAsyncReplies.filter { it !in source }
+            if (missingReplies.isNotEmpty()) {
+                throw GradleException(
+                    "GNOME identity extension is missing explicit async D-Bus replies: " +
+                        missingReplies.joinToString()
+                )
+            }
         }
     }
 }

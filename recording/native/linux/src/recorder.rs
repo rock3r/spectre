@@ -261,6 +261,7 @@ fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
 }
 
 fn run_x11(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
+    crate::x11_window::reject_xwayland_display(start.display_name.as_deref())?;
     let (target, stream_size, stream_position) = match start.target {
         CaptureTarget::Region => (
             X11CaptureTarget::Region {

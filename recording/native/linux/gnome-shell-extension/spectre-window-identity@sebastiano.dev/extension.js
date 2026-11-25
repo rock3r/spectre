@@ -8,6 +8,7 @@ const XML = `<node><interface name="dev.sebastiano.Spectre.WindowIdentity">
 </interface></node>`;
 const BUS = 'dev.sebastiano.Spectre.WindowIdentity';
 const PATH = '/dev/sebastiano/Spectre/WindowIdentity';
+const ERROR = `${BUS}.Error`;
 
 function parentPid(pid) {
     try {
@@ -29,19 +30,34 @@ export default class SpectreWindowIdentity extends Extension {
     enable() {
         const service = {
             LookupWindowAsync: async ([ownerPid, xid], invocation) => {
-                const sender = invocation.get_sender();
-                const reply = await Gio.DBus.session.call(
-                    'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
-                    'GetConnectionUnixProcessID', new GLib.Variant('(s)', [sender]),
-                    new GLib.VariantType('(u)'), Gio.DBusCallFlags.NONE, 3000, null);
-                const callerPid = reply.deepUnpack()[0];
-                if (!isAncestor(ownerPid, callerPid))
-                    throw new Error(`PID ${ownerPid} is not the caller or its ancestor`);
-                const matches = global.get_window_actors().map(a => a.meta_window).filter(w =>
-                    w.get_pid() === ownerPid && BigInt(w.get_xwindow()) === BigInt(xid));
-                if (matches.length !== 1)
-                    throw new Error(`expected exactly one owned window for PID ${ownerPid}, XID ${xid}; found ${matches.length}`);
-                invocation.return_value(new GLib.Variant('(u)', [matches[0].get_id()]));
+                try {
+                    const sender = invocation.get_sender();
+                    const reply = await Gio.DBus.session.call(
+                        'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
+                        'GetConnectionUnixProcessID', new GLib.Variant('(s)', [sender]),
+                        new GLib.VariantType('(u)'), Gio.DBusCallFlags.NONE, 3000, null);
+                    const callerPid = reply.deepUnpack()[0];
+                    if (!isAncestor(ownerPid, callerPid)) {
+                        invocation.return_dbus_error(`${ERROR}.AccessDenied`,
+                            `PID ${ownerPid} is not the caller or its ancestor`);
+                        return;
+                    }
+                    const matches = global.get_window_actors().map(a => a.meta_window).filter(w => {
+                        const windowXid = w.get_xwindow();
+                        return w.get_pid() === ownerPid && windowXid !== null &&
+                            BigInt(windowXid) === BigInt(xid);
+                    });
+                    if (matches.length !== 1) {
+                        invocation.return_dbus_error(`${ERROR}.NotFound`,
+                            `expected exactly one owned window for PID ${ownerPid}, XID ${xid}; found ${matches.length}`);
+                        return;
+                    }
+                    invocation.return_value(new GLib.Variant('(u)', [matches[0].get_id()]));
+                } catch (error) {
+                    // An Async wrapper must complete the invocation itself on every path. Merely
+                    // rejecting this promise leaves gdbus callers waiting until their timeout.
+                    invocation.return_dbus_error(`${ERROR}.Failed`, `${error}`);
+                }
             },
         };
         this._object = Gio.DBusExportedObject.wrapJSObject(XML, service);

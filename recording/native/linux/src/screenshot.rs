@@ -19,6 +19,7 @@ pub fn run(command: ScreenshotCommand, events: mpsc::Sender<Event>) -> Result<()
     let output = PathBuf::from(&command.output);
     match command.backend {
         CaptureBackend::X11 => {
+            crate::x11_window::reject_xwayland_display(command.display_name.as_deref())?;
             let argv = build_x11_screenshot_argv(&command, &output)?;
             run_gst_oneshot(&argv)
                 .with_context(|| format!("running screenshot pipeline: {argv:?}"))?;
