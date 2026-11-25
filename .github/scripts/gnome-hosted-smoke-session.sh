@@ -5,6 +5,9 @@ set -Eeuo pipefail
 : "${SMOKE_ARTIFACTS:?}"
 : "${SMOKE_REPO:?}"
 
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=GNOME
+export XDG_SESSION_DESKTOP=gnome
 export JAVA_HOME="${SMOKE_JAVA_HOME:?}"
 export PATH="$JAVA_HOME/bin:$PATH"
 if [[ "${1:-}" != --inside-dbus ]]; then
@@ -74,6 +77,7 @@ for _ in {1..30}; do
   sleep 1
 done
 xdpyinfo >/dev/null
+dbus-update-activation-environment --systemd XDG_CURRENT_DESKTOP XDG_SESSION_TYPE WAYLAND_DISPLAY DISPLAY XAUTHORITY
 [[ -n "$WAYLAND_DISPLAY" ]] || { echo "Mutter did not create a Wayland socket" >&2; exit 1; }
 timeout 5s gdbus wait --session org.gnome.Mutter.ScreenCast
 gnome-extensions enable "$extension_uuid"
@@ -99,7 +103,34 @@ trace=$(mktemp -d "$SMOKE_ARTIFACTS/atspi-call-XXXXXX")
 tee "$trace/request.json" | "$ATSPI_REPO/recording/native/linux/target/debug/spectre-wayland-helper" "$@" | tee "$trace/result.json"
 SH
   chmod +x "$SMOKE_ARTIFACTS/reader-with-trace"
+  unset DISPLAY
+  export GDK_BACKEND=wayland GTK_A11Y=atspi
+  printf 'fixture transport: WAYLAND_DISPLAY=%s; DISPLAY=%s\n' "$WAYLAND_DISPLAY" "${DISPLAY-unset}" | tee "$SMOKE_ARTIFACTS/fixture-backend.txt"
   SPECTRE_HELPER="$SMOKE_ARTIFACTS/reader-with-trace" bash "$SMOKE_ARTIFACTS/atspi-wayland.sh" 2>&1 | tee "$SMOKE_ARTIFACTS/atspi-live.log"
+  gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
+    --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled '<true>'
+  zenity --question --title="Spectre stock GTK proof" --text="Verify the stock GTK dialog" \
+    --ok-label="Complete proof" --cancel-label="Cancel proof" >"$SMOKE_ARTIFACTS/stock-gtk-app.log" 2>&1 &
+  gtk_pid=$!
+  python3 - "$gtk_pid" "$SMOKE_ARTIFACTS" "$ATSPI_REPO" <<'PYTHON'
+import json, pathlib, subprocess, sys, time
+pid, artifacts, reader = sys.argv[1:]
+request = {"target":{"type":"process-id","value":int(pid)},"maximumDepth":64,"maximumNodeCount":10000,"timeoutMs":5000,"allowAccessibilityEnable":False}
+command = [reader + "/recording/native/linux/target/debug/spectre-wayland-helper", "accessibility-snapshot"]
+for attempt in range(5):
+    run = subprocess.run(command, input=json.dumps(request), capture_output=True, text=True, check=True)
+    result = json.loads(run.stdout)
+    pathlib.Path(artifacts, "stock-gtk-snapshot.json").write_text(run.stdout)
+    if result["ok"]:
+        break
+    time.sleep(1)
+assert result["ok"], result
+snapshot = result["snapshot"]
+window = snapshot["windows"][0]
+assert window["title"] == "Spectre stock GTK proof" and window["boundsSpace"] == "window", window
+assert any(n["role"] == "button" and n["name"] == "Complete proof" for n in snapshot["nodes"]), snapshot
+print(f"stock GTK Wayland: pid={pid}, nodes={len(snapshot['nodes'])}, window={window}", flush=True)
+PYTHON
   exit 0
 fi
 
