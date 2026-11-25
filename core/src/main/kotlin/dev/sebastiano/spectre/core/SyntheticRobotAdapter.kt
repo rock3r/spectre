@@ -64,6 +64,12 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
     // Compose's KeyEvent handler like a plain 'v' keystroke and paste never fires.
     @Volatile private var heldKeyModifiers: Int = 0
 
+    // A delivered press owns its typed/release tail. Focus can legitimately move while the press
+    // handler runs (including to a newly opened modal), so resolving those events afresh could
+    // leak the tail into an unrelated recipient. Keyed storage also keeps interleaved chords
+    // independent; a repeated press replaces only its own key's gesture.
+    private val pressedKeyTargets = mutableMapOf<Int, Component>()
+
     // Press position + release history for click-vs-drag detection and click-count tracking.
     // Real AWT only fires MOUSE_CLICKED when press and release happen at the same location, and
     // increments clickCount on consecutive press/release pairs at the same spot within the
@@ -237,6 +243,7 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
             val shiftHeld = (heldKeyModifiers and InputEvent.SHIFT_DOWN_MASK) != 0
             dispatchKey(
                 type = KeyEvent.KEY_TYPED,
+                gestureKeyCode = keyCode,
                 keyCode = KeyEvent.VK_UNDEFINED,
                 keyCharOverride = keyCharFor(keyCode, shift = shiftHeld),
             )
@@ -305,33 +312,55 @@ internal class SyntheticRobotAdapter(private val rootWindow: Window? = null) : R
         return findDeepestComponentAt(window, lastX, lastY) ?: window
     }
 
-    private fun dispatchKey(type: Int, keyCode: Int, keyCharOverride: Char? = null) {
-        val modifiers = heldKeyModifiers
-        // Real OS-injected KEY_PRESSED/KEY_RELEASED events for printable keys carry the produced
-        // char too. JavaDoc says the value is "not guaranteed to be meaningful" outside of
-        // KEY_TYPED, but in practice it IS set, and Compose Desktop's paste path on this version
-        // reads `keyChar` on KEY_PRESSED to resolve Cmd/Ctrl+V — setting CHAR_UNDEFINED here makes
-        // synthetic paste flake. Codex flagged this as a P2 fidelity issue but the empirical
-        // trade-off favours the current behaviour. The override branch carries the Shift-aware
-        // char from `keyPress`'s KEY_TYPED dispatch.
-        val keyChar =
-            keyCharOverride
-                ?: if (keyCode in PRINTABLE_KEY_CODES)
-                    keyCharFor(keyCode, shift = (modifiers and InputEvent.SHIFT_DOWN_MASK) != 0)
-                else KeyEvent.CHAR_UNDEFINED
-        // Resolved on the EDT: the lookup reads Swing focus state and Compose semantics.
+    private fun dispatchKey(
+        type: Int,
+        keyCode: Int,
+        gestureKeyCode: Int = keyCode,
+        keyCharOverride: Char? = null,
+    ) {
         runOnEdt {
-            val target = resolveKeyTarget()
-            val event =
-                KeyEvent(target, type, System.currentTimeMillis(), modifiers, keyCode, keyChar)
-            // Bypass `KeyboardFocusManager` via `redispatchEvent`.
-            // `Component.dispatchEvent(KeyEvent)` would otherwise hand the event to KFM first,
-            // which redirects to the global focus owner — null under `apple.awt.UIElement=true`,
-            // causing the event to be silently dropped. The `redispatchEvent` entry point exists
-            // precisely for callers "using key events generated from non-keyboard sources": it
-            // sets `KeyEvent.focusManagerIsDispatching=true` so AWT skips the KFM redirect and
-            // delivers straight to the target's `processKeyEvent`.
-            KeyboardFocusManager.getCurrentKeyboardFocusManager().redispatchEvent(target, event)
+            val gestureTarget =
+                when (type) {
+                    KeyEvent.KEY_PRESSED -> null
+                    KeyEvent.KEY_RELEASED -> pressedKeyTargets.remove(gestureKeyCode)
+                    else -> pressedKeyTargets[gestureKeyCode]
+                }
+            val target = gestureTarget ?: resolveKeyTarget()
+            if (gestureTarget != null && !target.canReceiveKeyInput()) return@runOnEdt
+
+            val previousTarget =
+                if (type == KeyEvent.KEY_PRESSED) pressedKeyTargets.put(keyCode, target) else null
+            var delivered = false
+            try {
+                val modifiers = heldKeyModifiers
+                // Real OS-injected press/release events for printable keys carry the produced
+                // char too. Compose Desktop's paste path reads it on KEY_PRESSED.
+                val keyChar =
+                    keyCharOverride
+                        ?: if (keyCode in PRINTABLE_KEY_CODES)
+                            keyCharFor(
+                                keyCode,
+                                shift = (modifiers and InputEvent.SHIFT_DOWN_MASK) != 0,
+                            )
+                        else KeyEvent.CHAR_UNDEFINED
+                val event =
+                    KeyEvent(
+                        target,
+                        type,
+                        System.currentTimeMillis(),
+                        modifiers,
+                        keyCode,
+                        keyChar,
+                    )
+                // Avoid KFM redirecting a synthetic event away from its selected recipient.
+                KeyboardFocusManager.getCurrentKeyboardFocusManager().redispatchEvent(target, event)
+                delivered = true
+            } finally {
+                if (type == KeyEvent.KEY_PRESSED && !delivered) {
+                    if (previousTarget == null) pressedKeyTargets.remove(keyCode)
+                    else pressedKeyTargets[keyCode] = previousTarget
+                }
+            }
         }
     }
 

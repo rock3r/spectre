@@ -23,6 +23,7 @@ import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import kotlin.concurrent.thread
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -346,6 +347,104 @@ class SyntheticModalAndWindowOrderTest {
     }
 
     @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `Enter whose pressed handler hides its recipient drops its typed tail`() {
+        assumeLiveAwtAvailable()
+        val originalEvents = CopyOnWriteArrayList<Int>()
+        val replacementEvents = CopyOnWriteArrayList<Int>()
+        val originalFrame = AtomicReference<JFrame>()
+        val replacement =
+            JPanel().apply {
+                preferredSize = PANEL_SIZE
+                isFocusable = true
+                addKeyListener(recordKeyEventIds(replacementEvents))
+            }
+        try {
+            val replacementFrame = showFrame(replacement, x = DIALOG_X)
+            val original =
+                JPanel().apply {
+                    preferredSize = PANEL_SIZE
+                    isFocusable = true
+                    addKeyListener(
+                        object : KeyAdapter() {
+                            override fun keyPressed(event: KeyEvent) {
+                                originalEvents += event.id
+                                if (event.keyCode != KeyEvent.VK_ENTER) return
+                                originalFrame.get().isVisible = false
+                                replacementFrame.toFront()
+                                replacementFrame.requestFocus()
+                                replacement.requestFocus()
+                            }
+
+                            override fun keyTyped(event: KeyEvent) {
+                                originalEvents += event.id
+                            }
+
+                            override fun keyReleased(event: KeyEvent) {
+                                originalEvents += event.id
+                            }
+                        }
+                    )
+                }
+            val root = showFrame(original)
+            originalFrame.set(root)
+            focusOnEdt(root, original)
+
+            runOffTestThread {
+                runBlocking { RobotDriver.synthetic(root).pressKey(KeyEvent.VK_ENTER) }
+            }
+            drainEdt()
+
+            assertEquals(listOf(KeyEvent.KEY_PRESSED), originalEvents.toList())
+            assertTrue(
+                replacementEvents.isEmpty(),
+                "the typed/released tail must not leak into the newly focused window",
+            )
+        } finally {
+            disposeAll()
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `Escape whose pressed handler disposes its recipient completes without a release`() {
+        assumeLiveAwtAvailable()
+        val events = CopyOnWriteArrayList<Int>()
+        val frame = AtomicReference<JFrame>()
+        val target =
+            JPanel().apply {
+                preferredSize = PANEL_SIZE
+                isFocusable = true
+                addKeyListener(
+                    object : KeyAdapter() {
+                        override fun keyPressed(event: KeyEvent) {
+                            events += event.id
+                            if (event.keyCode == KeyEvent.VK_ESCAPE) frame.get().dispose()
+                        }
+
+                        override fun keyReleased(event: KeyEvent) {
+                            events += event.id
+                        }
+                    }
+                )
+            }
+        try {
+            val root = showFrame(target)
+            frame.set(root)
+            focusOnEdt(root, target)
+
+            runOffTestThread {
+                runBlocking { RobotDriver.synthetic(root).pressKey(KeyEvent.VK_ESCAPE) }
+            }
+            drainEdt()
+
+            assertEquals(listOf(KeyEvent.KEY_PRESSED), events.toList())
+        } finally {
+            disposeAll()
+        }
+    }
+
+    @Test
     fun `Compose host detection walks the superclass chain`() {
         assertTrue(ComposePanel::class.java.isComposeHostClass(), "ComposePanel itself")
         // Compose renders through anonymous subclasses of the Skiko layers: SkiaLayer for
@@ -438,6 +537,21 @@ class SyntheticModalAndWindowOrderTest {
         }
 
     private fun JPanel.windowAncestor(): Window? = SwingUtilities.getWindowAncestor(this)
+
+    private fun recordKeyEventIds(events: MutableList<Int>): KeyAdapter =
+        object : KeyAdapter() {
+            override fun keyPressed(event: KeyEvent) {
+                events += event.id
+            }
+
+            override fun keyTyped(event: KeyEvent) {
+                events += event.id
+            }
+
+            override fun keyReleased(event: KeyEvent) {
+                events += event.id
+            }
+        }
 
     private fun assertSyntheticRejection(block: () -> Unit) {
         val failure = assertFailsWith<InvocationTargetException>(block = block)

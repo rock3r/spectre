@@ -75,33 +75,42 @@ class AwtInputDeliveryWitnessTest {
     @Test
     fun `listener accepts only a primary press at the requested visible host and position`() {
         assumeLiveAwtAvailable()
-        val frame = JFrame("input witness fixture")
-        val target = JPanel()
-        val child = JPanel()
-        val unrelated = JPanel()
-        target.add(child)
-        frame.contentPane.add(target)
-        frame.setSize(160, 120)
-        frame.setLocationRelativeTo(null)
-        frame.isVisible = true
-        try {
+        val fixture = onEdt {
+            val target = JPanel()
+            val child = JPanel()
+            val frame = JFrame("input witness fixture")
+            target.add(child)
+            frame.contentPane.add(target)
+            frame.setSize(160, 120)
+            frame.setLocationRelativeTo(null)
+            frame.isVisible = true
+            frame.validate()
+            check(child.isShowing && child.width > 0 && child.height > 0) {
+                "input witness child must be showing and laid out before events are posted"
+            }
             val point = child.locationOnScreen
-            val x = point.x + 1
-            val y = point.y + 1
+            InputWitnessFixture(frame, target, child, JPanel(), point.x + 1, point.y + 1)
+        }
+        try {
             val observation =
-                AwtInputDeliveryWitness.attachListener(DispatchedInput.Press, target, x, y)
+                AwtInputDeliveryWitness.attachListener(
+                    DispatchedInput.Press,
+                    fixture.target,
+                    fixture.x,
+                    fixture.y,
+                )
             assumeTrue(observation != null, "toolkit refused the AWT listener")
             checkNotNull(observation).use { watch ->
-                postPress(unrelated, MouseEvent.BUTTON1, x, y)
-                postPress(child, MouseEvent.BUTTON3, x, y)
-                postPress(child, MouseEvent.BUTTON1, x + 20, y)
-                assertTrue(watch.awaitQueueDrain(DRAIN_WAIT_MS))
+                postPress(fixture.unrelated, MouseEvent.BUTTON1, fixture.x, fixture.y)
+                postPress(fixture.child, MouseEvent.BUTTON3, fixture.x, fixture.y)
+                postPress(fixture.child, MouseEvent.BUTTON1, fixture.x + 20, fixture.y)
+                awaitEdtFifoMarker()
                 assertFalse(watch.awaitDelivery(0))
-                postPress(child, MouseEvent.BUTTON1, x, y)
+                postPress(fixture.child, MouseEvent.BUTTON1, fixture.x, fixture.y)
                 assertTrue(watch.awaitDelivery(INPUT_WITNESS_WAIT_MS))
             }
         } finally {
-            frame.dispose()
+            onEdt { fixture.frame.dispose() }
         }
     }
 
@@ -206,6 +215,15 @@ class AwtInputDeliveryWitnessTest {
         Toolkit.getDefaultToolkit().systemEventQueue.postEvent(event)
     }
 
+    private fun awaitEdtFifoMarker() {
+        val marker = CountDownLatch(1)
+        SwingUtilities.invokeLater { marker.countDown() }
+        assertTrue(
+            marker.await(TEST_EDT_WAIT_MS, TimeUnit.MILLISECONDS),
+            "EDT did not dispatch the test FIFO marker",
+        )
+    }
+
     @Test
     fun `shipped AWT listener reports never dispatched when the queue drains with no press`() {
         val observation = AwtInputDeliveryWitness.attachListener(DispatchedInput.Press)
@@ -294,10 +312,20 @@ class AwtInputDeliveryWitnessTest {
         return checkNotNull(result).getOrThrow()
     }
 
+    private data class InputWitnessFixture(
+        val frame: JFrame,
+        val target: JPanel,
+        val child: JPanel,
+        val unrelated: JPanel,
+        val x: Int,
+        val y: Int,
+    )
+
     private companion object {
         const val INPUT_WITNESS_WAIT_MS = 2_000L
         const val NO_EVENT_WAIT_MS = 50L
         const val DRAIN_WAIT_MS = 500L
+        const val TEST_EDT_WAIT_MS = 5_000L
         const val INPUT_POINT_TOLERANCE_PX = 2
     }
 }

@@ -1,15 +1,12 @@
 package dev.sebastiano.spectre.core
 
-import java.awt.AWTEvent
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
 import java.awt.Rectangle
-import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
 import java.awt.datatransfer.Transferable
-import java.awt.event.AWTEventListener
 import java.awt.event.KeyEvent
 import java.awt.event.KeyListener
 import java.awt.event.MouseEvent
@@ -295,15 +292,16 @@ class SyntheticInputParityTest {
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     fun `modifier mask appears on the held key and does not leak to the next key`() {
         assumeLiveAwtAvailable()
-        val target = JPanel().apply { preferredSize = Dimension(FRAME_SIZE_PX, FRAME_SIZE_PX) }
+        val events: MutableList<KeyEvent> = CopyOnWriteArrayList()
+        val target =
+            JPanel().apply {
+                preferredSize = Dimension(FRAME_SIZE_PX, FRAME_SIZE_PX)
+                isFocusable = true
+                addKeyListener(KeyEventRecorder(events))
+            }
         val frame = showFrameOnEdt(target)
-        // Use a global AWT event listener instead of relying on focus transfer to the JPanel:
-        // undecorated JFrames in tests are subject to window-manager focus quirks on macOS that
-        // make `requestFocusInWindow` unreliable. The synthetic adapter dispatches KeyEvents to
-        // the focus owner (or the root window if none), so a global listener catches both paths
-        // without depending on which target won focus.
-        val recorder = GlobalKeyEventRecorder().also { it.install() }
         try {
+            focusOnEdt(frame.frame, target)
             val driver = RobotDriver.synthetic(frame.frame)
             // SHIFT+A then plain B. Modifier should be set on 'A' KEY_PRESSED and absent on 'B'.
             runBlocking {
@@ -312,14 +310,12 @@ class SyntheticInputParityTest {
             }
             drainEdt()
 
-            val aPressed =
-                recorder.events.firstOrNull {
-                    it.id == KeyEvent.KEY_PRESSED && it.keyCode == KeyEvent.VK_A
-                }
-            val bPressed =
-                recorder.events.firstOrNull {
-                    it.id == KeyEvent.KEY_PRESSED && it.keyCode == KeyEvent.VK_B
-                }
+            val aPressed = events.firstOrNull {
+                it.id == KeyEvent.KEY_PRESSED && it.keyCode == KeyEvent.VK_A
+            }
+            val bPressed = events.firstOrNull {
+                it.id == KeyEvent.KEY_PRESSED && it.keyCode == KeyEvent.VK_B
+            }
             assertNotNull(aPressed, "expected a KEY_PRESSED for 'A'")
             assertNotNull(bPressed, "expected a KEY_PRESSED for 'B'")
             assertTrue(
@@ -332,7 +328,6 @@ class SyntheticInputParityTest {
                 "expected no SHIFT_DOWN_MASK leak on 'B' KEY_PRESSED",
             )
         } finally {
-            recorder.uninstall()
             disposeFrame(frame.frame)
         }
     }
@@ -686,21 +681,6 @@ class SyntheticInputParityTest {
 
         override fun keyReleased(e: KeyEvent) {
             events.add(e)
-        }
-    }
-
-    private class GlobalKeyEventRecorder {
-        val events: MutableList<KeyEvent> = CopyOnWriteArrayList()
-        private val listener = AWTEventListener { event ->
-            if (event is KeyEvent) events.add(event)
-        }
-
-        fun install() {
-            Toolkit.getDefaultToolkit().addAWTEventListener(listener, AWTEvent.KEY_EVENT_MASK)
-        }
-
-        fun uninstall() {
-            Toolkit.getDefaultToolkit().removeAWTEventListener(listener)
         }
     }
 
