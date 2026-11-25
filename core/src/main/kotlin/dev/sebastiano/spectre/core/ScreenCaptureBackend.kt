@@ -55,10 +55,13 @@ internal data class WindowCapture(val image: BufferedImage, val boundsOnScreen: 
  */
 internal fun windowStillForRegion(capture: WindowCapture, region: Rectangle): WindowCapture {
     if (capture.boundsOnScreen == region) return capture
-    val visibleRegion = region.intersection(capture.boundsOnScreen)
+    require(capture.boundsOnScreen.contains(region)) {
+        "Window crop must be fully inside its capture source: requested=$region, " +
+            "source=${capture.boundsOnScreen}"
+    }
     return WindowCapture(
-        image = cropImageToScreenRegion(capture.image, visibleRegion, capture.boundsOnScreen),
-        boundsOnScreen = visibleRegion,
+        image = cropImageToScreenRegion(capture.image, region, capture.boundsOnScreen),
+        boundsOnScreen = region,
     )
 }
 

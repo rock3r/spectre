@@ -6,7 +6,9 @@ import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 /**
  * Window stills must keep the pixel scale the native helper produced.
@@ -59,16 +61,19 @@ class WindowStillScaleTest {
     }
 
     @Test
-    fun `a still clipped by the screen keeps the visible region only`() {
+    fun `a crop outside its window fails instead of returning partial pixels`() {
         val image = BufferedImage(400, 400, BufferedImage.TYPE_INT_ARGB)
         val windowBounds = Rectangle(0, 0, 200, 200)
 
-        val still =
-            windowStillForRegion(WindowCapture(image, windowBounds), Rectangle(100, 100, 200, 200))
-
-        assertEquals(Rectangle(100, 100, 100, 100), still.boundsOnScreen)
-        assertEquals(200, still.image.width, "clipped still keeps the 2x scale")
-        assertEquals(200, still.image.height)
+        val error =
+            assertFailsWith<IllegalArgumentException> {
+                windowStillForRegion(
+                    WindowCapture(image, windowBounds),
+                    Rectangle(100, 100, 200, 200),
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("requested="))
+        assertTrue(error.message.orEmpty().contains("source="))
     }
 
     private companion object {

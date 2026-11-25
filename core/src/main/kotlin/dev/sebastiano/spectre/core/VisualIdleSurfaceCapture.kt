@@ -14,16 +14,14 @@ import java.io.IOException
  *
  * When [nativeWindowCaptureAvailable] is true, uses window-scoped pixels via
  * [ScreenCaptureBackend.captureWindow] and crops to [surfaceRegion]. Failures do **not** fall back
- * to screen-region capture (that would reintroduce occlusion sensitivity #355 exists to remove),
- * except when the native helper cannot actually run (#503: recording classes present but GStreamer
- * / platform helper missing). That case is treated as "native unavailable" and uses
- * [ScreenCaptureBackend.captureRegion], matching 0.4.0 Robot sampling.
+ * to screen-region capture (that would reintroduce occlusion sensitivity #355 exists to remove), A
+ * caller can explicitly opt into [ScreenCaptureBackend.captureRegion] when native capture is
+ * unavailable; the default never substitutes a desktop crop for a window capture.
  *
  * Returning `null` for other native failures makes the visual-idle streak reset so the wait times
  * out rather than reporting fake stability.
  *
- * When the native bridge is absent, disabled, or not actually usable, falls back to
- * [ScreenCaptureBackend.captureRegion].
+ * When the native bridge is absent, disabled, or not usable, fails unless the caller opted in.
  */
 internal fun captureSurfaceForVisualIdle(
     backend: ScreenCaptureBackend,
@@ -32,9 +30,11 @@ internal fun captureSurfaceForVisualIdle(
     windowBounds: Rectangle,
     frameInsets: Insets,
     nativeWindowCaptureAvailable: Boolean,
+    allowScreenRegionFallback: Boolean = false,
 ): BufferedImage? {
     if (!nativeWindowCaptureAvailable) {
-        return backend.captureRegion(surfaceRegion)
+        return if (allowScreenRegionFallback) backend.captureRegion(surfaceRegion)
+        else throw visualIdleNativeCaptureUnavailable()
     }
     return try {
         val capture = backend.captureWindow(window, windowBounds, frameInsets)
@@ -58,7 +58,8 @@ internal fun captureSurfaceForVisualIdle(
         // waiting: surface it now instead of timing out on "unsampleable" frames.
         if (isWaylandCaptureFailFast(error)) throw error
         if (isNativeCaptureHelperUnusable(error)) {
-            backend.captureRegion(surfaceRegion)
+            if (allowScreenRegionFallback) backend.captureRegion(surfaceRegion)
+            else throw visualIdleNativeCaptureUnavailable(error)
         } else {
             null
         }
@@ -66,6 +67,16 @@ internal fun captureSurfaceForVisualIdle(
         null
     }
 }
+
+private fun visualIdleNativeCaptureUnavailable(cause: Throwable? = null): IllegalStateException =
+    IllegalStateException(
+        "waitForVisualIdle requires native window capture, but it is unavailable. " +
+            "Install GStreamer on Linux, add the matching spectre-recording-<os> runtime " +
+            "artifact, and on Windows use an interactive desktop (not a GitHub-hosted runner). " +
+            "If occlusion-sensitive screen crops are acceptable, explicitly call " +
+            "waitForVisualIdle(allowScreenRegionFallback = true).",
+        cause,
+    )
 
 /**
  * Hashes every tracked surface in order. Returns `null` if any surface cannot be sampled (empty
@@ -77,6 +88,7 @@ internal fun hashTrackedSurfacesForVisualIdle(
     frameInsetsFor: (TrackedWindow) -> Insets,
     backend: ScreenCaptureBackend,
     nativeWindowCaptureAvailable: Boolean,
+    allowScreenRegionFallback: Boolean = false,
 ): Int? {
     if (surfaces.isEmpty()) return null
     val hashes = IntArray(surfaces.size)
@@ -90,6 +102,7 @@ internal fun hashTrackedSurfacesForVisualIdle(
                 windowBounds = windowBoundsFor(window),
                 frameInsets = frameInsetsFor(window),
                 nativeWindowCaptureAvailable = nativeWindowCaptureAvailable,
+                allowScreenRegionFallback = allowScreenRegionFallback,
             ) ?: return null
         hashes[i] = imageHash(image)
     }
@@ -121,9 +134,7 @@ internal fun isNativeWindowCaptureBridgePresent(
  *
  * Requires the recording-owned bridge **and** a host where the platform helper can actually run.
  * Class presence alone is not enough: Linux stills need `gst-launch-1.0` (#503). When the helper
- * cannot run, [waitForVisualIdle] region-falls back like 0.4.0 instead of marking every sample
- * unsampleable. Atomic [ComposeAutomator.capture] uses [atomicCaptureNativeStillUnavailableReason]
- * instead so a missing helper stays fail-closed.
+ * cannot run, [waitForVisualIdle] fails unless its explicit screen-region fallback is enabled.
  */
 internal fun isNativeWindowCaptureAvailable(
     classLoader: ClassLoader = VisualIdleSurfaceCapture::class.java.classLoader,
@@ -142,8 +153,7 @@ internal fun isNativeWindowCaptureAvailable(
  * True when a native-window capture failure means the helper cannot run, not that this window was
  * ambiguous or occluded.
  *
- * [captureSurfaceForVisualIdle] may region-fallback in this case (#503). Other native failures stay
- * unsampleable so #355's no-silent-region-substitute rule still holds.
+ * [captureSurfaceForVisualIdle] reports this case immediately unless region fallback was requested.
  */
 internal fun isNativeCaptureHelperUnusable(error: Throwable): Boolean {
     val chain = generateSequence(error) { it.cause }.toList()

@@ -102,12 +102,8 @@ pub fn screen_size_to_region(values: [i32; 4]) -> Option<Region> {
 const ASPECT_MATCH_EPSILON: f64 = 0.02;
 const IDENTITY_SCALE_EPSILON: f64 = 0.02;
 
-/// Intersect [region] with [stream_size] and return the visible crop.
-///
-/// Genuinely oversized windows (larger than the shared monitor, or leftover
-/// overflow after mixed-space conversion) clamp to the stream. A region that
-/// misses the stream entirely still fails — that is a placement bug, not
-/// something we can invent pixels for.
+/// Validate [region] against [stream_size], allowing only one pixel of
+/// coordinate-rounding overflow at an edge.
 pub fn clamp_region_to_stream(region: Region, stream_size: (u32, u32)) -> Result<Region> {
     if region.width <= 0 || region.height <= 0 {
         bail!(
@@ -145,6 +141,16 @@ pub fn clamp_region_to_stream(region: Region, stream_size: (u32, u32)) -> Result
             stream_h
         );
     }
+    let overflow = (clip_left - left).max(0)
+        .max((clip_top - top).max(0))
+        .max((right - clip_right).max(0))
+        .max((bottom - clip_bottom).max(0));
+    if overflow > ROUNDING_TOLERANCE_PX {
+        bail!(
+            "region ({}, {}, {}x{}) is not fully inside stream (0, 0, {}x{}); overflow={}px",
+            region.x, region.y, region.width, region.height, stream_w, stream_h, overflow
+        );
+    }
     Ok(Region {
         x: clip_left as i32,
         y: clip_top as i32,
@@ -152,6 +158,8 @@ pub fn clamp_region_to_stream(region: Region, stream_size: (u32, u32)) -> Result
         height: (clip_bottom - clip_top) as i32,
     })
 }
+
+const ROUNDING_TOLERANCE_PX: i64 = 1;
 
 #[cfg(test)]
 mod tests {
@@ -167,21 +175,15 @@ mod tests {
     }
 
     #[test]
-    fn clamps_overflowing_hidpi_window_to_stream() {
-        let clipped = clamp_region_to_stream(region(1362, 0, 480, 240), (1536, 864)).unwrap();
-        assert_eq!(clipped.x, 1362);
-        assert_eq!(clipped.y, 0);
-        assert_eq!(clipped.width, 174);
-        assert_eq!(clipped.height, 240);
+    fn rejects_overflowing_hidpi_window() {
+        let error = clamp_region_to_stream(region(1362, 0, 480, 240), (1536, 864)).unwrap_err();
+        assert!(error.to_string().contains("not fully inside"), "{error:#}");
     }
 
     #[test]
-    fn clamps_window_larger_than_the_stream() {
-        let clipped = clamp_region_to_stream(region(0, 0, 4000, 3000), (1536, 864)).unwrap();
-        assert_eq!(clipped.x, 0);
-        assert_eq!(clipped.y, 0);
-        assert_eq!(clipped.width, 1536);
-        assert_eq!(clipped.height, 864);
+    fn rejects_window_larger_than_the_stream() {
+        let error = clamp_region_to_stream(region(0, 0, 4000, 3000), (1536, 864)).unwrap_err();
+        assert!(error.to_string().contains("not fully inside"), "{error:#}");
     }
 
     #[test]

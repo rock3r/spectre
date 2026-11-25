@@ -11,6 +11,7 @@ import java.io.IOException
 import javax.swing.JWindow
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -139,10 +140,43 @@ class VisualIdleSurfaceCaptureTest {
                     windowBounds = Rectangle(0, 0, 100, 100),
                     frameInsets = Insets(0, 0, 0, 0),
                     nativeWindowCaptureAvailable = false,
+                    allowScreenRegionFallback = true,
                 )
             assertSame(regionImage, image)
             assertEquals(1, regionCalls)
             assertEquals(0, windowCalls)
+        } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
+    fun `native absence fails instead of silently sampling a screen region`() {
+        assumeLiveAwtAvailable()
+        var regionCalls = 0
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = {
+                    regionCalls += 1
+                    solidImage(8, 8, 0)
+                },
+                nativeCapture = { error("must not run") },
+            )
+        val frame = Frame()
+        try {
+            val error =
+                assertFailsWith<IllegalStateException> {
+                    captureSurfaceForVisualIdle(
+                        backend = backend,
+                        window = tracked(frame),
+                        surfaceRegion = Rectangle(0, 0, 8, 8),
+                        windowBounds = Rectangle(0, 0, 8, 8),
+                        frameInsets = Insets(0, 0, 0, 0),
+                        nativeWindowCaptureAvailable = false,
+                    )
+                }
+            assertTrue(error.message.orEmpty().contains("allowScreenRegionFallback = true"))
+            assertEquals(0, regionCalls)
         } finally {
             frame.dispose()
         }
@@ -185,6 +219,7 @@ class VisualIdleSurfaceCaptureTest {
                     windowBounds = Rectangle(frame.bounds),
                     frameInsets = Insets(0, 0, 0, 0),
                     nativeWindowCaptureAvailable = true,
+                    allowScreenRegionFallback = true,
                 )
             assertSame(regionImage, image)
             assertEquals(1, windowCalls)
@@ -418,6 +453,7 @@ class VisualIdleSurfaceCaptureTest {
                     windowBounds = Rectangle(0, 0, 8, 8),
                     frameInsets = Insets(0, 0, 0, 0),
                     nativeWindowCaptureAvailable = false,
+                    allowScreenRegionFallback = true,
                 )
             assertSame(regionImage, image)
         } finally {
