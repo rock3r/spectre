@@ -342,6 +342,10 @@ are available over the agent transport. `waitForIdle` runs a **fingerprint-only*
 agent's in-target automator (timeout / quiet / poll; absolute deadline on the wire like
 `waitForNode`). It does **not** observe idling resources registered on a different automator
 instance in the app. **Idling-resource registration** and `withTracing` remain in-process-only.
+Attached `waitForVisualIdle` is fail-closed by default and forwards
+`allowScreenRegionFallback`. If an older target exposes only the legacy three-argument method, the
+agent rejects the default request because that target may silently use a Robot crop; explicitly
+allow the fallback only when those occlusion-sensitive pixels are intentional.
 
 Each wait returns its **timeout message verbatim** with category `timeout`.
 `waitForIdle` names busy idling resources. `waitForVisualIdle` reports frame sample counts.

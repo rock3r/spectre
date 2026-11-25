@@ -23,8 +23,8 @@ import org.junit.jupiter.api.TestInstance
  *   rectangle. A full default `stableFrames = 3` streak must complete against a static UI so
  *   one-shot helper cost cannot make visual idle unreachable by construction.
  *
- * Skips GitHub-hosted Windows: WGC still capture needs an interactive console (same gate as Issue14
- * screenshot warmup).
+ * GitHub-hosted Windows intentionally opts into desktop-region sampling because WGC still capture
+ * needs an interactive console. A separate assertion verifies that the default remains fail-closed.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class WaitForVisualIdleValidationTest {
@@ -34,10 +34,6 @@ class WaitForVisualIdleValidationTest {
     @BeforeAll
     fun start() {
         assumeFalse(GraphicsEnvironment.isHeadless(), "Needs a real AWT display")
-        assumeFalse(
-            isHostedWindows(),
-            "Live Windows Graphics Capture requires an interactive console",
-        )
         fixture.start()
     }
 
@@ -51,7 +47,11 @@ class WaitForVisualIdleValidationTest {
                 waitForTestTag("hidpi.target.40x0")
                 waitForIdle()
 
-                waitForVisualIdle(timeout = 5.seconds, stableFrames = 1)
+                waitForVisualIdle(
+                    timeout = 5.seconds,
+                    stableFrames = 1,
+                    allowScreenRegionFallback = isHostedWindows(),
+                )
             }
         }
 
@@ -64,9 +64,32 @@ class WaitForVisualIdleValidationTest {
                 waitForIdle()
 
                 // Default stableFrames; longer timeout absorbs cold helper + three warm stills.
-                waitForVisualIdle(timeout = 15.seconds, stableFrames = 3)
+                waitForVisualIdle(
+                    timeout = 15.seconds,
+                    stableFrames = 3,
+                    allowScreenRegionFallback = isHostedWindows(),
+                )
             }
         }
+
+    @Test
+    fun `hosted Windows fails closed before sampling a nonempty surface`() = runBlocking {
+        assumeTrue(isHostedWindows(), "Exercises the hosted Windows capture-policy gate")
+        with(fixture.automator) {
+            navigateToScenario("scenario.hidpi")
+            waitForTestTag("hidpi.target.40x0")
+            waitForIdle()
+
+            val error =
+                kotlin.test.assertFailsWith<UnsupportedOperationException> {
+                    waitForVisualIdle(timeout = 15.seconds, stableFrames = 1)
+                }
+            kotlin.test.assertTrue(
+                error.message.orEmpty().contains("non-interactive GitHub-hosted Windows runner"),
+                error.message,
+            )
+        }
+    }
 
     /**
      * #612: a focused text field blinks its caret about every 500 ms. Three stable samples must fit

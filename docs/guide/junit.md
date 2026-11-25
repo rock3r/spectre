@@ -317,7 +317,7 @@ import org.junit.jupiter.api.TestInfo
 
 @Test
 fun homeMatchesGold(testInfo: TestInfo, automator: ComposeAutomator): Unit = runSpectreTest {
-    automator.waitForVisualIdle()
+    automator.waitForVisualIdle() // requires native window capture
     assertMatchesGold(
         testInfo = testInfo,
         name = "main-window",

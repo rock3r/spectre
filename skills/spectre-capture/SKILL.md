@@ -109,7 +109,7 @@ diff -u \
 
 ## Workflow (`capture → act → capture → diff`) and key lifetime
 
-1. **Settle the UI first** (`waitForIdle`/`waitForVisualIdle` or app-level wait); `capture` does not auto-idle.
+1. **Settle the UI first** (`waitForIdle`/`waitForVisualIdle` or app-level wait); `capture` does not auto-idle. Visual idle requires native window capture unless the caller explicitly opts into `allowScreenRegionFallback = true` and accepts occlusion-sensitive desktop pixels.
 2. **Capture before** (`spectre capture <session-id> --json`), locate a target key in `capture.json` via `jq`, and
    **act** (`spectre click <session-id> "$KEY"`).
 3. **Capture after**, verify the diff, and **prune** (`spectre captures prune --session <session-id>`) when finished.
