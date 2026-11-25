@@ -79,7 +79,6 @@ internal class PlatformScreenCaptureBackend(
                 osName = System.getProperty("os.name"),
                 windowBounds = windowBounds,
                 insets = frameInsets,
-                isWayland = isWaylandSession(),
             )
         },
     private val deviceScaleRegionCapture: (Rectangle?) -> BufferedImage = regionCapture,
@@ -180,7 +179,7 @@ internal fun nativeWindowCaptureBounds(
     osName: String,
     windowBounds: Rectangle,
     insets: java.awt.Insets,
-    isWayland: Boolean,
+    isWayland: Boolean = isWaylandSession(osName),
 ): Rectangle {
     if (!osName.contains("linux", ignoreCase = true) || isWayland) return Rectangle(windowBounds)
     return Rectangle(
@@ -209,14 +208,34 @@ internal fun nativeWindowCaptureBounds(
  * the capture helper does (#635).
  */
 @InternalSpectreApi
-@Suppress("ReturnCount")
 public fun isWaylandSession(
     getenv: (String) -> String? = defaultLinuxGetenv,
     runtimeDirHasWaylandSocket: (Path) -> Boolean = ::runtimeDirHasWaylandSocket,
     displayIsPureX11: (String) -> Boolean = ::defaultDisplayIsPureX11,
     displayIsXwayland: (String) -> Boolean = ::defaultDisplayIsXwayland,
     waylandSocketExists: (Path) -> Boolean = ::isWaylandSocket,
+): Boolean =
+    isWaylandSession(
+        System.getProperty("os.name").orEmpty(),
+        getenv,
+        runtimeDirHasWaylandSocket,
+        displayIsPureX11,
+        displayIsXwayland,
+        waylandSocketExists,
+    )
+
+/** Resolves capture for [osName]. Only Linux requires evidence about the display server. */
+@InternalSpectreApi
+@Suppress("ReturnCount")
+public fun isWaylandSession(
+    osName: String,
+    getenv: (String) -> String? = defaultLinuxGetenv,
+    runtimeDirHasWaylandSocket: (Path) -> Boolean = ::runtimeDirHasWaylandSocket,
+    displayIsPureX11: (String) -> Boolean = ::defaultDisplayIsPureX11,
+    displayIsXwayland: (String) -> Boolean = ::defaultDisplayIsXwayland,
+    waylandSocketExists: (Path) -> Boolean = ::isWaylandSocket,
 ): Boolean {
+    if (!osName.contains("linux", ignoreCase = true)) return false
     explicitLinuxSession(getenv)?.let {
         return it
     }

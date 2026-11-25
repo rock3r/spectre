@@ -10,7 +10,7 @@ internal fun detectLinux(): Boolean = System.getProperty("os.name").lowercase().
 
 internal fun defaultRealOsRobotAdapter(
     isLinux: Boolean = detectLinux(),
-    wayland: Boolean = isWaylandSession(),
+    wayland: Boolean = isLinux && isWaylandSession(),
     waylandAdapter: () -> RobotAdapter? = ::loadWaylandRobotAdapter,
     awtAdapter: () -> RobotAdapter = { AwtRobotAdapter() },
 ): RobotAdapter {

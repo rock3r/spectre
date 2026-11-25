@@ -107,7 +107,8 @@ public object ScreenshotGoldPaths {
                 else -> System.getenv(key)
             }
         }
-        return if (isWaylandSession(getenv = getenv)) "linux-wayland" else "linux-x11"
+        return if (isWaylandSession(osName = "Linux", getenv = getenv)) "linux-wayland"
+        else "linux-x11"
     }
 
     internal fun sanitizeGoldSegment(raw: String): String {
