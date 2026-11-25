@@ -22,8 +22,8 @@ import java.io.IOException
  * Returning `null` for other native failures makes the visual-idle streak reset so the wait times
  * out rather than reporting fake stability.
  *
- * When the native bridge is absent, disabled, or not actually usable, falls back to
- * [ScreenCaptureBackend.captureRegion].
+ * When the native bridge is absent, disabled, or not actually usable, region capture is used only
+ * when [allowScreenRegionFallback] explicitly opts into that occlusion-sensitive mechanism.
  */
 internal fun captureSurfaceForVisualIdle(
     backend: ScreenCaptureBackend,
@@ -164,9 +164,9 @@ internal fun isNativeWindowCaptureBridgePresent(
  *
  * Requires the recording-owned bridge **and** a host where the platform helper can actually run.
  * Class presence alone is not enough: Linux stills need `gst-launch-1.0` (#503). When the helper
- * cannot run, [waitForVisualIdle] region-falls back like 0.4.0 instead of marking every sample
- * unsampleable. Atomic [ComposeAutomator.capture] uses [atomicCaptureNativeStillUnavailableReason]
- * instead so a missing helper stays fail-closed.
+ * cannot run, [waitForVisualIdle] either fails immediately or uses its explicit screen-region
+ * opt-in. Atomic [ComposeAutomator.capture] uses [atomicCaptureNativeStillUnavailableReason]
+ * instead and always stays fail-closed.
  */
 internal fun isNativeWindowCaptureAvailable(
     classLoader: ClassLoader = VisualIdleSurfaceCapture::class.java.classLoader,
