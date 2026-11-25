@@ -104,13 +104,21 @@ class WaitForVisualIdleValidationTest {
             waitForTestTag("hidpi.target.40x0")
             waitForIdle()
             // Warm the native capture path once, so the measurement below is steady state.
-            waitForVisualIdle(timeout = 15.seconds, stableFrames = 1)
+            waitForVisualIdle(
+                timeout = 15.seconds,
+                stableFrames = 1,
+                allowScreenRegionFallback = isHostedWindows(),
+            )
 
             // Sample period on a static surface: every sample matches, so the wait takes about
             // `samples` sample periods. Printed for the #612 before/after numbers.
             val samples = 10
             val staticStart = TimeSource.Monotonic.markNow()
-            waitForVisualIdle(timeout = 15.seconds, stableFrames = samples)
+            waitForVisualIdle(
+                timeout = 15.seconds,
+                stableFrames = samples,
+                allowScreenRegionFallback = isHostedWindows(),
+            )
             println(
                 "visual-idle sample period: " +
                     "${staticStart.elapsedNow().inWholeMilliseconds / samples} ms"
@@ -122,16 +130,51 @@ class WaitForVisualIdleValidationTest {
                 if (waitForTestTag("focus.field.first").isFocused) Unit else null
             }
             waitForIdle()
-            waitForVisualIdle(timeout = 5.seconds, stableFrames = 3)
+            waitForVisualIdle(
+                timeout = 5.seconds,
+                stableFrames = 3,
+                allowScreenRegionFallback = isHostedWindows(),
+            )
         }
     }
 
     private companion object {
         fun isWindows(): Boolean =
             System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
-
-        fun isHostedWindows(): Boolean =
-            System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true) &&
-                System.getenv("GITHUB_ACTIONS") == "true"
     }
 }
+
+class HostedWindowsVisualIdlePolicyTest {
+    @Test
+    fun `self-hosted Windows Actions job uses native capture`() {
+        kotlin.test.assertFalse(
+            isHostedWindows(
+                osName = "Windows 11",
+                getenv = {
+                    when (it) {
+                        "GITHUB_ACTIONS" -> "true"
+                        "RUNNER_ENVIRONMENT" -> "self-hosted"
+                        else -> null
+                    }
+                },
+            )
+        )
+    }
+
+    @Test
+    fun `GitHub-hosted Windows job opts into screen-region fallback`() {
+        kotlin.test.assertTrue(
+            isHostedWindows(
+                osName = "Windows 11",
+                getenv = { if (it == "RUNNER_ENVIRONMENT") "github-hosted" else null },
+            )
+        )
+    }
+}
+
+private fun isHostedWindows(
+    osName: String = System.getProperty("os.name").orEmpty(),
+    getenv: (String) -> String? = System::getenv,
+): Boolean =
+    osName.startsWith("Windows", ignoreCase = true) &&
+        getenv("RUNNER_ENVIRONMENT") == "github-hosted"
