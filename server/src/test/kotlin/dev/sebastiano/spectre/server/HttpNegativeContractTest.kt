@@ -31,6 +31,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 
 /**
  * Negative-path coverage for the HTTP transport (R4):
@@ -49,6 +52,65 @@ import kotlinx.coroutines.runBlocking
  *   status first via `getSuccess`.
  */
 class HttpNegativeContractTest {
+
+    @Test
+    fun `request decoding does not convert cancellation into malformed request`() =
+        testApplication {
+            application {
+                routing {
+                    serverPost("/cancel") {
+                        receiveOrRespond400(call, "TypeTextRequest", cancellingSerializer)
+                    }
+                }
+            }
+
+            val response =
+                client.post("/cancel") {
+                    contentType(ContentType.Application.Json)
+                    setBody("{\"text\":\"ok\"}")
+                }
+            assertTrue(
+                response.status != HttpStatusCode.BadRequest,
+                "cancellation must not be reported as a malformed request",
+            )
+        }
+
+    @Test
+    fun `POST bodies reject invalid shapes fields and decoded duplicate fields`() =
+        testApplication {
+            application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
+
+            listOf(
+                    "{\"text\":\"ok\",\"unknown\":true}",
+                    "{\"text\":7}",
+                    "{\"text\":{}}",
+                    "{\"text\":[]}",
+                    "{\"text\":\"first\",\"t\\u0065xt\":\"second\"}",
+                    "[]",
+                )
+                .forEach { body ->
+                    val response =
+                        postRaw(
+                            "/spectre/typeText",
+                            body = body,
+                            contentType = ContentType.Application.Json,
+                        )
+                    assertEquals(HttpStatusCode.BadRequest, response.status, body)
+                    assertEquals("Could not decode TypeTextRequest", response.bodyAsText())
+                }
+        }
+
+    @Test
+    fun `JSON-looking arbitrary text is not mistaken for duplicate fields`() = testApplication {
+        application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
+        val body = """{"text":"user text: {\"text\":\"nested\"}; quote=\\\"; colon=:"}"""
+
+        val response =
+            postRaw("/spectre/typeText", body, contentType = ContentType.Application.Json)
+
+        // Decoding succeeded and reached the headless input adapter (rather than schema 400).
+        assertEquals(HttpStatusCode.Conflict, response.status)
+    }
 
     private fun headlessAutomator(): ComposeAutomator =
         ComposeAutomator.inProcess(robotDriver = RobotDriver.headless(), discoverWindows = false)
@@ -284,7 +346,9 @@ class HttpNegativeContractTest {
                         port = server.port,
                     )
                     .use {
-                        assertFailsWith<IllegalStateException> { runBlocking { it.screenshot() } }
+                        assertFailsWith<IllegalStateException> {
+                            runBlocking { it.screenshot(fullscreen = true) }
+                        }
                     }
             assertEquals("Server returned an image we could not decode", error.message)
         } finally {
@@ -327,3 +391,20 @@ class HttpNegativeContractTest {
         )
     }
 }
+
+private val cancellingSerializer =
+    object : KSerializer<dev.sebastiano.spectre.server.dto.TypeTextRequest> {
+        private val delegate = dev.sebastiano.spectre.server.dto.TypeTextRequest.serializer()
+        override val descriptor = delegate.descriptor
+
+        override fun serialize(
+            encoder: Encoder,
+            value: dev.sebastiano.spectre.server.dto.TypeTextRequest,
+        ) = delegate.serialize(encoder, value)
+
+        override fun deserialize(
+            decoder: Decoder
+        ): dev.sebastiano.spectre.server.dto.TypeTextRequest {
+            throw kotlinx.coroutines.CancellationException("cancel decode")
+        }
+    }
