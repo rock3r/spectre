@@ -1,0 +1,84 @@
+name: Temporary GNOME hosted smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [release-0.10/gnome-hosted-smoke]
+
+# Verification only: this workflow cannot update the temporary branch, publish, or use secrets.
+permissions:
+  contents: read
+
+jobs:
+  gnome-mutter-window-identity:
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [capture, accessibility]
+
+    steps:
+      - name: Check out temporary workflow tooling
+        uses: actions/checkout@v6
+        with:
+          path: smoke-tooling
+          persist-credentials: false
+
+      - name: Check out the release candidate
+        uses: actions/checkout@v6
+        with:
+          ref: 7ececf7a7ac361d87417bb07108cc475f7cf890e
+          persist-credentials: false
+          path: candidate
+
+      - name: Check out full AT-SPI reader candidate
+        if: matrix.mode == 'accessibility'
+        uses: actions/checkout@v6
+        with:
+          ref: f4044ce86653ba2f60153e2759d208e7e759e3ae
+          persist-credentials: false
+          path: atspi-reader
+
+      - name: Check out native accessibility fixture
+        if: matrix.mode == 'accessibility'
+        uses: actions/checkout@v6
+        with:
+          ref: 96cd6cb20e44d5d26a4cfb93d8a3f8e1b6375aa8
+          persist-credentials: false
+          path: fixture
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          build-root-directory: candidate
+
+      - name: Run GNOME, Mutter, AT-SPI, and window-identity smoke
+        env:
+          ATSPI_REPO: ${{ github.workspace }}/atspi-reader
+          FIXTURE_CHECKOUT: ${{ github.workspace }}/fixture
+          SMOKE_MODE: ${{ matrix.mode }}
+          CANDIDATE_SHA: 7ececf7a7ac361d87417bb07108cc475f7cf890e
+          SMOKE_ARTIFACTS: ${{ runner.temp }}/gnome-hosted-smoke
+          SMOKE_REPO: ${{ github.workspace }}/candidate
+          SMOKE_SESSION_SCRIPT: ${{ github.workspace }}/smoke-tooling/.github/scripts/gnome-hosted-smoke-session.sh
+        run: |
+          export SMOKE_USER="$(id -un)" RUST_BIN="$(dirname "$(command -v cargo)")"
+          sudo --preserve-env=ATSPI_REPO,FIXTURE_CHECKOUT,SMOKE_MODE,SMOKE_USER,RUST_BIN,CANDIDATE_SHA,JAVA_HOME,SMOKE_ARTIFACTS,SMOKE_REPO,SMOKE_SESSION_SCRIPT .github/scripts/gnome-hosted-smoke.sh
+        working-directory: smoke-tooling
+
+      - name: Upload fail-closed GNOME diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gnome-hosted-smoke-${{ matrix.mode }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gnome-hosted-smoke/
+          if-no-files-found: error
+          retention-days: 7
