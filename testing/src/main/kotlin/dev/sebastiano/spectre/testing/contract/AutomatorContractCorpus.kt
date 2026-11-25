@@ -242,9 +242,9 @@ public object AutomatorContractCorpus {
     }
 
     /**
-     * Execute the corpus. Scenarios that need a live fixture are skipped (recorded as passed with
-     * detail `skipped:no-fixture`) when [AutomatorContractDriver.expectsFixtureSemantics] is false
-     * — matching matrix rows that only claim headless transport liveness.
+     * Execute the corpus. Scenarios that need a live fixture use the explicit
+     * [ScenarioOutcome.Skipped] outcome when [AutomatorContractDriver.expectsFixtureSemantics] is
+     * false — matching matrix rows that only claim headless transport liveness.
      */
     public fun run(driver: AutomatorContractDriver): RunResult =
         run(driver = driver, realKeyboardEnabled = RealKeyboardGate.isEnabled())
