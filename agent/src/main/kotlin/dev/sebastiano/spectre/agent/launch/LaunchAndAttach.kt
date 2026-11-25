@@ -272,7 +272,7 @@ internal fun prepareGradleLaunchCommand(
     marker: String,
 ): List<String> {
     require(LaunchCommandRewriter.isGradleishLaunch(command)) { "command must be Gradle-ish" }
-    val initScript = captureDirectory.resolve("spectre-launch-marker.gradle")
+    val initScript = Files.createTempFile(captureDirectory, "spectre-launch-marker-", ".gradle")
     val markerArgument = "-D${LaunchAndAttach.LAUNCH_MARKER_PROPERTY}=$marker"
     Files.writeString(
         initScript,

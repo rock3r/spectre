@@ -22,6 +22,7 @@ kotlin {
 dependencies {
     // Attaching-side runtime owns availability of the external desktop input coordinator.
     implementation(projects.inputCoordinatorServer)
+    implementation(libs.jna.platform)
 
     // Wire-protocol serialization. CBOR is the only kotlinx-serialization format used by
     // the agent transport; JSON is intentionally not on the agent runtime classpath.

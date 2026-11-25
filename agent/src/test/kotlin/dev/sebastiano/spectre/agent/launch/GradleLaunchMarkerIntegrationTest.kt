@@ -7,6 +7,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
+import java.util.UUID
 import kotlin.io.path.writeText
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -19,7 +20,6 @@ import org.junit.jupiter.api.condition.OS
 /**
  * Real Gradle/JavaExec boundary coverage for launch ownership; no Attach call is used as a probe.
  */
-@EnabledOnOs(OS.LINUX, OS.MAC)
 class GradleLaunchMarkerIntegrationTest {
     @Test
     fun `overlapping JavaExec launches with the same main bind to their own marker`() {
@@ -28,18 +28,16 @@ class GradleLaunchMarkerIntegrationTest {
         val warmup = startGradle(fixtureA, marker = null, task = "help")
         assertEquals(0, warmup.waitFor(), "failed to warm a reusable Gradle daemon")
 
-        val first = startMarkedFixture(fixtureA, "marker-overlap-a")
-        val firstPid = awaitOwnedJvm(first, "marker-overlap-a")
-        val second = startMarkedFixture(fixtureB, "marker-overlap-b")
+        val first = startMarkedFixture(fixtureA)
+        val firstPid = awaitOwnedJvm(first)
+        val second = startMarkedFixture(fixtureB)
         try {
-            val secondPid = awaitOwnedJvm(second, "marker-overlap-b")
+            val secondPid = awaitOwnedJvm(second)
             assertNotEquals(firstPid, secondPid)
-            assertTrue(LaunchDescendantDiscovery.commandLineContains(firstPid, "marker-overlap-a"))
-            assertTrue(LaunchDescendantDiscovery.commandLineContains(secondPid, "marker-overlap-b"))
-            assertTrue(!LaunchDescendantDiscovery.commandLineContains(firstPid, "marker-overlap-b"))
-            assertTrue(
-                !LaunchDescendantDiscovery.commandLineContains(secondPid, "marker-overlap-a")
-            )
+            assertTrue(hasLaunchMarker(firstPid, first.marker))
+            assertTrue(hasLaunchMarker(secondPid, second.marker))
+            assertTrue(!hasLaunchMarker(firstPid, second.marker))
+            assertTrue(!hasLaunchMarker(secondPid, first.marker))
         } finally {
             destroyLaunch(first)
             destroyLaunch(second)
@@ -49,22 +47,22 @@ class GradleLaunchMarkerIntegrationTest {
     @Test
     fun `no-daemon JavaExec launch exposes marker in the owned subprocess argv`() {
         val fixture = createFixture("no-daemon")
-        val launch = startMarkedFixture(fixture, "marker-no-daemon", noDaemon = true)
+        val launch = startMarkedFixture(fixture, noDaemon = true)
         try {
-            val pid = awaitOwnedJvm(launch, "marker-no-daemon")
-            assertTrue(LaunchDescendantDiscovery.commandLineContains(pid, "marker-no-daemon"))
+            val pid = awaitOwnedJvm(launch)
+            assertTrue(hasLaunchMarker(pid, launch.marker))
         } finally {
             destroyLaunch(launch)
         }
     }
 
     @Test
-    @EnabledOnOs(OS.LINUX)
+    @EnabledOnOs(OS.LINUX, OS.WINDOWS)
     fun `no-daemon JavaExec hidden from hsperfdata is found once through overlapping native roots`() {
         val fixture = createFixture("no-daemon-no-perfdata", disablePerfData = true)
-        val launch = startMarkedFixture(fixture, "marker-no-daemon-no-perfdata", noDaemon = true)
+        val launch = startMarkedFixture(fixture, noDaemon = true)
         try {
-            val pid = awaitOwnedJvm(launch, "marker-no-daemon-no-perfdata")
+            val pid = awaitOwnedJvm(launch)
             assertFalse(
                 LaunchDescendantDiscovery.isJvmAttachable(pid),
                 "-XX:-UsePerfData must force discovery through the native process-tree fallback",
@@ -110,7 +108,6 @@ class GradleLaunchMarkerIntegrationTest {
 
     private fun startMarkedFixture(
         fixture: Path,
-        marker: String,
         noDaemon: Boolean = false,
     ): Launch {
         val command = buildList {
@@ -122,6 +119,7 @@ class GradleLaunchMarkerIntegrationTest {
             if (noDaemon) add("--no-daemon")
         }
         val capture = Files.createTempDirectory("spectre-gradle-marker-capture-")
+        val marker = UUID.randomUUID().toString()
         val marked = prepareGradleLaunchCommand(command, capture, marker)
         val startedAt = Instant.now()
         return Launch(
@@ -142,14 +140,14 @@ class GradleLaunchMarkerIntegrationTest {
         return ProcessBuilder(actual).redirectErrorStream(true).start()
     }
 
-    private fun awaitOwnedJvm(launch: Launch, marker: String): Long {
+    private fun awaitOwnedJvm(launch: Launch): Long {
         val deadline = Instant.now().plus(Duration.ofSeconds(60))
         while (Instant.now().isBefore(deadline)) {
             discoverOwnedAppJvm(
                     clientPid = launch.process.pid(),
                     nameFilter = "SameMain",
                     clientStart = launch.startedAt,
-                    launchMarker = marker,
+                    launchMarker = launch.marker,
                 )
                 ?.let {
                     return it
@@ -157,12 +155,12 @@ class GradleLaunchMarkerIntegrationTest {
             check(launch.process.isAlive) { "Gradle client exited before marked JavaExec appeared" }
             Thread.sleep(100)
         }
-        error("timed out discovering JavaExec owned by $marker")
+        error("timed out discovering JavaExec owned by ${launch.marker}")
     }
 
     private fun destroyLaunch(launch: Launch) {
         ProcessHandle.allProcesses()
-            .filter { LaunchDescendantDiscovery.commandLineContains(it.pid(), launch.marker) }
+            .filter { hasLaunchMarker(it.pid(), launch.marker) }
             .forEach { ProcessTreeTeardown.destroyTreeByPid(it.pid()) }
         launch.process.destroyForcibly()
         launch.process.waitFor()
@@ -171,7 +169,10 @@ class GradleLaunchMarkerIntegrationTest {
     private fun gradlew(): Path {
         var directory = Path.of(System.getProperty("user.dir")).toAbsolutePath()
         repeat(8) {
-            val candidate = directory.resolve("gradlew")
+            val candidate =
+                directory.resolve(
+                    if (java.io.File.separatorChar == '\\') "gradlew.bat" else "gradlew"
+                )
             if (Files.isRegularFile(candidate)) return candidate
             directory = directory.parent ?: error("could not find gradlew")
         }

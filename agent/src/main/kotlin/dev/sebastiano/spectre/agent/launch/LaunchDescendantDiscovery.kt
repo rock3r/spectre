@@ -313,7 +313,7 @@ public object LaunchDescendantDiscovery {
     private fun commandLineLooksLikeGradleDaemon(pid: Long): Boolean {
         val handle = ProcessHandle.of(pid).orElse(null) ?: return false
         val cmd = handle.info().command().orElse("")
-        val args = handle.info().arguments().orElse(emptyArray()).joinToString(" ")
+        val args = processArguments(handle).joinToString(" ")
         return isGradleDaemonDisplayName("$cmd $args")
     }
 
@@ -328,7 +328,7 @@ public object LaunchDescendantDiscovery {
     internal fun commandLineContains(pid: Long, needle: String): Boolean {
         val handle = ProcessHandle.of(pid).orElse(null) ?: return false
         val cmd = handle.info().command().orElse("")
-        val args = handle.info().arguments().orElse(emptyArray()).joinToString(" ")
+        val args = processArguments(handle).joinToString(" ")
         return cmd.contains(needle, ignoreCase = true) || args.contains(needle, ignoreCase = true)
     }
 
@@ -379,9 +379,7 @@ internal fun discoverOwnedAppJvm(
         nameFilter = nameFilter,
         clientStart = clientStart,
         ownsLaunch =
-            launchMarker?.let { marker ->
-                { pid -> LaunchDescendantDiscovery.commandLineContains(pid, marker) }
-            } ?: { true },
+            launchMarker?.let { marker -> { pid -> hasLaunchMarker(pid, marker) } } ?: { true },
         onDiagnostics = AppJvmDiscoveryDiagnostics.sinkFromEnvironment(),
     )
 
