@@ -71,8 +71,8 @@ class RequestDiagnosticsTest {
             }
 
         assertEquals(100, warnings.size)
-        assertTrue(warnings.last().contains("2 additional warning(s)"))
-        assertTrue(warnings.last().contains("warning text beyond 4096 characters"))
+        assertTrue(warnings.last().contains("discarded 3 warning(s)"))
+        assertTrue(warnings.last().contains("904 warning character(s)"))
         assertTrue(warnings.last().contains("daemon log"))
     }
 
@@ -86,5 +86,41 @@ class RequestDiagnosticsTest {
         RequestDiagnostics.forget("gone")
 
         assertTrue(RequestDiagnostics.capture("gone") {}.second.isEmpty())
+    }
+
+    @Test
+    fun `late helper after cleanup cannot leak into a reused session id`() {
+        lateinit var delayed: () -> Unit
+        RequestDiagnostics.capture("reused") {
+            delayed = RequestDiagnostics.route { RequestDiagnostics.report("retired warning") }
+        }
+        RequestDiagnostics.forget("reused")
+        delayed()
+
+        val (_, reused) =
+            RequestDiagnostics.capture("reused") { RequestDiagnostics.report("new warning") }
+
+        assertEquals(listOf("new warning"), reused)
+    }
+
+    @Test
+    fun `warning crossing response boundary is delivered exactly once`() {
+        lateinit var delayed: () -> Unit
+        val (_, first) =
+            RequestDiagnostics.capture("boundary") {
+                delayed = RequestDiagnostics.route { RequestDiagnostics.report("crossing") }
+            }
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            executor.submit(delayed).get(5, TimeUnit.SECONDS)
+        } finally {
+            executor.shutdownNow()
+        }
+        val (_, second) = RequestDiagnostics.capture("boundary") {}
+        val (_, third) = RequestDiagnostics.capture("boundary") {}
+
+        assertTrue(first.isEmpty())
+        assertEquals(listOf("crossing"), second)
+        assertTrue(third.isEmpty())
     }
 }

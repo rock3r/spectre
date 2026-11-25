@@ -3,43 +3,39 @@ package dev.sebastiano.spectre.cli.daemon
 import java.io.PrintStream
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 
 /** Routes daemon stderr to its persistent log and to the session that caused each diagnostic. */
 internal object RequestDiagnostics {
     private val destination = InheritableThreadLocal<Collector?>()
-    private val pendingBySession = ConcurrentHashMap<String, WarningBuffer>()
+    private val sessions = ConcurrentHashMap<String, SessionWarnings>()
 
-    /** Installs the process-wide tee once. Requests only change thread-local attribution. */
     fun install() {
         if (System.err is DiagnosticPrintStream) return
         System.setErr(DiagnosticPrintStream(System.err))
     }
 
     /**
-     * Captures immediate warnings and drains warnings produced asynchronously by the preceding
-     * operation for [sessionId]. A closed collector keeps its provenance: child/helper work that
-     * completes later is retained for this session's next operation rather than silently lost.
+     * Captures warnings around one atomic response boundary. A concurrent producer is included in
+     * this response or retained for the next session request, never lost or duplicated.
      */
     fun <T> capture(sessionId: String?, block: () -> T): Pair<T, List<String>> {
-        val collector = Collector(sessionId)
+        val session = sessionId?.let { sessions.computeIfAbsent(it) { SessionWarnings() } }
+        val collector = Collector(session)
         val previous = destination.get()
         destination.set(collector)
-        val delayed = sessionId?.let(::drainPending).orEmpty()
+        val delayed = session?.drainPending().orEmpty()
         return try {
             val result = block()
-            collector.close()
-            result to (delayed + collector.snapshot())
+            result to (delayed + collector.closeAndSnapshot())
         } finally {
             destination.set(previous)
-            collector.close()
+            collector.closeAndSnapshot()
         }
     }
 
-    /** Captures diagnostics not owned by a live session without retaining delayed output. */
     fun <T> capture(block: () -> T): Pair<T, List<String>> = capture(null, block)
 
-    /** Carries current provenance through executors whose worker threads are reused. */
+    /** Carries current provenance into asynchronous work, including reused executor threads. */
     fun route(block: () -> Unit): () -> Unit {
         val captured = destination.get()
         return {
@@ -53,77 +49,98 @@ internal object RequestDiagnostics {
         }
     }
 
-    /** Drops delayed diagnostics as soon as the owning session is no longer live. */
+    /** Retires the stable lifecycle before removing it, so late helpers cannot recreate a queue. */
     fun forget(sessionId: String) {
-        pendingBySession.remove(sessionId)
+        sessions.remove(sessionId)?.retire()
     }
 
     fun clear() {
-        pendingBySession.clear()
+        sessions.values.forEach(SessionWarnings::retire)
+        sessions.clear()
     }
 
-    /** Records a daemon-owned helper diagnostic using the provenance routed to this thread. */
     internal fun report(warning: String) {
         destination.get()?.add(warning)
     }
-
-    private fun drainPending(sessionId: String): List<String> =
-        pendingBySession.remove(sessionId)?.snapshot().orEmpty()
 
     private class DiagnosticPrintStream(private val delegate: PrintStream) :
         PrintStream(delegate, true, StandardCharsets.UTF_8) {
         override fun write(buffer: ByteArray, offset: Int, length: Int) {
             delegate.write(buffer, offset, length)
             val text = String(buffer, offset, length, StandardCharsets.UTF_8)
-            text.lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { line ->
-                report(line)
-            }
+            text.lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { report(it) }
         }
     }
 
-    private class Collector(private val sessionId: String?) {
-        private val active = AtomicBoolean(true)
+    private class SessionWarnings {
+        private var retired = false
+        private var pending = WarningBuffer()
+
+        @Synchronized
+        fun addAfterBoundary(warning: String) {
+            if (!retired) pending.add(warning)
+        }
+
+        @Synchronized
+        fun drainPending(): List<String> {
+            if (retired) return emptyList()
+            val detached = pending
+            pending = WarningBuffer()
+            return detached.snapshot()
+        }
+
+        @Synchronized
+        fun retire() {
+            retired = true
+            pending = WarningBuffer()
+        }
+    }
+
+    private class Collector(private val session: SessionWarnings?) {
+        private val lock = Any()
+        private var active = true
         private val warnings = WarningBuffer()
 
         fun add(warning: String) {
-            if (active.get()) {
-                warnings.add(warning)
-            } else if (sessionId != null) {
-                pendingBySession.computeIfAbsent(sessionId) { WarningBuffer() }.add(warning)
+            synchronized(lock) {
+                if (active) {
+                    warnings.add(warning)
+                    return
+                }
             }
+            session?.addAfterBoundary(warning)
         }
 
-        fun close() {
-            active.set(false)
-        }
-
-        fun snapshot(): List<String> = warnings.snapshot()
+        fun closeAndSnapshot(): List<String> =
+            synchronized(lock) {
+                active = false
+                warnings.snapshot()
+            }
     }
 
     private class WarningBuffer {
         private val warnings = mutableListOf<String>()
-        private var truncatedCount = 0
-        private var truncatedLength = false
+        private var discardedWarnings = 0
+        private var discardedCharacters = 0
 
-        @Synchronized
         fun add(warning: String) {
             val bounded = warning.take(MAX_LENGTH)
-            if (warning.length > MAX_LENGTH) truncatedLength = true
-            if (warnings.size < MAX_WARNINGS) warnings += bounded else truncatedCount++
+            discardedCharacters += warning.length - bounded.length
+            if (warnings.size < MAX_WARNINGS) warnings += bounded else discardedWarnings++
         }
 
-        @Synchronized
         fun snapshot(): List<String> {
-            if (!truncatedLength && truncatedCount == 0) return warnings.toList()
+            if (discardedCharacters == 0 && discardedWarnings == 0) return warnings.toList()
+            val markerDiscardsWarning = warnings.size == MAX_WARNINGS
+            val totalDiscardedWarnings = discardedWarnings + if (markerDiscardsWarning) 1 else 0
             val reason = buildList {
-                if (truncatedCount > 0) add("$truncatedCount additional warning(s)")
-                if (truncatedLength) add("warning text beyond $MAX_LENGTH characters")
+                if (totalDiscardedWarnings > 0) add("$totalDiscardedWarnings warning(s)")
+                if (discardedCharacters > 0) add("$discardedCharacters warning character(s)")
             }
             val marker =
-                "[spectre-daemon] diagnostics truncated (${reason.joinToString()}); " +
+                "[spectre-daemon] diagnostics truncated (discarded ${reason.joinToString(" and ")}); " +
                     "complete diagnostics remain in the daemon log"
-            return if (warnings.size < MAX_WARNINGS) warnings + marker
-            else warnings.dropLast(1) + marker
+            return if (markerDiscardsWarning) warnings.dropLast(1) + marker else warnings + marker
         }
     }
 

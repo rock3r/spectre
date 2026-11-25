@@ -361,7 +361,7 @@ internal constructor(
             }
         val keyGuard = if (hotReload != null) ReloadAwareKeyGuard() else null
         // Wire invalidation before the reconnect loop connects so the first settle is not missed.
-        hotReload?.setReloadSettledListener { keyGuard?.onReload() }
+        hotReload?.setReloadSettledListener(RequestDiagnostics.route { keyGuard?.onReload() })
         (hotReload as? HotReloadSession)?.start()
         val session =
             DaemonSession(
