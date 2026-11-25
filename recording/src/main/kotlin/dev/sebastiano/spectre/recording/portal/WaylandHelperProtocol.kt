@@ -34,6 +34,8 @@ internal sealed interface Command {
         @SerialName("source_types") val sourceTypes: List<SourceType>,
         @SerialName("display_name") val displayName: String? = null,
         @SerialName("window_title") val windowTitle: String? = null,
+        @SerialName("window_owner_pid") val windowOwnerPid: Long? = null,
+        @SerialName("window_frame") val windowFrame: Region? = null,
         @SerialName("cursor_mode") val cursorMode: CursorMode,
         @SerialName("frame_rate") val frameRate: Int,
         @SerialName("region") val region: Region,
@@ -161,7 +163,11 @@ internal sealed interface Event {
 
     @Serializable
     @SerialName("screenshot_saved")
-    data class ScreenshotSaved(@SerialName("output_size_bytes") val outputSizeBytes: Long) : Event
+    data class ScreenshotSaved(
+        @SerialName("output_size_bytes") val outputSizeBytes: Long,
+        /** Stream-relative crop proven by the helper before it started the PNG pipeline. */
+        @SerialName("capture_region") val captureRegion: List<Int>? = null,
+    ) : Event
 
     @Serializable
     @SerialName("error")

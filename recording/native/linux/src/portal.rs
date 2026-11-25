@@ -356,6 +356,16 @@ fn open_screen_cast_session_inner(
             }
         );
     }
+    let stream = parse_first_stream(&start_response.results).with_context(|| {
+        format!(
+            "parsing Start Response streams field. Raw results: {:?}",
+            start_response.results
+        )
+    })?;
+
+    if stream.source_type == Some(SOURCE_TYPE_WINDOW) {
+        bail!("Portal returned a window stream for a desktop region; refusing capture");
+    }
     if let Some(token) = extract_restore_token(&start_response.results) {
         if let Err(e) = save_restore_token(token_key, &token) {
             eprintln!(
@@ -364,12 +374,6 @@ fn open_screen_cast_session_inner(
             );
         }
     }
-    let stream = parse_first_stream(&start_response.results).with_context(|| {
-        format!(
-            "parsing Start Response streams field. Raw results: {:?}",
-            start_response.results
-        )
-    })?;
 
     // 4. OpenPipeWireRemote — synchronous, no Request/Response pattern. Returns the FD inline.
     let open_options: PropMap = HashMap::new();

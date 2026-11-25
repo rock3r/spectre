@@ -59,16 +59,18 @@ class WindowStillScaleTest {
     }
 
     @Test
-    fun `a still clipped by the screen keeps the visible region only`() {
+    fun `a node outside its window fails instead of returning a partial still`() {
         val image = BufferedImage(400, 400, BufferedImage.TYPE_INT_ARGB)
         val windowBounds = Rectangle(0, 0, 200, 200)
 
-        val still =
-            windowStillForRegion(WindowCapture(image, windowBounds), Rectangle(100, 100, 200, 200))
-
-        assertEquals(Rectangle(100, 100, 100, 100), still.boundsOnScreen)
-        assertEquals(200, still.image.width, "clipped still keeps the 2x scale")
-        assertEquals(200, still.image.height)
+        val error =
+            kotlin.test.assertFailsWith<IllegalArgumentException> {
+                windowStillForRegion(
+                    WindowCapture(image, windowBounds),
+                    Rectangle(100, 100, 200, 200),
+                )
+            }
+        kotlin.test.assertTrue(error.message.orEmpty().contains("fully inside"))
     }
 
     private companion object {

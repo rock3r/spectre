@@ -386,8 +386,9 @@ fn dispatch(
             Ok(Event::InputAck)
         }),
         Command::Screenshot(command) => match run_screenshot(state, command) {
-            Ok(size) => Event::ScreenshotSaved {
+            Ok((size, region)) => Event::ScreenshotSaved {
                 output_size_bytes: size,
+                capture_region: Some([region.x, region.y, region.width, region.height]),
             },
             Err(e) => Event::Error {
                 kind: "Helper".into(),
@@ -439,7 +440,17 @@ fn with_state(
     }
 }
 
-fn run_screenshot(state: &Mutex<SessionState>, command: ScreenshotCommand) -> Result<u64> {
+fn run_screenshot(
+    state: &Mutex<SessionState>,
+    command: ScreenshotCommand,
+) -> Result<(u64, crate::protocol::Region)> {
+    crate::protocol::require_portal_region(
+        command.target,
+        &command.source_types,
+        command.window_frame.is_some()
+            || command.window_title.is_some()
+            || command.window_owner_pid.is_some(),
+    )?;
     if command.cursor_mode != crate::protocol::CursorMode::Embedded {
         anyhow::bail!(
             "the active Wayland RemoteDesktop grant embeds the cursor; hidden cursor screenshot cannot be honored"
@@ -451,8 +462,9 @@ fn run_screenshot(state: &Mutex<SessionState>, command: ScreenshotCommand) -> Re
         let owned = guard.session.open_pipewire_remote()?;
         (guard.session.stream.clone(), owned)
     };
-    crate::screenshot::capture_from_stream(&stream, owned.as_raw_fd(), &command, &output)?;
-    Ok(std::fs::metadata(&output)?.len())
+    let region =
+        crate::screenshot::capture_from_stream(&stream, owned.as_raw_fd(), &command, &output)?;
+    Ok((std::fs::metadata(&output)?.len(), region))
 }
 
 fn run_recording_start(
@@ -460,6 +472,13 @@ fn run_recording_start(
     start: StartCommand,
     client_id: u64,
 ) -> Result<Event> {
+    crate::protocol::require_portal_region(
+        start.target,
+        &start.source_types,
+        start.window_frame.is_some()
+            || start.window_title.is_some()
+            || start.window_owner_pid.is_some(),
+    )?;
     if start.cursor_mode != crate::protocol::CursorMode::Embedded {
         anyhow::bail!(
             "the active Wayland RemoteDesktop grant embeds the cursor; hidden cursor capture cannot be honored"
@@ -596,6 +615,7 @@ fn window_screenshot(
     write_window_frame(node_id, &output)?;
     Ok(Event::ScreenshotSaved {
         output_size_bytes: std::fs::metadata(&output)?.len(),
+        capture_region: None,
     })
 }
 

@@ -313,7 +313,7 @@ class AtomicCaptureStillTest {
                 others =
                     listOf(
                         CaptureTitleCandidate("App Settings", isShowing = true),
-                        // The Windows helper enumerates hidden windows too.
+                        CaptureTitleCandidate("App", isShowing = true),
                         CaptureTitleCandidate("App", isShowing = false),
                     ),
                 osName = "Windows 11",

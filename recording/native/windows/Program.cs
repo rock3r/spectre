@@ -86,7 +86,13 @@ internal static class Program
         else
         {
             var title = options.Title ?? throw new ArgumentException("--title is required for window capture.");
-            hwnd = FindWindowByTitleAndOwnerPid(title, ownerPid);
+            var titleMatches = FindWindowsByTitleAndOwnerPid(title, ownerPid);
+            if (titleMatches.Count > 1)
+            {
+                Console.Error.WriteLine($"{titleMatches.Count} visible top-level windows titled \"{title}\" owned by pid {ownerPid}; cannot select one.");
+                return ExitWindowAmbiguous;
+            }
+            hwnd = titleMatches.Count == 1 ? titleMatches[0] : IntPtr.Zero;
             if (hwnd == IntPtr.Zero)
             {
                 Console.Error.WriteLine(
@@ -176,6 +182,10 @@ internal static class Program
         {
             return "the window was closed";
         }
+        if (!IsWindowVisible(hwnd))
+        {
+            return "the window is no longer visible";
+        }
 
         if (options.Frame is { } frame)
         {
@@ -189,9 +199,15 @@ internal static class Program
                     : "the window frame changed";
             }
         }
-        else if (GetWindowTitle(hwnd) != options.Title)
+        else
         {
-            return "the window title changed";
+            var matches = FindWindowsByTitleAndOwnerPid(options.Title ?? string.Empty, options.OwnerPid ?? 0);
+            if (matches.Count != 1 || matches[0] != hwnd)
+            {
+                return matches.Count > 1
+                    ? "another window now has the same title"
+                    : "the window title changed";
+            }
         }
 
         return null;
@@ -405,33 +421,25 @@ internal static class Program
     [DllImport("user32.dll")]
     private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr value);
 
-    private static IntPtr FindWindowByTitleAndOwnerPid(string title, long ownerPid)
+    private static IReadOnlyList<IntPtr> FindWindowsByTitleAndOwnerPid(string title, long ownerPid)
     {
-        var matchedWindow = IntPtr.Zero;
+        var matches = new List<IntPtr>();
         bool Callback(IntPtr hwnd, IntPtr data)
         {
             if (TryGetWindowThreadProcessId(hwnd, out var actualPid) &&
                 actualPid == ownerPid &&
+                IsWindowVisible(hwnd) &&
                 GetWindowTitle(hwnd) == title)
             {
-                matchedWindow = hwnd;
-                return false;
+                matches.Add(hwnd);
             }
-
             return true;
         }
-
         if (!EnumWindows(Callback, IntPtr.Zero))
         {
-            if (matchedWindow != IntPtr.Zero)
-            {
-                return matchedWindow;
-            }
-
             throw new Win32Exception(Marshal.GetLastWin32Error(), "EnumWindows failed.");
         }
-
-        return matchedWindow;
+        return matches;
     }
 
     private static IReadOnlyList<WindowFrameCandidate> FindWindowsByFrameAndOwnerPid(
@@ -611,28 +619,36 @@ internal static class Program
 
         private static CaptureRect ClampCropToItem(CaptureRect crop, CaptureRect itemBounds)
         {
-            if (crop.X < 0 || crop.Y < 0 || crop.Width <= 0 || crop.Height <= 0)
+            if (crop.Width <= 0 || crop.Height <= 0 || itemBounds.Width <= 0 || itemBounds.Height <= 0)
+            {
+                throw new ArgumentException("Window crop and capture item must have positive dimensions.");
+            }
+
+            long right = (long)crop.X + crop.Width;
+            long bottom = (long)crop.Y + crop.Height;
+            long overflow = Math.Max(
+                Math.Max(Math.Max(-(long)crop.X, -(long)crop.Y), right - itemBounds.Width),
+                bottom - itemBounds.Height);
+            if (overflow > 1)
             {
                 throw new ArgumentException(
-                    $"Window crop must be non-negative with positive size; got {crop.X},{crop.Y} {crop.Width}x{crop.Height}.");
+                    $"Window crop {crop.X},{crop.Y} {crop.Width}x{crop.Height} is not fully inside " +
+                    $"capture item 0,0 {itemBounds.Width}x{itemBounds.Height}; overflow={overflow}px.");
             }
 
-            if (crop.Right > itemBounds.Width || crop.Bottom > itemBounds.Height)
+            int x = Math.Max(crop.X, 0);
+            int y = Math.Max(crop.Y, 0);
+            long clippedRight = Math.Min(right, itemBounds.Width);
+            long clippedBottom = Math.Min(bottom, itemBounds.Height);
+            if (clippedRight <= x || clippedBottom <= y)
             {
-                // Soft clamp rather than fail hard: HiDPI rounding can overshoot by a pixel.
-                var width = Math.Min(crop.Width, itemBounds.Width - crop.X);
-                var height = Math.Min(crop.Height, itemBounds.Height - crop.Y);
-                if (width <= 0 || height <= 0)
-                {
-                    throw new ArgumentException(
-                        $"Window crop {crop.X},{crop.Y} {crop.Width}x{crop.Height} is outside the capture item " +
-                        $"{itemBounds.Width}x{itemBounds.Height}.");
-                }
-
-                return new CaptureRect(crop.X, crop.Y, width, height);
+                throw new ArgumentException(
+                    $"Window crop {crop.X},{crop.Y} {crop.Width}x{crop.Height} has an empty intersection " +
+                    $"with capture item {itemBounds.Width}x{itemBounds.Height}.");
             }
 
-            return crop;
+            return new CaptureRect(
+                x, y, checked((int)(clippedRight - x)), checked((int)(clippedBottom - y)));
         }
 
         public static WgcFrameSource StartRegion(CaptureRect region, bool captureCursor)
@@ -1215,30 +1231,42 @@ internal static class Program
 
         private static CaptureRect ClampCropToItemSize(CaptureRect crop, int itemWidth, int itemHeight)
         {
-            if (itemWidth <= 0 || itemHeight <= 0)
+            if (itemWidth <= 0 || itemHeight <= 0 || crop.Width <= 0 || crop.Height <= 0)
             {
-                throw new InvalidOperationException(
-                    $"Capture item has invalid size {itemWidth}x{itemHeight}.");
+                throw new InvalidOperationException("Region crop and capture item must have positive dimensions.");
             }
 
-            var x = Math.Clamp(crop.X, 0, Math.Max(itemWidth - 1, 0));
-            var y = Math.Clamp(crop.Y, 0, Math.Max(itemHeight - 1, 0));
-            var width = Math.Min(crop.Width, itemWidth - x);
-            var height = Math.Min(crop.Height, itemHeight - y);
-            if (width <= 0 || height <= 0)
+            long right = (long)crop.X + crop.Width;
+            long bottom = (long)crop.Y + crop.Height;
+            long overflow = Math.Max(
+                Math.Max(Math.Max(-(long)crop.X, -(long)crop.Y), right - itemWidth),
+                bottom - itemHeight);
+            if (overflow > 1)
             {
                 throw new InvalidOperationException(
-                    $"Region crop {crop.X},{crop.Y} {crop.Width}x{crop.Height} is outside the capture item " +
-                    $"{itemWidth}x{itemHeight}.");
+                    $"Region crop {crop.X},{crop.Y} {crop.Width}x{crop.Height} is not fully inside " +
+                    $"capture item 0,0 {itemWidth}x{itemHeight}; overflow={overflow}px.");
             }
 
+            int x = Math.Max(crop.X, 0);
+            int y = Math.Max(crop.Y, 0);
+            long clippedRight = Math.Min(right, itemWidth);
+            long clippedBottom = Math.Min(bottom, itemHeight);
+            if (clippedRight <= x || clippedBottom <= y)
+            {
+                throw new InvalidOperationException(
+                    $"Region crop {crop.X},{crop.Y} {crop.Width}x{crop.Height} has an empty intersection " +
+                    $"with capture item {itemWidth}x{itemHeight}.");
+            }
+
+            int width = checked((int)(clippedRight - x));
+            int height = checked((int)(clippedBottom - y));
             if (x != crop.X || y != crop.Y || width != crop.Width || height != crop.Height)
             {
                 Console.Error.WriteLine(
                     $"clamped crop {crop.X},{crop.Y} {crop.Width}x{crop.Height} to {x},{y} {width}x{height} " +
                     $"for item {itemWidth}x{itemHeight}");
             }
-
             return new CaptureRect(x, y, width, height);
         }
 

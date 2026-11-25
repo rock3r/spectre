@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicReference
  *   against XWayland-bridged X clients.
  * - Linux Wayland: not handled by this recorder — Wayland's security model forbids cross-process
  *   framebuffer reads. [FfmpegBackend.detect] throws on Wayland sessions; route through
- *   `WaylandPortalRecorder` / `WaylandPortalWindowRecorder` instead (`AutoRecorder` does this
+ *   `WaylandPortalRecorder` / GNOME Mutter window streams instead (`AutoRecorder` does this
  *   automatically).
  * - BSD: not supported.
  *

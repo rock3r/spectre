@@ -78,6 +78,10 @@ pub struct StartCommand {
     pub display_name: Option<String>,
     #[serde(default)]
     pub window_title: Option<String>,
+    #[serde(default)]
+    pub window_owner_pid: Option<u32>,
+    #[serde(default)]
+    pub window_frame: Option<Region>,
     pub cursor_mode: CursorMode,
     pub frame_rate: u32,
     pub region: Region,
@@ -106,8 +110,8 @@ pub struct ScreenshotCommand {
     /// [window_title].
     #[serde(default)]
     pub window_frame: Option<Region>,
-    /// Process that owns the target window. The frame selector skips windows whose
-    /// `_NET_WM_PID` names another process.
+    /// Process that owns the target window. X11 title and frame selectors require a matching
+    /// `_NET_WM_PID` on the candidate.
     #[serde(default)]
     pub window_owner_pid: Option<u32>,
     pub cursor_mode: CursorMode,
@@ -138,6 +142,21 @@ pub enum SourceType {
     Monitor,
     Window,
     Virtual,
+}
+
+/// A portal grant identifies a selected stream, but carries no verifiable window owner or ID.
+pub fn require_portal_region(
+    target: CaptureTarget,
+    sources: &[SourceType],
+    has_window_selector: bool,
+) -> anyhow::Result<()> {
+    if target == CaptureTarget::Window
+        || sources.contains(&SourceType::Window)
+        || has_window_selector
+    {
+        anyhow::bail!("The Wayland portal cannot verify the selected window's identity. Use a GNOME Mutter window stream or request a desktop region explicitly.");
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -190,7 +209,12 @@ pub enum Event {
     /// Recording stopped cleanly: gst-launch exited 0, the mux finalised, the file is on disk.
     Stopped { output_size_bytes: u64 },
     /// One-shot screenshot command completed and wrote a readable image file.
-    ScreenshotSaved { output_size_bytes: u64 },
+    ScreenshotSaved {
+        output_size_bytes: u64,
+        /// Stream-relative crop validated before the PNG pipeline started.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        capture_region: Option<[i32; 4]>,
+    },
     /// Pointer/key command applied on the held RemoteDesktop session.
     InputAck,
     /// A Mutter window stream is bound under `key`. `logical_size` is the stream's `size`

@@ -70,6 +70,7 @@ internal constructor(
                 target = CaptureTarget.WINDOW,
                 displayName = displayNameProvider()?.takeIf { it.isNotBlank() },
                 windowTitle = title,
+                windowOwnerPid = windowOwnerPid,
                 cursorMode = CursorMode.HIDDEN,
                 region = window.bounds.toProtocolRegion(),
                 screenSize = null,

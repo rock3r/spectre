@@ -91,16 +91,17 @@ internal object NativeWindowCaptureBridge {
      * frame instead (#605).
      *
      * A [Frame] or [Dialog] whose title another window also has is found by its frame too, where
-     * [selectsSharedTitlesByFrame] (#611): the title alone would make the helper guess. The macOS
-     * helper tells shared titles apart itself, and the Wayland portal cannot select by frame. The
-     * Linux X11 helper matches client windows, which exclude the window-manager decorations, so
-     * there [selectsClientArea] narrows the frame to the window's client area.
+     * [selectsSharedTitlesByFrame] (#611): the title alone would make the helper guess. The Wayland
+     * portal cannot select by frame. The Linux X11 helper matches client windows, which exclude the
+     * window-manager decorations, so there [selectsClientArea] narrows the frame to the window's
+     * client area.
      */
     internal fun captureTargetFor(
         window: Window,
-        selectsSharedTitlesByFrame: Boolean = !HostPlatform.isMacOs() && !HostPlatform.isWayland(),
+        selectsSharedTitlesByFrame: Boolean = !HostPlatform.isWayland(),
         selectsClientArea: Boolean = HostPlatform.isLinux(),
     ): TitledWindow {
+        check(window.isShowing) { "Native window capture target is not showing" }
         val title =
             when (window) {
                 is Frame -> window.title
@@ -116,10 +117,17 @@ internal object NativeWindowCaptureBridge {
         }
     }
 
-    private fun isSharedTitle(window: Window, title: String?): Boolean {
+    internal fun isSharedTitle(
+        window: Window,
+        title: String?,
+        matchesSubstring: Boolean = HostPlatform.isMacOs(),
+    ): Boolean {
         if (title.isNullOrBlank()) return false
         return Window.getWindows().any { other ->
-            other !== window && other.isDisplayable && other.titleOrNull() == title
+            val otherTitle = other.titleOrNull()
+            other !== window &&
+                other.isShowing &&
+                (if (matchesSubstring) otherTitle?.contains(title) == true else otherTitle == title)
         }
     }
 

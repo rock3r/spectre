@@ -113,9 +113,13 @@ internal constructor(
         scaleX: Double = 1.0,
         scaleY: Double = 1.0,
     ): RecordingHandle {
+        val nativeTarget =
+            (window as? dev.sebastiano.spectre.recording.screencapturekit.AwtWindowBacked)
+                ?.awtWindow
+                ?.let(NativeWindowCaptureBridge::captureTargetFor) ?: window
         if (cropInWindow != null) {
             return startWindowCropped(
-                window,
+                nativeTarget,
                 cropInWindow,
                 output,
                 options,
@@ -131,12 +135,12 @@ internal constructor(
                         "Wayland window capture",
                         waylandPortalWindowRecorderFailure,
                     )
-            return recorder.start(window, window.bounds, output, options)
+            return recorder.start(nativeTarget, nativeTarget.bounds, output, options)
         }
         if (isMacOs()) {
             return try {
                 sckRecorder.start(
-                    window = window,
+                    window = nativeTarget,
                     windowOwnerPid = windowOwnerPid,
                     output = output,
                     options = options,
@@ -145,22 +149,26 @@ internal constructor(
                 throw unavailable("macOS window capture", e)
             }
         }
-        val title = window.title
+        val title = nativeTarget.title
         val recorder = windowsWindowRecorder
         if (isWindows()) {
-            require(!title.isNullOrBlank()) {
-                "AutoRecorder.startWindow requires a non-blank window title on Windows. " +
-                    "Use startRegion(...) explicitly if region capture is what you want."
+            require(
+                nativeTarget is dev.sebastiano.spectre.recording.screencapturekit.FramedWindow ||
+                    !title.isNullOrBlank()
+            ) {
+                "AutoRecorder.startWindow requires a title or frame selector on Windows."
             }
-            return recorder?.start(window, windowOwnerPid, output, options)
+            return recorder?.start(nativeTarget, windowOwnerPid, output, options)
                 ?: throw unavailable("Windows window capture", null)
         }
         if (isLinux()) {
-            require(!title.isNullOrBlank()) {
-                "AutoRecorder.startWindow requires a non-blank window title on Linux X11. " +
-                    "Use startRegion(...) explicitly if region capture is what you want."
+            require(
+                nativeTarget is dev.sebastiano.spectre.recording.screencapturekit.FramedWindow ||
+                    !title.isNullOrBlank()
+            ) {
+                "AutoRecorder.startWindow requires a title or frame selector on Linux X11."
             }
-            return linuxWindowRecorder?.start(window, windowOwnerPid, output, options)
+            return linuxWindowRecorder?.start(nativeTarget, windowOwnerPid, output, options)
                 ?: throw unavailable("Linux X11 window capture", null)
         }
         throw unsupportedWindowCapture()
@@ -168,8 +176,8 @@ internal constructor(
 
     /**
      * Window-targeted capture for an out-of-process window identified by title + owner pid (daemon
-     * attach / #185). Does not stamp a local AWT title discriminator — the [title] must already
-     * uniquely identify the target among windows of [windowOwnerPid].
+     * attach / #185). The helper requires [title] to identify exactly one visible window of
+     * [windowOwnerPid]; ambiguity fails instead of selecting the first match.
      *
      * When [cropInWindow] is set, applies window+crop (#186). Prefer this over [startRegion] for
      * attached targets.

@@ -4,7 +4,6 @@ package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
-import dev.sebastiano.spectre.recording.screencapturekit.TitleDiscriminationAware
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
@@ -65,45 +64,6 @@ class AutoScreenshotterTest {
 
         assertEquals(1, windows.captureCallCount)
         assertSame(window, windows.lastWindow)
-    }
-
-    @Test
-    fun `captureWindow temporarily disambiguates blank Windows titles`() {
-        val windows = StubWindowScreenshotter()
-        val screenshotter =
-            autoScreenshotter(
-                windowsWindowScreenshotter = windows,
-                isMacOs = { false },
-                isWindows = { true },
-            )
-
-        val window = StubScreenshotWindow(title = "")
-
-        screenshotter.captureWindow(window)
-
-        assertEquals(1, windows.captureCallCount)
-        assertTrue(windows.titleDuringCapture.orEmpty().isNotBlank())
-        assertEquals("", window.title)
-    }
-
-    @Test
-    fun `captureWindow restores title while preserving interruption`() {
-        val windows = StubWindowScreenshotter(behavior = StubScreenshotBehavior.Interrupted)
-        val screenshotter =
-            autoScreenshotter(
-                windowsWindowScreenshotter = windows,
-                isMacOs = { false },
-                isWindows = { true },
-            )
-        val window = StubScreenshotWindow(title = "")
-
-        try {
-            assertFailsWith<InterruptedException> { screenshotter.captureWindow(window) }
-            assertEquals("", window.title)
-            assertTrue(Thread.currentThread().isInterrupted)
-        } finally {
-            Thread.interrupted()
-        }
     }
 
     @Test
@@ -209,12 +169,6 @@ class AutoScreenshotterTest {
         assertEquals(1, sck.captureCallCount)
         assertEquals("Remote App", sck.lastWindow?.title)
         assertEquals(4242L, sck.lastWindowOwnerPid)
-        // A discriminator would rename a window object in this JVM, not the remote window, and
-        // the helper would then search the target process for a title that does not exist.
-        assertEquals(
-            false,
-            (sck.lastWindow as? TitleDiscriminationAware)?.requiresTitleDiscriminator,
-        )
     }
 
     @Test
