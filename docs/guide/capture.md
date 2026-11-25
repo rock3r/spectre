@@ -170,10 +170,9 @@ the JUnit failure artifacts below.
     any resolution, so there is nothing to degrade to. If even the logical still overruns you get a
     `payloadTooLarge` error naming the flag that fixes it, rather than a silent failure.
 
-    On a **mixed-density multi-monitor** desktop a fullscreen still is also bounded by
-    `java.awt.Robot`, which derives one scale from the display under the centre of the captured
-    rectangle rather than capturing each display at its own. The still comes back at that display's
-    scale, so a desktop centred on a 1x monitor downsamples the Retina parts.
+    On macOS Spectre combines sequential display-scoped ScreenCaptureKit captures at the scale of
+    the display under the requested rectangle's centre. Windows and Linux X11 retain
+    `java.awt.Robot`'s equivalent centre-display scale behaviour.
 
     Window-scoped stills, including every `capture`, do not have this limit, because the native
     helpers use the target window's own screen scale.

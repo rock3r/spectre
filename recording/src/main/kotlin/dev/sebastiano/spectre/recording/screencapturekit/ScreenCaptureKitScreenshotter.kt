@@ -3,9 +3,11 @@ package dev.sebastiano.spectre.recording.screencapturekit
 import dev.sebastiano.spectre.recording.HelperStillSessions
 import dev.sebastiano.spectre.recording.StillHelper
 import dev.sebastiano.spectre.recording.WindowScreenshotter
+import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 
@@ -43,6 +45,41 @@ internal constructor(
             return captureFromSession(windowOwnerPid, titleContains = title, frame = null)
         }
         return captureOneShot(window, windowOwnerPid)
+    }
+
+    internal fun captureRegion(region: Rectangle, displayIndex: Int): BufferedImage {
+        requireScreenCaptureAccess()
+        val helperPath = helperExtractor.extract()
+        val output = Files.createTempFile("spectre-sck-region-screenshot-", ".png")
+        var process: Process? = null
+        try {
+            val argv =
+                HelperArguments(
+                        mode = "screenshot",
+                        source = HelperSource.Region,
+                        region = region,
+                        displayIndex = displayIndex,
+                        output = output,
+                        fps = SCREENSHOT_FRAME_RATE,
+                        captureCursor = false,
+                        discoveryTimeoutMs = SCREENSHOT_DISCOVERY_TIMEOUT_MS,
+                    )
+                    .toArgv(helperPath)
+            // A stuck replayd can starve a second SCK stream while a stills helper owns one.
+            stillSessions.stopAll()
+            process = processFactory.start(argv)
+            waitForScreenshot(process, argv, output)
+            return ImageIO.read(output.toFile())
+                ?: error("spectre-screencapture did not produce a readable PNG at $output")
+        } catch (e: InterruptedException) {
+            process?.destroyForcibly()
+            Thread.currentThread().interrupt()
+            throw e
+        } catch (e: IOException) {
+            throw IllegalStateException("spectre-screencapture screenshot failed", e)
+        } finally {
+            Files.deleteIfExists(output)
+        }
     }
 
     private fun captureFromSession(
@@ -108,15 +145,7 @@ internal constructor(
             // An open stills session would keep this capture from getting any frames.
             stillSessions.stopAll()
             process = processFactory.start(argv)
-            if (!process.waitFor(SCREENSHOT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                process.destroyForcibly()
-                process.waitFor(FORCE_KILL_WAIT_SECONDS, TimeUnit.SECONDS)
-                error(
-                    "spectre-screencapture screenshot timed out after ${SCREENSHOT_TIMEOUT_SECONDS}s"
-                )
-            }
-            val exit = process.exitValue()
-            check(exit == 0) { messageForHelperExit(exit, argv, output) }
+            waitForScreenshot(process, argv, output)
             return ImageIO.read(output.toFile())
                 ?: error("spectre-screencapture did not produce a readable PNG at $output")
         } catch (e: InterruptedException) {
@@ -137,6 +166,16 @@ internal constructor(
                 Files.deleteIfExists(output)
             }
         }
+    }
+
+    private fun waitForScreenshot(process: Process, argv: List<String>, output: Path) {
+        if (!process.waitFor(SCREENSHOT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            process.waitFor(FORCE_KILL_WAIT_SECONDS, TimeUnit.SECONDS)
+            error("spectre-screencapture screenshot timed out after ${SCREENSHOT_TIMEOUT_SECONDS}s")
+        }
+        val exit = process.exitValue()
+        check(exit == 0) { messageForHelperExit(exit, argv, output) }
     }
 }
 

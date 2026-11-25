@@ -18,6 +18,28 @@ import kotlin.test.assertTrue
 class ScreenCaptureKitScreenshotterTest {
 
     @Test
+    fun `captureRegion invokes ScreenCaptureKit region source without cursor`() {
+        val factory = ScreenshotHelperProcessFactory()
+        var accessChecks = 0
+        val screenshotter =
+            ScreenCaptureKitScreenshotter(
+                helperExtractor = testExtractor(),
+                processFactory = factory,
+                requireScreenCaptureAccess = { accessChecks += 1 },
+            )
+
+        val image = screenshotter.captureRegion(Rectangle(12, 34, 56, 78), displayIndex = 2)
+
+        assertEquals(4, image.width)
+        assertEquals(3, image.height)
+        assertEquals(1, accessChecks)
+        assertContainsSequence(factory.lastArgv, listOf("--source", "region"))
+        assertContainsSequence(factory.lastArgv, listOf("--region", "12,34,56,78"))
+        assertContainsSequence(factory.lastArgv, listOf("--display-index", "2"))
+        assertContainsSequence(factory.lastArgv, listOf("--cursor", "false"))
+    }
+
+    @Test
     fun `captureWindow explains a frame that matches several windows`() {
         val factory =
             ScreenshotHelperProcessFactory(process = SuccessfulScreenshotHelperProcess(exit = 7))
@@ -152,6 +174,14 @@ class ScreenCaptureKitScreenshotterTest {
         assertContains(failure.message.orEmpty(), "timed out after 15s")
     }
 }
+
+private fun testExtractor(): HelperBinaryExtractor =
+    HelperBinaryExtractor(
+        envLookup = { null },
+        sysPropLookup = { null },
+        materialLocator = { helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf()) },
+        targetDirProvider = { Path.of("/tmp") },
+    )
 
 private class ScreenshotFakeTitledWindow(initialTitle: String?) : TitledWindow {
     override var title: String? = initialTitle

@@ -792,6 +792,76 @@ private class FakeInputDeliveryWitness(
     }
 }
 
+class MacOsRegionScreenshotRoutingTest {
+
+    @Test
+    fun `macOS screenshot routes through native region capture without Robot or TCC probe`() {
+        val robot = RecordingRobotAdapter()
+        var tccCalls = 0
+        val guard =
+            object : MacOsTccGuard({ TccStatus.Granted }, { TccStatus.Granted }) {
+                override fun requireScreenRecording() {
+                    tccCalls += 1
+                }
+            }
+        val requested = Rectangle(11, 22, 30, 20)
+        val native = BufferedImage(60, 40, BufferedImage.TYPE_INT_ARGB)
+        val driver =
+            RobotDriver(
+                robot = robot,
+                clipboard = RecordingClipboardAdapter(),
+                tccGuard = guard,
+                nativeRegionCapture = { region ->
+                    assertEquals(requested, region)
+                    native
+                },
+                isMacOs = { true },
+            )
+
+        val image = driver.screenshot(requested)
+
+        assertEquals(30, image.width)
+        assertEquals(20, image.height)
+        assertEquals(0, tccCalls)
+        assertEquals(0, robot.captureCalls)
+    }
+
+    @Test
+    fun `macOS device-scale screenshot returns native helper pixels unchanged`() {
+        val requested = Rectangle(11, 22, 30, 20)
+        val native = BufferedImage(60, 40, BufferedImage.TYPE_INT_ARGB)
+        val driver =
+            RobotDriver(
+                robot = RecordingRobotAdapter(),
+                clipboard = RecordingClipboardAdapter(),
+                nativeRegionCapture = { native },
+                isMacOs = { true },
+            )
+
+        assertTrue(driver.screenshotAtDeviceScale(requested) === native)
+    }
+
+    @Test
+    fun `non-macOS screenshot keeps Robot capture path`() {
+        val robot = RecordingRobotAdapter()
+        var nativeCalls = 0
+        val driver =
+            RobotDriver(
+                robot = robot,
+                clipboard = RecordingClipboardAdapter(),
+                nativeRegionCapture = {
+                    nativeCalls += 1
+                    BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
+                },
+                isMacOs = { false },
+            )
+
+        driver.screenshot(Rectangle(1, 2, 3, 4))
+
+        assertEquals(0, nativeCalls)
+    }
+}
+
 private class RecordingTccGuard(
     private val accessibilityThrows: Boolean = false,
     private val screenRecordingThrows: Boolean = false,

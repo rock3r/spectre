@@ -1,11 +1,14 @@
 package dev.sebastiano.spectre.recording
 
+import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitScreenshotter
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import dev.sebastiano.spectre.recording.screencapturekit.asFramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.asTitledWindow
 import java.awt.Dialog
 import java.awt.EventQueue
 import java.awt.Frame
+import java.awt.GraphicsEnvironment
+import java.awt.Rectangle
 import java.awt.Window
 import java.awt.image.BufferedImage
 import java.util.WeakHashMap
@@ -84,6 +87,61 @@ internal object NativeWindowCaptureBridge {
     @JvmName("captureWindow")
     internal fun captureWindow(window: Window): BufferedImage =
         withCaptureLock(window) { screenshotter.captureWindow(captureTargetFor(window)) }
+
+    /** macOS screen-region still entry point loaded reflectively by core. */
+    @JvmStatic
+    @JvmName("captureScreenRegion")
+    internal fun captureScreenRegion(region: Rectangle): BufferedImage {
+        val environment = GraphicsEnvironment.getLocalGraphicsEnvironment()
+        val primary = environment.defaultScreenDevice
+        val devices =
+            environment.screenDevices.sortedWith(
+                compareBy(
+                    { it !== primary },
+                    { it.defaultConfiguration.bounds.x },
+                    { it.defaultConfiguration.bounds.y },
+                )
+            )
+        val center = java.awt.Point(region.x + region.width / 2, region.y + region.height / 2)
+        val target =
+            devices
+                .firstOrNull { it.defaultConfiguration.bounds.contains(center) }
+                ?.defaultConfiguration ?: primary.defaultConfiguration
+        val scaleX = target.defaultTransform.scaleX
+        val scaleY = target.defaultTransform.scaleY
+        val output =
+            BufferedImage(
+                (region.width * scaleX).toInt(),
+                (region.height * scaleY).toInt(),
+                BufferedImage.TYPE_INT_ARGB,
+            )
+        val screenshotter = ScreenCaptureKitScreenshotter()
+        val graphics = output.createGraphics()
+        try {
+            var captured = false
+            devices.forEachIndexed { index, device ->
+                val display = device.defaultConfiguration.bounds
+                val part = region.intersection(display)
+                if (part.isEmpty) return@forEachIndexed
+                captured = true
+                val local =
+                    Rectangle(part.x - display.x, part.y - display.y, part.width, part.height)
+                val image = screenshotter.captureRegion(local, index)
+                graphics.drawImage(
+                    image,
+                    ((part.x - region.x) * scaleX).toInt(),
+                    ((part.y - region.y) * scaleY).toInt(),
+                    (part.width * scaleX).toInt(),
+                    (part.height * scaleY).toInt(),
+                    null,
+                )
+            }
+            require(captured) { "macOS ScreenCaptureKit region is outside every display: $region" }
+        } finally {
+            graphics.dispose()
+        }
+        return output
+    }
 
     /**
      * How the native helper finds [window]. A [Frame] or [Dialog] is found by its title. Any other

@@ -50,7 +50,12 @@ With `spectre-recording` at runtime, `ComposeAutomator.screenshot(windowIndex)` 
 `screenshot(node)` use native window capture. Core does not depend on recording.
 Injected or core-only deployments report an error for these overloads when native
 capture is unavailable. They do not substitute a framebuffer region.
-Use `screenshot(region)` for an explicit screen rectangle.
+Use `screenshot(region)` for an explicit screen rectangle. On macOS both that logical-size API and
+`screenshotAtDeviceScale(region)` run through the `spectre-screencapture` ScreenCaptureKit helper;
+they never call `java.awt.Robot.createScreenCapture`. The former downsamples the helper pixels to
+one pixel per AWT unit, while the latter preserves device pixels. A region that crosses displays is
+captured one display at a time and combined at the centre display's scale. The runtime needs both
+`spectre-recording` and `spectre-recording-macos`.
 For a top-level AWT window, call `AutoScreenshotter` directly:
 
 ```kotlin

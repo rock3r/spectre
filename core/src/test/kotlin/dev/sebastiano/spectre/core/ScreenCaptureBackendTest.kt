@@ -36,6 +36,22 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `optional native region bridge is absent without recording on the classpath`() {
+        val recordingFreeLoader =
+            object : ClassLoader(null) {
+                override fun loadClass(name: String, resolve: Boolean): Class<*> =
+                    throw ClassNotFoundException(name)
+            }
+
+        assertNull(nativeScreenRegionCaptureFor(recordingFreeLoader))
+    }
+
+    @Test
+    fun `optional native region bridge is discovered without a core compile dependency`() {
+        assertTrue(nativeScreenRegionCaptureFor(javaClass.classLoader) != null)
+    }
+
+    @Test
     fun `begin native capture wait is a no-op without recording on the classpath`() {
         val recordingFreeLoader =
             object : ClassLoader(null) {

@@ -850,8 +850,11 @@ final class Recorder {
                 height = max(2, Int((targetWindow.frame.height * scale).rounded()))
             }
         case .region(let display, let region):
-            width = max(2, region.width)
-            height = max(2, region.height)
+            // Region screenshots are still artifacts and preserve backing-store pixels, just like
+            // window screenshots. Video keeps its existing explicit output dimensions.
+            let scale = args.mode == .screenshot ? backingScaleFactor(for: display.frame) : 1.0
+            width = max(2, Int((CGFloat(region.width) * scale).rounded()))
+            height = max(2, Int((CGFloat(region.height) * scale).rounded()))
             filter = SCContentFilter(display: display, excludingWindows: [])
             sourceRect = region.sourceRect()
         }
