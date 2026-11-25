@@ -224,6 +224,44 @@ def detect_display_mode(system: str | None = None) -> str:
     return f"unknown:{system}"
 
 
+LINUX_SEAT_VARIABLES = (
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "XDG_RUNTIME_DIR",
+    "XDG_SESSION_TYPE",
+    "SPECTRE_CAPTURE_BACKEND",
+)
+
+
+def configure_linux_display_mode(
+    mode: str,
+    environ: MutableMapping[str, str] | None = None,
+    *,
+    discover: Callable[[Mapping[str, str]], dict[str, str]] | None = None,
+) -> str:
+    """Apply an explicit Linux display choice before preflight and seat detection."""
+    target = os.environ if environ is None else environ
+    if mode == "xvfb":
+        for key in LINUX_SEAT_VARIABLES:
+            target.pop(key, None)
+        return mode
+    if mode == "seat":
+        found = (discover or discover_linux_seat_env)(target)
+        target.update(found)
+        if not target.get("DISPLAY", "").strip() and not target.get(
+            "WAYLAND_DISPLAY", ""
+        ).strip():
+            raise RuntimeError(
+                "--display-mode seat requires a real Linux seat, but none was discovered"
+            )
+        return mode
+    if mode != "auto":
+        raise ValueError(f"unsupported Linux display mode: {mode}")
+    return mode
+
+
 def _which(name: str) -> str | None:
     path = os.environ.get("PATH", "")
     for directory in path.split(os.pathsep):
@@ -2031,11 +2069,23 @@ def linux_wayland_helper_path(root: Path) -> Path | None:
     return None
 
 
-def prepare_linux_portal_token_env(root: Path, out_dir: Path) -> dict[str, str]:
+def wayland_restore_token_dir(
+    out_dir: Path, environ: Mapping[str, str] | None = None
+) -> Path:
+    source = os.environ if environ is None else environ
+    inherited = source.get("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR", "").strip()
+    return Path(inherited).expanduser() if inherited else Path(out_dir) / "wayland-restore-tokens"
+
+
+def prepare_linux_portal_token_env(
+    root: Path, out_dir: Path, environ: Mapping[str, str] | None = None
+) -> dict[str, str]:
     """Pin a restore-token dir, and a private copy of the helper when one is already staged."""
-    token_dir = Path(out_dir) / "wayland-restore-tokens"
+    token_dir = wayland_restore_token_dir(out_dir, environ)
+    token_dir_existed = token_dir.exists()
     token_dir.mkdir(parents=True, exist_ok=True)
-    token_dir.chmod(0o700)
+    if not token_dir_existed:
+        token_dir.chmod(0o700)
     session_dir = Path(out_dir) / "wayland-session"
     session_dir.mkdir(parents=True, exist_ok=True)
     session_dir.chmod(0o700)
