@@ -313,7 +313,10 @@ internal constructor(
 
     /**
      * Selects all content in the focused field, deletes it, then types [text]. Select-all is
-     * Ctrl/Cmd+A followed by Backspace. The second half uses [typeText].
+     * Ctrl/Cmd+A followed by Backspace. The second half uses [typeText]. Backends must explicitly
+     * support reliable select-all delivery; otherwise this call fails before dispatching any key,
+     * leaving the field untouched. The current Wayland helper backends refuse this operation
+     * because their separate key messages cannot guarantee that Ctrl remains applied to A.
      *
      * Useful for overwriting a `TextField`'s current value without the caller having to compute
      * cursor / selection state. Same caveats as [typeText] for supported characters apply.
@@ -631,6 +634,14 @@ internal interface RobotAdapter : ScreenCaptureAdapter {
     /** True when pointer/keyboard go through a real OS input path (AWT Robot or Wayland helper). */
     val deliversRealOsInput: Boolean
         get() = false
+
+    /**
+     * Whether a modifier-down, A, modifier-up sequence reliably reaches the target as select-all.
+     * The safe default covers AWT and synthetic adapters. Backends known to lose modifier state
+     * must opt out so [RobotDriver.clearAndTypeText] fails before its destructive Backspace.
+     */
+    val supportsReliableSelectAll: Boolean
+        get() = true
 
     fun mouseMove(x: Int, y: Int)
 

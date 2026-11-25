@@ -229,7 +229,11 @@ Spectre reads the Caps Lock LED and inverts Shift on letter strokes when it is o
 dispatch when the LED state cannot be read; digits and punctuation remain safe, and synthetic
 input has deterministic case. `clearAndTypeText` performs this preflight before it selects or
 deletes existing content. It uses only the full-field select-all chord, so a successful multiline
-selection is never narrowed to the current line. Use `pasteText` for large strings or arbitrary
+selection is never narrowed to the current line. A backend must guarantee that it preserves the
+select-all modifier; otherwise the operation fails before dispatching any key and leaves the field
+untouched. The current Wayland portal and seat-socket helpers cannot make that guarantee because
+they deliver modifier and character keys as separate messages, so `clearAndTypeText` refuses there;
+`typeText` and the other Wayland input operations remain supported. Use `pasteText` for large strings or arbitrary
 Unicode; it stashes the previous clipboard contents (including an empty clipboard), writes the requested text,
 dispatches the platform paste shortcut (<kbd>Cmd</kbd>+<kbd>V</kbd> on macOS,
 <kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere), waits for the paste handler to drain, then

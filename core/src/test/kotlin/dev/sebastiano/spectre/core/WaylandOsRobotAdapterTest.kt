@@ -100,6 +100,12 @@ class WaylandOsRobotAdapterTest {
     }
 
     @Test
+    fun `Wayland adapters refuse destructive clear when select all is unreliable`() {
+        assertTrue(!MissingWaylandHelperAdapter.supportsReliableSelectAll)
+        assertTrue(!seatSocketRobotAdapterForTests().supportsReliableSelectAll)
+    }
+
+    @Test
     fun `seat screenshot commands include AWT display bounds for HiDPI mapping`() {
         val json =
             waylandScreenshotCommandJson(

@@ -216,6 +216,11 @@ It supports ASCII letters, digits, space, newline, and common US keyboard punctu
 For real OS input, text containing letters fails before dispatch if Caps Lock cannot be read;
 digits and punctuation do not require that check, and synthetic input has deterministic case.
 `clearAndTypeText` performs the same validation before deleting the existing value.
+It also refuses before dispatching any key when the backend cannot guarantee a reliable
+select-all chord. This currently applies to the Wayland portal and seat-socket helpers, whose
+separate key messages may drop Ctrl before A; the existing field contents remain untouched. Use an
+explicit field-state API where available, or select and edit through a backend that preserves
+modifier state. Other Wayland input operations remain available.
 For Unicode or large text, `pasteText` writes to the clipboard. It sends
 <kbd>Cmd</kbd>+<kbd>V</kbd> on macOS or <kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere.
 It waits for the paste, then restores the previous clipboard content.

@@ -9,9 +9,14 @@ import kotlinx.coroutines.delay
  *
  * Ctrl/Cmd+A is the documented select-all chord. Spectre deliberately does not follow it with a
  * Home / Shift+End line selection: that would collapse a successful multiline selection to the
- * current line and silently leave stale text behind.
+ * current line and silently leave stale text behind. An adapter that cannot guarantee the chord
+ * refuses before any key is dispatched, so Backspace can never run without a known selection.
  */
 internal suspend fun RobotAdapter.clearFocusedField(selectAllModifier: Int) {
+    check(supportsReliableSelectAll) {
+        "clearAndTypeText cannot safely select-all on this input backend; " +
+            "the focused field was left untouched"
+    }
     pressChord(selectAllModifier, KeyEvent.VK_A)
     settleAfterClearChord()
     tapKey(KeyEvent.VK_BACK_SPACE)
