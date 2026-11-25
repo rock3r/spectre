@@ -1,0 +1,369 @@
+diff --git a/recording/native/windows/AccessibilitySnapshot.cs b/recording/native/windows/AccessibilitySnapshot.cs
+index f9e4fec8e8d9d72dab4502f6315575123c43014c..af9595fb720f82ef277f3ce4cb781c3d5fb784bf 100644
+--- a/recording/native/windows/AccessibilitySnapshot.cs
++++ b/recording/native/windows/AccessibilitySnapshot.cs
+@@ -1,51 +1,117 @@
+ using System.Diagnostics;
++using System.Text;
+ using System.Text.Json;
+ using System.Text.Json.Serialization;
+ 
+ internal readonly record struct AccessibilityRectangle(int X, int Y, int Width, int Height);
+ internal sealed record AccessibilityElementData(string? Id, string? PlatformRole, string? Role, string? Name,
+     string? Value, bool IsEnabled, bool HasKeyboardFocus, bool IsKeyboardFocusable, bool IsChecked,
+     bool IsExpanded, bool IsSelected, AccessibilityRectangle Bounds, IReadOnlyList<AccessibilityElementData> Children);
+ internal sealed record AccessibilityWindowData(string Id, string? Title, AccessibilityRectangle Bounds, AccessibilityElementData Root);
+ internal sealed record AccessibilityTarget(string Type, long? ProcessId, nint? WindowHandle, string? WindowTitle);
+ internal sealed record AccessibilityReadLimits(int MaximumDepth, int MaximumNodeCount, long TimeoutMs, Func<long> ElapsedMilliseconds);
+ internal interface IAccessibilityTreeReader { IReadOnlyList<AccessibilityWindowData> Read(AccessibilityTarget target, AccessibilityReadLimits limits); }
+ internal sealed class AccessibilityTargetException(string code, string message) : Exception(message) { public string Code { get; } = code; }
+ internal sealed class AccessibilityLimitException(string code, string message, IReadOnlyList<AccessibilityWindowData> partial) : Exception(message)
+ { public string Code { get; } = code; public IReadOnlyList<AccessibilityWindowData> Partial { get; } = partial; }
+ internal readonly record struct AccessibilityProtocolResult(int ExitCode, string Output, string Error);
+ 
+ internal static class AccessibilitySnapshotProtocol
+ {
+     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, DefaultIgnoreCondition = JsonIgnoreCondition.Never };
+-    public static int Run(IAccessibilityTreeReader reader) { var r = RunForTest(Console.In.ReadToEnd(), reader); Console.Out.Write(r.Output); if (r.Error.Length > 0) Console.Error.WriteLine(r.Error); return r.ExitCode; }
++    public static int Run(IAccessibilityTreeReader reader) =>
++        Run(Console.OpenStandardInput(), Console.OpenStandardOutput(), Console.OpenStandardError(), reader);
++
++    internal static int Run(
++        Stream input,
++        Stream output,
++        Stream error,
++        IAccessibilityTreeReader reader)
++    {
++        var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
++        using var stdin = new StreamReader(input, utf8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
++        using var stdout = new StreamWriter(output, utf8, leaveOpen: true);
++        using var stderr = new StreamWriter(error, utf8, leaveOpen: true) { AutoFlush = true };
++        var traceLock = new object();
++        void Trace(string stage)
++        {
++            lock (traceLock)
++            {
++                try { stderr.WriteLine($"accessibility-snapshot: stage={stage}"); }
++                catch (ObjectDisposedException) { /* A timed-out background UIA call finished during process exit. */ }
++            }
++        }
++
++        Trace("request-read-started");
++        var request = stdin.ReadToEnd();
++        Trace("request-read-completed");
++        var result = RunForTest(request, reader, Trace);
++        stdout.Write(result.Output);
++        stdout.Flush();
++        Trace("response-written");
++        if (result.Error.Length > 0) stderr.WriteLine(result.Error);
++        return result.ExitCode;
++    }
++
+     internal static AccessibilityProtocolResult RunForTest(string input, IAccessibilityTreeReader reader)
++        => RunForTest(input, reader, null);
++
++    private static AccessibilityProtocolResult RunForTest(
++        string input,
++        IAccessibilityTreeReader reader,
++        Action<string>? trace)
+     {
+         Request request;
+         try { request = Parse(input); } catch (Exception e) when (e is JsonException or RequestException or InvalidOperationException) { return new(2, "", e.Message); }
++        trace?.Invoke("request-parsed");
+         var watch = Stopwatch.StartNew();
++        var completion = new TaskCompletionSource<AccessibilityProtocolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
++        var worker = new Thread(() =>
++        {
++            trace?.Invoke($"reader-started apartment={Thread.CurrentThread.GetApartmentState()}");
++            try { completion.SetResult(Read(reader, request, watch)); }
++            catch (Exception e) { completion.SetException(e); }
++            finally { trace?.Invoke("reader-completed"); }
++        }) { IsBackground = true, Name = "Spectre UI Automation reader" };
++        if (OperatingSystem.IsWindows()) worker.SetApartmentState(ApartmentState.MTA);
++        worker.Start();
++
++        var remaining = Math.Max(0, request.Timeout - watch.ElapsedMilliseconds);
++        if (!completion.Task.Wait(TimeSpan.FromMilliseconds(remaining)))
++        {
++            trace?.Invoke("reader-deadline-reached");
++            return Fail("timeout", $"timeoutMs {request.Timeout} reached while waiting for UI Automation", Snapshot(Array.Empty<AccessibilityWindowData>()));
++        }
++        return completion.Task.GetAwaiter().GetResult();
++    }
++
++    private static AccessibilityProtocolResult Read(
++        IAccessibilityTreeReader reader,
++        Request request,
++        Stopwatch watch)
++    {
+         try
+         {
+             var windows = reader.Read(request.Target, new(request.Depth, request.Count, request.Timeout, () => watch.ElapsedMilliseconds));
+             if (windows.Count == 0) return Fail("target-not-found", "No matching top-level window was found", null);
+             return Success(new { ok = true, snapshot = Snapshot(windows) });
+         }
+         catch (AccessibilityLimitException e) { return Fail(e.Code, e.Message, Snapshot(e.Partial)); }
+         catch (AccessibilityTargetException e) { return Fail(e.Code, e.Message, null); }
+     }
+     private static object Snapshot(IReadOnlyList<AccessibilityWindowData> windows)
+     {
+         var windowJson = new List<object>(); var nodes = new List<object>();
+         for (var w = 0; w < windows.Count; w++)
+         {
+             var window = windows[w]; var wk = $"w{w}";
+             windowJson.Add(new { key = wk, title = window.Title, bounds = Rect(window.Bounds), boundsSpace = "screen" });
+             Visit(window.Root, null, wk, window.Bounds, nodes);
+         }
+         return new { schemaVersion = 2, source = "os-accessibility", capturedAt = DateTimeOffset.UtcNow.ToString("O"), windows = windowJson, nodes, notes = Array.Empty<string>() };
+     }
+     private static void Visit(AccessibilityElementData e, string? parent, string prefix, AccessibilityRectangle window, List<object> nodes, string? segment = null)
+     {
+         var key = $"{prefix}/{segment ?? Segment(e.Id, 0, false)}";
+         nodes.Add(new { key, parentKey = parent, id = e.Id, platformRole = e.PlatformRole, role = e.Role, name = e.Name,
+             states = States(e), value = e.Value, bounds = Rect(e.Bounds), onScreen = Intersects(e.Bounds, window) });
+diff --git a/recording/native/windows/SpectreWindowCapture.Tests/AccessibilitySnapshotTests.cs b/recording/native/windows/SpectreWindowCapture.Tests/AccessibilitySnapshotTests.cs
+index 017d427a02895e4c52e37ed6730c8ba2fc78bcac..ef87e48810518fb702a6fb44814fb5b5e7dd30f3 100644
+--- a/recording/native/windows/SpectreWindowCapture.Tests/AccessibilitySnapshotTests.cs
++++ b/recording/native/windows/SpectreWindowCapture.Tests/AccessibilitySnapshotTests.cs
+@@ -1,31 +1,65 @@
++using System.Diagnostics;
+ using System.Text.Json;
++using System.Text;
+ using System.Windows.Automation;
+ using Xunit;
+ 
+ public sealed class AccessibilitySnapshotTests
+ {
++    [Fact]
++    public void StreamProtocolWritesBomlessUtf8AndFlushesImmediately()
++    {
++        var input = new MemoryStream(Encoding.UTF8.GetBytes(Request("process-id", 7)));
++        var output = new TrackingMemoryStream();
++        var error = new TrackingMemoryStream();
++
++        var exitCode = AccessibilitySnapshotProtocol.Run(input, output, error, new FakeReader([Window(Node("root"))]));
++
++        Assert.Equal(0, exitCode);
++        Assert.True(output.WasFlushed);
++        Assert.False(output.ToArray().AsSpan().StartsWith(Encoding.UTF8.Preamble));
++        Assert.True(JsonDocument.Parse(output.ToArray()).RootElement.GetProperty("ok").GetBoolean());
++        Assert.Contains("stage=response-written", Encoding.UTF8.GetString(error.ToArray()));
++    }
++
++    [Fact]
++    public void BlockingReaderIsBoundedByTheRequestDeadline()
++    {
++        using var release = new ManualResetEventSlim();
++        var reader = new BlockingReader(release);
++        var started = Stopwatch.StartNew();
++
++        var result = AccessibilitySnapshotProtocol.RunForTest(Request("process-id", 7, timeout: 50), reader);
++
++        started.Stop();
++        release.Set();
++        Assert.True(started.Elapsed < TimeSpan.FromSeconds(2), $"protocol blocked for {started.Elapsed}");
++        using var json = JsonDocument.Parse(result.Output);
++        Assert.Equal("timeout", json.RootElement.GetProperty("error").GetProperty("code").GetString());
++    }
++
+     [Fact]
+     public void SupportsWindowTitleAndRejectsEmptyTitle()
+     {
+         var reader = new FakeReader([Window(Node("root"))]);
+         var result = AccessibilitySnapshotProtocol.RunForTest(Request("window-title", "Unique fixture"), reader);
+         Assert.True(JsonDocument.Parse(result.Output).RootElement.GetProperty("ok").GetBoolean());
+         Assert.Equal("Unique fixture", reader.Target!.WindowTitle);
+         Assert.Equal(2, AccessibilitySnapshotProtocol.RunForTest(Request("window-title", ""), reader).ExitCode);
+     }
+ 
+     [Theory]
+     [InlineData("7", true)]
+     [InlineData("0", false)]
+     [InlineData("-3", false)]
+     [InlineData("1.5", false)]
+     [InlineData("\"7\"", false)]
+     [InlineData("null", false)]
+     public void TitleOwnerMustBeAPositiveInteger(string owner, bool valid)
+     {
+         var reader = new FakeReader([Window(Node("root"))]);
+         using var pid = JsonDocument.Parse(owner);
+         var request = JsonSerializer.Serialize(new {
+             target = new { type = "window-title", value = "Fixture", processId = pid.RootElement },
+             maximumDepth = 8, maximumNodeCount = 50, timeoutMs = 1000,
+         });
+@@ -132,26 +166,48 @@ public sealed class AccessibilitySnapshotTests
+     private static AccessibilityWindowData Window(AccessibilityElementData root) => new("1", "Fixture", new(0, 0, 100, 100), root);
+     private sealed class FakeReader(IReadOnlyList<AccessibilityWindowData> result) : IAccessibilityTreeReader
+     {
+         public AccessibilityTarget? Target { get; private set; } public AccessibilityReadLimits? Limits { get; private set; }
+         public IReadOnlyList<AccessibilityWindowData> Read(AccessibilityTarget target, AccessibilityReadLimits limits) { Target = target; Limits = limits; return result; }
+     }
+     private sealed class ThrowingReader(Exception error) : IAccessibilityTreeReader
+     { public IReadOnlyList<AccessibilityWindowData> Read(AccessibilityTarget target, AccessibilityReadLimits limits) => throw error; }
+     private sealed class LateCallReader(bool finalChild) : IAccessibilityTreeReader
+     {
+         public IReadOnlyList<AccessibilityWindowData> Read(
+             AccessibilityTarget target,
+             AccessibilityReadLimits limits)
+         {
+             var partial = finalChild
+                 ? new[] { Window(Node("root", Node("final-child"))) }
+                 : Array.Empty<AccessibilityWindowData>();
+             long elapsed = 9;
+             var deterministic = limits with { ElapsedMilliseconds = () => elapsed };
+             Assert.False(WindowsUiaTreeReader.DeadlineReached(deterministic));
+             elapsed = 10;
+             Assert.True(WindowsUiaTreeReader.DeadlineReached(deterministic));
+             throw new AccessibilityLimitException("timeout", "timeoutMs 10 reached", partial);
+         }
+     }
++
++    private sealed class BlockingReader(ManualResetEventSlim release) : IAccessibilityTreeReader
++    {
++        public IReadOnlyList<AccessibilityWindowData> Read(
++            AccessibilityTarget target,
++            AccessibilityReadLimits limits)
++        {
++            release.Wait();
++            return [Window(Node("root"))];
++        }
++    }
++
++    private sealed class TrackingMemoryStream : MemoryStream
++    {
++        public bool WasFlushed { get; private set; }
++
++        public override void Flush()
++        {
++            WasFlushed = true;
++            base.Flush();
++        }
++    }
+ }
+diff --git a/recording/native/windows/test-accesskit-fixture.ps1 b/recording/native/windows/test-accesskit-fixture.ps1
+index af6ba763d58db2767fc454624ca945414b57cf8d..75454beec3b49bbc11c8d0eeae43ffc04757c4b8 100644
+--- a/recording/native/windows/test-accesskit-fixture.ps1
++++ b/recording/native/windows/test-accesskit-fixture.ps1
+@@ -1,90 +1,107 @@
+ param(
+   [Parameter(Mandatory=$true)][string]$Helper,
+   [Parameter(Mandatory=$true)][string]$Fixture,
+   [Parameter(Mandatory=$true)][string]$Golden
+ )
+ $ErrorActionPreference = "Stop"
+ Add-Type -AssemblyName UIAutomationClient
+ 
+-function Invoke-Helper([string]$Request, [int]$ExpectedExit = 0) {
++function Limit-Diagnostic([string]$Value, [int]$MaximumCharacters = 8192) {
++  if ([string]::IsNullOrEmpty($Value) -or $Value.Length -le $MaximumCharacters) { return $Value }
++  return "... (truncated $($Value.Length - $MaximumCharacters) characters) ...`n$($Value.Substring($Value.Length - $MaximumCharacters))"
++}
++function Invoke-Helper([string]$Stage, [string]$Request, [int]$ExpectedExit = 0) {
+   $start = [Diagnostics.ProcessStartInfo]::new($Helper, "accessibility-snapshot")
+   $start.RedirectStandardInput = $true; $start.RedirectStandardOutput = $true
+   $start.RedirectStandardError = $true; $start.UseShellExecute = $false
++  $utf8 = [Text.UTF8Encoding]::new($false)
++  $start.StandardInputEncoding = $utf8; $start.StandardOutputEncoding = $utf8; $start.StandardErrorEncoding = $utf8
++  $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+   $process = [Diagnostics.Process]::Start($start)
+   # Drain both pipes concurrently before waiting. Waiting first deadlocks when a snapshot exceeds
+   # the OS pipe buffer (which the large-tree limit tests intentionally exercise).
+   $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+   $stderrTask = $process.StandardError.ReadToEndAsync()
+-  $process.StandardInput.Write($Request); $process.StandardInput.Close()
+-  if (-not $process.WaitForExit(10000)) { $process.Kill(); throw "helper timed out" }
++  $process.StandardInput.Write($Request); $process.StandardInput.Flush(); $process.StandardInput.Close()
++  if (-not $process.WaitForExit(10000)) {
++    $process.Kill($true); $process.WaitForExit()
++    $stdout = Limit-Diagnostic $stdoutTask.GetAwaiter().GetResult()
++    $stderr = Limit-Diagnostic $stderrTask.GetAwaiter().GetResult()
++    throw "helper timed out at request stage '$Stage' after $($stopwatch.ElapsedMilliseconds)ms; pid=$($process.Id); stdout: $stdout; stderr: $stderr"
++  }
+   $stdout = $stdoutTask.GetAwaiter().GetResult(); $stderr = $stderrTask.GetAwaiter().GetResult()
+-  if ($process.ExitCode -ne $ExpectedExit) { throw "helper exit $($process.ExitCode), expected $ExpectedExit; stderr: $stderr; stdout: $stdout" }
+-  return @{ Json = if ($stdout) { $stdout | ConvertFrom-Json } else { $null }; Error = $stderr }
++  if ($process.ExitCode -ne $ExpectedExit) { throw "helper exit $($process.ExitCode), expected $ExpectedExit at request stage '$Stage'; stderr: $(Limit-Diagnostic $stderr); stdout: $(Limit-Diagnostic $stdout)" }
++  try { $json = if ($stdout) { $stdout | ConvertFrom-Json } else { $null } }
++  catch { throw "helper returned invalid JSON at request stage '$Stage'; stderr: $(Limit-Diagnostic $stderr); stdout: $(Limit-Diagnostic $stdout)" }
++  return @{ Json = $json; Error = $stderr }
+ }
+ function Request([string]$Type, $Value, [int]$Depth = 64, [int]$Count = 10000, [Nullable[long]]$Owner = $null) {
+   $target = @{ type = $Type; value = $Value }
+   if ($null -ne $Owner) { $target.processId = $Owner }
+   @{ target = $target; maximumDepth = $Depth; maximumNodeCount = $Count; timeoutMs = 5000 } | ConvertTo-Json -Compress
+ }
+ function Wait-ForFixtureWindow([int]$ProcessId, [string]$Title) {
+   $root = [Windows.Automation.AutomationElement]::RootElement
+   $pidCondition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ProcessIdProperty, $ProcessId)
+   $titleCondition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, $Title)
+   $condition = [Windows.Automation.AndCondition]::new($pidCondition, $titleCondition)
+   $deadline = [DateTime]::UtcNow.AddSeconds(15)
+   do {
+     $window = $root.FindFirst([Windows.Automation.TreeScope]::Children, $condition)
+     if ($null -eq $window) { Start-Sleep -Milliseconds 100 }
+   } while ($null -eq $window -and [DateTime]::UtcNow -lt $deadline)
+   if ($null -eq $window) { throw "fixture window '$Title' for process $ProcessId did not register with UIA" }
+   return $window
+ }
+ 
+ $fixtureProcess = Start-Process $Fixture -PassThru
+ $duplicateProcess = $null
+ try {
+   $fixtureTitle = "Spectre AccessKit Fixture"
+   $window = Wait-ForFixtureWindow $fixtureProcess.Id $fixtureTitle
++  Write-Output "spectre-accesskit-helper: pwsh=$($PSVersionTable.PSVersion) apartment=$([Threading.Thread]::CurrentThread.GetApartmentState()) session=$env:SESSIONNAME interactive=$([Environment]::UserInteractive)"
++  Write-Output "spectre-accesskit-helper: fixture pid=$($fixtureProcess.Id) hwnd=$($window.Current.NativeWindowHandle) framework=$($window.Current.FrameworkId) class=$($window.Current.ClassName) provider=$($window.GetCurrentPropertyValue([Windows.Automation.AutomationElement]::ProviderDescriptionProperty))"
+   $goldenValues = Get-Content -Raw $Golden | ConvertFrom-Json
+-  $response = (Invoke-Helper (Request "process-id" $fixtureProcess.Id)).Json
+-  if (-not $response.ok) { throw "snapshot failed: $($response.error.message)" }
++  $initial = Invoke-Helper "initial process-id snapshot" (Request "process-id" $fixtureProcess.Id)
++  $response = $initial.Json
++  if (-not $response.ok) { throw "snapshot failed: $($response.error.message); helper diagnostics: $(Limit-Diagnostic $initial.Error)" }
+   $byId = @{}
+   foreach ($node in $response.snapshot.nodes) {
+     if ($null -eq $node.id) { continue }
+     if (-not $byId.ContainsKey($node.id)) { $byId[$node.id] = @() }
+     $byId[$node.id] += $node
+   }
+   if ($byId["primary-button"][0].platformRole -ne $goldenValues.buttonRole) { throw "button role mismatch" }
+   if ($byId["account-name"][0].value -ne $goldenValues.textValue) { throw "value pattern mismatch" }
+   if ($byId["newsletter"][0].value -ne "on") { throw "toggle pattern mismatch" }
+   if ($byId["disabled-button"][0].states -notcontains $goldenValues.disabledState) { throw "disabled state mismatch" }
+   $keys = @($response.snapshot.nodes | ForEach-Object key)
+   if (@($keys | Sort-Object -Unique).Count -ne $keys.Count) { throw "node keys are not unique" }
+-  $partial = (Invoke-Helper (Request "process-id" $fixtureProcess.Id 64 2)).Json
++  $partial = (Invoke-Helper "node-limit process-id snapshot" (Request "process-id" $fixtureProcess.Id 64 2)).Json
+   if ($partial.ok -or $partial.error.partialSnapshot.nodes.Count -ne 2) { throw "node limit mismatch" }
+-  $depth = (Invoke-Helper (Request "process-id" $fixtureProcess.Id 1 10000)).Json
++  $depth = (Invoke-Helper "depth-limit process-id snapshot" (Request "process-id" $fixtureProcess.Id 1 10000)).Json
+   if ($depth.ok -or $depth.error.code -ne "limit-reached") { throw "depth limit mismatch" }
+   $handle = $window.Current.NativeWindowHandle.ToString()
+-  if (-not (Invoke-Helper (Request "window-id" $handle)).Json.ok) { throw "window-id target mismatch" }
+-  $titleResult = (Invoke-Helper (Request "window-title" $fixtureTitle)).Json
++  if (-not (Invoke-Helper "window-id snapshot" (Request "window-id" $handle)).Json.ok) { throw "window-id target mismatch" }
++  $titleResult = (Invoke-Helper "unique window-title snapshot" (Request "window-title" $fixtureTitle)).Json
+   if (-not $titleResult.ok -or $titleResult.snapshot.windows.Count -ne 1) { throw "unique window-title target mismatch" }
+   $duplicateProcess = Start-Process $Fixture -PassThru
+   $null = Wait-ForFixtureWindow $duplicateProcess.Id $fixtureTitle
+-  $ambiguous = (Invoke-Helper (Request "window-title" $fixtureTitle)).Json
++  $ambiguous = (Invoke-Helper "ambiguous window-title snapshot" (Request "window-title" $fixtureTitle)).Json
+   if ($ambiguous.ok -or $ambiguous.error.code -ne "target-ambiguous") { throw "ambiguous window-title target did not fail closed" }
+   foreach ($ownerId in @($fixtureProcess.Id, $duplicateProcess.Id)) {
+-    $owned = (Invoke-Helper (Request "window-title" $fixtureTitle -Owner $ownerId)).Json
++    $owned = (Invoke-Helper "owned window-title snapshot for $ownerId" (Request "window-title" $fixtureTitle -Owner $ownerId)).Json
+     if (-not $owned.ok -or $owned.snapshot.windows.Count -ne 1 -or $owned.snapshot.windows[0].title -ne $fixtureTitle) {
+       throw "window-title with correct owner $ownerId did not select the fixture"
+     }
+   }
+-  $wrongOwner = (Invoke-Helper (Request "window-title" $fixtureTitle -Owner $PID)).Json
++  $wrongOwner = (Invoke-Helper "wrong-owner window-title snapshot" (Request "window-title" $fixtureTitle -Owner $PID)).Json
+   if ($wrongOwner.ok -or $wrongOwner.error.code -ne "target-not-found") { throw "window-title matched a different owner" }
+-  $wrongTitle = (Invoke-Helper (Request "window-title" "Absent fixture title" -Owner $fixtureProcess.Id)).Json
++  $wrongTitle = (Invoke-Helper "absent window-title snapshot" (Request "window-title" "Absent fixture title" -Owner $fixtureProcess.Id)).Json
+   if ($wrongTitle.ok -or $wrongTitle.error.code -ne "target-not-found") { throw "owner filter ignored the title" }
+   Write-Output "spectre-accesskit-helper: pass"
+ }
+ finally {
+   if ($null -ne $duplicateProcess -and -not $duplicateProcess.HasExited) { Stop-Process -Id $duplicateProcess.Id -Force }
+   if (-not $fixtureProcess.HasExited) { Stop-Process -Id $fixtureProcess.Id -Force }
+ }
