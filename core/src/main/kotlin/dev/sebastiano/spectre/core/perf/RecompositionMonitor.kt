@@ -164,7 +164,7 @@ internal constructor(
      * Subscribes the monitor to [windowTracker]'s flow of tracked surfaces and reconciles
      * attachments on every change: surfaces that appear are resolved to a [Recomposer] via
      * [RecomposerInspector] and attached; surfaces that disappear are detached. Surfaces whose
-     * recomposer cannot be resolved (overlay popups in this MVP) are skipped silently —
+     * recomposer cannot be resolved (overlay popups in this MVP) are marked unresolved —
      * `RecomposerInspector.findRecomposer` returns `null`; the monitor records those surfaces as
      * unresolved so waits fail rather than declaring partial monitoring idle.
      */

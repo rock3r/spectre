@@ -350,7 +350,7 @@ internal class ReflectiveAutomatorHandler(
         refreshWindowsMethod.invoke(automator)
         val allNodes = allNodesMethod.invoke(automator) as List<*>
         val focusedNodes =
-            allNodes.filterNotNull().filter { nodeBooleanProperty(it, methodName = "isFocused") }
+            allNodes.filterNotNull().filter { requireNodeBoolean(it, methodName = "isFocused") }
         if (focusedNodes.isEmpty()) {
             return AgentResponse.Error(
                 message =
@@ -873,21 +873,6 @@ internal class ReflectiveAutomatorHandler(
         if (asString in KNOWN_ROLE_WIRE_NAMES) return asString
         return asString.takeUnless { it == "null" || it.all { ch -> ch.isDigit() } }
             ?: (raw as? Number)?.toInt()?.let { ROLE_ORDINAL_WIRE_NAMES[it] }
-    }
-
-    /**
-     * Soft boolean lookup: missing accessors return [default]. Used for optional snapshot fields
-     * (`isDisabled` / `isSelected` / `isFocused`) so older fakes and partial test doubles still map
-     * cleanly.
-     */
-    private fun nodeBooleanProperty(
-        node: Any,
-        methodName: String,
-        default: Boolean = false,
-    ): Boolean {
-        val method = resolveBooleanMethod(node, methodName)
-        if (method === MISSING_BOOLEAN_METHOD) return default
-        return method.invoke(node) as Boolean
     }
 
     /** Hard boolean lookup: missing accessor is an AutomatorNode API mismatch. */
