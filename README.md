@@ -54,8 +54,10 @@ npx skills add rock3r/spectre --skill spectre
 - `server` — embedded HTTP transport (Ktor) for cross-JVM access. **Experimental**; see
   [`docs/SECURITY.md`](docs/SECURITY.md) for the trust model.
 - `recording` — region capture, window-targeted video capture, and native still
-  window screenshots where available (ScreenCaptureKit on macOS, Windows Graphics Capture
-  on Windows, X11 region fallback on Linux). `AutoRecorder` / `AutoScreenshotter` pick per call. See
+  window screenshots where available. For windows owned by the application, platform paths include
+  ScreenCaptureKit on macOS, Windows Graphics Capture on Windows, owned-window capture on
+  Xorg/Xvfb, and Mutter window identity on supported GNOME Wayland sessions. `AutoRecorder` /
+  `AutoScreenshotter` pick per call. See
   [`docs/RECORDING-LIMITATIONS.md`](docs/RECORDING-LIMITATIONS.md).
 - `recording-macos` — runtime-only macOS ScreenCaptureKit helper resources for native
   window/region recording and still screenshots.

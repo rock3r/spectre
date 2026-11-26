@@ -29,6 +29,7 @@ internal class MultiplexedIpcSession(
     private val channel: java.nio.channels.Channel,
     private val frameIoTimeoutMs: Long = FrameIoDeadline.DEFAULT_TIMEOUT_MS,
     private val inputWorkers: CrossSessionInputWorkers,
+    private val onDeadlineResponseClaimed: () -> Unit,
 ) {
     fun run(input: InputStream, output: OutputStream) {
         // Bound threads *and* queue so a buggy client cannot OOM the agent with enqueued ops.
@@ -213,8 +214,8 @@ internal class MultiplexedIpcSession(
         val slot = inFlight.remove(cancel.opId)
         if (slot != null) {
             slot.cancelDeadlineTask()
-            slot.abortRunningWork()
             if (slot.tryClaimResponse()) {
+                slot.abortClaimedWork()
                 writeOpResponse(
                     output,
                     writeLock,
@@ -365,8 +366,9 @@ internal class MultiplexedIpcSession(
         val delayMs = deadline - System.currentTimeMillis()
         val fireTimeout = Runnable {
             if (inFlight.remove(op.opId, slot)) {
-                slot.abortRunningWork()
                 if (slot.tryClaimResponse()) {
+                    onDeadlineResponseClaimed()
+                    slot.abortClaimedWork()
                     writeOpResponse(
                         output,
                         writeLock,
@@ -503,6 +505,12 @@ internal class MultiplexedIpcSession(
             // writing). Interrupting it mid-write can close the shared InterruptibleChannel
             // and kill subsequent ops — cancel already lost tryClaimResponse in that case.
             if (responseClaimed.get()) return
+            aborted.set(true)
+            future.get()?.cancel(/* mayInterruptIfRunning= */ true)
+        }
+
+        fun abortClaimedWork() {
+            check(responseClaimed.get())
             aborted.set(true)
             future.get()?.cancel(/* mayInterruptIfRunning= */ true)
         }

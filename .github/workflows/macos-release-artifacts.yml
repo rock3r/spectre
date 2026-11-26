@@ -182,13 +182,24 @@ jobs:
           fi
 
   mac-cli-bundles:
-    name: Build, sign, and notarise macOS CLI bundles
-    runs-on: macos-latest
+    name: Build, sign, and notarise macOS CLI (${{ matrix.target }})
+    strategy:
+      matrix:
+        include:
+          - target: macosX64
+            task-suffix: MacosX64
+            runner: macos-15-intel
+          - target: macosArm64
+            task-suffix: MacosArm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
     needs:
       - validate
       - mac-helper
     env:
       RELEASE_VERSION: ${{ inputs.version }}
+      TARGET: ${{ matrix.target }}
+      TARGET_TASK_SUFFIX: ${{ matrix.task-suffix }}
 
     steps:
       - name: Check out repository
@@ -269,12 +280,11 @@ jobs:
           echo "$APPLE_NOTARY_API_KEY" | base64 --decode > "$API_KEY_PATH"
 
           ./gradlew \
-            :cli:packageMacosX64 \
-            :cli:packageMacosArm64 \
+            ":cli:package${TARGET_TASK_SUFFIX}" \
             -PVERSION_NAME="$RELEASE_VERSION" \
             -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app"
 
-          for target in macosX64 macosArm64; do
+          for target in "$TARGET"; do
             archive="cli/build/construo/distributions/${target}/spectre-${target}.zip"
             workspace="$RUNNER_TEMP/spectre-${target}"
             root="$workspace/spectre-cli-$RELEASE_VERSION"
@@ -304,21 +314,12 @@ jobs:
               ln -s "../Resources/$payload" "$app/Contents/MacOS/$payload"
             done
 
-            # The shaded CLI jar contains Jansi and JNA native libraries. They are scanned by
-            # Apple's notary service even though they live inside a zip, so sign them in place
-            # before repacking the jar and sealing the app.
+            # The shaded CLI jar contains native libraries scanned by Apple's notary service.
+            # Preserve the already-notarized capture helper (including its stapled ticket) and
+            # sign only the jar's other Mach-O entries before sealing the outer app.
             cli_jar="$resources/cli-$RELEASE_VERSION-all.jar"
-            jar_workspace="$workspace/cli-jar"
-            mkdir -p "$jar_workspace"
-            ditto -x -k "$cli_jar" "$jar_workspace"
-            while IFS= read -r -d '' file; do
-              if file -b "$file" | grep -q 'Mach-O'; then
-                codesign --force --options runtime --timestamp \
-                  --entitlements "$entitlements" \
-                  --sign "$APPLE_DEVELOPER_IDENTITY" "$file"
-              fi
-            done < <(find "$jar_workspace" -type f -print0)
-            (cd "$jar_workspace" && zip -qry "$cli_jar" .)
+            python3 .github/scripts/sign-macos-shaded-jar.py \
+              "$cli_jar" "$entitlements" "$APPLE_DEVELOPER_IDENTITY"
 
             # jlink carries its own Java launchers and dylibs. The JVM needs these hardened
             # runtime entitlements for JIT code, native-library loading, and jdk.attach. Sign
@@ -373,9 +374,53 @@ jobs:
             test -f "$published_launcher"
             test -x "$published_launcher"
             .github/scripts/verify-macos-cli-bundle.sh "$archive" "$RELEASE_VERSION"
-            # Do not execute the launcher in CI: macosX64 cannot run on arm64 runners without
-            # Rosetta. The verifier above checks the final extracted archive with codesign,
-            # stapler, and Gatekeeper instead.
+            # Each matrix row runs on its own native CPU, including Intel without Rosetta.
+            "$published_launcher" --version
+            "$published_launcher" --help >/dev/null
+
+            # Exercise helper extraction through the archived CLI's real JVM. Hosted runners
+            # normally have no Screen Recording grant, so explicit denial is a valid result.
+            helper_smoke="$workspace/helper-smoke"
+            helper_dir="$helper_smoke/helper-dir"
+            permission_json="$helper_smoke/permissions.json"
+            mkdir -p "$helper_dir"
+            set +e
+            SPECTRE_AOT=off \
+              JAVA_TOOL_OPTIONS="-Dspectre.recording.screencapturekit.helperDir=$helper_dir" \
+              "$published_launcher" permissions check --json >"$permission_json"
+            permission_exit=$?
+            set -e
+            materialized_app="$helper_dir/SpectreCaptureHelper.app"
+            materialized_helper="$materialized_app/Contents/MacOS/spectre-screencapture"
+            python3 - "$permission_json" "$materialized_helper" "$permission_exit" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          result = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          exit_code = int(sys.argv[3])
+          assert exit_code in (0, 1), f"unexpected permissions exit {exit_code}: {result}"
+          assert result["platform"] == "macos", result
+          assert result["binary"] == str(pathlib.Path(sys.argv[2])), result
+          assert result["granted"] is (exit_code == 0), result
+          PY
+            test -f "$materialized_helper"
+            test -x "$materialized_helper"
+
+            # Both app trees must contain only plain directories/files and be byte-identical.
+            trusted_app="$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app"
+            if find "$trusted_app" "$materialized_app" ! -type d ! -type f -print -quit | grep -q .; then
+              echo "Helper app contains a symlink or other non-regular entry" >&2
+              exit 1
+            fi
+            diff -rq "$trusted_app" "$materialized_app"
+            codesign --verify --deep --strict --verbose=4 "$materialized_app"
+            xcrun stapler validate "$materialized_app"
+            spctl --assess --type execute --verbose=4 "$materialized_app"
+            # Launching restores executable modes in place; prove that this final mutation did
+            # not invalidate either the nested code seal or the stapled notarisation ticket.
+            codesign --verify --deep --strict --verbose=4 "$published_app"
+            xcrun stapler validate "$published_app"
             file "$published_launcher"
             ls -la "$published_app/Contents/MacOS/"
           done
@@ -383,7 +428,7 @@ jobs:
           # Flatten zip names for mac-cli-bundles so B16 download stays
           # build/notarized-smoke/mac-cli-bundles/spectre-${target}.zip.
           mkdir -p "$RUNNER_TEMP/mac-cli-bundles"
-          for target in macosX64 macosArm64; do
+          for target in "$TARGET"; do
             cp "cli/build/construo/distributions/${target}/spectre-${target}.zip" \
               "$RUNNER_TEMP/mac-cli-bundles/spectre-${target}.zip"
           done
@@ -391,10 +436,8 @@ jobs:
       - name: Upload signed and notarised macOS CLI bundles
         uses: actions/upload-artifact@v4
         with:
-          name: mac-cli-bundles
-          path: |
-            ${{ runner.temp }}/mac-cli-bundles/spectre-macosX64.zip
-            ${{ runner.temp }}/mac-cli-bundles/spectre-macosArm64.zip
+          name: mac-cli-${{ matrix.target }}
+          path: ${{ runner.temp }}/mac-cli-bundles/spectre-${{ matrix.target }}.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -412,3 +455,26 @@ jobs:
             rm -f "$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_API_KEY_ID}.p8"
           fi
 
+
+  merge-mac-cli-bundles:
+    name: Merge notarised macOS CLI bundles
+    needs: mac-cli-bundles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download both native-CPU bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mac-cli-macos*
+          merge-multiple: true
+          path: ${{ runner.temp }}/mac-cli-bundles
+      - name: Require both release targets
+        run: |
+          test -f "$RUNNER_TEMP/mac-cli-bundles/spectre-macosX64.zip"
+          test -f "$RUNNER_TEMP/mac-cli-bundles/spectre-macosArm64.zip"
+      - name: Upload merged macOS CLI bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-cli-bundles
+          path: ${{ runner.temp }}/mac-cli-bundles/
+          if-no-files-found: error
+          retention-days: 7

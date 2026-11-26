@@ -12,7 +12,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 16)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 18)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -48,8 +48,21 @@ public object DaemonProtocol {
             handshake.minor < SCREEN_PIXEL_STILLS_INTRODUCED_MINOR
 
     internal fun minimumDaemonVersion(request: DaemonRequest): DaemonProtocolVersion =
+        if (request is DaemonRequest.AccessibilityTree) {
+            versionFor(
+                if (request.allowAccessibilityEnable) ACCESSIBILITY_ENABLE_INTRODUCED_MINOR
+                else ACCESSIBILITY_INTRODUCED_MINOR
+            )
+        } else {
+            minimumDaemonVersionBeforeAccessibility(request)
+        }
+
+    private fun minimumDaemonVersionBeforeAccessibility(
+        request: DaemonRequest
+    ): DaemonProtocolVersion =
         when (request) {
-            is DaemonRequest.Hello -> versionFor(MINIMUM_PROTOCOL_MINOR)
+            is DaemonRequest.Hello,
+            is DaemonRequest.AccessibilityTree -> versionFor(MINIMUM_PROTOCOL_MINOR)
             is DaemonRequest.Attach,
             is DaemonRequest.Detach,
             DaemonRequest.ListSessions,
@@ -78,8 +91,7 @@ public object DaemonProtocol {
             is DaemonRequest.RecordingStatus -> versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
             // Each still op needs the minor that introduced it *and* the minor its pixels
             // changed in: an older daemon answers these "successfully" but with dp-sized stills.
-            is DaemonRequest.Capture ->
-                versionFor(maxOf(CAPTURE_INTRODUCED_MINOR, SCREEN_PIXEL_STILLS_INTRODUCED_MINOR))
+            is DaemonRequest.Capture -> captureVersion(request)
             is DaemonRequest.Screenshot ->
                 versionFor(
                     maxOf(
@@ -93,7 +105,17 @@ public object DaemonProtocol {
      * Negotiates connection-wide configuration and diagnostics for every operation but shutdown.
      */
     internal fun clientHandshakeVersion(request: DaemonRequest): DaemonProtocolVersion =
-        if (request is DaemonRequest.Shutdown) minimumDaemonVersion(request) else CurrentVersion
+        when (request) {
+            DaemonRequest.Shutdown -> minimumDaemonVersion(request)
+            is DaemonRequest.StopRecording -> versionFor(RECORDING_RESULTS_INTRODUCED_MINOR)
+            else ->
+                versionFor(
+                    maxOf(
+                        minimumDaemonVersion(request).minor,
+                        DIAGNOSTICS_INTRODUCED_MINOR,
+                    )
+                )
+        }
 
     /** Whether this negotiated client can decode operation-level diagnosed envelopes. */
     internal fun supportsDiagnosedResponses(handshake: DaemonProtocolVersion): Boolean =
@@ -107,6 +129,16 @@ public object DaemonProtocol {
             versionFor(RECORDING_FULLSCREEN_INTRODUCED_MINOR)
         } else {
             versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
+        }
+
+    /** Accessibility is a 1.17 source; Compose keeps its historical screen-pixel floor. */
+    private fun captureVersion(request: DaemonRequest.Capture): DaemonProtocolVersion =
+        if (request.allowAccessibilityEnable) {
+            versionFor(ACCESSIBILITY_ENABLE_INTRODUCED_MINOR)
+        } else if (request.source == DaemonCaptureSource.Accessibility) {
+            versionFor(ACCESSIBILITY_INTRODUCED_MINOR)
+        } else {
+            versionFor(maxOf(CAPTURE_INTRODUCED_MINOR, SCREEN_PIXEL_STILLS_INTRODUCED_MINOR))
         }
 
     private fun versionFor(minor: Int): DaemonProtocolVersion =
@@ -160,6 +192,12 @@ public object DaemonProtocol {
     private const val FOCUS_WINDOW_INTRODUCED_MINOR: Int = 14
     /** Configuration negotiation and diagnosed operation envelopes (#673). */
     private const val DIAGNOSTICS_INTRODUCED_MINOR: Int = 15
+    /** Recording finalization results and shutdown recording summaries (#715). */
+    private const val RECORDING_RESULTS_INTRODUCED_MINOR: Int = 16
+    /** Native accessibility snapshots and accessibility-backed captures (#718). */
+    private const val ACCESSIBILITY_INTRODUCED_MINOR: Int = 17
+    /** Explicit permission to temporarily enable a disabled platform accessibility service. */
+    private const val ACCESSIBILITY_ENABLE_INTRODUCED_MINOR: Int = 18
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -176,6 +214,19 @@ public sealed interface DaemonRequest {
     public sealed interface SessionRequest : DaemonRequest {
         public val sessionId: String
     }
+
+    @Serializable
+    @SerialName("accessibilityTree")
+    public data class AccessibilityTree(
+        public val processId: Long? = null,
+        public val windowTitle: String? = null,
+        public val sessionId: String? = null,
+        public val windowIndex: Int = 0,
+        public val maximumDepth: Int = 64,
+        public val maximumNodeCount: Int = 10_000,
+        public val timeoutMs: Long = 750,
+        public val allowAccessibilityEnable: Boolean = false,
+    ) : DaemonRequest
 
     @Serializable
     public data class Hello(
@@ -373,6 +424,8 @@ public sealed interface DaemonRequest {
         public override val sessionId: String,
         public val windowIndex: Int = 0,
         public val outDir: String? = null,
+        public val source: DaemonCaptureSource = DaemonCaptureSource.Compose,
+        public val allowAccessibilityEnable: Boolean = false,
     ) : SessionRequest
 
     @Serializable
@@ -405,6 +458,16 @@ public sealed interface DaemonRequest {
 @OptIn(ExperimentalSpectreAgentApi::class)
 @Serializable
 public sealed interface DaemonResponse {
+    @Serializable
+    @SerialName("accessibilitySnapshot")
+    public data class AccessibilitySnapshotResult(public val snapshot: AccessibilitySnapshot) :
+        DaemonResponse
+
+    @Serializable
+    @SerialName("accessibilityError")
+    public data class AccessibilityErrorResult(public val error: AccessibilityError) :
+        DaemonResponse
+
     /**
      * @property maxFrameBytes the frame write budget this daemon booted with. `null` from a daemon
      *   that predates budget reporting, which is indistinguishable from "not the budget you asked
@@ -521,6 +584,7 @@ public sealed interface DaemonResponse {
         public val imageWidth: Int,
         public val imageHeight: Int,
         public val captureDurationMs: Long,
+        public val notes: List<String> = emptyList(),
     ) : DaemonResponse
 
     @Serializable
@@ -602,6 +666,12 @@ public data class DaemonSessionInfo(
 )
 
 /** A JVM process that can be targeted through the local daemon. */
+@Serializable
+public enum class DaemonCaptureSource {
+    @SerialName("compose") Compose,
+    @SerialName("accessibility") Accessibility,
+}
+
 @Serializable
 public data class DaemonJvmProcessSummary(public val pid: Long, public val displayName: String)
 

@@ -4,7 +4,7 @@ description: >
   Use when inspecting, diffing, or pruning Spectre atomic captures (`capture.json` + `screenshot.png` from
   `spectre capture`, MCP `capture`, or `ComposeAutomator.capture`). Use `spectre` for general UI automation.
 license: Apache-2.0
-compatibility: Requires the Spectre CLI (or in-process capture API) and schemaVersion 2 captures.
+compatibility: Requires the Spectre CLI (or in-process capture API); describes schemaVersion 2 and compatible schemaVersion 1 reading.
 ---
 
 # Spectre capture output
@@ -13,6 +13,23 @@ Atomic capture writes a native window still (`screenshot.png`) and a versioned s
 disk, returning paths, summary counts, and dimensions so callers query `capture.json` with `jq` instead of loading full
 trees into context. Run `spectre guide capture` or `spectre guide --search "<words>"` for bundled CLI docs (published at
 <https://spectre.sebastiano.dev/guide/capture/>).
+
+Schema version 2 supports two capture sources. CLI `capture --source compose` and MCP `capture`
+with `source: "compose"` are the default and write `capture.json`. With `--source accessibility`
+(or MCP `source: "accessibility"`), an attached session writes `accessibility.json` plus the same
+native screenshot. That native document has `source: "os-accessibility"`, `windows`, native node
+`name`/`bounds`, and `notes`; do not apply the Compose recipes below to it. The standalone
+`spectre a11y tree` and MCP `accessibility_tree` operations return the same native snapshot shape.
+On Linux, add `--allow-accessibility-enable` to accessibility-sourced CLI capture, or
+`allow_accessibility_enable: true` to MCP capture, only when temporary AT-SPI enablement is
+acceptable. It defaults to false and is invalid for the Compose source.
+
+Always branch on `schemaVersion` before reading. Version 1 Compose captures remain readable with
+their original fields, but they have no document `source`, `parentKey`, `id`, `platformRole`,
+`states`, `value`, `onScreen`, or `boundsSpace`. Treat a missing `source` as legacy Compose only
+when `schemaVersion == 1`; never use that fallback for an unknown future version. The existing
+`testTag`, text, state, `boundsImage`, and `boundsScreen` recipes below work for both versions when
+they do not select a version-2-only field.
 
 When Compose Hot Reload MCP is also configured, use Hot Reload MCP to check recomposition during live reload sessions
 and Spectre for semantics inspection, input, and captures (`spectre wait --reload-settled` / MCP
@@ -114,7 +131,9 @@ diff -u \
 
 ## Workflow (`capture → act → capture → diff`) and key lifetime
 
-1. **Settle the UI first** (`waitForIdle`/`waitForVisualIdle` or app-level wait); `capture` does not auto-idle. Visual idle requires native window capture unless the caller explicitly opts into `allowScreenRegionFallback = true` and accepts occlusion-sensitive desktop pixels.
+1. **Settle the UI first** (`waitForIdle`/`waitForVisualIdle` or app-level wait); `capture` does not auto-idle. Visual
+   idle requires native window capture unless the caller explicitly opts into `allowScreenRegionFallback = true` and
+   accepts occlusion-sensitive desktop pixels.
 2. **Capture before** (`spectre capture <session-id> --json`), locate a target by `id`/`testTag` via `jq`, resolve its
    current actionable key with `spectre find`, and act with that live key. Snapshot keys are structural evidence, not
    durable action handles.

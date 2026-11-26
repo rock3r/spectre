@@ -40,6 +40,7 @@ constructor(
     private val sessionInfo: AgentSessionInfoDto? = null,
     /** Per-frame read/write deadline; `<= 0` disables (not for production). */
     private val frameIoTimeoutMs: Long = FrameIoDeadline.DEFAULT_TIMEOUT_MS,
+    private val onDeadlineResponseClaimed: () -> Unit = {},
 ) : AutoCloseable {
     private var createdParentDir: Path? = null
 
@@ -165,15 +166,20 @@ constructor(
         // Phase 1: bare Hello (#199).
         if (!performHandshake(client, input, output)) return
         // Phase 2: multiplexed OpRequest frames on a worker pool (#200).
-        MultiplexedIpcSession(
-                handler = handler,
-                running = running,
-                onDetach = onDetach,
-                channel = client,
-                frameIoTimeoutMs = frameIoTimeoutMs,
-                inputWorkers = inputWorkers,
-            )
-            .run(input, output)
+        try {
+            MultiplexedIpcSession(
+                    handler = handler,
+                    running = running,
+                    onDetach = onDetach,
+                    channel = client,
+                    frameIoTimeoutMs = frameIoTimeoutMs,
+                    inputWorkers = inputWorkers,
+                    onDeadlineResponseClaimed = onDeadlineResponseClaimed,
+                )
+                .run(input, output)
+        } finally {
+            handler.connectionClosed()
+        }
     }
 
     /** Bare Hello handshake. Returns false if the connection should end. */
@@ -389,4 +395,7 @@ constructor(
  */
 internal fun interface AgentRequestHandler {
     fun handle(request: AgentRequest): AgentResponse
+
+    /** Releases resources scoped to the just-ended IPC connection. */
+    fun connectionClosed() {}
 }

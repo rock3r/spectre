@@ -415,9 +415,9 @@ internal constructor(
         }
 
         /**
-         * Lazily resolves both portal recorders once per JVM (the first time the public no-arg
-         * `AutoRecorder` constructor's defaults fire). Captures any construction failure so the
-         * router can surface it via the fallback warning instead of silently dropping it.
+         * Lazily resolves the Wayland region and window recorders once per JVM (the first time the
+         * public no-arg `AutoRecorder` constructor's defaults fire). Captures any construction
+         * failure so the router can include the cause when the requested backend is unavailable.
          *
          * Tests bypass this entirely by going through the internal constructor.
          */
@@ -442,15 +442,14 @@ internal data class WaylandPortalRecorders(
     companion object {
 
         /**
-         * Constructs the default portal recorders on Linux; returns all-null on other hosts.
+         * Constructs the default Wayland recorders on Linux; returns all-null on other hosts.
          *
          * dbus-java + gst-launch are no-ops on macOS / Windows (the gst-launch binary doesn't exist
          * there, the D-Bus session bus isn't running) — gating on `isLinux` keeps cross-host
          * distribution jars from triggering construction-time failures. On Linux, failures
          * resolving the gst-launch path or constructing either recorder are captured rather than
          * dropped, so a Linux host without GStreamer installed can still instantiate AutoRecorder
-         * for non-Wayland flows but a user who triggers Wayland recording sees the diagnostic via
-         * the stderr fallback warning.
+         * for non-Wayland flows. Requesting the unavailable backend raises a capture error.
          */
         @Suppress("TooGenericExceptionCaught")
         fun resolveDefaults(isLinux: () -> Boolean): WaylandPortalRecorders {

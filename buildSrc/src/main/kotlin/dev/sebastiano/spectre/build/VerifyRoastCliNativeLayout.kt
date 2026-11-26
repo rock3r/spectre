@@ -20,12 +20,30 @@ abstract class VerifyRoastCliNativeLayout : DefaultTask() {
     /** Construo target name (`linuxX64`, `macosArm64`, …) used to derive the keep prefix. */
     @get:Input abstract val roastTargetName: Property<String>
 
+    /** Release staging supplies both Linux helpers; contributor builds only supply the target CPU. */
+    @get:Input abstract val requireAllLinuxHelpers: Property<Boolean>
+
     @TaskAction
     fun verify() {
         val archive = artifact.get().asFile
         val keepPrefix =
             CliRoastNativePackagingContract.keepNativePrefixForRoastTarget(roastTargetName.get())
         ZipFile(archive).use { zip ->
+            val nativeEntries =
+                zip.entries().asSequence().filterNot { it.isDirectory }.mapNotNull { entry ->
+                    if (CliRuntimeArchitectureContract.isNativePayloadName(entry.name)) {
+                        entry.name to
+                            CliRuntimeArchitectureContract.Payload(entry.size) {
+                                zip.getInputStream(entry)
+                            }
+                    } else null
+                }.toMap()
+            val nativeErrors =
+                CliRuntimeArchitectureContract.validatePayloads(roastTargetName.get(), nativeEntries)
+            check(nativeErrors.isEmpty()) {
+                "${archive.name} fails target native-binary validation:\n" +
+                    nativeErrors.joinToString("\n") { "  - $it" }
+            }
             val applicationJar = resolveApplicationJarEntry(zip)
             val entryNames =
                 zip.getInputStream(zip.getEntry(applicationJar)).use { input ->
@@ -49,11 +67,40 @@ abstract class VerifyRoastCliNativeLayout : DefaultTask() {
             check(AGENT_RUNTIME_ENTRY in entryNames) {
                 "${archive.name} embedded jar $applicationJar is missing $AGENT_RUNTIME_ENTRY"
             }
+            requiredHelpers(roastTargetName.get(), requireAllLinuxHelpers.get()).forEach { suffix ->
+                check(entryNames.any { it.endsWith(suffix) }) {
+                    "${archive.name} embedded jar $applicationJar is missing native helper $suffix"
+                }
+            }
         }
     }
 
     companion object {
         const val AGENT_RUNTIME_ENTRY: String = "spectre/agent-runtime.jar"
+        internal fun requiredHelpers(
+            targetName: String,
+            requireAllLinuxHelpers: Boolean,
+        ): List<String> =
+            when {
+                targetName.startsWith("windows") ->
+                    listOf("native/windows/x64/spectre-window-capture.exe")
+                targetName.startsWith("linux") ->
+                    if (requireAllLinuxHelpers) {
+                        listOf(
+                            "native/linux/x86_64/spectre-wayland-helper",
+                            "native/linux/aarch64/spectre-wayland-helper",
+                        )
+                    } else if (targetName.equals("linuxArm64", ignoreCase = true)) {
+                        listOf("native/linux/aarch64/spectre-wayland-helper")
+                    } else {
+                        listOf("native/linux/x86_64/spectre-wayland-helper")
+                    }
+                targetName.startsWith("macos") ->
+                    listOf(
+                        "native/macos/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture"
+                    )
+                else -> error("Unsupported Roast target: $targetName")
+            }
 
         /**
          * Prefer a single `*-all.jar` application payload; fail if zero or multiple candidates

@@ -20,6 +20,7 @@ import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
+import kotlin.math.roundToInt
 import kotlin.system.exitProcess
 
 /**
@@ -52,12 +53,18 @@ private fun runRegionSmoke() {
     val (frame, label) = openRegionSmokeWindow()
     try {
         Thread.sleep(WINDOW_SETTLE_MS)
-        val region = runOnEdt {
+        val selectedRegion = runOnEdt {
             frame.toFront()
             frame.requestFocus()
             val location = frame.locationOnScreen
-            Rectangle(location.x, location.y, frame.width, frame.height)
+            val transform = frame.graphicsConfiguration.defaultTransform
+            SelectedRegion(
+                bounds = Rectangle(location.x, location.y, frame.width, frame.height),
+                scaleX = transform.scaleX,
+                scaleY = transform.scaleY,
+            )
         }
+        val region = selectedRegion.bounds
 
         val handle =
             AutoRecorder()
@@ -92,7 +99,18 @@ private fun runRegionSmoke() {
         check(bytes > MINIMUM_RECORDING_BYTES) {
             "Expected a non-empty MOV larger than $MINIMUM_RECORDING_BYTES bytes, got $bytes at $output"
         }
-        println("SCK region recording stopped -> $output ($bytes bytes, ticks=$ticks)")
+        val (actualWidth, actualHeight) = readIsoBmffVideoSize(output)
+        val expectedWidth = (region.width * selectedRegion.scaleX).roundToInt()
+        val expectedHeight = (region.height * selectedRegion.scaleY).roundToInt()
+        check(actualWidth == expectedWidth && actualHeight == expectedHeight) {
+            "Expected MOV track ${expectedWidth}x$expectedHeight for ${region.width}x${region.height} " +
+                "point region at backing scale ${selectedRegion.scaleX}x${selectedRegion.scaleY}, " +
+                "got ${actualWidth}x$actualHeight at $output ($bytes bytes)"
+        }
+        println(
+            "SCK region recording stopped -> $output ($bytes bytes, ${actualWidth}x$actualHeight, " +
+                "backing scale ${selectedRegion.scaleX}x${selectedRegion.scaleY}, ticks=$ticks)"
+        )
     } finally {
         SwingUtilities.invokeLater {
             frame.isVisible = false
@@ -100,6 +118,12 @@ private fun runRegionSmoke() {
         }
     }
 }
+
+private data class SelectedRegion(
+    val bounds: Rectangle,
+    val scaleX: Double,
+    val scaleY: Double,
+)
 
 private fun openRegionSmokeWindow(): Pair<JFrame, JLabel> {
     val ready = CountDownLatch(1)

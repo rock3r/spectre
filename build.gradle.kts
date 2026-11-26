@@ -196,6 +196,8 @@ val verifyMacosCliBundleReleaseContract by
                 ".github/scripts/test-macos-release-artifact-workflows.sh",
                 ".github/scripts/test-macos-roast-dual-package-graph.sh",
                 ".github/scripts/test-macos-bundle-verify-ordering.sh",
+                ".github/scripts/sign-macos-shaded-jar.py",
+                ".github/scripts/test-sign-macos-shaded-jar.py",
                 ".github/scripts/inspect-macos-roast-package-dests.init.gradle.kts",
                 "docs/PUBLISHING.md",
                 "docs/RELEASE-SMOKE.md",

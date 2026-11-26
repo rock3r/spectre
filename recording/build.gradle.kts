@@ -61,6 +61,9 @@ val useStubMacHelperForTesting = providers.gradleProperty("stubMacHelperForTesti
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    providers.systemProperty("spectre.test.nativeMacCapture").orNull?.let { value ->
+        systemProperty("spectre.test.nativeMacCapture", value)
+    }
     if (useStubMacHelperForTesting) {
         systemProperty("spectre.test.stubMacHelperForTesting", "true")
     }
@@ -1276,6 +1279,19 @@ tasks.register<JavaExec>("requestWaylandPortalGrant") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("dev.sebastiano.spectre.recording.portal.WaylandPortalGrantRequestKt")
     args(providers.gradleProperty("waylandGrantTimeoutSeconds").orElse("300").get())
+    standardOutput = System.out
+    errorOutput = System.err
+}
+
+// QA-only, noninteractive counterpart used after the attended release-harness grant. This must
+// remain wired to preflight(): request() deliberately permits a prompt even when prompting is
+// disabled for ordinary capture paths.
+tasks.register<JavaExec>("checkWaylandPortalGrant") {
+    group = "verification"
+    description = "Checks the Linux Wayland portal grant without opening a consent dialog."
+    onlyIf { OperatingSystem.current().isLinux }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.portal.WaylandPortalGrantCheckKt")
     standardOutput = System.out
     errorOutput = System.err
 }

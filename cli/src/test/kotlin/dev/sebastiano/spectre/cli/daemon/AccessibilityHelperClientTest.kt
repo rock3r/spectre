@@ -2,8 +2,10 @@ package dev.sebastiano.spectre.cli.daemon
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -20,6 +22,9 @@ import kotlin.time.measureTime
 import org.junit.jupiter.api.io.TempDir
 
 class AccessibilityHelperClientTest {
+    private val request = AccessibilitySnapshotRequest(Target.ProcessId(1), 4, 10, 100)
+    private val helper = Path.of("recorded-helper")
+
     @Test
     fun `decodes a recorded successful helper response without a desktop`() {
         val response = AccessibilityHelperClient { _, _, _ ->
@@ -33,6 +38,8 @@ class AccessibilityHelperClientTest {
         val success = assertIs<AccessibilitySnapshotResponse.Success>(response)
         assertEquals("w0/app/0", success.snapshot.nodes.single().key)
         assertEquals(BoundsSpace.Screen, success.snapshot.windows.single().boundsSpace)
+        assertNull(success.snapshot.nodes.single().bounds)
+        assertNull(success.snapshot.nodes.single().onScreen)
     }
 
     @Test
@@ -49,6 +56,8 @@ class AccessibilityHelperClientTest {
         assertEquals(2, snapshot?.schemaVersion)
         assertEquals("os-accessibility", snapshot?.source)
         assertEquals("w0/root", snapshot?.nodes?.single()?.key)
+        assertNull(snapshot?.nodes?.single()?.bounds)
+        assertNull(snapshot?.nodes?.single()?.onScreen)
     }
 
     @Test
@@ -72,6 +81,131 @@ class AccessibilityHelperClientTest {
     }
 
     @Test
+    fun `partial snapshot presence is validated against every emitted error reason`() {
+        fun decode(code: String, partial: String = "null") = AccessibilityHelperClient { _, _, _ ->
+            """{"ok":false,"error":{"code":"$code","message":"failed","partialSnapshot":$partial}}"""
+        }
+            .snapshot(request, helper)
+
+        val validPartial = snapshotJson(nodes = "")
+        assertFailsWith<IllegalArgumentException> { decode("limit-reached") }
+        assertIs<AccessibilitySnapshotResponse.Failure>(decode("limit-reached", validPartial))
+        assertIs<AccessibilitySnapshotResponse.Failure>(decode("timeout"))
+        assertIs<AccessibilitySnapshotResponse.Failure>(decode("timeout", validPartial))
+        listOf(
+                "permission-missing",
+                "accessibility-disabled",
+                "target-not-found",
+                "no-accessibility-tree",
+                "restore-failed",
+                "unsupported-target",
+            )
+            .forEach { code ->
+                assertIs<AccessibilitySnapshotResponse.Failure>(decode(code))
+                assertFailsWith<IllegalArgumentException>(code) { decode(code, validPartial) }
+            }
+    }
+
+    @Test
+    fun `requires truly boolean ok`() {
+        listOf("1", "\"true\"", "null").forEach { ok ->
+            assertFailsWith<IllegalArgumentException>(ok) {
+                AccessibilityHelperClient { _, _, _ ->
+                        """{"ok":$ok,"snapshot":${snapshotJson()}}"""
+                    }
+                    .snapshot(request, helper)
+            }
+        }
+    }
+
+    @Test
+    fun `requires window scoped preorder parents and permits a depth limited forest`() {
+        val twoWindows =
+            """{"key":"w0","title":null,"bounds":{"x":0,"y":0,"width":1,"height":1},"boundsSpace":"screen"},
+               {"key":"w1","title":null,"bounds":{"x":0,"y":0,"width":1,"height":1},"boundsSpace":"screen"}"""
+        assertFailsWith<IllegalArgumentException> {
+            decodeSuccess(snapshotJson(nodes = node("w0/root", "w0/root")))
+        }
+        val childBeforeParent = node("w0/parent/child", "w0/parent") + "," + node("w0/parent", null)
+        assertFailsWith<IllegalArgumentException> {
+            decodeSuccess(snapshotJson(windows = twoWindows, nodes = childBeforeParent))
+        }
+        val priorCrossWindowParent = node("w0/root", null) + "," + node("w1/child", "w0/root")
+        assertFailsWith<IllegalArgumentException> {
+            decodeSuccess(snapshotJson(windows = twoWindows, nodes = priorCrossWindowParent))
+        }
+        assertIs<AccessibilitySnapshotResponse.Success>(
+            decodeSuccess(
+                snapshotJson(
+                    windows = twoWindows,
+                    nodes = node("w0/root", null) + "," + node("w1/root", null),
+                )
+            )
+        )
+    }
+
+    @Test
+    fun `rejects duplicate nodes`() {
+        val root = node("w0/root", null)
+        assertFailsWith<IllegalArgumentException> {
+            decodeSuccess(snapshotJson(nodes = "$root,$root"))
+        }
+    }
+
+    @Test
+    fun `rejects unknown coordinate space with its raw value`() {
+        val failure =
+            assertFailsWith<IllegalArgumentException> {
+                decodeSuccess(snapshotJson().replace("\"screen\"", "\"desktop-logical\""))
+            }
+        assertTrue(failure.message.orEmpty().contains("desktop-logical"))
+    }
+
+    @Test
+    fun `unknown helper error remains a typed failure with its raw code`() {
+        val failure =
+            assertIs<AccessibilitySnapshotResponse.Failure>(
+                AccessibilityHelperClient { _, _, _ ->
+                        """{"ok":false,"error":{"code":"reader-busy","message":"busy"}}"""
+                    }
+                    .snapshot(request, helper)
+            )
+        assertEquals(AccessibilityErrorCode.Unknown, failure.error.code)
+        assertEquals("reader-busy", failure.error.rawCode)
+        assertNull(failure.error.partialSnapshot)
+    }
+
+    @Test
+    fun `restore failure is a known native failure without a stale partial snapshot`() {
+        val failure =
+            assertIs<AccessibilitySnapshotResponse.Failure>(
+                AccessibilityHelperClient { _, _, _ ->
+                        """{"ok":false,"error":{"code":"restore-failed","message":"restore denied"}}"""
+                    }
+                    .snapshot(request, helper)
+            )
+
+        assertEquals(AccessibilityErrorCode.RestoreFailed, failure.error.code)
+        assertNull(failure.error.rawCode)
+        assertNull(failure.error.partialSnapshot)
+    }
+
+    @Test
+    fun `validated response owns all snapshot collections`() {
+        val response =
+            assertIs<AccessibilitySnapshotResponse.Success>(decodeSuccess(snapshotJson()))
+        assertFailsWith<UnsupportedOperationException> {
+            (response.snapshot.windows as MutableList).clear()
+        }
+        assertFailsWith<UnsupportedOperationException> {
+            (response.snapshot.nodes.single().states as MutableList).add("changed")
+        }
+        assertFailsWith<UnsupportedOperationException> {
+            (response.snapshot.notes as MutableList).add("changed")
+        }
+    }
+
+    @Test
     fun `passes command and bounded request to helper`() {
         var stdin = ""
         val helper = Files.createTempFile("spectre-helper", "")
@@ -86,6 +220,23 @@ class AccessibilityHelperClientTest {
 
         assertIs<AccessibilitySnapshotResponse.Failure>(response)
         assertTrue(stdin.contains("\"maximumNodeCount\":5"))
+        assertTrue(!stdin.contains("allowAccessibilityEnable"))
+    }
+
+    @Test
+    fun `passes explicit accessibility enable permission to helper`() {
+        var stdin = ""
+        val client = AccessibilityHelperClient { _, input, _ ->
+            stdin = input
+            """{"ok":false,"error":{"code":"accessibility-disabled","message":"off"}}"""
+        }
+
+        client.snapshot(
+            AccessibilitySnapshotRequest(Target.ProcessId(42), 4, 5, 100, true),
+            java.nio.file.Path.of("helper"),
+        )
+
+        assertTrue(stdin.contains("\"allowAccessibilityEnable\":true"))
     }
 
     @Test
@@ -133,17 +284,23 @@ class AccessibilityHelperClientTest {
     fun `real cross-platform helper and its descendant are forcibly bounded on timeout`(
         @TempDir directory: Path
     ) {
-        withReadyHelper(directory) { helper, child ->
-            val elapsed = measureTime {
-                val error =
-                    assertFailsWith<IllegalStateException> {
-                        exchangeWithHelper(helper, "{}", 2_000)
-                    }
-                assertEquals("Accessibility helper exceeded its 2000ms deadline", error.message)
+        val unrelated = ProcessBuilder(fixtureCommand("sleep")).start()
+        try {
+            withReadyHelper(directory) { helper, child ->
+                val elapsed = measureTime {
+                    val error =
+                        assertFailsWith<IllegalStateException> {
+                            exchangeWithHelper(helper, "{}", 2_000)
+                        }
+                    assertEquals("Accessibility helper exceeded its 2000ms deadline", error.message)
+                }
+                assertTrue(elapsed < 4.seconds, "helper took $elapsed to be reaped")
+                assertFalse(helper.isAlive, "helper survived timeout")
+                assertFalse(child.isAlive, "child survived timeout")
+                assertTrue(unrelated.isAlive, "cleanup killed an unrelated process")
             }
-            assertTrue(elapsed < 4.seconds, "helper took $elapsed to be reaped")
-            assertFalse(helper.isAlive, "helper survived timeout")
-            assertFalse(child.isAlive, "child survived timeout")
+        } finally {
+            unrelated.destroyForcibly()
         }
     }
 
@@ -207,6 +364,34 @@ class AccessibilityHelperClientTest {
     }
 
     @Test
+    fun `cleanup signals the process before waiting for a blocking pipe close`() {
+        val helper = ControlledProcess(exitOnDestroy = true, blockOutputCloseUntilDestroy = true)
+
+        val elapsed = measureTime {
+            val error =
+                assertFailsWith<IllegalStateException> { exchangeWithHelper(helper, "{}", 1) }
+            assertEquals("Accessibility helper exceeded its 1ms deadline", error.message)
+        }
+
+        assertTrue(elapsed < 2.seconds, "blocking pipe close delayed cleanup by $elapsed")
+        assertFalse(helper.isAlive, "helper survived cleanup")
+    }
+
+    @Test
+    fun `cleanup retries a slow parent within a second bounded grace period`() {
+        val helper = ControlledProcess(exitOnDestroyAttempt = 2)
+
+        val error = assertFailsWith<IllegalStateException> { exchangeWithHelper(helper, "{}", 1) }
+
+        assertEquals("Accessibility helper exceeded its 1ms deadline", error.message)
+        assertTrue(
+            error.suppressed.isEmpty(),
+            "slow parent should be reaped without cleanup failure",
+        )
+        assertFalse(helper.isAlive, "slow parent survived cleanup")
+    }
+
+    @Test
     fun `positive maximum timeout does not overflow deadline arithmetic`() {
         val helper = ControlledProcess(exitOnDestroy = true, initiallyAlive = false)
 
@@ -254,6 +439,21 @@ class AccessibilityHelperClientTest {
     private fun request(timeoutMs: Long) =
         AccessibilitySnapshotRequest(Target.ProcessId(1), 1, 1, timeoutMs)
 
+    private fun decodeSuccess(snapshot: String) = AccessibilityHelperClient { _, _, _ ->
+        """{"ok":true,"snapshot":$snapshot}"""
+    }
+        .snapshot(request, helper)
+
+    private fun snapshotJson(
+        windows: String =
+            """{"key":"w0","title":null,"bounds":{"x":0,"y":0,"width":1,"height":1},"boundsSpace":"screen"}""",
+        nodes: String = node("w0/root", null),
+    ) =
+        """{"schemaVersion":2,"source":"os-accessibility","capturedAt":"now","windows":[$windows],"nodes":[$nodes],"notes":[]}"""
+
+    private fun node(key: String, parent: String?) =
+        """{"key":"$key","parentKey":${parent?.let { "\"$it\"" } ?: "null"},"id":null,"platformRole":null,"role":null,"name":null,"states":[],"value":null,"bounds":null,"onScreen":null}"""
+
     private fun awaitFixture(description: String, ready: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
         while (!ready()) {
@@ -271,12 +471,30 @@ class AccessibilityHelperClientTest {
             .toString()
 
     private class ControlledProcess(
-        private val exitOnDestroy: Boolean,
+        exitOnDestroy: Boolean,
         initiallyAlive: Boolean = true,
+        private val blockOutputCloseUntilDestroy: Boolean = false,
+        private val exitOnDestroyAttempt: Int? = if (exitOnDestroy) 1 else null,
     ) : Process() {
-        private var alive = initiallyAlive
+        constructor(exitOnDestroyAttempt: Int) : this(false, true, false, exitOnDestroyAttempt)
 
-        override fun getOutputStream() = ByteArrayOutputStream()
+        private var alive = initiallyAlive
+        private var destroyAttempts = 0
+        private val destroyed = CountDownLatch(if (initiallyAlive) 1 else 0)
+
+        override fun getOutputStream(): OutputStream =
+            if (blockOutputCloseUntilDestroy) {
+                object : ByteArrayOutputStream() {
+                    override fun close() {
+                        check(destroyed.await(3, TimeUnit.SECONDS)) {
+                            "Timed out waiting for process destruction before closing output pipe"
+                        }
+                        super.close()
+                    }
+                }
+            } else {
+                ByteArrayOutputStream()
+            }
 
         override fun getInputStream() = ByteArrayInputStream("response".toByteArray())
 
@@ -295,7 +513,11 @@ class AccessibilityHelperClientTest {
         }
 
         override fun destroy() {
-            if (exitOnDestroy) alive = false
+            destroyAttempts += 1
+            if (destroyAttempts == exitOnDestroyAttempt) {
+                alive = false
+                destroyed.countDown()
+            }
         }
 
         override fun destroyForcibly(): Process {

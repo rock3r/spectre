@@ -2,15 +2,22 @@ package dev.sebastiano.spectre.cli.daemon
 
 import dev.sebastiano.spectre.recording.locateAccessibilityHelper
 import java.nio.file.Path
+import java.util.Collections
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.locks.LockSupport
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonObject
 
 private const val ACCESSIBILITY_COMMAND = "accessibility-snapshot"
 private const val PROCESS_GRACE_MS = 250L
@@ -23,7 +30,17 @@ internal sealed interface Target {
     @SerialName("process-id")
     data class ProcessId(val value: Long) : Target {
         init {
-            require(value > 0) { "Process id must be positive" }
+            require(value > 0) { "process id must be positive" }
+        }
+    }
+
+    /** Exact title target; [processId] disambiguates an attached session's native window. */
+    @Serializable
+    @SerialName("window-title")
+    data class WindowTitle(val value: String, val processId: Long? = null) : Target {
+        init {
+            require(value.isNotBlank()) { "window title must not be blank" }
+            require(processId == null || processId > 0) { "process id must be positive" }
         }
     }
 
@@ -31,7 +48,7 @@ internal sealed interface Target {
     @SerialName("window-id")
     data class WindowId(val value: String) : Target {
         init {
-            require(value.isNotBlank()) { "Window id must not be blank" }
+            require(value.isNotBlank()) { "window id must not be blank" }
         }
     }
 }
@@ -42,6 +59,7 @@ internal data class AccessibilitySnapshotRequest(
     val maximumDepth: Int,
     val maximumNodeCount: Int,
     val timeoutMs: Long,
+    val allowAccessibilityEnable: Boolean = false,
 ) {
     init {
         require(maximumDepth > 0)
@@ -51,16 +69,16 @@ internal data class AccessibilitySnapshotRequest(
 }
 
 @Serializable
-internal enum class BoundsSpace {
+public enum class BoundsSpace {
     @SerialName("screen") Screen,
     @SerialName("window") Window,
 }
 
 @Serializable
-internal data class AccessibilityRect(val x: Int, val y: Int, val width: Int, val height: Int)
+public data class AccessibilityRect(val x: Int, val y: Int, val width: Int, val height: Int)
 
 @Serializable
-internal data class AccessibilityWindow(
+public data class AccessibilityWindow(
     val key: String,
     val title: String?,
     val bounds: AccessibilityRect,
@@ -68,7 +86,7 @@ internal data class AccessibilityWindow(
 )
 
 @Serializable
-internal data class AccessibilityNode(
+public data class AccessibilityNode(
     val key: String,
     val parentKey: String?,
     val id: String?,
@@ -82,7 +100,7 @@ internal data class AccessibilityNode(
 )
 
 @Serializable
-internal data class AccessibilitySnapshot(
+public data class AccessibilitySnapshot(
     val schemaVersion: Int,
     val source: String,
     val capturedAt: String,
@@ -92,10 +110,24 @@ internal data class AccessibilitySnapshot(
 )
 
 @Serializable
-internal data class AccessibilityError(
-    val code: String,
+public enum class AccessibilityErrorCode {
+    @SerialName("permission-missing") PermissionMissing,
+    @SerialName("accessibility-disabled") AccessibilityDisabled,
+    @SerialName("target-not-found") TargetNotFound,
+    @SerialName("no-accessibility-tree") NoAccessibilityTree,
+    @SerialName("limit-reached") LimitReached,
+    @SerialName("timeout") Timeout,
+    @SerialName("restore-failed") RestoreFailed,
+    @SerialName("unsupported-target") UnsupportedTarget,
+    @SerialName("unknown") Unknown,
+}
+
+@Serializable
+public data class AccessibilityError(
+    val code: AccessibilityErrorCode,
     val message: String,
     val partialSnapshot: AccessibilitySnapshot? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val rawCode: String? = null,
 )
 
 internal sealed interface AccessibilitySnapshotResponse {
@@ -105,10 +137,28 @@ internal sealed interface AccessibilitySnapshotResponse {
 }
 
 @Serializable
-private data class HelperEnvelope(
-    val ok: Boolean,
-    val snapshot: AccessibilitySnapshot? = null,
-    val error: AccessibilityError? = null,
+private data class SnapshotDto(
+    val schemaVersion: Int,
+    val source: String,
+    val capturedAt: String,
+    val windows: List<WindowDto>,
+    val nodes: List<AccessibilityNode>,
+    val notes: List<String> = emptyList(),
+)
+
+@Serializable
+private data class WindowDto(
+    val key: String,
+    val title: String?,
+    val bounds: AccessibilityRect,
+    val boundsSpace: String,
+)
+
+@Serializable
+private data class ErrorDto(
+    val code: String,
+    val message: String,
+    val partialSnapshot: SnapshotDto? = null,
 )
 
 internal fun interface AccessibilityHelperRunner {
@@ -117,6 +167,7 @@ internal fun interface AccessibilityHelperRunner {
 
 /** Runs the already-packaged platform helper and validates its one-request/one-response JSON. */
 internal class AccessibilityHelperClient(
+    private val helperExecutable: () -> Path = ::locateAccessibilityHelper,
     private val command: (Path) -> List<String> = { listOf(it.toString()) },
     private val runner: AccessibilityHelperRunner = AccessibilityHelperRunner(::runHelper),
 ) {
@@ -124,55 +175,126 @@ internal class AccessibilityHelperClient(
 
     fun snapshot(
         request: AccessibilitySnapshotRequest,
-        helperExecutable: Path = defaultHelperExecutable(),
+        helperExecutable: Path = this.helperExecutable(),
     ): AccessibilitySnapshotResponse {
         val input = json.encodeToString(AccessibilitySnapshotRequest.serializer(), request)
         val output =
             runner.run(command(helperExecutable) + ACCESSIBILITY_COMMAND, input, request.timeoutMs)
-        val envelope = json.decodeFromString(HelperEnvelope.serializer(), output)
-        require(
-            envelope.ok == (envelope.snapshot != null) && envelope.ok != (envelope.error != null)
-        ) {
+        val envelope = json.parseToJsonElement(output).jsonObject
+        val ok =
+            (envelope["ok"] as? JsonPrimitive)?.takeUnless(JsonPrimitive::isString)?.booleanOrNull
+        val snapshotElement = envelope["snapshot"]?.takeUnless { it is JsonNull }
+        val errorElement = envelope["error"]?.takeUnless { it is JsonNull }
+        require(ok != null && ok == (snapshotElement != null) && ok != (errorElement != null)) {
             "Helper response must contain exactly one coherent success or error payload"
         }
-        return if (envelope.ok) {
-            val snapshot = requireNotNull(envelope.snapshot)
-            validateSnapshot(snapshot)
+        return if (ok) {
+            val snapshot =
+                validateSnapshot(
+                    json
+                        .decodeFromJsonElement<SnapshotDto>(requireNotNull(snapshotElement))
+                        .toSnapshot()
+                )
             AccessibilitySnapshotResponse.Success(snapshot)
         } else {
-            val error = requireNotNull(envelope.error)
-            if (error.code == "limit-reached") {
-                validateSnapshot(
-                    requireNotNull(error.partialSnapshot) {
-                        "limit-reached response must contain a partial snapshot"
-                    }
-                )
-            } else {
-                error.partialSnapshot?.let(::validateSnapshot)
+            val dto = json.decodeFromJsonElement<ErrorDto>(requireNotNull(errorElement))
+            val code = knownErrorCode(dto.code)
+            val partial = dto.partialSnapshot?.let { validateSnapshot(it.toSnapshot()) }
+            require(
+                when (code) {
+                    AccessibilityErrorCode.LimitReached -> partial != null
+                    AccessibilityErrorCode.Timeout -> true
+                    else -> partial == null
+                }
+            ) {
+                "${dto.code} response has invalid partialSnapshot presence"
             }
+            val error =
+                AccessibilityError(
+                    code,
+                    dto.message,
+                    partial,
+                    rawCode = dto.code.takeIf { code == AccessibilityErrorCode.Unknown },
+                )
             AccessibilitySnapshotResponse.Failure(error)
         }
     }
 }
 
-private fun validateSnapshot(snapshot: AccessibilitySnapshot) {
+private fun SnapshotDto.toSnapshot(): AccessibilitySnapshot =
+    AccessibilitySnapshot(
+        schemaVersion,
+        source,
+        capturedAt,
+        windows.map { window ->
+            val boundsSpace =
+                when (window.boundsSpace) {
+                    "screen" -> BoundsSpace.Screen
+                    "window" -> BoundsSpace.Window
+                    else ->
+                        throw IllegalArgumentException(
+                            "Unknown boundsSpace '${window.boundsSpace}' for window '${window.key}'"
+                        )
+                }
+            AccessibilityWindow(window.key, window.title, window.bounds, boundsSpace)
+        },
+        nodes,
+        notes,
+    )
+
+private fun knownErrorCode(raw: String): AccessibilityErrorCode =
+    when (raw) {
+        "permission-missing" -> AccessibilityErrorCode.PermissionMissing
+        "accessibility-disabled" -> AccessibilityErrorCode.AccessibilityDisabled
+        "target-not-found" -> AccessibilityErrorCode.TargetNotFound
+        "no-accessibility-tree" -> AccessibilityErrorCode.NoAccessibilityTree
+        "limit-reached" -> AccessibilityErrorCode.LimitReached
+        "timeout" -> AccessibilityErrorCode.Timeout
+        "restore-failed" -> AccessibilityErrorCode.RestoreFailed
+        "unsupported-target" -> AccessibilityErrorCode.UnsupportedTarget
+        else -> AccessibilityErrorCode.Unknown
+    }
+
+private fun validateSnapshot(snapshot: AccessibilitySnapshot): AccessibilitySnapshot {
     require(snapshot.schemaVersion == 2) { "Unsupported schemaVersion ${snapshot.schemaVersion}" }
     require(snapshot.source == "os-accessibility") {
         "Invalid snapshot source '${snapshot.source}'"
     }
     val windowKeys = snapshot.windows.mapTo(mutableSetOf()) { it.key }
     require(windowKeys.size == snapshot.windows.size) { "Snapshot contains duplicate window keys" }
-    val nodeKeys = snapshot.nodes.mapTo(mutableSetOf()) { it.key }
-    require(nodeKeys.size == snapshot.nodes.size) { "Snapshot contains duplicate node keys" }
+    val nodeKeys = mutableSetOf<String>()
     snapshot.nodes.forEach { node ->
-        require(node.parentKey == null || node.parentKey in nodeKeys) {
-            "Node '${node.key}' refers to missing parent '${node.parentKey}'"
+        val window =
+            requireNotNull(
+                windowKeys.singleOrNull { node.key == it || node.key.startsWith("$it/") }
+            ) {
+                "Node '${node.key}' does not belong to a snapshot window"
+            }
+        require(node.key !in nodeKeys) { "Snapshot contains duplicate node key '${node.key}'" }
+        node.parentKey?.let { parent ->
+            require(parent in nodeKeys) {
+                "Node '${node.key}' refers to a parent '$parent' that does not precede it"
+            }
+            require(parent == window || parent.startsWith("$window/")) {
+                "Node '${node.key}' and parent '$parent' belong to different windows"
+            }
         }
-        require(windowKeys.any { node.key == it || node.key.startsWith("$it/") }) {
-            "Node '${node.key}' does not belong to a snapshot window"
-        }
+        nodeKeys.add(node.key)
     }
+    return snapshot.ownedCopy()
 }
+
+private fun AccessibilitySnapshot.ownedCopy() =
+    AccessibilitySnapshot(
+        schemaVersion,
+        source,
+        capturedAt,
+        Collections.unmodifiableList(windows.toList()),
+        Collections.unmodifiableList(
+            nodes.map { it.copy(states = Collections.unmodifiableList(it.states.toList())) }
+        ),
+        Collections.unmodifiableList(notes.toList()),
+    )
 
 private fun runHelper(argv: List<String>, stdin: String, timeoutMs: Long): String {
     val process = ProcessBuilder(argv).redirectError(ProcessBuilder.Redirect.INHERIT).start()
@@ -232,20 +354,29 @@ private fun cleanup(
     executor: java.util.concurrent.ExecutorService,
 ): CleanupResult {
     var interrupted = Thread.interrupted()
-    val cleanupDeadline = deadlineAfterMillis(PROCESS_GRACE_MS)
     val descendants = process.descendants().toList().asReversed()
-    descendants.forEach { it.destroyForcibly() }
-    // Start every owned process terminating before spending the shared grace period waiting. In
-    // particular, ProcessHandle's exit notification can precede Process.waitFor updating the
-    // Process object on Windows, so reap the parent through Process itself below.
-    process.destroyForcibly()
-    descendants.forEach { interrupted = waitForExit(it, cleanupDeadline) || interrupted }
-    interrupted = waitForExit(process, cleanupDeadline) || interrupted
+
+    var attemptsRemaining = 2
+    while (attemptsRemaining-- > 0) {
+        descendants.filter { it.isAlive }.forEach { it.destroyForcibly() }
+        if (process.isAlive) process.destroyForcibly()
+
+        // Signal the entire owned tree before an I/O worker can close a pipe. On Windows a pipe
+        // close may wait for a process which still holds the other end. Poll descendants before
+        // using Process.waitFor to refresh the parent Process state, then retry the bounded
+        // termination once if native teardown is delayed.
+        val terminationDeadline = deadlineAfterMillis(PROCESS_GRACE_MS)
+        descendants.forEach { interrupted = waitForExit(it, terminationDeadline) || interrupted }
+        interrupted = waitForExit(process, terminationDeadline) || interrupted
+        if (!process.isAlive && descendants.none { it.isAlive }) break
+    }
+
     input.cancel(true)
     output.cancel(true)
     executor.shutdownNow()
+    val executorDeadline = deadlineAfterMillis(PROCESS_GRACE_MS)
     try {
-        executor.awaitTermination(remainingMillis(cleanupDeadline), TimeUnit.MILLISECONDS)
+        executor.awaitTermination(remainingMillis(executorDeadline), TimeUnit.MILLISECONDS)
     } catch (cleanupInterrupted: InterruptedException) {
         interrupted = true
     }
@@ -294,5 +425,3 @@ private object DaemonThreadFactory : ThreadFactory {
     override fun newThread(task: Runnable): Thread =
         Thread(task, "spectre-accessibility-helper-io").apply { isDaemon = true }
 }
-
-private fun defaultHelperExecutable(): Path = locateAccessibilityHelper()

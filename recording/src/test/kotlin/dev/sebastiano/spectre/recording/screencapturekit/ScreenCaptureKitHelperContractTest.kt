@@ -4,6 +4,7 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
+import javax.imageio.ImageIO
 import kotlin.io.path.deleteIfExists
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -252,21 +253,36 @@ class ScreenCaptureKitHelperContractTest {
     }
 
     @Test
-    fun `helper exits 2 on region screenshot mode`() {
-        val exit =
-            runHelper(
-                listOf(
-                    "--mode",
-                    "screenshot",
-                    "--source",
-                    "region",
-                    "--region",
-                    "10,20,30,40",
-                    "--output",
-                    output.toString(),
+    fun `helper writes retina region screenshot on a real display`() {
+        assumeTrue(
+            System.getProperty("spectre.test.nativeMacCapture").toBoolean(),
+            "Real display capture requires an opt-in TCC-granted macOS host",
+        )
+        val screenshot = Files.createTempFile("spectre-helper-region-", ".png")
+        screenshot.deleteIfExists()
+        try {
+            val exit =
+                runHelper(
+                    listOf(
+                        "--mode",
+                        "screenshot",
+                        "--source",
+                        "region",
+                        "--region",
+                        "10,20,30,40",
+                        "--display-index",
+                        "0",
+                        "--output",
+                        screenshot.toString(),
+                    )
                 )
-            )
-        assertEquals(2, exit, "Region source is recording-only until Kotlin exposes screenshots")
+            assertEquals(0, exit, "Region screenshot must succeed on the opted-in real display")
+            val image = ImageIO.read(screenshot.toFile())
+            assertEquals(60, image.width, "30pt region must preserve Retina backing pixels")
+            assertEquals(80, image.height, "40pt region must preserve Retina backing pixels")
+        } finally {
+            screenshot.deleteIfExists()
+        }
     }
 
     @Test

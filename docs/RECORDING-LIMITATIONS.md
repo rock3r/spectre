@@ -88,31 +88,32 @@ Headless runners without a seated GNOME session do not expose
 Unit tests check token persistence, reuse, and removal without a live portal.
 First consent still needs a real compositor seat and a person to accept the dialog.
 
-## Linux Wayland: one approval, up front
+## Linux Wayland: consent and helper lifetime
 
-On Linux Wayland, a person must accept the portal consent dialog **once**:
-`spectre permissions request` (or `WaylandPortalAccess.request()`) opens it, stores the
-grant, and leaves the session helper running. `spectre permissions check` reports the grant
-without a dialog. After that, no Spectre run opens a dialog, as long as the stored token
-stays valid. What can still require a new approval:
+On Linux Wayland, a person must accept the portal consent dialog before Spectre can use
+monitor capture or remote input. `spectre permissions request` (or
+`WaylandPortalAccess.request()`) opens it and leaves the session helper running;
+`spectre permissions check --json` reports `granted`, `sessionActive`, and `tokenStored`
+without opening a dialog. Calls reuse the live helper without another picker. Reuse after that
+helper stops depends on whether the portal returned a stored restore token. What can require a
+new approval:
 
 - The user revokes the grant, or deletes the token file.
 - The monitor changes identity. The token names the monitor by vendor, product, and serial,
   and Mutter gives every new virtual monitor a new serial.
 - The grant covers one monitor. A region on another monitor cannot be captured with it.
-- A desktop other than GNOME may not restore RemoteDesktop grants without a dialog.
+- The portal returns no restore token, or rejects a previously stored token when a new helper
+  starts. Restore support is compositor- and portal-version-dependent.
 
-What never needs another dialog on GNOME: window stills, `waitForVisualIdle()` samples, and
-window recording. They use GNOME Mutter's own `org.gnome.Mutter.ScreenCast` window streams
-through the session helper, which need no consent. The portal's window source cannot do
-this: GNOME stores a window grant as the window's app id and title, and gives a Java window
-without a matching `.desktop` file a new `window:<n>` app id, so every new window would show
-a new window picker. Spectre's `spectre-window-identity@sebastiano.dev` GNOME Shell extension
-maps the requesting JVM's PID and exact Xwayland XID to Mutter's internal id. The helper passes
-that id to `RecordWindow`; keyboard focus is neither read nor changed. The extension rejects a
-PID that is not an ancestor of its D-Bus caller and rejects zero or multiple matches, so a wrong
-window is never accepted. A missing extension, translucent first frame, identity mismatch, or a
-desktop other than GNOME fails with an error. Spectre never substitutes a monitor crop.
+On GNOME, window stills, `waitForVisualIdle()` samples, and window recording use Mutter's
+`org.gnome.Mutter.ScreenCast` window streams through the session helper. Starting the helper
+requires the RemoteDesktop grant, but binding a window needs no separate window-picker grant.
+The `spectre-window-identity@sebastiano.dev` GNOME Shell extension authorizes only the
+requester's own PID and exact Xwayland XID, then returns a short-lived, one-use token. The
+UID/PID-authenticated session connection redeems that token for Mutter's internal window ID and
+passes the ID as the actual `uint64` argument to `RecordWindow`; keyboard focus is neither read
+nor changed. An absent or invalid token, an absent or ambiguous identity, a missing extension,
+or a desktop other than GNOME produces a capture error. Spectre never substitutes a monitor crop.
 GNOME shows its screen-sharing indicator in the top bar while window streams run. Each bound
 stream lives until its window closes or the session helper's client disconnects.
 
@@ -125,10 +126,12 @@ Settings:
 - `SPECTRE_WAYLAND_CONSENT_TIMEOUT_SECS` sets how long the session helper waits for each
   dialog step (default 60). `spectre permissions request --timeout` sets it for the request.
 
-`spectre-wayland-helper --session` installs `dev.sebastiano.spectre.desktop` and calls
-`org.freedesktop.host.portal.Registry.Register` **before** `SelectDevices` and
-`SelectSources`. It opens **one** RemoteDesktop session for keyboard, pointer, and
-monitor access with `persist_mode=2`. Spectre stores replacement `restore_token` files under
+`spectre-wayland-helper --session` installs `dev.sebastiano.spectre.desktop`. When the
+portal exposes `org.freedesktop.host.portal.Registry`, the helper registers that application
+before `SelectDevices` and `SelectSources`; older backends that do not expose the interface
+continue without registration. It opens **one** RemoteDesktop session for keyboard, pointer,
+and monitor access with `persist_mode=2`. When the portal returns a `restore_token`, Spectre
+stores it under
 `$XDG_STATE_HOME/spectre/` with file mode `0600` and directory mode `0700`.
 Use `SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` or `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` to change the
 location. Spectre does not store these tokens under `~/.java/robot/`.
@@ -161,10 +164,11 @@ Parallel JVMs connect to its socket, sharing one Robot portal session.
 - **Coordinates**: pointer motion is translated by the granted stream origin. Fractional
   HiDPI and a monitor other than the restored one can still miss; pick the same screen at
   first consent.
-- **Later CLI and agent sessions:** The helper restores the RemoteDesktop grant
-  without another dialog. This behaviour was validated on GNOME/mutter; other
-  compositors remain best-effort. Portal tokens are single-use. Each successful
-  `Start` writes a replacement file. A cancelled dialog stores no token.
+- **Later CLI and agent sessions:** While the helper is live, clients reuse its active
+  RemoteDesktop session without another dialog. After a helper restart, dialog-free restoration
+  is available only when `tokenStored` is true and the portal accepts the token. Portal tokens
+  are single-use; each successful restored `Start` writes the replacement returned by the
+  portal. A cancelled dialog, or a successful grant with no returned token, stores no token.
 - **Invalidation**: if SelectDevices/SelectSources/Start rejects the token, Spectre clears
   the file, retries interactively once, and fails closed if that retry fails.
 
@@ -239,7 +243,8 @@ X11, macOS, and Windows keep their input and capture paths.
   file descriptor to the encoder. Its source is in `recording/native/linux/`.
   `WaylandPortalRecorder` selects a monitor through `SourceType.MONITOR` and crops to
   the requested rectangle. `AutoRecorder` records a window through a GNOME Mutter window
-  stream.
+  stream. The explicit `WaylandPortalWindowRecorder` fails before requesting a portal grant:
+  the picker exposes no verifiable window identity.
   `LinuxNativeScreenshotter` uses the same helper for a one-frame PNG.
   The JVM exchanges newline-delimited JSON with the helper over standard streams.
   **Approve once with `spectre permissions request`.** Later calls reuse the portal grant
@@ -247,8 +252,6 @@ X11, macOS, and Windows keep their input and capture paths.
   The helper exists because dbus-java could not decode the Unix file descriptor.
   Rust can pass it to `gst-launch-1.0`; JVM `ProcessBuilder` does not expose the
   required `fcntl(F_SETFD, ...)` control. macOS also uses a separate capture helper.
-
-  The portal picker exposes no verifiable window identity. Explicit portal window requests fail before a grant or restore token is used.
 
   Region stills taken by `LinuxNativeScreenshotter.captureRegion()` and the shared Wayland
   session use that session's compositor-provided `Embedded` cursor stream. Consequently, these
@@ -268,37 +271,39 @@ X11, macOS, and Windows keep their input and capture paths.
   old helper while other clients may still hold its grant. Older portals may show a new Share
   picker because the replacement helper needs a new grant.
 
-  **`WaylandPortalWindowRecorder` needs `xprop` on `PATH` and GTK/Mutter frame extents.**
-  Mutter includes invisible shadows in window streams, often 25 px per side for
-  GNOME GTK client-side decoration. `Frame.getBounds()` covers only the inner window.
-  `WaylandPortalWindowRecorder` queries `_GTK_FRAME_EXTENTS(CARDINAL)` through `xprop`
-  on the JFrame's XWayland window. It uses that value to place the stream-relative crop.
-  Without the extents, the crop can clip the title bar close button.
-  Debian and Ubuntu provide `xprop` in `x11-utils`. Minimal images may need that package.
-  The recorder throws `IllegalStateException` when `xprop` is missing, the title is blank,
-  or the window manager does not publish `_GTK_FRAME_EXTENTS`.
-  Older Mutter, non-GTK decoration, and KDE Plasma may lack the property.
-  Use `AutoRecorder.startRegion(...)` or `WaylandPortalRecorder` for explicit region capture.
-  Installing `xprop` cannot make Qt, JavaFX, Electron, SDL, KDE, or wlroots windows
-  publish the GTK property.
-
   **HiDPI / mixed AWT and portal coordinates.** On fractional-scale Wayland, AWT/XWayland
   often reports a larger virtual desktop than the ScreenCast stream. For example,
   AWT may report 2560×1440 while the portal supplies 1536×864. Region capture
   sends the AWT display bounds that contain the requested rectangle. When their
-  aspect ratios match, Spectre converts the rectangle into stream pixels and
-  clamps overflow. A region outside the granted stream still fails.
+  aspect ratios match, Spectre converts the rectangle into stream pixels. The requested region
+  must remain wholly inside that exact stream geometry; Spectre does not clamp overflow.
 
   Wayland region stills use the same portal grant as video, and window stills use Mutter
   window streams. In unattended SSH/headless runs without a grant, a capture fails with an
   error that names `spectre permissions request`. It never returns a silent blank PNG.
 
-  The smoke runner validated real-pixel MP4 capture on Ubuntu 22.04/GNOME 42,
-  Ubuntu 24.04/GNOME 46, and Ubuntu 26.04/GNOME 50 with Mutter.
-  Runs on 2026-05-02 and 2026-05-03 checked the 24.04 and 26.04 paths.
-  The 24.04 run confirmed that `cursor_mode=Embedded` includes the system pointer when
-  `RecordingOptions.captureCursor=true`. The 26.04 run confirmed window-sized output,
-  visible window decorations, and isolation from other apps.
+  Public native-desktop evidence covers both supported Ubuntu GNOME baselines:
+
+  - **Ubuntu 22.04, GNOME Shell 42.9:** the public portal advertised RemoteDesktop v1 and
+    ScreenCast v4, while the GNOME RemoteDesktop backend advertised v0. The packaged public
+    `permissions request` and `permissions check --json` path reported `granted: true` and
+    `sessionActive: true`, but `tokenStored: false`. Static and changing Mutter window captures
+    decoded successfully, and the live helper reused consent without a second picker. After the
+    helper was deliberately stopped, its old socket had no listener; the next permissions
+    request displayed a second genuine picker, which was accepted to create a new helper, still
+    without a token. See the [live-session and capture run](https://github.com/rock3r/spectre/actions/runs/45749559957/job/139673792065)
+    and [helper-restart run](https://github.com/rock3r/spectre/actions/runs/45749559957/job/139673792412).
+  - **Ubuntu 24.04, GNOME 46:** the packaged CLI reported `granted: true`,
+    `sessionActive: true`, and `tokenStored: true`; a screenshot and recording reused the live
+    helper without a second picker. That run did not restart the Noble helper, so it does not by
+    itself prove post-restart restoration. See the [Noble packaged-CLI run](https://github.com/rock3r/spectre/actions/runs/45746386387/job/139663371101).
+
+  Separate native Mutter streams also captured two application windows independently while
+  focus remained elsewhere, including when both windows had the same title. This validates the
+  local, owner-scoped Mutter identity path on these GNOME configurations; it does not establish
+  equivalent behaviour for every Wayland compositor or for the explicit portal window path.
+  The native `pipewiresrc` `keepalive-time` property, expressed in milliseconds, maintains
+  cadence when a target's contents do not change.
   Routine validation does not cover KDE Plasma, sway, wlroots, other distributions,
   or other Ubuntu versions.
   Use `WaylandPortalRecorder` for region capture until a compositor-specific lookup exists.
@@ -381,7 +386,8 @@ Popups and movement follow the monitor-region limits described above.
 - Still capture follows the same rule, so a `spectre capture` PNG and a recording of the same
   window come out at the same resolution. See
   [Atomic capture — Pixel scale](guide/capture.md#pixel-scale).
-- `Rectangle` coordinates passed to `start(...)` are in screen pixels. Prefer
+- `Rectangle` coordinates passed to `start(...)` are logical AWT screen units (points on macOS),
+  while the encoded dimensions are backing pixels. Prefer
   `AutomatorNode.boundsOnScreen`; it already divides by the display scale and adds the Compose
   surface's screen origin. `boundsInWindow` is already in Compose / device pixels (density-scaled)
   and window-relative; manual conversion requires division by the display scale **and** addition
@@ -407,18 +413,18 @@ Popups and movement follow the monitor-region limits described above.
 
 ## JUnit failure-video policy (#206)
 
-`ComposeAutomatorExtension` / `ComposeAutomatorRule` can record the whole test and keep or
+`ComposeAutomatorExtension` / `ComposeAutomatorRule` can record video during a test and keep or
 delete the file at the end (`FailureVideoPolicy`: `Off` | `OnFailureKeep` | `Always`). See
 [JUnit integration — Failure video](guide/junit.md#failure-video).
 
 Recording overhead:
 
-- **Per-OS cost** — the same backends as `AutoRecorder` run for the full test duration
+- **Per-OS cost** — the same backends as `AutoRecorder` run while the recorder is active
   (ScreenCaptureKit helper on macOS, Windows Graphics Capture helper on Windows, GStreamer
   X11 / Wayland portal on Linux). CPU, encoder, and helper-process cost scale with test
   length and resolution; capability and permission limits on this page still apply.
-- **Disk under `OnFailureKeep`** — the video file is written during **every** invocation
-  (including green tests) and only deleted after stop+finalise on pass. Parallel suites and
+- **Disk under `OnFailureKeep`** — a passing test also writes a video file. The wrapper deletes it after
+  the recorder stops and finalises. Parallel suites and
   long-running tests can therefore spike disk use during the run even when nothing remains
   after a green suite.
 - **Stop before delete** — Spectre always stops the recorder and finalises the file before
@@ -443,7 +449,6 @@ Recording overhead:
 - An embedded panel can use host-window capture with a fixed crop on macOS and
   Windows when its `Frame` or `JFrame` has a usable handle. On Linux, or without
   a suitable host window, use explicit region capture.
-
 
 ## Window identity and ambiguity
 

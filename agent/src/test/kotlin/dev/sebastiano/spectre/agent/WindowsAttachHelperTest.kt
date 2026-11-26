@@ -6,8 +6,12 @@ import dev.sebastiano.spectre.agent.launch.LaunchAgentBootstrapException
 import dev.sebastiano.spectre.agent.launch.LaunchReadiness
 import dev.sebastiano.spectre.agent.launch.LaunchStage
 import dev.sebastiano.spectre.agent.launch.ProcessExitedBeforeAttachException
+import java.io.InputStream
+import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardWatchEventKinds.ENTRY_CREATE
+import java.nio.file.WatchService
 import java.util.Base64
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
@@ -79,6 +83,8 @@ class WindowsAttachHelperTest {
 
     @Test
     fun `diagnostics and launch classification work without jdk attach module`() {
+        val stdoutPath = directory.resolve("limited-module.out")
+        val stderrPath = directory.resolve("limited-module.err")
         val process =
             ProcessBuilder(
                     Path.of(System.getProperty("java.home"), "bin", "java").toString(),
@@ -88,24 +94,45 @@ class WindowsAttachHelperTest {
                     System.getProperty("java.class.path"),
                     WindowsAttachWithoutModuleFixture::class.java.name,
                 )
+                .redirectOutput(stdoutPath.toFile())
+                .redirectError(stderrPath.toFile())
                 .start()
 
-        assertTrue(process.waitFor(10, TimeUnit.SECONDS), "limited-module child did not terminate")
-        val stdout = process.inputStream.bufferedReader().readText()
-        val stderr = process.errorStream.bufferedReader().readText()
-        assertEquals(0, process.exitValue(), "stdout=$stdout\nstderr=$stderr")
-        assertEquals("attach-without-module-ok", stdout.trim())
+        try {
+            assertTrue(
+                process.waitFor(FIXTURE_STARTUP_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                "limited-module child did not terminate\n${limitedModuleOutput(stdoutPath, stderrPath)}",
+            )
+            val stdout = Files.readString(stdoutPath)
+            val output = limitedModuleOutput(stdoutPath, stderrPath)
+            assertEquals(0, process.exitValue(), output)
+            assertEquals("attach-without-module-ok", stdout.trim(), output)
+        } finally {
+            if (process.isAlive) process.destroyForcibly()
+            assertTrue(
+                process.waitFor(FIXTURE_CLEANUP_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                "limited-module child did not stop during cleanup\n" +
+                    limitedModuleOutput(stdoutPath, stderrPath),
+            )
+        }
     }
 
     @Test
     fun `typed diagnostic preserves remaining deadline for real process exit and output`() {
         val stdout = directory.resolve("typed-exit.out")
         val stderr = directory.resolve("typed-exit.err")
+        val ready = directory.resolve("typed-exit.ready")
+        val readyEvents = directory.fileSystem.newWatchService()
+        directory.register(readyEvents, ENTRY_CREATE)
         val process =
-            ProcessBuilder(childCommand())
+            ProcessBuilder(childCommand(ready))
                 .redirectOutput(stdout.toFile())
                 .redirectError(stderr.toFile())
                 .start()
+        val monitoredProcess =
+            ReleaseOnTimedWaitProcess(process) {
+                process.outputStream.use { it.write(EXIT_RELEASE) }
+            }
         val failure =
             requireNotNull(
                 WindowsAttachHelper.failure(
@@ -114,10 +141,24 @@ class WindowsAttachHelperTest {
             )
 
         try {
+            awaitReady(ready, readyEvents)
+            assertFailsWith<LaunchAgentBootstrapException> {
+                LaunchReadiness.bootstrapFailureOrProcessExit(
+                    process = monitoredProcess,
+                    gradleish = false,
+                    attachedPid = process.pid(),
+                    stdoutPath = stdout,
+                    stderrPath = stderr,
+                    cause = failure,
+                    graceMs = 0,
+                )
+            }
+            assertTrue(process.isAlive, "zero grace must not release the child")
+
             val ex =
                 assertFailsWith<ProcessExitedBeforeAttachException> {
                     LaunchReadiness.bootstrapFailureOrProcessExit(
-                        process = process,
+                        process = monitoredProcess,
                         gradleish = false,
                         attachedPid = process.pid(),
                         stdoutPath = stdout,
@@ -136,6 +177,7 @@ class WindowsAttachHelperTest {
                 process.destroyForcibly()
                 assertTrue(process.waitFor(10, TimeUnit.SECONDS), "child JVM did not terminate")
             }
+            readyEvents.close()
         }
     }
 
@@ -156,19 +198,44 @@ class WindowsAttachHelperTest {
         }
     }
 
-    private fun childCommand() =
+    private fun childCommand(ready: Path) =
         listOf(
             Path.of(System.getProperty("java.home"), "bin", "java").toString(),
             "-cp",
             System.getProperty("java.class.path"),
             WindowsAttachHelperExitFixture::class.java.name,
+            ready.toString(),
         )
+
+    private fun awaitReady(ready: Path, events: WatchService) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (!Files.exists(ready)) {
+            val remaining = deadline - System.nanoTime()
+            assertTrue(remaining > 0, "child JVM did not become ready")
+            val key = events.poll(remaining, TimeUnit.NANOSECONDS)
+            assertNotNull(key, "child JVM did not become ready")
+            key.pollEvents()
+            assertTrue(key.reset(), "child JVM ready watch became invalid")
+        }
+    }
 
     private fun response(type: String, detail: String): String =
         listOf("ERROR", encode("attach failed"), encode(type), encode(detail)).joinToString("\t")
 
     private fun encode(value: String): String =
         Base64.getUrlEncoder().withoutPadding().encodeToString(value.toByteArray())
+
+    private fun limitedModuleOutput(stdout: Path, stderr: Path): String =
+        "stdout=${readOutput(stdout)}\nstderr=${readOutput(stderr)}"
+
+    private fun readOutput(path: Path): String =
+        if (Files.exists(path)) Files.readString(path) else "<unavailable>"
+
+    private companion object {
+        const val EXIT_RELEASE: Int = 1
+        const val FIXTURE_STARTUP_TIMEOUT_SECONDS: Long = 90
+        const val FIXTURE_CLEANUP_TIMEOUT_SECONDS: Long = 10
+    }
 }
 
 object WindowsAttachHelperExitFixture {
@@ -178,7 +245,8 @@ object WindowsAttachHelperExitFixture {
         System.out.flush()
         System.err.print("exit-detail")
         System.err.flush()
-        Thread.sleep(200)
+        Files.createFile(Path.of(args.single()))
+        check(System.`in`.read() >= 0) { "parent closed stdin before exit release" }
         kotlin.system.exitProcess(17)
     }
 }
@@ -250,6 +318,42 @@ object WindowsAttachWithoutModuleFixture {
 private class AttachNotSupportedException : RuntimeException()
 
 private class AgentLoadException(message: String) : RuntimeException(message)
+
+private class ReleaseOnTimedWaitProcess(
+    private val delegate: Process,
+    private val release: () -> Unit,
+) : Process() {
+    private var released = false
+
+    override fun getOutputStream(): OutputStream = delegate.outputStream
+
+    override fun getInputStream(): InputStream = delegate.inputStream
+
+    override fun getErrorStream(): InputStream = delegate.errorStream
+
+    override fun waitFor(): Int {
+        releaseOnce()
+        return delegate.waitFor()
+    }
+
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
+        if (timeout > 0) releaseOnce()
+        return delegate.waitFor(timeout, unit)
+    }
+
+    override fun exitValue() = delegate.exitValue()
+
+    override fun destroy() = delegate.destroy()
+
+    override fun isAlive() = delegate.isAlive
+
+    private fun releaseOnce() {
+        if (!released) {
+            released = true
+            release()
+        }
+    }
+}
 
 private object UnusedProcess : Process() {
     override fun getOutputStream() = error("unused")

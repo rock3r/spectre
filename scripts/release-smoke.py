@@ -15,10 +15,18 @@ See docs/RELEASE-SMOKE.md and scripts/smoke_lib.py for scenario IDs.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import json
 import os
 import platform
+import queue
+import re
+import shutil
+import signal
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -36,6 +44,7 @@ from smoke_lib import (  # noqa: E402
     HEADED_ROBOT_TESTCASE,
     MACOS_TCC_BLOCKED_REASON,
     REQUIRED_SCENARIO_IDS,
+    A11Y_ACCESSKIT_SCENARIO_IDS,
     RESULT_FAIL,
     RESULT_PASS,
     ScenarioResult,
@@ -43,7 +52,8 @@ from smoke_lib import (  # noqa: E402
     apply_linux_seat_env,
     apply_linux_toolchain_path,
     assert_junit_testcases_passed,
-    assert_linux_portal_tokens_captured,
+    assert_accessibility_snapshot,
+    assert_accessibility_limit_result,
     assert_mcp_fixture_e2e_executed,
     assert_pointer_move_live_executed,
     input_coordination_missing_surface,
@@ -67,6 +77,7 @@ from smoke_lib import (  # noqa: E402
     portal_token_warmup_skip_reason,
     portal_warmup_failure_hint,
     portal_warmup_operator_banner,
+    remote_desktop_portal_version,
     virtual_monitor_warmup_hint,
     wayland_x11_fallback_failure,
     prepare_linux_portal_token_env,
@@ -82,6 +93,8 @@ from smoke_lib import (  # noqa: E402
     scenario_result,
     utc_now_iso,
     validate_report,
+    verify_linux_portal_warmup,
+    wayland_portal_preflight_command,
     wayland_portal_warmup_command,
     write_json_report,
     write_markdown_report,
@@ -90,10 +103,466 @@ from smoke_lib import (  # noqa: E402
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+LINUX_ACCESSIBILITY_ENABLE_NOTE = (
+    "enabled Linux accessibility for this snapshot; restored the previous setting afterwards"
+)
 OUT = ROOT / "build" / "smoke"
 
 # Default overall budget for a full baseline (seconds). Overridable via CLI.
 DEFAULT_OVERALL_TIMEOUT = 7200
+
+# Stable IDs are spelled out here as well as in smoke_lib so wiring checks catch accidental
+# removal from this entrypoint: a11y-accesskit-macos, a11y-accesskit-windows,
+# a11y-accesskit-linux.
+
+
+def _accesskit_fixture_pid(ready_line: str) -> int:
+    match = re.fullmatch(
+        r"SPECTRE_ACCESSKIT_FIXTURE_READY(?:\s+.*)?\s+pid=([1-9]\d*)\s*",
+        ready_line,
+    )
+    if match is None:
+        raise ValueError(
+            f"fixture readiness did not report a valid positive pid: {ready_line!r}"
+        )
+    return int(match.group(1))
+
+
+def _assert_accessibility_cli_refusal(
+    completed: subprocess.CompletedProcess[str],
+) -> None:
+    if completed.returncode != 5:
+        raise AssertionError(
+            f"default packaged CLI refusal must exit 5, got {completed.returncode}"
+        )
+    if completed.stdout != "":
+        raise AssertionError("default packaged CLI refusal must leave stdout empty")
+    if re.fullmatch(
+        r"Spectre daemon error: AccessibilityDisabled: [^\r\n]+"
+        r"(?:\r?\nHint: [^\r\n]+)?\r?\n?",
+        completed.stderr,
+    ) is None:
+        raise AssertionError(
+            f"unexpected default packaged CLI refusal stderr: {completed.stderr!r}"
+        )
+
+
+@contextlib.contextmanager
+def _private_daemon_environment():
+    parent = "/tmp" if os.name == "posix" else None
+    directory = Path(tempfile.mkdtemp(prefix="sp-a11y-", dir=parent))
+    if os.name == "posix":
+        directory.chmod(0o700)
+    try:
+        yield {"SPECTRE_DAEMON_SOCKET_DIR": str(directory)}
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def _read_process_line(process: subprocess.Popen[str], *, timeout: float) -> str:
+    assert process.stdout is not None
+    result: queue.Queue[str | BaseException] = queue.Queue(maxsize=1)
+
+    def read() -> None:
+        try:
+            result.put(process.stdout.readline())
+        except BaseException as error:
+            result.put(error)
+
+    threading.Thread(target=read, daemon=True).start()
+    try:
+        value = result.get(timeout=timeout)
+    except queue.Empty as error:
+        raise TimeoutError(
+            "process did not emit a complete line before the deadline"
+        ) from error
+    if isinstance(value, BaseException):
+        raise value
+    return value
+
+
+def _wait_for_accesskit_ready(
+    process: subprocess.Popen[str], *, timeout: float = 30
+) -> str:
+    deadline = time.monotonic() + timeout
+    last_line = ""
+    while (remaining := deadline - time.monotonic()) > 0:
+        line = _read_process_line(process, timeout=remaining)
+        if not line:
+            raise RuntimeError(f"AccessKit fixture exited before ready: {last_line}")
+        last_line = line.strip()
+        if last_line.startswith("SPECTRE_ACCESSKIT_FIXTURE_READY"):
+            return last_line
+        if process.poll() is not None:
+            raise RuntimeError(f"AccessKit fixture exited before ready: {last_line}")
+    raise TimeoutError("AccessKit fixture did not report ready within 30s")
+
+
+def _process_group_has_live_members(group: int) -> bool:
+    """Return whether an owned process group contains anything except zombies."""
+    proc = Path("/proc")
+    if platform.system() != "Linux" or not proc.is_dir():
+        try:
+            os.killpg(group, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError as error:
+            if platform.system() != "Darwin":
+                raise
+            states = _darwin_process_group_states(group)
+            if states and all(state == "Z" for state in states):
+                return False
+            if not states:
+                # The group can disappear between Darwin's authority check and ps.
+                # Recheck once: only ESRCH proves that the empty snapshot was a race.
+                try:
+                    os.killpg(group, 0)
+                except ProcessLookupError:
+                    return False
+                except PermissionError:
+                    raise error
+                return True
+            raise error
+        if platform.system() != "Darwin":
+            return True
+        states = _darwin_process_group_states(group)
+        return not states or any(state != "Z" for state in states)
+    for stat_path in proc.glob("[0-9]*/stat"):
+        try:
+            stat = stat_path.read_text()
+            comm_end = stat.rfind(")")
+            fields = stat[comm_end + 2 :].split()
+            if int(fields[2]) == group and fields[0] != "Z":
+                return True
+        except (FileNotFoundError, IndexError, PermissionError, ValueError):
+            continue
+    return False
+
+
+def _darwin_process_group_states(group: int) -> list[str]:
+    """Read status only; signalling authority still comes solely from the owned PGID."""
+    completed = subprocess.run(
+        ["ps", "-axo", "pgid=,stat="],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    states = []
+    for line in completed.stdout.splitlines():
+        fields = line.split()
+        if len(fields) >= 2:
+            try:
+                process_group = int(fields[0])
+            except ValueError:
+                continue
+            if process_group == group:
+                states.append(fields[1][0])
+    return states
+
+
+def _wait_for_owned_process_group(
+    process: subprocess.Popen[str], group: int, *, timeout: float
+) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        # poll() is intentional: an unreaped group leader makes Darwin report EPERM
+        # for group existence checks until its parent collects the zombie.
+        process.poll()
+        if not _process_group_has_live_members(group):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.01, remaining))
+
+
+def _terminate_owned_process(process: subprocess.Popen[str]) -> None:
+    """Terminate the narrowly owned process group, even after its leader exits."""
+    primary_exception_active = sys.exc_info()[0] is not None
+    cleanup_error: BaseException | None = None
+    try:
+        if os.name == "posix":
+            group = process.pid
+            try:
+                os.killpg(group, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                if _process_group_has_live_members(group):
+                    raise
+            if not _wait_for_owned_process_group(process, group, timeout=0.5):
+                try:
+                    os.killpg(group, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    if _process_group_has_live_members(group):
+                        raise
+                if not _wait_for_owned_process_group(process, group, timeout=5):
+                    raise TimeoutError(
+                        f"owned process group {group} survived SIGKILL"
+                    )
+        elif process.poll() is None:
+            process.terminate()
+    except BaseException as error:
+        cleanup_error = error
+    try:
+        process.wait(timeout=0.5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            process.wait(timeout=5)
+        except BaseException as error:
+            if cleanup_error is None:
+                cleanup_error = error
+    except BaseException as error:
+        if cleanup_error is None:
+            cleanup_error = error
+    finally:
+        if process.stdout is not None:
+            try:
+                process.stdout.close()
+            except BaseException as error:
+                if cleanup_error is None:
+                    cleanup_error = error
+    if cleanup_error is not None and not primary_exception_active:
+        raise cleanup_error
+
+
+@contextlib.contextmanager
+def _private_linux_dbus(required: bool):
+    if not required:
+        yield {}
+        return
+    daemon_environment = os.environ.copy()
+    daemon_environment.pop("AT_SPI_BUS_ADDRESS", None)
+    daemon_environment["GSETTINGS_BACKEND"] = "memory"
+    parent = "/tmp" if os.name == "posix" else None
+    with tempfile.TemporaryDirectory(dir=parent, prefix="sp-bus-") as socket_directory:
+        socket_path = Path(socket_directory) / "bus"
+        process = subprocess.Popen(
+            [
+                "dbus-daemon",
+                "--session",
+                "--nofork",
+                "--print-address=1",
+                f"--address=unix:path={socket_path}",
+            ],
+            cwd=ROOT,
+            env=daemon_environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            address = _read_process_line(process, timeout=10).strip()
+            if not address:
+                raise RuntimeError("private D-Bus daemon emitted no session address")
+            yield {
+                "DBUS_SESSION_BUS_ADDRESS": address,
+                "GSETTINGS_BACKEND": "memory",
+            }
+        finally:
+            _terminate_owned_process(process)
+
+
+def _linux_accessibility_enabled(env: dict[str, str]) -> bool:
+    completed = subprocess.run(
+        ["gdbus", "call", "--session", "--dest", "org.a11y.Bus", "--object-path", "/org/a11y/bus", "--method", "org.freedesktop.DBus.Properties.Get", "org.a11y.Status", "IsEnabled"],
+        cwd=ROOT, env=env, check=True, capture_output=True, text=True, timeout=30,
+    )
+    match = re.search(r"\b(true|false)\b", completed.stdout, re.IGNORECASE)
+    if match is None:
+        raise RuntimeError(
+            f"could not parse org.a11y.Status.IsEnabled: {completed.stdout!r}"
+        )
+    return match.group(1).lower() == "true"
+
+
+def _assert_linux_accessibility_disabled(env: dict[str, str], operation: str) -> None:
+    if _linux_accessibility_enabled(env):
+        raise AssertionError(
+            f"{operation} did not restore org.a11y.Status.IsEnabled=false"
+        )
+
+
+def _accesskit_success_detail(system: str) -> str:
+    platform_detail = (
+        "Linux default refusal, public CLI/MCP opt-in notes, immediate D-Bus restoration, "
+        if system == "Linux"
+        else ""
+    )
+    return (
+        "real packaged CLI read fixture by pid and title; "
+        f"{platform_detail}stable native roles, values, ownership, and schemaVersion=2 verified"
+    )
+
+
+def _accesskit_cli_smoke(executable: Path, expected_version: str) -> str:
+    system = platform.system()
+    manifest = ROOT / "fixtures/accesskit/Cargo.toml"
+    if not manifest.is_file():
+        raise RuntimeError(f"AccessKit fixture manifest missing: {manifest}")
+    subprocess.run(
+        ["cargo", "build", "--locked", "--manifest-path", str(manifest)],
+        cwd=ROOT,
+        check=True,
+        timeout=600,
+    )
+    fixture = manifest.parent / "target/debug/spectre-accesskit-fixture"
+    prefix = xvfb_prefix(system)
+    with _private_daemon_environment() as daemon_environment:
+        # Never borrow the operator's accessibility bus. In particular, an opt-in
+        # smoke must not disable a desktop which was already enabled by its user.
+        with _private_linux_dbus(system == "Linux") as bus_environment:
+            environment = {**os.environ, **daemon_environment, **bus_environment}
+            if system == "Linux":
+                # Keep the real display/runtime seat, but isolate both the a11y bus
+                # address and GSettings state from the operator's desktop session.
+                environment.pop("AT_SPI_BUS_ADDRESS", None)
+                environment["GSETTINGS_BACKEND"] = "memory"
+            process = subprocess.Popen(
+                [*prefix, str(fixture)],
+                cwd=ROOT,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                start_new_session=os.name == "posix",
+            )
+            try:
+                ready = _wait_for_accesskit_ready(process)
+                fixture_pid = _accesskit_fixture_pid(ready)
+
+                def invoke(*arguments: str) -> subprocess.CompletedProcess[str]:
+                    completed = subprocess.run(
+                        [str(executable), "a11y", "tree", *arguments, "--timeout-ms", "5000"],
+                        cwd=ROOT,
+                        env=environment,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    if system == "Linux":
+                        _assert_linux_accessibility_disabled(environment, "packaged CLI")
+                    return completed
+
+                def read(*target: str) -> dict:
+                    completed = invoke(*target)
+                    if completed.returncode != 0:
+                        raise RuntimeError(
+                            "packaged accessibility CLI exited "
+                            f"{completed.returncode}: {completed.stderr.strip()}"
+                        )
+                    json_start = completed.stdout.find("{")
+                    if json_start < 0:
+                        raise AssertionError(
+                            f"CLI emitted no JSON snapshot: {completed.stdout!r}"
+                        )
+                    snapshot = json.loads(completed.stdout[json_start:])
+                    if system == "Linux":
+                        expected_notice = f"notice: {LINUX_ACCESSIBILITY_ENABLE_NOTE}"
+                        if (
+                            expected_notice not in completed.stderr
+                            or LINUX_ACCESSIBILITY_ENABLE_NOTE not in snapshot.get("notes", [])
+                        ):
+                            raise AssertionError(
+                                "Linux opt-in must be exposed in CLI stderr and snapshot notes"
+                            )
+                    return snapshot
+
+                opt_in = ("--allow-accessibility-enable",) if system == "Linux" else ()
+                if system == "Linux":
+                    _assert_linux_accessibility_disabled(environment, "fixture startup")
+                    refused = invoke("--pid", str(fixture_pid))
+                    _assert_accessibility_cli_refusal(refused)
+                assert_accessibility_snapshot(
+                    read("--pid", str(fixture_pid), *opt_in), system
+                )
+                assert_accessibility_snapshot(
+                    read("--window", "Spectre AccessKit Fixture", *opt_in), system
+                )
+                limited = invoke(
+                    "--pid", str(fixture_pid), "--maximum-node-count", "2", *opt_in
+                )
+                preceding_lines = (
+                    (f"notice: {LINUX_ACCESSIBILITY_ENABLE_NOTE}",)
+                    if system == "Linux"
+                    else ()
+                )
+                assert_accessibility_limit_result(
+                    limited,
+                    maximum_node_count=2,
+                    preceding_stderr_lines=preceding_lines,
+                )
+                if system == "Linux":
+                    subprocess.run(
+                        [
+                            sys.executable,
+                            str(ROOT / "scripts" / "mcp-stdio-smoke.py"),
+                            "--expected-version", expected_version,
+                            "--accessibility-pid", str(fixture_pid),
+                            "--", str(executable),
+                        ],
+                        cwd=ROOT,
+                        env=environment,
+                        check=True,
+                        timeout=120,
+                    )
+                    _assert_linux_accessibility_disabled(environment, "packaged MCP")
+                    blocked = robot_xvfb_unavailable_reason(system)
+                    if blocked:
+                        raise RuntimeError(f"attached CLI/MCP capture: {blocked}")
+                    # The private session bus has no Wayland capture portals.
+                    attached_environment = {
+                        key: value
+                        for key, value in _robot_env(environment).items()
+                        if value != ""
+                    }
+                    subprocess.run(
+                        [
+                            *robot_xvfb_prefix(system),
+                            str(ROOT / "gradlew"),
+                            ":cli:test",
+                            "--tests",
+                            "*DaemonFixtureIntegrationTest.packaged CLI and MCP capture*",
+                            f"-PVERSION_NAME={expected_version}",
+                            f"-Dspectre.cli.distributionExecutable={executable}",
+                            "--rerun-tasks",
+                            "--console=plain",
+                        ],
+                        cwd=ROOT,
+                        env=attached_environment,
+                        check=True,
+                        timeout=600,
+                    )
+                    assert_junit_testcases_passed(
+                        ROOT / "cli/build/test-results/test",
+                        needles=(
+                            "packaged CLI and MCP capture an attached JVM through private AT-SPI consent",
+                        ),
+                        cell="a11y-accesskit-linux attached CLI/MCP capture",
+                    )
+                    _assert_linux_accessibility_disabled(
+                        environment, "attached CLI/MCP capture"
+                    )
+                return _accesskit_success_detail(system)
+            finally:
+                try:
+                    _terminate_owned_process(process)
+                finally:
+                    subprocess.run(
+                        [str(executable), "daemon", "kill"],
+                        cwd=ROOT,
+                        env=environment,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
 
 
 def _print_result(item: ScenarioResult) -> None:
@@ -705,7 +1174,7 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
         add(
             scenario_result(
                 "portal-token-warmup",
-                name="Capture persistent ScreenCast restore token",
+                name="Verify Wayland portal grant reuse",
                 result="n/a",
                 reason=portal_skip,
                 hard=True,
@@ -715,7 +1184,7 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
         add(
             scenario_result(
                 "portal-token-warmup",
-                name="Capture persistent ScreenCast restore token",
+                name="Verify Wayland portal grant reuse",
                 result=RESULT_FAIL,
                 detail=seat_monitor_error,
                 log=str(out_dir / "seat-monitor.log"),
@@ -761,7 +1230,7 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
             }
             warmup = run_scenario(
                 "portal-token-warmup",
-                name="Capture persistent ScreenCast restore token",
+                name="Verify Wayland portal grant reuse",
                 command=wayland_portal_warmup_command(gradle),
                 cwd=ROOT,
                 # --no-daemon pays JVM startup + configuration on top of the dialog wait.
@@ -772,8 +1241,35 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
             )
             if warmup.result == RESULT_PASS:
                 try:
-                    assert_linux_portal_tokens_captured(
-                        scenario_env, expected_mtime_ns=before_mtime
+                    # Run the real noninteractive preflight in a fresh JVM. Never call request()
+                    # here: it intentionally overrides the ordinary no-prompt policy.
+                    reuse_log = out_dir / "portal-token-warmup-live-reuse.log"
+                    reuse_code, reuse_error, _ = run_command(
+                        wayland_portal_preflight_command(gradle),
+                        cwd=ROOT,
+                        timeout=180,
+                        log_path=reuse_log,
+                        env=scenario_env,
+                        overall_deadline=overall_deadline,
+                    )
+                    if reuse_code != 0:
+                        raise RuntimeError(
+                            "noninteractive live-session preflight failed: "
+                            + (reuse_error or f"exit {reuse_code}")
+                        )
+                    portal_version, version_error = remote_desktop_portal_version(
+                        env=scenario_env
+                    )
+                    if portal_version is None:
+                        raise RuntimeError(
+                            "could not verify org.freedesktop.portal.RemoteDesktop version: "
+                            + version_error
+                        )
+                    warmup.detail = verify_linux_portal_warmup(
+                        portal_version=portal_version,
+                        env=scenario_env,
+                        live_reuse_output=_read_log(str(reuse_log)),
+                        expected_mtime_ns=before_mtime,
                     )
                 except RuntimeError as error:
                     warmup = scenario_result(
@@ -1194,6 +1690,36 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
         )
 
     executable = packaged_cli_executable(ROOT, system)
+    active_a11y_id = A11Y_ACCESSKIT_SCENARIO_IDS[system]
+    for smoke_system, scenario_id in A11Y_ACCESSKIT_SCENARIO_IDS.items():
+        if smoke_system != system:
+            add(
+                scenario_result(
+                    scenario_id,
+                    name=f"AccessKit accessibility snapshot ({smoke_system})",
+                    result="n/a",
+                    reason=f"requires a native {smoke_system} desktop",
+                    hard=True,
+                )
+            )
+    if package_result.result == RESULT_PASS and executable.is_file():
+        add(
+            run_callable_scenario(
+                active_a11y_id,
+                name=f"AccessKit accessibility snapshot ({system})",
+                action=lambda: _accesskit_cli_smoke(executable, args.version),
+                out_dir=out_dir,
+            )
+        )
+    else:
+        add(
+            scenario_result(
+                active_a11y_id,
+                name=f"AccessKit accessibility snapshot ({system})",
+                result=RESULT_FAIL,
+                detail="packaged CLI unavailable; cannot invoke the real accessibility helper",
+            )
+        )
     if not executable.is_file():
         add(
             scenario_result(

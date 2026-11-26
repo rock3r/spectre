@@ -148,4 +148,83 @@ final class ArgumentsTests: XCTestCase {
             ])
         )
     }
+
+    func testArgumentsAcceptRegionScreenshot() throws {
+        let args = try Arguments.parse([
+            "spectre-screencapture",
+            "--mode",
+            "screenshot",
+            "--source",
+            "region",
+            "--region",
+            "0,0,2,2",
+            "--display-index",
+            "0",
+            "--fps",
+            "30",
+            "--cursor",
+            "false",
+            "--file-type",
+            "mov",
+            "--discovery-timeout-ms",
+            "2000",
+            "--output",
+            "/tmp/test.png",
+        ])
+
+        XCTAssertEqual(args.mode, .screenshot)
+        XCTAssertEqual(args.source, .region)
+        XCTAssertEqual(args.region?.x, 0)
+        XCTAssertEqual(args.region?.y, 0)
+        XCTAssertEqual(args.region?.width, 2)
+        XCTAssertEqual(args.region?.height, 2)
+        XCTAssertEqual(args.displayIndex, 0)
+        XCTAssertEqual(args.fps, 30)
+        XCTAssertFalse(args.captureCursor)
+        XCTAssertEqual(args.fileType, .mov)
+        XCTAssertEqual(args.discoveryTimeoutMs, 2000)
+        XCTAssertEqual(args.output.path, "/tmp/test.png")
+    }
+
+    func testArgumentsRejectStillsOnRegionSource() {
+        assertInvalidRegionArguments(
+            ["--mode", "stills"],
+            message: "--mode stills only supports --source window")
+    }
+
+    func testArgumentsRejectCropOnRegionScreenshot() {
+        assertInvalidRegionArguments(
+            ["--mode", "screenshot", "--crop", "0,0,1,1"],
+            message: "--crop is only valid with --source window (region uses --region)")
+    }
+
+    func testArgumentsRejectWindowFrameOnRegionScreenshot() {
+        assertInvalidRegionArguments(
+            ["--mode", "screenshot", "--frame", "0,0,2,2"],
+            message: "--frame is only valid with --source window")
+    }
+
+    private func assertInvalidRegionArguments(
+        _ extraArguments: [String],
+        message expectedMessage: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertThrowsError(
+            try Arguments.parse(
+                [
+                    "spectre-screencapture",
+                    "--source",
+                    "region",
+                    "--region",
+                    "0,0,2,2",
+                    "--output",
+                    "/tmp/test.png",
+                ] + extraArguments),
+            file: file,
+            line: line
+        ) { error in
+            XCTAssertEqual((error as? CLIError)?.message, expectedMessage, file: file, line: line)
+        }
+    }
 }

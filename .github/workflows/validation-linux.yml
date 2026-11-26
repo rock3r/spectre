@@ -111,23 +111,25 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
 
-      - name: Install Xvfb + libdbus + libxkbcommon-x11 + pkg-config
+      - name: Install Xvfb + AccessKit X11 + libdbus + pkg-config
         # Xvfb: display for Compose Desktop + Robot input. libdbus / pkg-config: needed by
         # the spectre-wayland-helper Rust build (`:recording`'s assembleWaylandHelper runs
         # cargo build --release on Linux as part of processResources, and dbus-rs links
-        # libdbus-1). libxkbcommon-x11 is loaded at runtime by the AccessKit fixture's winit
-        # dependency. gstreamer supplies gst-launch-1.0 + ximagesrc for the required native
-        # window screenshot path exercised by validationTest under Xvfb.
+        # libdbus-1). libxkbcommon-x11 and libxcursor are loaded at runtime by the AccessKit
+        # fixture's winit dependency. gstreamer supplies gst-launch-1.0 + ximagesrc for the
+        # required native window screenshot path exercised by validationTest under Xvfb.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             xvfb \
             at-spi2-core \
+            libatk-wrapper-java \
             python3-gi \
             python3-pyatspi \
             gir1.2-atspi-2.0 \
             libdbus-1-dev \
             libxkbcommon-x11-0 \
+            libxcursor1 \
             pkg-config \
             gstreamer1.0-tools \
             gstreamer1.0-plugins-base \
@@ -254,6 +256,7 @@ jobs:
           xvfb-run -a ./gradlew :agent:test \
             --tests "*AgentAttachIntegrationTest*" \
             --tests "*AgentContractCorpusTest*" \
+            --tests "*WindowChangeCaptureTest*" \
             --rerun-tasks
         shell: bash
 
@@ -400,7 +403,8 @@ jobs:
           # the script under `set -e` (same pattern as the verifier above).
           verify_agent_xml() {
             local class_name="$1"
-            local xml="agent/build/test-results/test/TEST-dev.sebastiano.spectre.agent.${class_name}.xml"
+            local package_name="${2:-dev.sebastiano.spectre.agent}"
+            local xml="agent/build/test-results/test/TEST-${package_name}.${class_name}.xml"
             if [ ! -f "$xml" ]; then
               echo "::error::Missing JUnit XML report $xml — :agent:test never ran $class_name"
               exit 1
@@ -429,6 +433,7 @@ jobs:
           }
           verify_agent_xml "AgentAttachIntegrationTest"
           verify_agent_xml "AgentContractCorpusTest"
+          verify_agent_xml "WindowChangeCaptureTest" "dev.sebastiano.spectre.agent.runtime"
         shell: bash
 
       - name: Upload validation artefacts

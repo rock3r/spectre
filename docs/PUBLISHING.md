@@ -34,33 +34,27 @@ Jobs on tag push (order simplified; see the workflow for the full graph):
 1. **`release-gate`** (Linux runner, depends on `runtime-matrix`) — validates the tag
    shape, runs `./gradlew check`, installs the docs dependencies, and runs
    `mkdocs build --strict`. Helper builds and publish wait for this gate.
-2. **`mac-helper`** (macOS runner, depends on `release-gate`) — builds the
-   arm64+x86_64 universal helper, packages it as `SpectreCaptureHelper.app`,
-   Developer ID signs the **bundle**, runs `notarytool submit --wait`, staples
-   the ticket, verifies `codesign --deep --strict` + `stapler validate`, and
-   uploads the app as a GitHub Actions artefact (see [NOTARIZATION.md](NOTARIZATION.md)).
-3. **`linux-helpers`** (Linux runner, depends on `release-gate`) — cross-builds the
-   `spectre-wayland-helper` Rust binary for `x86_64` and `aarch64` (same
-   toolchain dance documented in [`ci.yml`][ci-yml]: dpkg multi-arch +
-   per-arch libdbus sysroot + cross-linker). Uploads the per-arch binaries as a
-   GitHub Actions artefact.
-4. **`windows-helper`** (Windows runner, depends on `release-gate`) — builds the
-   .NET Windows Graphics Capture helper for `x64` and `arm64`, then uploads the
-   per-arch helper directories as a GitHub Actions artefact.
-5. **`mac-cli-bundles`** (macOS runner, depends on the gate and `mac-helper`) — builds the
-   x64 and arm64 Roast `.app` CLI bundles with the notarised screen-capture helper, signs every
-   Mach-O component in their jlink runtimes with the Developer ID and JVM hardened-runtime
-   entitlements (nested first, outer bundle last), submits each archive to `notarytool` with a
-   30-minute bound, staples the ticket, then verifies the exact extracted ZIP with
-   `codesign --verify --deep --strict`, `stapler`, and `spctl` before upload. Intermediate
+2. **Native release builds** (depend on `release-gate`) — the Linux helper builds natively on
+   x64 and arm64, and its combined resources remain in both Linux ZIPs. The Windows job builds
+   the Windows Graphics Capture helper for x64 and arm64, includes both helpers in the Windows
+   x64 ZIP, and validates that archive on Windows. Native Ubuntu arm64 builds and validates the
+   Linux arm64 ZIP, while the Ubuntu x64 final publish job builds the Linux x64 ZIP.
+3. **`macos-release-artifacts`** (trusted reusable workflow, depends on `release-gate`) — resolves
+   the requested ref to its full GitHub SHA and accepts it only when it is reachable from `main`.
+   Separate native Intel and arm64 Mac jobs build their matching Roast `.app` archives with the
+   universal screen-capture helper, sign every Mach-O component in their jlink runtimes with the
+   Developer ID and JVM hardened-runtime entitlements (nested first, outer bundle last), submit
+   each archive to `notarytool` with a 30-minute bound, staple the ticket, and verify the matching
+   extracted ZIP with `codesign --verify --deep --strict`, `stapler`, and `spctl`. Intermediate
    post-sign checks also use `--deep --strict` so a nested jlink seal break cannot green-pass
    (#390). The Homebrew formula must keep `preserve_rpath` and a `post_install` that re-stages
    the notarized `Spectre.app` from the release zip after `fix_dynamic_linkage` (which can still
    strip duplicate jlink rpaths and ad-hoc re-sign nested dylibs, breaking the outer seal).
-6. **`publish`** (Linux runner, depends on the gate and all helper/bundle jobs) — downloads the
-   helper and signed macOS CLI artefacts, runs `:verifyMavenLocalPublication` to assert the
-   publication shape, builds the Linux x64/Linux arm64/Windows x64 Roast CLI bundles, and runs
-   `publishToMavenCentral` against the [Sonatype Central Portal][central-portal]. Finally it
+4. **`publish`** (Ubuntu x64, depends on the gate and all native release builds) — downloads four
+   already-produced ZIPs (both macOS archives, Linux arm64, and Windows x64), then runs
+   `:verifyMavenLocalPublication` to assert the publication shape. It builds Linux x64 locally
+   without uploading it as an intermediate Actions artefact and verifies all five ZIPs before
+   running `publishToMavenCentral` against the [Sonatype Central Portal][central-portal]. Finally it
    creates a draft GitHub release and uploads all five self-contained CLI bundles. Maven Central
    remains the canonical host for library modules only; the CLI is never uploaded there. Do not
    attach a partial library jar set to the GitHub release.
@@ -116,7 +110,6 @@ scoop bucket add spectre https://github.com/rock3r/spectre
 scoop install spectre
 ```
 
-[ci-yml]: https://github.com/rock3r/spectre/blob/main/.github/workflows/ci.yml
 [central-portal]: https://central.sonatype.com/
 
 Both the Central Portal deployment and the GitHub release stay in **manual-

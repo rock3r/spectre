@@ -1,4 +1,4 @@
-public final class dev/sebastiano/spectre/recording/AccessibilityHelperLocatorKt {
+public final class dev/sebastiano/spectre/recording/AccessibilityHelperExecutableKt {
 	public static final fun locateAccessibilityHelper ()Ljava/nio/file/Path;
 }
 

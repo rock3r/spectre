@@ -34,6 +34,57 @@ import org.junit.jupiter.api.Timeout
 class HotReloadInvalidationIntegrationTest {
     @Test
     @Timeout(30)
+    fun `connected is published only after the real orchestration source registers its reader`() {
+        val server = startOrchestrationServer()
+        val port = server.port.getBlocking(15.seconds).getOrThrow()
+        val channelRegistered = CountDownLatch(1)
+        val allowPublication = CountDownLatch(1)
+        val session =
+            HotReloadSession(
+                    portProvider = { port },
+                    onOrchestrationChannelRegisteredForTesting = {
+                        channelRegistered.countDown()
+                        assertTrue(
+                            allowPublication.await(10, TimeUnit.SECONDS),
+                            "test did not release connection publication",
+                        )
+                    },
+                )
+                .also { it.start() }
+        val listenerFired = CountDownLatch(1)
+        session.setReloadSettledListener { listenerFired.countDown() }
+        try {
+            assertTrue(
+                channelRegistered.await(10, TimeUnit.SECONDS),
+                "real orchestration source did not register its reader",
+            )
+            assertTrue(!session.isConnected, "connection was usable before inbound registration")
+
+            allowPublication.countDown()
+            awaitConnected(session)
+            val request = OrchestrationMessage.ReloadClassesRequest()
+            server sendBlocking request
+            server sendBlocking
+                OrchestrationMessage.ReloadClassesResult(
+                    reloadRequestId = request.messageId,
+                    isSuccess = true,
+                )
+            server sendBlocking
+                OrchestrationMessage.UIRendered(
+                    windowId = null,
+                    reloadRequestId = request.messageId,
+                    iteration = 1,
+                )
+            assertTrue(listenerFired.await(10, TimeUnit.SECONDS), "registered reader lost settle")
+        } finally {
+            allowPublication.countDown()
+            session.close()
+            server.close()
+        }
+    }
+
+    @Test
+    @Timeout(30)
     fun `reload settled listener fires after UIRendered without Spectre redefining classes`() {
         val server = startOrchestrationServer()
         val port = server.port.getBlocking(15.seconds).getOrThrow()

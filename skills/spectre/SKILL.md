@@ -157,9 +157,8 @@ IntelliJ EDT dispatchers, wrap waits in `withContext(Dispatchers.Default) { ... 
 - `waitForVisualIdle(stableFrames = 3)` — consecutive pixel-stable frames using required native
   window capture; use before screenshots or after animations. Missing helpers fail immediately.
   Use `allowScreenRegionFallback = true` only when occlusion-sensitive desktop crops are acceptable.
-  Uses native window capture when `:recording` and a runnable helper exist, falls back to `Robot` region capture when
-  `:recording` is absent or the helper cannot launch, and fails fast on missing Wayland grants or unsupported Wayland
-  `JWindow` popups (`#640`).
+  Without that explicit fallback opt-in, an absent `:recording` module, a helper that cannot launch, missing Wayland
+  grants, or a Wayland surface the GNOME identity extension cannot bind fails fast instead of sampling desktop pixels.
 
 ### Screenshots and atomic capture
 
@@ -169,8 +168,8 @@ capturing animated UI.
 
 | Call | Resolution | Backend and failure behaviour |
 |---|---|---|
-| `screenshot()`, `screenshot(region)` | 1 px per logical screen unit (`boundsOnScreen` maps 1:1) | `Robot` capture; no `:recording` needed |
-| `screenshotAtDeviceScale(region)` | Device pixels (2× Retina, 1× Xvfb) | `Robot` multi-resolution capture; derive scale as `image.width / bounds.width` for sub-dp pixel assertions |
+| `screenshot()`, `screenshot(region)` | 1 px per logical screen unit (`boundsOnScreen` maps 1:1) | macOS: ScreenCaptureKit (`spectre-recording` + `spectre-recording-macos`); Windows/Linux Xorg/Xvfb: `Robot` |
+| `screenshotAtDeviceScale(region)` | Device pixels (2× Retina, 1× Xvfb) | Same platform split; derive scale as `image.width / bounds.width` for sub-dp pixel assertions |
 | `screenshot(node)`, `screenshot(windowIndex)`, `capture(windowIndex)` | Device pixels | Native window backend (`:recording` + OS helper); **fails closed** — never falls back to a desktop crop |
 | `screenshotWindows(listOf(0, 1))` | Device pixels on union canvas | Painter's order (owner before popup); returns `CompositeScreenshot` (`composite` is `null` if any window fails) |
 
@@ -178,6 +177,29 @@ On macOS, screenshots require Screen Recording TCC plus an unlocked console (`IO
 black captures as TCC).
 
 ### CLI attach workflow and advanced entry points
+
+For an application that Spectre must not or cannot JVM-attach to, read the native accessibility
+tree that a screen reader receives:
+
+```shell
+spectre a11y tree --pid <pid>
+spectre a11y tree --window "<window title>"
+```
+
+The MCP `accessibility_tree` tool takes the same `pid` or `window` target. On Linux, temporary
+AT-SPI enablement is an explicit opt-in: pass CLI `--allow-accessibility-enable` or MCP
+`allow_accessibility_enable: true`; the default never enables it and returns `accessibility-disabled`.
+For an attached session, CLI `capture --source accessibility` and MCP `capture` with
+`source: "accessibility"` store `accessibility.json` beside the screenshot; `compose` is the default. Accessibility keys belong to one
+snapshot only: re-read and resolve by `id`, name, role, and bounds after the UI changes. On GNOME
+Wayland, heed the output's `window-relative` bounds marker and never use those bounds directly as
+screen input coordinates. Linux may report that Spectre temporarily enabled session
+accessibility; preserve that notice in agent output. AccessKit text-field values can be `null` on
+Linux even when the field is present. Its canonical AT-SPI roles are `frame`, `button`, `check
+box`, and `entry` (normalised as `window`, `button`, `checkbox`, and `entry`); never rewrite
+`entry` as raw `text`, infer a disabled state, or invent a value from another source. On Windows,
+the framework-dependent helper requires the .NET 8 Desktop Runtime and a same-architecture public
+Windows App Runtime 1.8 installation; the CBS system package alone is insufficient.
 
 `spectre attach <pid>` attaches to a same-user JDK 21+ JVM (injecting core automatically when `spectre-core` is absent):
 

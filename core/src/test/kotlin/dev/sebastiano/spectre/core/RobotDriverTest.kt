@@ -472,34 +472,6 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `screenshot consults the screen-recording guard before capturing`() {
-        val guard = RecordingTccGuard()
-        val robot = RecordingRobotAdapter()
-        val capture = RecordingScreenCaptureAdapter()
-        val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard, capture)
-
-        driver.screenshot(Rectangle(0, 0, 4, 4))
-
-        assertEquals(0, guard.accessibilityCalls)
-        assertEquals(1, guard.screenRecordingCalls)
-        assertEquals(1, guard.captureValidationCalls)
-        assertEquals(1, capture.captureCalls)
-        assertEquals(0, robot.captureCalls)
-    }
-
-    @Test
-    fun `screenshot that fails the screen-recording check does not capture`() {
-        val guard = RecordingTccGuard(screenRecordingThrows = true)
-        val robot = RecordingRobotAdapter()
-        val capture = RecordingScreenCaptureAdapter()
-        val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard, capture)
-
-        assertFailsWith<IllegalStateException> { driver.screenshot(Rectangle(0, 0, 4, 4)) }
-
-        assertEquals(0, capture.captureCalls)
-    }
-
-    @Test
     fun `pasteText consults the accessibility guard before mutating the clipboard`() = runTest {
         // pasteText writes to and restores the clipboard, so a failed accessibility check
         // must short-circuit BEFORE the clipboard is touched. Otherwise a failing macOS run
@@ -543,12 +515,6 @@ class RobotDriverTest {
     fun `headless pasteText throws UnsupportedOperationException`() = runTest {
         val driver = RobotDriver.headless()
         assertFailsWith<UnsupportedOperationException> { driver.pasteText("hello") }
-    }
-
-    @Test
-    fun `headless screenshot throws UnsupportedOperationException`() {
-        val driver = RobotDriver.headless()
-        assertFailsWith<UnsupportedOperationException> { driver.screenshot() }
     }
 
     @Test
@@ -847,7 +813,7 @@ private class FakeInputDeliveryWitness(
     }
 }
 
-private class RecordingTccGuard(
+internal class RecordingTccGuard(
     private val accessibilityThrows: Boolean = false,
     private val screenRecordingThrows: Boolean = false,
 ) :
@@ -880,14 +846,18 @@ private class RecordingTccGuard(
     }
 }
 
-private class RecordingRobotAdapter(
+internal class RecordingRobotAdapter(
     override val autoDelayMs: Int = 0,
     private val sharedLog: MutableList<String>? = null,
     private val drainAfterPaste: Boolean = false,
     initialCapsLockOn: Boolean = false,
     private val allowCapsLockWrite: Boolean = true,
+    private val platformCapture: Boolean = false,
     override val deliversRealOsInput: Boolean = false,
 ) : RobotAdapter {
+    override val gatesMacOsScreenRecordingTcc: Boolean
+        get() = platformCapture
+
     override val requiresOffEdt: Boolean = false
     val events = mutableListOf<String>()
     val capsLockWrites = mutableListOf<Boolean>()
@@ -937,7 +907,7 @@ private class RecordingRobotAdapter(
         get() = drainAfterPaste
 }
 
-private class RecordingScreenCaptureAdapter : ScreenCaptureAdapter {
+internal class RecordingScreenCaptureAdapter : ScreenCaptureAdapter {
     var captureCalls: Int = 0
         private set
 
@@ -951,7 +921,7 @@ private class RecordingScreenCaptureAdapter : ScreenCaptureAdapter {
     }
 }
 
-private class RecordingClipboardAdapter : ClipboardAdapter {
+internal class RecordingClipboardAdapter : ClipboardAdapter {
     private var current: Transferable? = null
 
     var setCalls: Int = 0

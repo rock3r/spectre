@@ -78,6 +78,8 @@ internal class ReflectiveAutomatorHandler(
     private val nodeBooleanMethods = ConcurrentHashMap<Pair<Class<*>, String>, Method>()
     private val nodeEditableTextMethods = ConcurrentHashMap<Class<*>, Method>()
     private val nodeState = NodeStateReflectiveMapper()
+    private val windowChangeCaptures = ConcurrentHashMap<Long, WindowChangeCapture>()
+    private val nextWindowChangeCapture = java.util.concurrent.atomic.AtomicLong()
 
     /**
      * `ComposeAutomator.windows` is a Volatile cache populated by `refreshWindows()` (or by any of
@@ -200,6 +202,8 @@ internal class ReflectiveAutomatorHandler(
                 AtomicCaptureReflectiveMapper.invokeWithUntitledWindowStill(automator, request)
             is AgentRequest.WindowIdentity ->
                 WindowIdentityReflectiveMapper.invoke(automator, request.windowIndex)
+            AgentRequest.BeginWindowChangeCapture -> beginWindowChangeCapture()
+            is AgentRequest.EndWindowChangeCapture -> endWindowChangeCapture(request.token)
             AgentRequest.Detach -> AgentResponse.Detached
             // Handled in IpcServer before the automator handler; keep exhaustive.
             is AgentRequest.Hello ->
@@ -213,6 +217,30 @@ internal class ReflectiveAutomatorHandler(
             is AgentRequest.WaitForIdle -> waitOps.handleWaitForIdle(request)
             AgentRequest.PrintTree -> handlePrintTree()
         }
+
+    private fun beginWindowChangeCapture(): AgentResponse {
+        val capture = WindowChangeCapture.begin()
+        val token = nextWindowChangeCapture.incrementAndGet()
+        windowChangeCaptures[token] = capture
+        return AgentResponse.WindowChangeCapture(token, 0)
+    }
+
+    private fun endWindowChangeCapture(token: Long): AgentResponse {
+        val capture =
+            requireNotNull(windowChangeCaptures.remove(token)) {
+                "unknown window change capture $token"
+            }
+        return try {
+            AgentResponse.WindowChangeCapture(token, capture.changeGeneration)
+        } finally {
+            capture.close()
+        }
+    }
+
+    override fun connectionClosed() {
+        windowChangeCaptures.values.forEach { runCatching { it.close() } }
+        windowChangeCaptures.clear()
+    }
 
     // Note on un-caught exceptions: any non-reflective `RuntimeException` thrown by the
     // automator (NullPointerException from a broken window list, ClassCastException from a

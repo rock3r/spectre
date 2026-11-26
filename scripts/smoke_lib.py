@@ -65,7 +65,187 @@ REQUIRED_SCENARIO_IDS: tuple[str, ...] = (
     # hosts that can run one, and by an operator signature on hosts that cannot -- never by the
     # coordinator-protocol cells.
     "input-coord-headed-robot",
+    "a11y-accesskit-macos",
+    "a11y-accesskit-windows",
+    "a11y-accesskit-linux",
 )
+
+A11Y_ACCESSKIT_SCENARIO_IDS: Mapping[str, str] = {
+    "Darwin": "a11y-accesskit-macos",
+    "Windows": "a11y-accesskit-windows",
+    "Linux": "a11y-accesskit-linux",
+}
+
+
+def assert_accessibility_limit_result(
+    completed: Any, *, maximum_node_count: int, preceding_stderr_lines: tuple[str, ...] = ()
+) -> Mapping[str, Any]:
+    """Validate the packaged CLI's typed node-budget result without merging its streams."""
+    if completed.returncode != 5:
+        raise AssertionError(
+            f"node budget must use CLI error exit 5, got {completed.returncode}"
+        )
+    expected_error = (
+        "Spectre daemon error: LimitReached: "
+        f"maximumNodeCount {maximum_node_count} reached"
+    )
+    diagnostic_lines = [line.strip() for line in completed.stderr.splitlines() if line.strip()]
+    expected_lines = [*preceding_stderr_lines, expected_error]
+    if diagnostic_lines[: len(expected_lines)] != expected_lines:
+        raise AssertionError(f"unexpected node-budget stderr: {completed.stderr!r}")
+    try:
+        snapshot = json.loads(completed.stdout)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise AssertionError("node-budget stdout must be a JSON partial snapshot") from error
+    if not isinstance(snapshot, dict) or snapshot.get("schemaVersion") != 2:
+        raise AssertionError("node-budget stdout must be a schemaVersion 2 snapshot")
+    nodes = snapshot.get("nodes")
+    if not isinstance(nodes, list) or len(nodes) != maximum_node_count:
+        raise AssertionError(
+            f"node-budget partial snapshot must contain {maximum_node_count} nodes"
+        )
+    return snapshot
+
+
+def assert_accessibility_snapshot(snapshot: Mapping[str, Any], system: str) -> None:
+    """Fail closed on stable values returned by the native reader for the AccessKit fixture."""
+    if snapshot.get("schemaVersion") != 2:
+        raise AssertionError("accessibility snapshot must use schemaVersion 2")
+    if snapshot.get("source") != "os-accessibility":
+        raise AssertionError("accessibility snapshot source must be 'os-accessibility'")
+    windows = snapshot.get("windows")
+    if not isinstance(windows, list) or not windows:
+        raise AssertionError("accessibility snapshot must contain a window")
+    targets = [
+        window
+        for window in windows
+        if isinstance(window, dict)
+        and window.get("title") == "Spectre AccessKit Fixture"
+        and window.get("boundsSpace") in {"screen", "window"}
+    ]
+    if len(targets) != 1:
+        raise AssertionError("snapshot must uniquely identify the titled AccessKit fixture window")
+    target_key = targets[0].get("key")
+    if not isinstance(target_key, str) or not target_key:
+        raise AssertionError("AccessKit fixture window must have a key")
+
+    nodes = snapshot.get("nodes")
+    if not isinstance(nodes, list) or not all(isinstance(node, dict) for node in nodes):
+        raise AssertionError("accessibility snapshot nodes must be an object list")
+    keys = {node.get("key") for node in nodes}
+    if None in keys or len(keys) != len(nodes):
+        raise AssertionError("accessibility snapshot node keys must be present and unique")
+    by_key = {node["key"]: node for node in nodes}
+    for node in nodes:
+        parent = node.get("parentKey")
+        if parent is not None and parent not in keys:
+            raise AssertionError(f"node {node.get('key')!r} has missing parentKey {parent!r}")
+
+    required = {
+        "fixture-window",
+        "primary-button",
+        "newsletter",
+        "account-name",
+        "disabled-button",
+    }
+    ids = [node.get("id") for node in nodes]
+    missing = required.difference(ids)
+    if missing:
+        raise AssertionError(f"AccessKit fixture snapshot missing platform ids: {sorted(missing)}")
+    if system != "Windows" and ids.count("repeated") != 3:
+        raise AssertionError("AccessKit fixture snapshot must preserve all three repeated ids")
+    if system == "Linux" and "offscreen-button" not in ids:
+        raise AssertionError("Linux AccessKit snapshot must preserve the offscreen-button node")
+    by_id = {node.get("id"): node for node in nodes if node.get("id") in required}
+    fixture = by_id["fixture-window"]
+    if not fixture["key"].startswith(f"{target_key}/"):
+        raise AssertionError("fixture-window must belong to the selected native window")
+
+    cursor = fixture
+    visited: set[str] = set()
+    while cursor.get("parentKey") is not None:
+        key = cursor["key"]
+        if key in visited:
+            raise AssertionError("fixture window parent chain contains a cycle")
+        visited.add(key)
+        cursor = by_key[cursor["parentKey"]]
+    if cursor["key"] != target_key and not cursor["key"].startswith(f"{target_key}/"):
+        raise AssertionError("fixture-window parent chain must stay in the selected native window")
+
+    fixture_key = fixture["key"]
+    for node_id in ("primary-button", "newsletter", "account-name", "disabled-button"):
+        if by_id[node_id].get("parentKey") != fixture_key:
+            raise AssertionError(f"{node_id} parentKey must link to the AccessKit fixture window")
+
+    expected = {
+        "Darwin": {
+            "fixture-window": ("AXGroup", None),
+            "primary-button": ("AXButton", "Save changes"),
+            "newsletter": ("AXCheckBox", "Receive updates"),
+            "account-name": ("AXTextField", "Account name"),
+            "disabled-button": ("AXButton", "Unavailable action"),
+        },
+        "Linux": {
+            "fixture-window": ("frame", "Spectre AccessKit Fixture"),
+            "primary-button": ("button", "Save changes"),
+            "newsletter": ("check box", "Receive updates"),
+            "account-name": ("entry", "Account name"),
+            "disabled-button": ("button", "Unavailable action"),
+        },
+        "Windows": {
+            "fixture-window": ("Group", "Spectre AccessKit Fixture"),
+            "primary-button": ("Button", "Save changes"),
+            "newsletter": ("CheckBox", "Receive updates"),
+            "account-name": ("Edit", "Account name"),
+            "disabled-button": ("Button", "Unavailable action"),
+        },
+    }.get(system)
+    if expected is None:
+        raise AssertionError(f"unsupported smoke system: {system}")
+    for node_id, (role, name) in expected.items():
+        node = by_id[node_id]
+        if node.get("platformRole") != role or node.get("name") != name:
+            raise AssertionError(
+                f"{node_id} must preserve platformRole {role!r} and name {name!r}"
+            )
+
+    newsletter = by_id["newsletter"]
+    if "checked" not in newsletter.get("states", []):
+        raise AssertionError("newsletter must preserve its checked state")
+    if system == "Darwin" and newsletter.get("value") != "1":
+        raise AssertionError("macOS newsletter must preserve checked value '1'")
+    if system == "Windows" and newsletter.get("value") != "on":
+        raise AssertionError("Windows newsletter must preserve checked value 'on'")
+    if system != "Linux" and "disabled" not in by_id["disabled-button"].get("states", []):
+        raise AssertionError("disabled-button must preserve its disabled state")
+    expected_value = None if system == "Linux" else "Ada Lovelace"
+    if by_id["account-name"].get("value") != expected_value:
+        raise AssertionError(f"account-name value must be {expected_value!r} on {system}")
+
+    if system != "Windows":
+        repeated = [node for node in nodes if node.get("id") == "repeated"]
+        if len({node.get("key") for node in repeated}) != 3 or any(
+            not node.get("parentKey") for node in repeated
+        ):
+            raise AssertionError("repeated nodes need distinct keys and parent links")
+    if system == "Linux":
+        normalized_roles = {
+            "fixture-window": "window",
+            "primary-button": "button",
+            "newsletter": "checkbox",
+            "account-name": "entry",
+            "disabled-button": "button",
+        }
+        for node_id, role in normalized_roles.items():
+            if by_id[node_id].get("role") != role:
+                raise AssertionError(f"{node_id} must preserve normalized role {role!r}")
+        offscreen = next(node for node in nodes if node.get("id") == "offscreen-button")
+        if offscreen.get("onScreen") is not False:
+            raise AssertionError("Linux offscreen-button must remain explicitly off screen")
+    if not all(isinstance(node.get("bounds"), dict) for node in by_id.values()):
+        raise AssertionError("fixture nodes must contain bounds")
+    if not all(isinstance(node.get("onScreen"), bool) for node in by_id.values()):
+        raise AssertionError("fixture nodes must contain boolean onScreen")
 
 HEADED_ROBOT_SCENARIO_ID: str = "input-coord-headed-robot"
 HEADED_ROBOT_NAME: str = "Headed two-JVM Robot contention"
@@ -2183,9 +2363,97 @@ def assert_linux_portal_tokens_captured(
         )
 
 
+REMOTE_DESKTOP_PERSISTENCE_VERSION = 2
+
+
+def remote_desktop_portal_version(
+    *,
+    env: Mapping[str, str] | None = None,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> tuple[int | None, str]:
+    """Read the live portal's RemoteDesktop interface version, strictly."""
+    command = [
+        "gdbus",
+        "call",
+        "--session",
+        "--dest",
+        "org.freedesktop.portal.Desktop",
+        "--object-path",
+        "/org/freedesktop/portal/desktop",
+        "--method",
+        "org.freedesktop.DBus.Properties.Get",
+        "org.freedesktop.portal.RemoteDesktop",
+        "version",
+    ]
+    merged_env = os.environ.copy()
+    if env is not None:
+        merged_env.update(env)
+        for key, value in env.items():
+            if value == "":
+                merged_env.pop(key, None)
+    try:
+        result = run(
+            command,
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+            env=merged_env,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, str(error)
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+    if result.returncode != 0:
+        return None, (stderr.strip() or stdout.strip() or f"exit {result.returncode}")
+    if stderr.strip():
+        return None, f"unexpected Properties.Get stderr: {stderr.strip()}"
+    match = re.fullmatch(r"\(<uint32 ([0-9]+)>,\)\s*", stdout)
+    if match is None:
+        return None, f"unexpected Properties.Get response: {stdout.strip() or '(empty)'}"
+    version = int(match.group(1))
+    if version == 0:
+        return None, "unexpected Properties.Get RemoteDesktop version 0"
+    return version, ""
+
+
+def verify_linux_portal_warmup(
+    *,
+    portal_version: int | None,
+    env: Mapping[str, str],
+    live_reuse_output: str,
+    expected_mtime_ns: Mapping[str, int] | int | None = None,
+) -> str:
+    """Fail closed unless the fresh grant is active and its capability evidence is valid."""
+    if portal_version is None:
+        raise RuntimeError(
+            "could not verify org.freedesktop.portal.RemoteDesktop version; capability unknown"
+        )
+    if not (
+        re.search(r"(?m)^Wayland portal grant: granted\s*$", live_reuse_output)
+        and re.search(r"(?m)^Session helper: running\s*$", live_reuse_output)
+    ):
+        raise RuntimeError(
+            "noninteractive preflight did not verify the newly granted session is still active"
+        )
+    if portal_version == 1:
+        return (
+            "hard PASS (live-only): RemoteDesktop v1; newly granted session remains active "
+            "under noninteractive preflight"
+        )
+    if portal_version < REMOTE_DESKTOP_PERSISTENCE_VERSION:
+        raise RuntimeError(f"unsupported RemoteDesktop version {portal_version}")
+    assert_linux_portal_tokens_captured(env, expected_mtime_ns=expected_mtime_ns)
+    return (
+        f"hard PASS (persisted): RemoteDesktop v{portal_version}; fresh restore token and "
+        "newly granted active session verified"
+    )
+
+
 # Calls WaylandPortalAccess.request, the same operation as `spectre permissions request`: one
 # RemoteDesktop grant, restore token stored, session helper left running for later cells.
 WAYLAND_PORTAL_WARMUP_TASK = ":recording:requestWaylandPortalGrant"
+WAYLAND_PORTAL_PREFLIGHT_TASK = ":recording:checkWaylandPortalGrant"
 # spectre-wayland-helper waits this long for each portal Response during the warmup.
 WAYLAND_PORTAL_RESPONSE_TIMEOUT_SECONDS = 60
 LINUX_SEAT_ENV_KEYS: tuple[str, ...] = (
@@ -2485,6 +2753,16 @@ def wayland_portal_warmup_command(gradle: str) -> list[str]:
         "--no-daemon",
         WAYLAND_PORTAL_WARMUP_TASK,
         f"-PwaylandGrantTimeoutSeconds={WAYLAND_PORTAL_RESPONSE_TIMEOUT_SECONDS}",
+        "--console=plain",
+    ]
+
+
+def wayland_portal_preflight_command(gradle: str) -> list[str]:
+    """Check the warmup's live session in a fresh JVM without invoking request()."""
+    return [
+        gradle,
+        "--no-daemon",
+        WAYLAND_PORTAL_PREFLIGHT_TASK,
         "--console=plain",
     ]
 
