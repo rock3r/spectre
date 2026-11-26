@@ -52,6 +52,10 @@ beforeSettings { s ->
             includeVersion 'org.gradle.toolchains', 'foojay-resolver', '1.0.0'
         }
     }
+    // Use the read-only central mirror for public tool dependencies on rate-limited runners.
+    s.pluginManagement.repositories.maven {
+        url = java.net.URI.create('https://maven-central.storage-download.googleapis.com/maven2/')
+    }
     // An explicit repository removes Gradle's implicit Plugin Portal for included builds.
     s.pluginManagement.repositories.gradlePluginPortal()
 }

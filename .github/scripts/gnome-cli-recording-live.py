@@ -445,10 +445,12 @@ def main() -> None:
         env['QA_EXTRACTED_ROAST_CLI']=str(cli)
         diagnostic_dir=Path(diagnostic).parent
         status={}
-        for label, command, budget in [
-            ('attached-native', [sys.executable, diagnostic], 450),
-            ('stock-private-X11', [sys.executable, str(diagnostic_dir/'run-gnome-fixed-stock.py'), str(cli)], 1200),
-        ]:
+        cells=[('attached-native', [sys.executable, diagnostic], 450)]
+        # The standalone QA overlay is only applied when comparing the earlier public revision.
+        # A final source checkout exercises its own stock case in the full release rehearsal.
+        if os.environ.get('CANDIDATE_SHA') == '86f7ca858e4d453b8963c6e1807f940aee8c1e57':
+            cells.append(('stock-private-X11', [sys.executable, str(diagnostic_dir/'run-gnome-fixed-stock.py'), str(cli)], 1200))
+        for label, command, budget in cells:
             try:
                 with (artifacts/f'{label}.log').open('w') as output:
                     proc=subprocess.run(command, cwd=os.environ['SMOKE_REPO'], env=env,
