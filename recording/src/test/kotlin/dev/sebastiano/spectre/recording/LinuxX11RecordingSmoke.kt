@@ -140,7 +140,7 @@ private fun runNamedWindowSmoke() {
 
         val sizeBytes = Files.size(output)
         check(sizeBytes > 0) { "Named-window recording wrote an empty file: $output" }
-        val (mp4Width, mp4Height) = readMp4VideoSize(output)
+        val (mp4Width, mp4Height) = readIsoBmffVideoSize(output)
         logFfprobe(output)
         println(
             "Named-window recording stopped -> $output ($sizeBytes bytes, " +
@@ -382,10 +382,11 @@ private fun findOnPath(name: String): String? {
         ?.absolutePath
 }
 
-private fun readMp4VideoSize(path: Path): Pair<Int, Int> {
+internal fun readIsoBmffVideoSize(path: Path): Pair<Int, Int> {
     val bytes = Files.readAllBytes(path)
     val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN)
-    return findTkhdSize(buffer, 0, bytes.size) ?: error("Could not find an MP4 tkhd atom in $path")
+    return findTkhdSize(buffer, 0, bytes.size)
+        ?: error("Could not find a video tkhd atom in ISO BMFF media at $path")
 }
 
 private fun findTkhdSize(buffer: ByteBuffer, start: Int, end: Int): Pair<Int, Int>? {
