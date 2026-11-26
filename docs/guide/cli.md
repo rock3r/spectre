@@ -19,6 +19,15 @@ and warning characters discarded; replacing the final retained warning with that
 a discarded warning. All preceding in-budget warnings are preserved in order and exactly once.
 The operation's normal response, partial failure, or image payload is unaffected.
 
+Diagnostics also share the configured IPC frame budget with the encoded operation response and
+envelope. If the complete diagnosed response does not fit, the daemon retains the longest
+in-order warning prefix whose encoded bytes fit alongside a marker reporting the number of warning
+entries discarded for the frame. This byte measurement includes multibyte text and serialization
+metadata. If an otherwise valid operation response leaves no room for even the envelope and compact
+marker, current clients receive the bare response; recent diagnostics may remain in the bounded
+per-socket log's retained suffix.
+Clients from before diagnosed responses keep their existing bare-response contract.
+
 The truncation marker points to the recent suffix retained in the per-socket log, not a complete
 archive. The log uses in-place truncation so the daemon's stderr remains attached, but independent
 raw stderr writers or appends that race rotation may be lost. Do not rely on this log for complete

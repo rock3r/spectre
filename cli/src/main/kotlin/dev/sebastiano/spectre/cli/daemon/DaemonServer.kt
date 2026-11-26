@@ -1,5 +1,7 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 import java.io.IOException
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
@@ -219,7 +221,12 @@ public constructor(
                         // listening after Shutdown (registry is already closed by handleRequest).
                         shutdownAfterResponse = true
                     }
-                    runCatching { DaemonWireCodec.writeResponse(output, response) }
+                    if (runCatching { DaemonWireCodec.writeResponse(output, response) }.isFailure) {
+                        // A rejected or disconnected write cannot produce a response to a later
+                        // request on this stream. Close promptly instead of leaving the caller
+                        // waiting forever for a frame that was never written.
+                        return
+                    }
                     if (isShutdown) break
                 }
             }
@@ -443,16 +450,59 @@ public constructor(
 private fun diagnosticSessionId(request: DaemonRequest): String? =
     (request as? DaemonRequest.SessionRequest)?.sessionId
 
-private fun diagnosedResponse(
+@OptIn(ExperimentalSpectreAgentApi::class)
+internal fun diagnosedResponse(
     response: DaemonResponse,
     warnings: List<String>,
     clientVersion: DaemonProtocolVersion?,
-): DaemonResponse =
+    maxFrameBytes: Int = FrameLimits.maxFrameBytes,
+    encoder: (DaemonResponse) -> ByteArray = DaemonWireCodec::encodeResponse,
+): DaemonResponse {
     if (warnings.isEmpty() || (clientVersion?.minor ?: 0) < DaemonProtocol.CurrentVersion.minor) {
-        response
-    } else {
-        DaemonResponse.Diagnosed(response, warnings)
+        return response
     }
+
+    val sizer = DiagnosedResponseSizer(response, encoder)
+    if (sizer.encodedSize(warnings) <= maxFrameBytes) {
+        return DaemonResponse.Diagnosed(response, warnings)
+    }
+
+    // The encoded size is monotone as retainedCount increases: each step adds a CBOR text item
+    // (at least one byte), while decrementing the marker's decimal count can remove at most one
+    // byte; CBOR list headers can only stay equal or grow. Binary search therefore finds the true
+    // maximal prefix, including across both marker-digit and CBOR-length header boundaries. The
+    // large polymorphic response was encoded once above; probes encode only a compact placeholder
+    // response plus the real warning envelope.
+    var smallest = 0
+    var largest = warnings.lastIndex
+    var retainedCount = -1
+    while (smallest <= largest) {
+        val candidateCount = (smallest + largest).ushr(1)
+        val candidateWarnings =
+            warnings.take(candidateCount) + truncationMarker(warnings.size - candidateCount)
+        if (sizer.encodedSize(candidateWarnings) <= maxFrameBytes) {
+            retainedCount = candidateCount
+            smallest = candidateCount + 1
+        } else {
+            largest = candidateCount - 1
+        }
+    }
+    if (retainedCount >= 0) {
+        return DaemonResponse.Diagnosed(
+            response,
+            warnings.take(retainedCount) + truncationMarker(warnings.size - retainedCount),
+        )
+    }
+
+    // A result can sit so close to the limit that even the envelope and shortest truthful marker
+    // do not fit. The negotiated protocol permits a bare response; preserve the user's result
+    // rather than replacing it with a warning/error envelope or attempting an impossible write.
+    return response
+}
+
+internal fun truncationMarker(discardedCount: Int): String =
+    "[spectre-daemon] diagnostics truncated to fit IPC frame " +
+        "(discarded $discardedCount warning(s)); see the per-socket daemon log"
 
 /** Thrown instead of replacing an existing daemon that is still accepting local connections. */
 public class DaemonAlreadyRunningException(socketPath: Path) :

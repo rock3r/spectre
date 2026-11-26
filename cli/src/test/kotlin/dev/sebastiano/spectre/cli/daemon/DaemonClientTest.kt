@@ -7,6 +7,7 @@ import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -170,7 +171,6 @@ class DaemonClientTest {
     fun `starts a detached daemon process for the first request`() {
         val socketPath = temporaryDaemonClientSocketPath()
         var process: Process? = null
-        var shutdownConfirmed = false
 
         try {
             DaemonClient(socketPath).use { client ->
@@ -186,12 +186,12 @@ class DaemonClientTest {
                     },
                 )
                 assertEquals(DaemonResponse.ShuttingDown, client.request(DaemonRequest.Shutdown))
-                shutdownConfirmed = true
             }
 
             awaitDaemonClientSocketRemoval(socketPath)
+            assertDaemonExited(requireNotNull(process))
         } finally {
-            if (!shutdownConfirmed) process?.destroyForcibly()?.waitFor()
+            process?.takeIf(Process::isAlive)?.destroyForcibly()?.waitFor()
             deleteTemporaryDaemonClientSocketPath(socketPath)
         }
     }
@@ -239,7 +239,6 @@ class DaemonClientTest {
     fun `restarts a daemon after its process is killed`() {
         val socketPath = temporaryDaemonClientSocketPath()
         val processes = mutableListOf<Process>()
-        var shutdownConfirmed = false
 
         try {
             DaemonClient(socketPath).use { client ->
@@ -265,12 +264,12 @@ class DaemonClientTest {
                 )
                 assertEquals(2, processes.size)
                 assertEquals(DaemonResponse.ShuttingDown, client.request(DaemonRequest.Shutdown))
-                shutdownConfirmed = true
             }
 
             awaitDaemonClientSocketRemoval(socketPath)
+            assertDaemonExited(processes.last())
         } finally {
-            if (!shutdownConfirmed) processes.forEach { it.destroyForcibly().waitFor() }
+            processes.filter(Process::isAlive).forEach { it.destroyForcibly().waitFor() }
             deleteTemporaryDaemonClientSocketPath(socketPath)
         }
     }
@@ -349,6 +348,13 @@ private fun awaitDaemonClientSocketRemoval(socketPath: Path) {
     error("Timed out waiting for daemon socket removal")
 }
 
+private fun assertDaemonExited(process: Process) {
+    assertTrue(
+        process.waitFor(DAEMON_EXIT_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+        "Daemon JVM did not exit within $DAEMON_EXIT_TIMEOUT_SECONDS seconds after shutdown",
+    )
+}
+
 /** Reads a process's group id with `ps`, which Linux and macOS both ship. */
 private fun processGroupOf(pid: Long): Long {
     val ps = ProcessBuilder("ps", "-o", "pgid=", "-p", pid.toString()).start()
@@ -359,6 +365,7 @@ private fun processGroupOf(pid: Long): Long {
 
 private const val MAX_SOCKET_REMOVAL_ATTEMPTS: Int = 100
 private const val SOCKET_REMOVAL_WAIT_MILLIS: Long = 10
+private const val DAEMON_EXIT_TIMEOUT_SECONDS: Long = 10
 
 private fun testRuntimeClassPath(): String =
     requireNotNull(System.getProperty("spectre.cli.testRuntimeClasspath")) {
