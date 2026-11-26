@@ -13,6 +13,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.measureTime
@@ -85,6 +86,21 @@ class AccessibilityHelperClientTest {
 
         assertIs<AccessibilitySnapshotResponse.Failure>(response)
         assertTrue(stdin.contains("\"maximumNodeCount\":5"))
+    }
+
+    @Test
+    fun `decodes successful nodes with unknown geometry`() {
+        val response = AccessibilityHelperClient { _, _, _ ->
+            javaClass.getResource("/accessibility/unknown-geometry.json")!!.readText()
+        }
+            .snapshot(
+                AccessibilitySnapshotRequest(Target.ProcessId(42), 20, 2_000, 750),
+                java.nio.file.Path.of("recorded-helper"),
+            )
+
+        val node = assertIs<AccessibilitySnapshotResponse.Success>(response).snapshot.nodes.single()
+        assertNull(node.bounds)
+        assertNull(node.onScreen)
     }
 
     @Test
