@@ -4,7 +4,8 @@ set -euo pipefail
 for tool in gst-launch-1.0 gst-inspect-1.0 ffprobe ffmpeg; do
   command -v "$tool" >/dev/null || { echo "missing required test tool: $tool" >&2; exit 1; }
 done
-gst-inspect-1.0 pipewiresrc | grep -q 'keepalive-time.*Periodically send last buffer'
+pipewiresrc_inspection="$(gst-inspect-1.0 pipewiresrc)"
+grep -q 'keepalive-time.*Periodically send last buffer' <<<"$pipewiresrc_inspection"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -25,7 +26,7 @@ record_for "$work/static.mp4" \
 
 read -r frames first_pts last_pts < <(
   ffprobe -v error -select_streams v:0 -show_entries frame=pts_time \
-    -of csv=p=0 "$work/static.mp4" \
+    -of default=noprint_wrappers=1:nokey=1 "$work/static.mp4" \
     | awk 'NR == 1 { first=$1 } { last=$1; count++ } END { print count, first, last }'
 )
 awk -v frames="$frames" -v first="$first_pts" -v last="$last_pts" 'BEGIN {

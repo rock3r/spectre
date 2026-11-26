@@ -50,6 +50,27 @@ val testGnomeWindowIdentity =
         )
     }
 
+val testGnomeExtensionInstaller =
+    tasks.register<Exec>("testGnomeExtensionInstaller") {
+        group = "verification"
+        description = "Tests GNOME Shell legacy and ES-module entry-point selection."
+        workingDir(recordingProject.layout.projectDirectory)
+        dependsOn(tasks.named("jar"))
+        val packagedJar = tasks.named<Jar>("jar").flatMap { it.archiveFile }
+        commandLine("bash", "native/linux/gnome-shell-extension/install.test.sh")
+        args(
+            packagedJar.get().asFile,
+            rootProject.layout.projectDirectory
+                .file("docs/guide/troubleshooting.md")
+                .asFile
+                .absolutePath,
+        )
+        inputs.dir(recordingProject.file("native/linux/gnome-shell-extension"))
+        inputs.file(packagedJar)
+        inputs.file(rootProject.file("docs/guide/troubleshooting.md"))
+        onlyIf { !OperatingSystem.current().isWindows }
+    }
+
 val prebuiltLinuxHelpersDir = providers.gradleProperty("prebuiltLinuxHelpersDir")
 val useAllLinuxArches = providers.gradleProperty("allLinuxArches").isPresent
 val shouldVerifyLinuxHelpers =
@@ -100,7 +121,10 @@ tasks.register("verifyRecordingLinuxHelpers") {
         listOf(
             "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/metadata.json",
             "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension.js",
+            "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension-legacy.js",
             "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js",
+            "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentityCore.js",
+            "native/linux/gnome-shell-extension/install.sh",
         )
     doLast {
         val jar = jarFile.get().asFile
@@ -116,7 +140,7 @@ tasks.register("verifyRecordingLinuxHelpers") {
                 JsonSlurper().parse(zip.getInputStream(zip.getEntry(expectedExtensionPaths[0])))
                     as Map<*, *>
             val supported = (metadata["shell-version"] as List<*>).map(Any?::toString)
-            val expected = (45..50).map(Int::toString)
+            val expected = (42..50).map(Int::toString)
             if (supported != expected) {
                 throw GradleException(
                     "GNOME identity extension supports $supported; expected $expected"
@@ -140,6 +164,6 @@ tasks.register("verifyRecordingLinuxHelpers") {
 }
 
 tasks.named("check") {
-    dependsOn(testGnomeWindowIdentity)
+    dependsOn(testGnomeWindowIdentity, testGnomeExtensionInstaller)
     dependsOn("verifyRecordingLinuxHelpers")
 }
