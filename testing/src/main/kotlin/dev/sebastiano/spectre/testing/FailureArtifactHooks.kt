@@ -13,6 +13,7 @@ import java.nio.file.Path
 internal object FailureArtifactHooks {
 
     const val REPORT_ENTRY_KEY: String = "spectre.failureArtifact"
+    const val MISSING_REPORT_ENTRY_KEY: String = "spectre.failureArtifactMissing"
 
     /**
      * True when [throwable] is a JUnit assumption / abort rather than a test failure. Aborted tests
@@ -42,26 +43,66 @@ internal object FailureArtifactHooks {
         testClassName: String,
         testMethodName: String,
         publishReport: (key: String, value: String) -> Unit,
-        capture: (ComposeAutomator, Path) -> List<CaptureArtifactPaths> =
-            FailureArtifactCapture::captureAllWindows,
+        capture: ((ComposeAutomator, Path) -> List<CaptureArtifactPaths>)? = null,
     ): List<CaptureArtifactPaths> {
         if (!config.enabled) return emptyList()
         return runCatching {
-                val methodDir =
-                    FailureArtifactPaths.methodDirectory(
-                        testClassName = testClassName,
-                        testMethodName = testMethodName,
-                        config = config,
-                    )
-                val paths = capture(automator, methodDir)
-                for (path in paths) {
-                    publishReport(
-                        REPORT_ENTRY_KEY,
-                        path.directory.toAbsolutePath().normalize().toString(),
-                    )
-                }
-                paths
+            val methodDir =
+                FailureArtifactPaths.methodDirectory(
+                    testClassName = testClassName,
+                    testMethodName = testMethodName,
+                    config = config,
+                )
+            val missing = mutableListOf<String>()
+            val paths =
+                capture?.invoke(automator, methodDir)
+                    ?: FailureArtifactCapture.captureAllWindowsWithDiagnostics(
+                        automator,
+                        methodDir,
+                    ) {
+                        missing += it
+                    }
+            for (path in paths) {
+                publishReportSafely(
+                    publishReport,
+                    REPORT_ENTRY_KEY,
+                    path.directory.toAbsolutePath().normalize().toString(),
+                )
             }
-            .getOrDefault(emptyList())
+            for (reason in missing) {
+                publishReportSafely(publishReport, MISSING_REPORT_ENTRY_KEY, reason)
+            }
+            if (paths.isEmpty() && missing.isEmpty()) {
+                publishReportSafely(
+                    publishReport,
+                    MISSING_REPORT_ENTRY_KEY,
+                    "No failure artifacts were produced: no windows were discovered or every capture failed.",
+                )
+            }
+            paths
+        }
+            .getOrElse { error ->
+                publishReportSafely(
+                    publishReport,
+                    MISSING_REPORT_ENTRY_KEY,
+                    "Failure artifact capture failed: ${error.describeForReport()}",
+                )
+                emptyList()
+            }
     }
+}
+
+internal fun publishReportSafely(
+    publishReport: (key: String, value: String) -> Unit,
+    key: String,
+    value: String,
+) {
+    runCatching { publishReport(key, value) }
+        .exceptionOrNull()
+        ?.let { System.err.println("Spectre: report publisher failed: ${it.describeForReport()}") }
+}
+
+internal fun Throwable.describeForReport(): String = buildString {
+    append(this@describeForReport::class.simpleName ?: "error")
+    message?.takeIf { it.isNotBlank() }?.let { append(": ").append(it) }
 }

@@ -1,10 +1,16 @@
 package dev.sebastiano.spectre.recording.windows
 
 import dev.sebastiano.spectre.recording.Recorder
+import dev.sebastiano.spectre.recording.RecordingFileStamp
 import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
+import dev.sebastiano.spectre.recording.RecordingResult
+import dev.sebastiano.spectre.recording.RecordingResultProvider
+import dev.sebastiano.spectre.recording.recordingFileStamp
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import dev.sebastiano.spectre.recording.screencapturekit.WindowRecorder
+import dev.sebastiano.spectre.recording.screencapturekit.ownerScopedFrame
+import dev.sebastiano.spectre.recording.validateRecordingOutput
 import java.awt.Rectangle
 import java.io.BufferedReader
 import java.io.IOException
@@ -64,9 +70,10 @@ internal constructor(
         options: RecordingOptions,
         cropDevicePixels: Rectangle?,
     ): RecordingHandle {
-        val title = window.title
-        require(!title.isNullOrBlank()) {
-            "WindowsGraphicsCaptureRecorder requires a non-blank window title; got \"$title\"."
+        val frame = window.ownerScopedFrame(windowOwnerPid, matchesSubstring = false)?.deviceFrame
+        val title = if (frame == null) window.title else null
+        require(frame != null || !title.isNullOrBlank()) {
+            "WindowsGraphicsCaptureRecorder requires a frame or a non-blank window title; got \"$title\"."
         }
         validateOptions(options)
         output.toAbsolutePath().parent?.let(Files::createDirectories)
@@ -84,6 +91,7 @@ internal constructor(
                     mode = WindowsGraphicsCaptureMode.Recording,
                     source = WindowsGraphicsCaptureSource.Window,
                     title = title,
+                    frame = frame,
                     ownerPid = windowOwnerPid,
                     crop = cropDevicePixels,
                     output = output,
@@ -132,9 +140,10 @@ internal constructor(
     private fun startHelper(output: Path, argv: List<String>): RecordingHandle {
         var process: Process? = null
         try {
+            val previous = recordingFileStamp(output)
             process = processFactory.start(argv)
             waitForReady(process, argv)
-            return WindowsGraphicsCaptureRecordingHandle(process, output, argv)
+            return WindowsGraphicsCaptureRecordingHandle(process, output, argv, previous)
         } catch (e: InterruptedException) {
             process?.destroyForcibly()
             Thread.currentThread().interrupt()
@@ -166,7 +175,7 @@ internal constructor(
 
     private companion object {
         private const val READY: String = "READY"
-        private const val READY_WAIT_MILLIS: Long = 3_500
+        private const val READY_WAIT_MILLIS: Long = 15_000
         private const val EXIT_PROBE_WAIT_MILLIS: Long = 100
 
         fun waitForReady(process: Process, argv: List<String>) {
@@ -217,7 +226,9 @@ private class WindowsGraphicsCaptureRecordingHandle(
     private val process: Process,
     override val output: Path,
     private val argv: List<String>,
-) : RecordingHandle {
+    private val previous: RecordingFileStamp?,
+) : RecordingHandle, RecordingResultProvider {
+    override val recordingResult = RecordingResult(output, cropFixedAtStart = "--crop-x" in argv)
 
     private val stopLock = Any()
     @Volatile private var result: Result<Unit>? = null
@@ -241,7 +252,7 @@ private class WindowsGraphicsCaptureRecordingHandle(
 
     private fun stopInternal() {
         var interrupted = false
-        var sentTerminationOurselves = false
+        var stopTimedOut = false
         if (process.isAlive) {
             try {
                 process.outputStream.use { stdin ->
@@ -260,7 +271,7 @@ private class WindowsGraphicsCaptureRecordingHandle(
                     false
                 }
             if (!gracefulExit) {
-                sentTerminationOurselves = true
+                stopTimedOut = true
                 process.destroy()
                 val terminatedAfterDestroy =
                     try {
@@ -292,7 +303,11 @@ private class WindowsGraphicsCaptureRecordingHandle(
             error("spectre-window-capture is still running after stop. Argv: $argv")
         }
         val exit = process.exitValue()
-        check(exit == 0 || sentTerminationOurselves) {
+        check(!stopTimedOut) {
+            "spectre-window-capture did not exit within ${STOP_TIMEOUT_SECONDS}s of stop(); " +
+                "the helper had to be terminated and output at $output may be unfinalised."
+        }
+        check(exit == 0) {
             val stderr = helperFailureDetail(process)
             appendHelperStderr(
                 messageForWindowsGraphicsCaptureHelperExit(
@@ -304,6 +319,7 @@ private class WindowsGraphicsCaptureRecordingHandle(
                 stderr,
             ) + " The helper may also have been terminated externally after stop was requested."
         }
+        validateRecordingOutput(output, previous = previous)
     }
 
     private companion object {

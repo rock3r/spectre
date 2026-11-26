@@ -1,8 +1,11 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
+import dev.sebastiano.spectre.recording.stabilizeMappedAwtFrames
 import java.awt.Dialog
+import java.awt.EventQueue
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
+import java.awt.Rectangle
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import org.junit.jupiter.api.Assumptions.assumeFalse
@@ -98,3 +101,34 @@ private fun assumeLiveAwtAvailable() {
 
 /** A subclass of [Frame] that doesn't try to allocate a peer — safe for headless unit tests. */
 private class TestFrame(initialTitle: String) : Frame(initialTitle)
+
+internal fun withSharedSckFrames(test: (Frame, Frame) -> Unit) {
+    assumeLiveAwtAvailable()
+    val titleChanges = java.util.concurrent.atomic.AtomicInteger()
+    lateinit var left: Frame
+    lateinit var right: Frame
+    EventQueue.invokeAndWait {
+        fun visible(bounds: Rectangle) =
+            Frame("direct SCK shared title").apply {
+                addPropertyChangeListener("title") { titleChanges.incrementAndGet() }
+                isUndecorated = true
+                this.bounds = bounds
+                isVisible = true
+            }
+        left = visible(SCK_LEFT_FRAME)
+        right = visible(SCK_RIGHT_FRAME)
+    }
+    try {
+        stabilizeMappedAwtFrames(left to SCK_LEFT_FRAME, right to SCK_RIGHT_FRAME)
+        test(left, right)
+        assertEquals(0, titleChanges.get(), "capture changed an AWT title")
+    } finally {
+        EventQueue.invokeAndWait {
+            left.dispose()
+            right.dispose()
+        }
+    }
+}
+
+internal val SCK_LEFT_FRAME: Rectangle = Rectangle(40, 80, 300, 200)
+internal val SCK_RIGHT_FRAME: Rectangle = Rectangle(410, 80, 300, 200)

@@ -57,16 +57,63 @@ class FailureArtifactHooksTest {
 
     @Test
     fun `recordFailure swallows capture exceptions`(@TempDir temp: Path) {
+        val reports = mutableListOf<Pair<String, String>>()
         val paths =
             FailureArtifactHooks.recordFailure(
                 automator = newHeadlessAutomator(),
                 config = FailureArtifactsConfig(reportsRoot = temp),
                 testClassName = "com.example.T",
                 testMethodName = "fails",
-                publishReport = { _, _ -> },
+                publishReport = { key, value -> reports += key to value },
                 capture = { _, _ -> error("boom") },
             )
         assertTrue(paths.isEmpty())
+        assertEquals(FailureArtifactHooks.MISSING_REPORT_ENTRY_KEY, reports.single().first)
+        assertTrue(reports.single().second.contains("boom"))
+    }
+
+    @Test
+    fun `recordFailure reports when capture produces no artifacts`(@TempDir temp: Path) {
+        val reports = mutableListOf<Pair<String, String>>()
+        FailureArtifactHooks.recordFailure(
+            automator = newHeadlessAutomator(),
+            config = FailureArtifactsConfig(reportsRoot = temp),
+            testClassName = "com.example.T",
+            testMethodName = "fails",
+            publishReport = { key, value -> reports += key to value },
+            capture = { _, _ -> emptyList() },
+        )
+        assertEquals(FailureArtifactHooks.MISSING_REPORT_ENTRY_KEY, reports.single().first)
+        assertTrue(reports.single().second.contains("No failure artifacts were produced"))
+    }
+
+    @Test
+    fun `throwing publisher is invoked once and does not discard captured paths`(
+        @TempDir temp: Path
+    ) {
+        val markerDir = temp.resolve("window-0")
+        val marker =
+            CaptureArtifactPaths(
+                markerDir,
+                markerDir.resolve("capture.json"),
+                markerDir.resolve("screenshot.png"),
+            )
+        var publications = 0
+        val paths =
+            FailureArtifactHooks.recordFailure(
+                automator = newHeadlessAutomator(),
+                config = FailureArtifactsConfig(reportsRoot = temp),
+                testClassName = "com.example.T",
+                testMethodName = "fails",
+                publishReport = { _, _ ->
+                    publications++
+                    error("publisher failed")
+                },
+                capture = { _, _ -> listOf(marker) },
+            )
+
+        assertEquals(listOf(marker), paths)
+        assertEquals(1, publications)
     }
 
     @Test

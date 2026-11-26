@@ -154,7 +154,7 @@ final class WindowFrameSelectorTests: XCTestCase {
         }
     }
 
-    func testTitleSelectorKeepsFirstSubstringMatch() throws {
+    func testTitleSelectorRejectsAmbiguousSubstringMatches() throws {
         let candidates = [
             WindowCandidate(
                 id: 1, pid: 42, title: nil, frame: CGRect(x: 0, y: 0, width: 10, height: 10)),
@@ -166,9 +166,11 @@ final class WindowFrameSelectorTests: XCTestCase {
                 frame: CGRect(x: 0, y: 0, width: 10, height: 10)),
         ]
 
-        let selected = try selectWindow(
-            candidates, pid: 42, selector: .titleContains("Spectre/abc"))
-
-        XCTAssertEqual(selected, 2)
+        XCTAssertThrowsError(
+            try selectWindow(candidates, pid: 42, selector: .titleContains("Spectre/abc"))
+        ) { error in
+            XCTAssertEqual((error as? CLIError)?.code, 7)
+            XCTAssertTrue((error as? CLIError)?.message.contains("2 windows") == true)
+        }
     }
 }

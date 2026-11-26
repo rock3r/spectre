@@ -195,22 +195,92 @@ public object ContractFixtureTags {
  */
 public object AutomatorContractCorpus {
 
-    public data class ScenarioResult(
+    public enum class ScenarioOutcome {
+        Passed,
+        Failed,
+        Skipped,
+    }
+
+    public class ScenarioResult(
         public val id: String,
         public val transport: AutomatorTransport,
-        public val passed: Boolean,
+        passed: Boolean,
         public val detail: String = "",
-    )
+    ) {
+        private var storedOutcome: ScenarioOutcome =
+            if (passed) ScenarioOutcome.Passed else ScenarioOutcome.Failed
+
+        public constructor(
+            id: String,
+            transport: AutomatorTransport,
+            outcome: ScenarioOutcome,
+            detail: String = "",
+        ) : this(id, transport, outcome == ScenarioOutcome.Passed, detail) {
+            storedOutcome = outcome
+        }
+
+        public val outcome: ScenarioOutcome
+            get() = storedOutcome
+
+        public val passed: Boolean
+            get() = outcome == ScenarioOutcome.Passed
+
+        public operator fun component1(): String = id
+
+        public operator fun component2(): AutomatorTransport = transport
+
+        public operator fun component3(): Boolean = passed
+
+        public operator fun component4(): String = detail
+
+        public fun copy(
+            id: String = this.id,
+            transport: AutomatorTransport = this.transport,
+            passed: Boolean = this.passed,
+            detail: String = this.detail,
+        ): ScenarioResult {
+            val copiedOutcome =
+                if (passed == this.passed) outcome
+                else if (passed) ScenarioOutcome.Passed else ScenarioOutcome.Failed
+            return ScenarioResult(id, transport, copiedOutcome, detail)
+        }
+
+        public fun withOutcome(
+            outcome: ScenarioOutcome,
+            id: String = this.id,
+            transport: AutomatorTransport = this.transport,
+            detail: String = this.detail,
+        ): ScenarioResult = ScenarioResult(id, transport, outcome, detail)
+
+        override fun equals(other: Any?): Boolean =
+            this === other ||
+                (other is ScenarioResult &&
+                    id == other.id &&
+                    transport == other.transport &&
+                    outcome == other.outcome &&
+                    detail == other.detail)
+
+        override fun hashCode(): Int {
+            var result = id.hashCode()
+            result = 31 * result + transport.hashCode()
+            result = 31 * result + outcome.hashCode()
+            result = 31 * result + detail.hashCode()
+            return result
+        }
+
+        override fun toString(): String =
+            "ScenarioResult(id=$id, transport=$transport, outcome=$outcome, detail=$detail)"
+    }
 
     public data class RunResult(
         public val transport: AutomatorTransport,
         public val results: List<ScenarioResult>,
     ) {
         public val allPassed: Boolean
-            get() = results.all { it.passed }
+            get() = results.none { it.outcome == ScenarioOutcome.Failed }
 
         public fun requireAllPassed() {
-            val failed = results.filterNot { it.passed }
+            val failed = results.filter { it.outcome == ScenarioOutcome.Failed }
             if (failed.isNotEmpty()) {
                 throw AssertionError(
                     "Contract corpus failures for ${transport.name}:\n" +
@@ -221,9 +291,9 @@ public object AutomatorContractCorpus {
     }
 
     /**
-     * Execute the corpus. Scenarios that need a live fixture are skipped (recorded as passed with
-     * detail `skipped:no-fixture`) when [AutomatorContractDriver.expectsFixtureSemantics] is false
-     * — matching matrix rows that only claim headless transport liveness.
+     * Execute the corpus. Scenarios that need a live fixture use the explicit
+     * [ScenarioOutcome.Skipped] outcome when [AutomatorContractDriver.expectsFixtureSemantics] is
+     * false — matching matrix rows that only claim headless transport liveness.
      */
     public fun run(driver: AutomatorContractDriver): RunResult =
         run(driver = driver, realKeyboardEnabled = RealKeyboardGate.isEnabled())
@@ -286,7 +356,7 @@ public object AutomatorContractCorpus {
                 ScenarioResult(
                     id = "type-text-after-focus-field",
                     transport = driver.transport,
-                    passed = true,
+                    outcome = ScenarioOutcome.Skipped,
                     detail = "skipped:type-text-experimental",
                 )
             results +=
@@ -305,21 +375,21 @@ public object AutomatorContractCorpus {
                 ScenarioResult(
                     id = "click-fixture-button",
                     transport = driver.transport,
-                    passed = true,
+                    outcome = ScenarioOutcome.Skipped,
                     detail = "skipped:no-fixture",
                 )
             results +=
                 ScenarioResult(
                     id = "type-text-after-focus-field",
                     transport = driver.transport,
-                    passed = true,
+                    outcome = ScenarioOutcome.Skipped,
                     detail = "skipped:no-fixture",
                 )
             results +=
                 ScenarioResult(
                     id = "screenshot-non-empty",
                     transport = driver.transport,
-                    passed = true,
+                    outcome = ScenarioOutcome.Skipped,
                     detail = "skipped:no-fixture",
                 )
             // Headless Robot adapters throw on real key/clipboard paths; typeText is covered by
@@ -328,7 +398,7 @@ public object AutomatorContractCorpus {
                 ScenarioResult(
                     id = "type-text-entry-point",
                     transport = driver.transport,
-                    passed = true,
+                    outcome = ScenarioOutcome.Skipped,
                     detail = "skipped:no-fixture",
                 )
         }
@@ -487,7 +557,7 @@ public object AutomatorContractCorpus {
                 ScenarioResult(
                     id = PressKeyAfterFocus.SCENARIO_ID,
                     transport = driver.transport,
-                    passed = true,
+                    outcome = ScenarioOutcome.Skipped,
                     detail = RealKeyboardGate.SKIPPED_DETAIL,
                 )
             } else {

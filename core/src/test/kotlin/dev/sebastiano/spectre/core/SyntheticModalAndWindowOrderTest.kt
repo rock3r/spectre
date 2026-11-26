@@ -3,7 +3,6 @@ package dev.sebastiano.spectre.core
 import androidx.compose.ui.awt.ComposePanel
 import java.awt.AWTEvent
 import java.awt.BorderLayout
-import java.awt.Component
 import java.awt.Dialog
 import java.awt.Dimension
 import java.awt.Toolkit
@@ -13,6 +12,7 @@ import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
@@ -24,8 +24,8 @@ import javax.swing.SwingUtilities
 import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -84,7 +84,9 @@ class SyntheticModalAndWindowOrderTest {
             val driver = RobotDriver.synthetic(root)
 
             val (rootX, rootY) = centerOnScreen(rootTarget)
-            runOffTestThread { runBlocking { driver.click(rootX, rootY) } }
+            assertSyntheticRejection {
+                runOffTestThread { runBlocking { driver.click(rootX, rootY) } }
+            }
             val (dialogX, dialogY) = centerOnScreen(dialogTarget)
             runOffTestThread { runBlocking { driver.click(dialogX, dialogY) } }
             drainEdt()
@@ -101,7 +103,40 @@ class SyntheticModalAndWindowOrderTest {
 
     @Test
     @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
-    fun `an active modal dialog receives keys when AWT has no focus owner`() {
+    fun `an overlapping active modal dialog wins hit testing over its pinned owner`() {
+        assumeLiveAwtAvailable()
+        val ownerTarget = RecordingPanel()
+        val dialogTarget = RecordingPanel()
+        try {
+            val owner = showFrame(ownerTarget)
+            val dialog =
+                showModalDialog(owner = owner, content = dialogTarget, x = FRAME_X + OVERLAP_OFFSET)
+            val driver = RobotDriver.synthetic(owner)
+
+            val dialogX = onEdt { owner.x + owner.width - OVERLAP_OFFSET / 2 }
+            val dialogY = onEdt { owner.y + owner.height / 2 }
+            runOffTestThread { runBlocking { driver.click(dialogX, dialogY) } }
+            val blockedOwnerX = onEdt { owner.x + OVERLAP_OFFSET / 2 }
+            val blockedOwnerY = onEdt { owner.y + owner.height / 2 }
+            assertSyntheticRejection {
+                runOffTestThread { runBlocking { driver.click(blockedOwnerX, blockedOwnerY) } }
+            }
+            drainEdt()
+
+            assertTrue(dialog.isShowing, "the modal fixture must remain live for both gestures")
+            assertTrue(dialogTarget.pressed.isNotEmpty(), "the overlap must hit the modal dialog")
+            assertTrue(
+                ownerTarget.pressed.isEmpty(),
+                "the blocked pinned owner must receive neither overlapping nor outside clicks",
+            )
+        } finally {
+            disposeAll()
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `an active modal dialog rejects keys when AWT has no focus owner`() {
         assumeLiveAwtAvailable()
         val recorder = GlobalKeyRecorder().also { it.install() }
         try {
@@ -109,28 +144,23 @@ class SyntheticModalAndWindowOrderTest {
                 showFrame(JPanel().apply { preferredSize = PANEL_SIZE }) {
                     focusableWindowState = false
                 }
-            val dialog =
-                showModalDialog(
-                    owner = root,
-                    content = JPanel().apply { preferredSize = PANEL_SIZE },
-                    x = DIALOG_X,
-                    focusable = false,
-                )
+            showModalDialog(
+                owner = root,
+                content = JPanel().apply { preferredSize = PANEL_SIZE },
+                x = DIALOG_X,
+                focusable = false,
+            )
 
-            runOffTestThread { runBlocking { RobotDriver.synthetic(root).pressKey(KeyEvent.VK_A) } }
+            assertSyntheticRejection {
+                runOffTestThread {
+                    runBlocking { RobotDriver.synthetic(root).pressKey(KeyEvent.VK_A) }
+                }
+            }
             drainEdt()
 
-            val pressed =
-                recorder.events.firstOrNull {
-                    it.id == KeyEvent.KEY_PRESSED && it.keyCode == KeyEvent.VK_A
-                }
-            assertNotNull(pressed, "expected a KEY_PRESSED for VK_A")
-            val source = pressed.source as Component
-            val sourceWindow = source as? Window ?: SwingUtilities.getWindowAncestor(source)
-            assertEquals(
-                dialog,
-                sourceWindow,
-                "keys must go to the active modal dialog, not the window it blocks; source=$source",
+            assertTrue(
+                recorder.events.none { it.keyCode == KeyEvent.VK_A },
+                "a key without a focused key-listening recipient must not be delivered",
             )
         } finally {
             recorder.uninstall()
@@ -190,7 +220,9 @@ class SyntheticModalAndWindowOrderTest {
             val (earlierX, earlierY) = centerOnScreen(earlierTarget)
             runOffTestThread { runBlocking { driver.click(earlierX, earlierY) } }
             val (newerX, newerY) = centerOnScreen(newerTarget)
-            runOffTestThread { runBlocking { driver.click(newerX, newerY) } }
+            assertSyntheticRejection {
+                runOffTestThread { runBlocking { driver.click(newerX, newerY) } }
+            }
             drainEdt()
 
             assertTrue(
@@ -296,6 +328,9 @@ class SyntheticModalAndWindowOrderTest {
 
             runOffTestThread { runBlocking { driver.click(cx, cy) } }
             waitUntil("modal dialog showing") { dialog.get()?.isShowing == true }
+            val modal = checkNotNull(dialog.get())
+            windows += modal
+            stabilizeWindowLocation(modal, DIALOG_X, FRAME_Y)
 
             val (dx, dy) = centerOnScreen(dialogTarget)
             runOffTestThread { runBlocking { driver.click(dx, dy) } }
@@ -306,7 +341,6 @@ class SyntheticModalAndWindowOrderTest {
             )
         } finally {
             disposeAll()
-            dialog.get()?.let { modal -> SwingUtilities.invokeLater { modal.dispose() } }
         }
     }
 
@@ -318,6 +352,7 @@ class SyntheticModalAndWindowOrderTest {
         val opener =
             JPanel().apply {
                 preferredSize = PANEL_SIZE
+                isFocusable = true
                 addKeyListener(
                     object : KeyAdapter() {
                         override fun keyPressed(e: KeyEvent) {
@@ -334,20 +369,113 @@ class SyntheticModalAndWindowOrderTest {
                 )
             }
         try {
-            val root = showFrame(opener) { focusableWindowState = false }
+            val root = showFrame(opener)
+            focusOnEdt(root, opener)
             val driver = RobotDriver.synthetic(root)
-            val (cx, cy) = centerOnScreen(opener)
 
-            runOffTestThread {
-                runBlocking {
-                    driver.moveTo(cx, cy)
-                    driver.pressKey(KeyEvent.VK_ENTER)
-                }
-            }
+            runOffTestThread { runBlocking { driver.pressKey(KeyEvent.VK_ENTER) } }
             waitUntil("modal dialog showing") { dialog.get()?.isShowing == true }
+            windows += checkNotNull(dialog.get())
         } finally {
             disposeAll()
-            dialog.get()?.let { modal -> SwingUtilities.invokeLater { modal.dispose() } }
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `Enter whose pressed handler hides its recipient drops its typed tail`() {
+        assumeLiveAwtAvailable()
+        val originalEvents = CopyOnWriteArrayList<Int>()
+        val replacementEvents = CopyOnWriteArrayList<Int>()
+        val originalFrame = AtomicReference<JFrame>()
+        val replacement =
+            JPanel().apply {
+                preferredSize = PANEL_SIZE
+                isFocusable = true
+                addKeyListener(recordKeyEventIds(replacementEvents))
+            }
+        try {
+            val replacementFrame = showFrame(replacement, x = DIALOG_X)
+            val original =
+                JPanel().apply {
+                    preferredSize = PANEL_SIZE
+                    isFocusable = true
+                    addKeyListener(
+                        object : KeyAdapter() {
+                            override fun keyPressed(event: KeyEvent) {
+                                originalEvents += event.id
+                                if (event.keyCode != KeyEvent.VK_ENTER) return
+                                originalFrame.get().isVisible = false
+                                replacementFrame.toFront()
+                                replacementFrame.requestFocus()
+                                replacement.requestFocus()
+                            }
+
+                            override fun keyTyped(event: KeyEvent) {
+                                originalEvents += event.id
+                            }
+
+                            override fun keyReleased(event: KeyEvent) {
+                                originalEvents += event.id
+                            }
+                        }
+                    )
+                }
+            val root = showFrame(original)
+            originalFrame.set(root)
+            focusOnEdt(root, original)
+
+            runOffTestThread {
+                runBlocking { RobotDriver.synthetic(root).pressKey(KeyEvent.VK_ENTER) }
+            }
+            drainEdt()
+
+            assertEquals(listOf(KeyEvent.KEY_PRESSED), originalEvents.toList())
+            assertTrue(
+                replacementEvents.isEmpty(),
+                "the typed/released tail must not leak into the newly focused window",
+            )
+        } finally {
+            disposeAll()
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `Escape whose pressed handler disposes its recipient completes without a release`() {
+        assumeLiveAwtAvailable()
+        val events = CopyOnWriteArrayList<Int>()
+        val frame = AtomicReference<JFrame>()
+        val target =
+            JPanel().apply {
+                preferredSize = PANEL_SIZE
+                isFocusable = true
+                addKeyListener(
+                    object : KeyAdapter() {
+                        override fun keyPressed(event: KeyEvent) {
+                            events += event.id
+                            if (event.keyCode == KeyEvent.VK_ESCAPE) frame.get().dispose()
+                        }
+
+                        override fun keyReleased(event: KeyEvent) {
+                            events += event.id
+                        }
+                    }
+                )
+            }
+        try {
+            val root = showFrame(target)
+            frame.set(root)
+            focusOnEdt(root, target)
+
+            runOffTestThread {
+                runBlocking { RobotDriver.synthetic(root).pressKey(KeyEvent.VK_ESCAPE) }
+            }
+            drainEdt()
+
+            assertEquals(listOf(KeyEvent.KEY_PRESSED), events.toList())
+        } finally {
+            disposeAll()
         }
     }
 
@@ -385,6 +513,7 @@ class SyntheticModalAndWindowOrderTest {
         }
         windows += frame
         waitUntil("frame showing") { content.isShowing }
+        stabilizeWindowLocation(frame, x, FRAME_Y)
         return frame
     }
 
@@ -407,6 +536,7 @@ class SyntheticModalAndWindowOrderTest {
         }
         windows += tool
         waitUntil("tool window showing") { content.isShowing }
+        stabilizeWindowLocation(tool, x, FRAME_Y)
         return tool
     }
 
@@ -427,6 +557,7 @@ class SyntheticModalAndWindowOrderTest {
         // setVisible(true) on a modal dialog blocks in a nested loop, so it must be posted.
         SwingUtilities.invokeLater { modal.isVisible = true }
         waitUntil("modal dialog showing") { content.isShowing }
+        stabilizeWindowLocation(modal, x, FRAME_Y)
         return modal
     }
 
@@ -445,6 +576,51 @@ class SyntheticModalAndWindowOrderTest {
 
     private fun JPanel.windowAncestor(): Window? = SwingUtilities.getWindowAncestor(this)
 
+    private fun recordKeyEventIds(events: MutableList<Int>): KeyAdapter =
+        object : KeyAdapter() {
+            override fun keyPressed(event: KeyEvent) {
+                events += event.id
+            }
+
+            override fun keyTyped(event: KeyEvent) {
+                events += event.id
+            }
+
+            override fun keyReleased(event: KeyEvent) {
+                events += event.id
+            }
+        }
+
+    private fun assertSyntheticRejection(block: () -> Unit) {
+        val failure = assertFailsWith<InvocationTargetException>(block = block)
+        assertTrue(
+            failure.targetException is IllegalStateException,
+            "expected synthetic input rejection, got ${failure.targetException}",
+        )
+    }
+
+    private fun focusOnEdt(frame: JFrame, target: JPanel) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(CALL_TIMEOUT_SECONDS)
+        var consecutiveFocusedReads = 0
+        while (System.nanoTime() < deadline && consecutiveFocusedReads < 2) {
+            SwingUtilities.invokeAndWait {
+                frame.toFront()
+                frame.requestFocus()
+                target.requestFocus()
+            }
+            drainEdt()
+            if (onEdt { frame.focusOwner === target }) consecutiveFocusedReads++
+            else consecutiveFocusedReads = 0
+            if (consecutiveFocusedReads < 2) Thread.sleep(POLL_INTERVAL_MS)
+        }
+        check(onEdt { frame.focusOwner === target }) {
+            "the headed environment did not grant the enabled, showing key listener AWT focus; " +
+                "frame focused=${frame.isFocused}, active=${frame.isActive}, " +
+                "focusOwner=${frame.focusOwner}, target showing=${target.isShowing}, " +
+                "enabled=${target.isEnabled}, focusable=${target.isFocusable}"
+        }
+    }
+
     private fun centerOnScreen(target: JPanel): Pair<Int, Int> {
         var center = 0 to 0
         SwingUtilities.invokeAndWait {
@@ -452,6 +628,25 @@ class SyntheticModalAndWindowOrderTest {
             center = (origin.x + target.width / 2) to (origin.y + target.height / 2)
         }
         return center
+    }
+
+    private fun stabilizeWindowLocation(window: Window, x: Int, y: Int) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(CALL_TIMEOUT_SECONDS)
+        var consecutiveMatches = 0
+        while (System.nanoTime() < deadline && consecutiveMatches < 2) {
+            SwingUtilities.invokeAndWait { window.setLocation(x, y) }
+            drainEdt()
+            if (onEdt { window.locationOnScreen.x == x && window.locationOnScreen.y == y }) {
+                consecutiveMatches++
+            } else {
+                consecutiveMatches = 0
+            }
+            if (consecutiveMatches < 2) Thread.sleep(POLL_INTERVAL_MS)
+        }
+        check(consecutiveMatches == 2) {
+            "window manager did not settle the fixture at ($x,$y); " +
+                "actual=${onEdt { window.locationOnScreen }} bounds=${onEdt { window.bounds }}"
+        }
     }
 
     private fun <T> onEdt(block: () -> T): T {
@@ -500,6 +695,7 @@ class SyntheticModalAndWindowOrderTest {
             }
         }
         windows.clear()
+        drainEdt()
     }
 
     private class RecordingPanel : JPanel() {
@@ -538,6 +734,7 @@ class SyntheticModalAndWindowOrderTest {
         const val POLL_INTERVAL_MS: Long = 25L
         const val FRAME_X: Int = 120
         const val FRAME_Y: Int = 120
+        const val OVERLAP_OFFSET: Int = 100
         const val DIALOG_X: Int = 400
         const val EXCLUDED_X: Int = 680
         val PANEL_SIZE = Dimension(200, 200)

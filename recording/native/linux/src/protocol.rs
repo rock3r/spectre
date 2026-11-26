@@ -15,10 +15,22 @@ pub enum Command {
     Start(StartCommand),
     Screenshot(ScreenshotCommand),
     Stop,
-    PointerMove { x: i32, y: i32 },
-    PointerButton { button: i32, pressed: bool },
-    Key { key_code: i32, pressed: bool },
-    PointerAxis { axis: u32, steps: i32 },
+    PointerMove {
+        x: i32,
+        y: i32,
+    },
+    PointerButton {
+        button: i32,
+        pressed: bool,
+    },
+    Key {
+        key_code: i32,
+        pressed: bool,
+    },
+    PointerAxis {
+        axis: u32,
+        steps: i32,
+    },
     /// Session only. Bind a GNOME Mutter window stream to the window that has keyboard focus now,
     /// keep it under `key`, and write its first frame to `output` as an RGBA PNG. The JVM focuses
     /// the window first and checks the frame before it trusts the binding.
@@ -29,12 +41,30 @@ pub enum Command {
         #[serde(default = "hidden_cursor")]
         cursor_mode: CursorMode,
     },
+    BindWindow {
+        key: String,
+        output: String,
+        owner_pid: u32,
+        binding_token: String,
+        #[serde(default = "hidden_cursor")]
+        cursor_mode: CursorMode,
+    },
+    /// One-shot only: resolve an owned X11 window and obtain an opaque GNOME handoff token.
+    LocateWindow {
+        owner_pid: u32,
+        frame: Region,
+    },
     /// Session only. Write one RGBA PNG frame of the window bound under `key` to `output`.
-    WindowScreenshot { key: String, output: String },
+    WindowScreenshot {
+        key: String,
+        output: String,
+    },
     /// Session only. Record the window bound under `key`, cropped to `region` in stream pixels.
     StartWindowRecording(WindowRecordingCommand),
     /// Session only. Stop the Mutter stream bound under `key`.
-    UnbindWindow { key: String },
+    UnbindWindow {
+        key: String,
+    },
     /// Session only. Ask the window manager to activate the Xwayland client window whose
     /// root-relative geometry is `frame` (device pixels, client area), owned by `owner_pid`.
     /// GNOME ignores a Java window's own focus requests once another window holds focus; the
@@ -78,6 +108,10 @@ pub struct StartCommand {
     pub display_name: Option<String>,
     #[serde(default)]
     pub window_title: Option<String>,
+    #[serde(default)]
+    pub window_owner_pid: Option<u32>,
+    #[serde(default)]
+    pub window_frame: Option<Region>,
     pub cursor_mode: CursorMode,
     pub frame_rate: u32,
     pub region: Region,
@@ -106,11 +140,13 @@ pub struct ScreenshotCommand {
     /// [window_title].
     #[serde(default)]
     pub window_frame: Option<Region>,
-    /// Process that owns the target window. The frame selector skips windows whose
-    /// `_NET_WM_PID` names another process.
+    /// Process that owns the target window. X11 title and frame selectors require a matching
+    /// `_NET_WM_PID` on the candidate.
     #[serde(default)]
     pub window_owner_pid: Option<u32>,
-    pub cursor_mode: CursorMode,
+    /// Explicit cursor requirement. Omitted accepts an existing session stream's semantics.
+    #[serde(default)]
+    pub cursor_mode: Option<CursorMode>,
     pub region: Region,
     /// AWT bounds of the display that contains [region], when known (`x,y,w,h`).
     #[serde(default)]
@@ -132,7 +168,7 @@ pub enum CaptureTarget {
     Window,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceType {
     Monitor,
@@ -140,7 +176,22 @@ pub enum SourceType {
     Virtual,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+/// A portal grant identifies a selected stream, but carries no verifiable window owner or ID.
+pub fn require_portal_region(
+    target: CaptureTarget,
+    sources: &[SourceType],
+    has_window_selector: bool,
+) -> anyhow::Result<()> {
+    if target == CaptureTarget::Window
+        || sources.contains(&SourceType::Window)
+        || has_window_selector
+    {
+        anyhow::bail!("The Wayland portal cannot verify the selected window's identity. Use a GNOME Mutter window stream or request a desktop region explicitly.");
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CursorMode {
     /// Cursor not drawn into the captured frames.
@@ -190,7 +241,12 @@ pub enum Event {
     /// Recording stopped cleanly: gst-launch exited 0, the mux finalised, the file is on disk.
     Stopped { output_size_bytes: u64 },
     /// One-shot screenshot command completed and wrote a readable image file.
-    ScreenshotSaved { output_size_bytes: u64 },
+    ScreenshotSaved {
+        output_size_bytes: u64,
+        /// Stream-relative crop validated before the PNG pipeline started.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        capture_region: Option<[i32; 4]>,
+    },
     /// Pointer/key command applied on the held RemoteDesktop session.
     InputAck,
     /// A Mutter window stream is bound under `key`. `logical_size` is the stream's `size`
@@ -205,6 +261,8 @@ pub enum Event {
     /// The window manager was asked to activate the X11 window `xid`. The JVM still confirms
     /// focus itself: the request can be refused.
     WindowActivated { xid: u64 },
+    /// Opaque, one-use GNOME window binding created by the owning process (or its child).
+    WindowLocated { binding_token: String },
     /// Anything that didn't reach a Stopped state. `kind` is a coarse category the JVM can
     /// pattern-match for surfacing the right exception type; `message` is the human-readable
     /// detail.

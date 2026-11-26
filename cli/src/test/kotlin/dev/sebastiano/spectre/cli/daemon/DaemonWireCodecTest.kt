@@ -59,9 +59,9 @@ class DaemonWireCodecTest {
                 diagnosedResponse(
                     response,
                     warnings,
-                    DaemonProtocol.CurrentVersion,
-                    exactBudget,
-                    encoder,
+                    acceptsDiagnosedResponses = true,
+                    maxFrameBytes = exactBudget,
+                    encoder = encoder,
                 )
             )
 

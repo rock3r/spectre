@@ -92,7 +92,12 @@ constructor(
     ): List<String> {
         val requiredVersion = DaemonProtocol.clientHandshakeVersion(request)
         val configuration = daemonConfiguration()
-        DaemonWireCodec.writeRequest(output, DaemonRequest.Hello(requiredVersion, configuration))
+        val hello =
+            DaemonRequest.Hello(requiredVersion, configuration).also {
+                it.acceptsShutdownRecordings = true
+                it.acceptsDiagnosedResponses = true
+            }
+        DaemonWireCodec.writeRequest(output, hello)
         when (val response = DaemonWireCodec.readResponse(input)) {
             is DaemonResponse.Hello -> {
                 if (!retainDiagnostics) response.warnings.forEach(warningSink)

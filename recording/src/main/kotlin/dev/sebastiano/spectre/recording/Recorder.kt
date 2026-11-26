@@ -11,9 +11,9 @@ import java.nio.file.Path
  * lives behind separate
  * [WindowRecorder][dev.sebastiano.spectre.recording.screencapturekit.WindowRecorder]
  * implementations: `ScreenCaptureKitRecorder` on macOS, `WindowsGraphicsCaptureRecorder` on
- * Windows, `LinuxX11Recorder` on Xorg/Xvfb, and `WaylandPortalWindowRecorder` on Linux Wayland.
- * Tests and advanced consumers can swap in their own [Recorder] implementation (e.g. an in-memory
- * frame accumulator).
+ * Windows, `LinuxX11Recorder` on Xorg/Xvfb, and GNOME Mutter window streams on Wayland. Tests and
+ * advanced consumers can swap in their own [Recorder] implementation (e.g. an in-memory frame
+ * accumulator).
  */
 public interface Recorder {
 

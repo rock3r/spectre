@@ -60,6 +60,26 @@ class WaylandOsRobotAdapterTest {
     }
 
     @Test
+    fun `Linux Wayland driver remains eligible for platform capture`() {
+        val wayland = RecordingWaylandAdapter()
+        val selected =
+            defaultRealOsRobotAdapter(
+                isLinux = true,
+                wayland = true,
+                waylandAdapter = { wayland },
+                awtAdapter = { error("AWT Robot must not open a portal on Wayland") },
+            )
+        val driver = RobotDriver(robot = selected, screenCapture = selected)
+        val backend = PlatformScreenCaptureBackend(driver)
+
+        val image = backend.captureRegion(Rectangle(10, 20, 30, 40))
+
+        assertEquals(1, image.width)
+        assertEquals(1, image.height)
+        assertTrue(driver.allowsPlatformCapture)
+    }
+
+    @Test
     fun `Linux Wayland fails closed on first use when the helper bridge is missing`() {
         val adapter =
             defaultRealOsRobotAdapter(
@@ -118,13 +138,79 @@ class WaylandOsRobotAdapterTest {
     }
 
     @Test
-    fun `logical screenshots are resized back to the requested AWT region`() {
-        val device = BufferedImage(288, 144, BufferedImage.TYPE_INT_ARGB)
-        val logical = screenshotToLogicalSize(device, Rectangle(10, 20, 480, 240))
-        assertEquals(480, logical.width)
-        assertEquals(240, logical.height)
-        val alreadyLogical = screenshotToLogicalSize(device, Rectangle(0, 0, 288, 144))
-        assertSame(device, alreadyLogical)
+    fun `logical screenshots resize a verified mixed-scale capture`() {
+        val device = BufferedImage(1536, 864, BufferedImage.TYPE_INT_ARGB)
+        val logical =
+            screenshotToLogicalSize(
+                device,
+                Rectangle(0, 0, 2560, 1440),
+                Rectangle(0, 0, 1536, 864),
+            )
+
+        assertEquals(2560, logical.width)
+        assertEquals(1440, logical.height)
+        assertSame(
+            device,
+            screenshotToLogicalSize(
+                device,
+                Rectangle(0, 0, 1536, 864),
+                Rectangle(0, 0, 1536, 864),
+            ),
+        )
+    }
+
+    @Test
+    fun `seat adapter keeps native pixels but returns AWT dimensions to logical callers`() {
+        val device = BufferedImage(1536, 864, BufferedImage.TYPE_INT_ARGB)
+        val adapter =
+            WaylandSeatSocketAdapter(
+                socketPath = { error("must not connect") },
+                capture = { VerifiedWaylandCapture(device, Rectangle(0, 0, 1536, 864)) },
+            )
+        device.setRGB(0, 0, java.awt.Color.RED.rgb)
+        device.setRGB(device.width - 1, device.height - 1, java.awt.Color.BLUE.rgb)
+        val requested = Rectangle(0, 0, 2560, 1440)
+        val logical = adapter.createScreenCapture(requested)
+
+        assertEquals(2560, logical.width)
+        assertEquals(1440, logical.height)
+        assertEquals(java.awt.Color.RED.rgb, logical.getRGB(0, 0))
+        assertEquals(java.awt.Color.BLUE.rgb, logical.getRGB(logical.width - 1, logical.height - 1))
+        assertSame(device, adapter.createDeviceScaleScreenCapture(requested))
+    }
+
+    @Test
+    fun `seat adapter rejects a genuinely clipped helper image`() {
+        val adapter =
+            WaylandSeatSocketAdapter(
+                socketPath = { error("must not connect") },
+                capture = {
+                    VerifiedWaylandCapture(
+                        BufferedImage(1535, 864, BufferedImage.TYPE_INT_ARGB),
+                        Rectangle(0, 0, 1536, 864),
+                    )
+                },
+            )
+
+        val error =
+            assertFailsWith<IllegalStateException> {
+                adapter.createScreenCapture(Rectangle(0, 0, 2560, 1440))
+            }
+        assertTrue(error.message.orEmpty().contains("verified crop was 1536x864"))
+    }
+
+    @Test
+    fun `logical screenshots reject an image clipped below its verified crop`() {
+        val clipped = BufferedImage(287, 144, BufferedImage.TYPE_INT_ARGB)
+        val error =
+            assertFailsWith<IllegalStateException> {
+                screenshotToLogicalSize(
+                    clipped,
+                    Rectangle(10, 20, 480, 240),
+                    Rectangle(6, 12, 288, 144),
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("verified crop was 288x144"))
     }
 
     @Test

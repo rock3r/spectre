@@ -1,8 +1,11 @@
 package dev.sebastiano.spectre.recording.portal
 
 import dev.sebastiano.spectre.recording.Recorder
+import dev.sebastiano.spectre.recording.RecordingFileStamp
 import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
+import dev.sebastiano.spectre.recording.recordingFileStamp
+import dev.sebastiano.spectre.recording.validateRecordingOutput
 import dev.sebastiano.spectre.recording.withWaylandHelperEnvironment
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
@@ -103,13 +106,14 @@ private constructor(
         output: Path,
         options: RecordingOptions,
     ): RecordingHandle {
-        sessionClient?.let { client ->
-            if (sourceTypes.none { it == SourceType.WINDOW }) {
-                return startViaSession(client, region, output, options)
-            }
+        require(SourceType.WINDOW !in sourceTypes) { "The portal cannot verify window identity." }
+        sessionClient?.let {
+            return startViaSession(it, region, output, options)
         }
         val helperPath = helperExtractor.extract()
         Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
+        val command = startCommandFactory(region, output, options)
+        val previous = recordingFileStamp(output)
         val process = processFactory.start(helperPath)
 
         // The reader thread, the latches, and the events live for the recorder's lifetime.
@@ -129,7 +133,7 @@ private constructor(
 
         @Suppress("TooGenericExceptionCaught")
         try {
-            writeCommand(process.outputStream, startCommandFactory(region, output, options))
+            writeCommand(process.outputStream, command)
         } catch (e: IOException) {
             val launchFailure =
                 IllegalStateException(
@@ -141,7 +145,22 @@ private constructor(
             throw launchFailure
         }
 
-        if (!startedLatch.await(startedTimeout, TimeUnit.MILLISECONDS)) {
+        val startCompleted =
+            try {
+                startedLatch.await(startedTimeout, TimeUnit.MILLISECONDS)
+            } catch (interrupted: InterruptedException) {
+                // Until Started is observed no RecordingHandle exists, so this invocation still
+                // owns the helper (and any encoder it may already have spawned). Reap it before
+                // cancellation escapes; otherwise the caller has no handle with which to stop it.
+                try {
+                    runCatching { process.outputStream.close() }
+                    killAndReapOrThrow(process, readerThread, interrupted)
+                } finally {
+                    Thread.currentThread().interrupt()
+                }
+                throw interrupted
+            }
+        if (!startCompleted) {
             val timeoutFailure =
                 IllegalStateException(
                     "spectre-wayland-helper did not emit a Started or Error event within " +
@@ -172,6 +191,7 @@ private constructor(
                     throw syncFailure
                 }
         return GstRecordingHandle(
+            previous = previous,
             process = process,
             output = output,
             json = json,
@@ -193,8 +213,9 @@ private constructor(
     ): RecordingHandle {
         Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
         val command = startCommandFactory(region, output, options)
+        val previous = recordingFileStamp(output)
         val held = client.startHeld(command)
-        return SessionRecordingHandle(held, output)
+        return SessionRecordingHandle(held, output, previous)
     }
 
     @Suppress("LongParameterList", "TooGenericExceptionCaught")
@@ -262,7 +283,8 @@ private constructor(
                 is Event.InputAck,
                 is Event.WindowBound,
                 is Event.WindowUnbound,
-                is Event.WindowActivated -> {
+                is Event.WindowActivated,
+                is Event.WindowLocated -> {
                     // Reserved for a future progress-streaming UX / session input acks.
                 }
             }
@@ -312,11 +334,10 @@ private constructor(
     internal companion object {
 
         /**
-         * In-module factory for tests and [WaylandPortalWindowRecorder]'s delegate path. Annotated
-         * `@JvmSynthetic` so Java consumers don't see it — the JVM-public `WaylandPortalRecorder`
-         * class is supposed to expose only its no-arg constructor. Reflection-based access still
-         * works for genuinely needs-the-internals callers but stays absent from IDE autocomplete
-         * and javap's default view.
+         * In-module factory for tests. Annotated `@JvmSynthetic` so Java consumers don't see it —
+         * the JVM-public `WaylandPortalRecorder` class is supposed to expose only its no-arg
+         * constructor. Reflection-based access still works for genuinely needs-the-internals
+         * callers but stays absent from IDE autocomplete and javap's default view.
          */
         @JvmSynthetic
         internal fun createForInternalUse(
@@ -343,14 +364,16 @@ private constructor(
         fun defaultStartCommandFactory(
             sourceTypes: List<SourceType>
         ): (Rectangle, Path, RecordingOptions) -> Command.Start = { region, output, options ->
+            require(SourceType.WINDOW !in sourceTypes) {
+                "The portal cannot verify window identity."
+            }
+            require(options.screenIndex == RecordingOptions.DEFAULT_SCREEN_INDEX) {
+                "Wayland portal display selection is controlled by the portal picker; " +
+                    "screenIndex=${options.screenIndex} cannot be honored."
+            }
             Command.Start(
                 backend = CaptureBackend.WAYLAND_PORTAL,
-                target =
-                    if (sourceTypes == listOf(SourceType.WINDOW)) {
-                        CaptureTarget.WINDOW
-                    } else {
-                        CaptureTarget.REGION
-                    },
+                target = CaptureTarget.REGION,
                 sourceTypes = sourceTypes,
                 cursorMode = if (options.captureCursor) CursorMode.EMBEDDED else CursorMode.HIDDEN,
                 frameRate = options.frameRate,
@@ -361,12 +384,7 @@ private constructor(
                         width = region.width,
                         height = region.height,
                     ),
-                screenSize =
-                    if (sourceTypes == listOf(SourceType.WINDOW)) {
-                        null
-                    } else {
-                        awtDisplayBoundsContaining(region)?.toWire()
-                    },
+                screenSize = awtDisplayBoundsContaining(region)?.toWire(),
                 output = output.toAbsolutePath().toString(),
                 codec = options.codec,
             )
@@ -405,11 +423,10 @@ internal const val DEFAULT_PROCESS_EXIT_TIMEOUT_MS: Long = 5_000
 
 /**
  * Force-kills [process] and waits up to [FORCED_REAP_TIMEOUT_MS] for the OS to reap it, then joins
- * [readerThread] unbounded (the kill propagates EOF on the helper's stdout, so the reader
- * terminates promptly). Throws [IllegalStateException] if the process is still alive after the
- * forced-reap window — that should never happen with SIGKILL but is surfaced rather than silently
- * leaked. The error message uses [phase] (e.g. `"during a failed start"`, `"during stop"`) so
- * callers from different lifecycle stages produce accurate diagnostics.
+ * [readerThread] for the same bounded interval (the kill normally propagates EOF immediately).
+ * Throws [IllegalStateException] if either resource remains alive. The error message uses [phase]
+ * (e.g. `"during a failed start"`, `"during stop"`) so callers from different lifecycle stages
+ * produce accurate diagnostics.
  *
  * Shared by every `start()` and `stop()` failure path so the contract is consistent: when the
  * caller is about to throw, the helper process is reaped and the reader thread is gone before the
@@ -433,10 +450,25 @@ internal fun killAndReapOrThrow(
                 "spectre-wayland-helper did not exit within ${FORCED_REAP_TIMEOUT_MS}ms after " +
                     "SIGKILL $phase. Helper process may be leaked."
             )
-        if (pendingFailure != null) cleanupFailure.addSuppressed(pendingFailure)
+        if (pendingFailure != null) {
+            pendingFailure.addSuppressed(cleanupFailure)
+            throw pendingFailure
+        }
         throw cleanupFailure
     }
-    readerThread.join()
+    readerThread.join(FORCED_REAP_TIMEOUT_MS)
+    if (readerThread.isAlive) {
+        val cleanupFailure =
+            IllegalStateException(
+                "spectre-wayland-helper reader did not exit within " +
+                    "${FORCED_REAP_TIMEOUT_MS}ms after SIGKILL $phase."
+            )
+        if (pendingFailure != null) {
+            pendingFailure.addSuppressed(cleanupFailure)
+            throw pendingFailure
+        }
+        throw cleanupFailure
+    }
 }
 
 internal const val FORCED_REAP_TIMEOUT_MS: Long = 2_000
@@ -444,6 +476,7 @@ internal const val FORCED_REAP_TIMEOUT_MS: Long = 2_000
 internal class SessionRecordingHandle(
     private val held: HeldRecordingSession,
     override val output: Path,
+    private val previous: RecordingFileStamp?,
 ) : RecordingHandle {
     private val stopInitiated = AtomicBoolean(false)
     private val finished = CountDownLatch(1)
@@ -465,6 +498,7 @@ internal class SessionRecordingHandle(
                 check(event is Event.Stopped) {
                     "spectre-wayland-helper session did not stop recording: $event"
                 }
+                validateRecordingOutput(output, event.outputSizeBytes, previous)
             }
             result.set(Result.success(Unit))
         } catch (t: Throwable) {
@@ -486,6 +520,7 @@ internal class SessionRecordingHandle(
 private class GstRecordingHandle(
     private val process: Process,
     override val output: Path,
+    private val previous: RecordingFileStamp?,
     private val json: Json,
     @Suppress("unused") private val startedEvent: Event.Started,
     private val stoppedRef: AtomicReference<Event.Stopped?>,
@@ -580,6 +615,11 @@ private class GstRecordingHandle(
                     "process's stderr) for the underlying cause."
             )
         }
+        val stopped =
+            checkNotNull(stoppedRef.get()) {
+                "Recording helper exited without reporting Stopped for $output."
+            }
+        validateRecordingOutput(output, stopped.outputSizeBytes, previous)
     }
 
     private fun waitForGracefulExitOrReap(

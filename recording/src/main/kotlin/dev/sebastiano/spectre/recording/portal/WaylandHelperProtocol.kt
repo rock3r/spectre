@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording.portal
 
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonClassDiscriminator
@@ -34,6 +35,8 @@ internal sealed interface Command {
         @SerialName("source_types") val sourceTypes: List<SourceType>,
         @SerialName("display_name") val displayName: String? = null,
         @SerialName("window_title") val windowTitle: String? = null,
+        @SerialName("window_owner_pid") val windowOwnerPid: Long? = null,
+        @SerialName("window_frame") val windowFrame: Region? = null,
         @SerialName("cursor_mode") val cursorMode: CursorMode,
         @SerialName("frame_rate") val frameRate: Int,
         @SerialName("region") val region: Region,
@@ -53,7 +56,10 @@ internal sealed interface Command {
         /** Untitled-window selector: root coordinates, device pixels. X11 only. */
         @SerialName("window_frame") val windowFrame: Region? = null,
         @SerialName("window_owner_pid") val windowOwnerPid: Long? = null,
-        @SerialName("cursor_mode") val cursorMode: CursorMode,
+        /** Explicit requirement; null accepts an existing session stream's cursor semantics. */
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        @SerialName("cursor_mode")
+        val cursorMode: CursorMode? = null,
         @SerialName("region") val region: Region,
         @SerialName("screen_size") val screenSize: List<Int>? = null,
         @SerialName("output") val output: String,
@@ -95,6 +101,25 @@ internal sealed interface Command {
         @SerialName("output") val output: String,
         /** Mutter fixes the cursor mode when it binds the stream. */
         @SerialName("cursor_mode") val cursorMode: CursorMode = CursorMode.HIDDEN,
+    ) : Command
+
+    /** Binds the window resolved by the Spectre GNOME Shell identity service. */
+    @Serializable
+    @SerialName("bind_window")
+    data class BindWindow(
+        @SerialName("key") val key: String,
+        @SerialName("output") val output: String,
+        @SerialName("owner_pid") val ownerPid: Long,
+        @SerialName("binding_token") val bindingToken: String,
+        @SerialName("cursor_mode") val cursorMode: CursorMode = CursorMode.HIDDEN,
+    ) : Command
+
+    /** One-shot helper: validates an owned X11 window and returns an opaque handoff token. */
+    @Serializable
+    @SerialName("locate_window")
+    data class LocateWindow(
+        @SerialName("owner_pid") val ownerPid: Long,
+        @SerialName("frame") val frame: Region,
     ) : Command
 
     /** Session only. Writes one RGBA PNG frame of the window bound under [key]. */
@@ -161,7 +186,11 @@ internal sealed interface Event {
 
     @Serializable
     @SerialName("screenshot_saved")
-    data class ScreenshotSaved(@SerialName("output_size_bytes") val outputSizeBytes: Long) : Event
+    data class ScreenshotSaved(
+        @SerialName("output_size_bytes") val outputSizeBytes: Long,
+        /** Stream-relative crop proven by the helper before it started the PNG pipeline. */
+        @SerialName("capture_region") val captureRegion: List<Int>? = null,
+    ) : Event
 
     @Serializable
     @SerialName("error")
@@ -192,6 +221,10 @@ internal sealed interface Event {
     @Serializable
     @SerialName("window_activated")
     data class WindowActivated(@SerialName("xid") val xid: Long) : Event
+
+    @Serializable
+    @SerialName("window_located")
+    data class WindowLocated(@SerialName("binding_token") val bindingToken: String) : Event
 }
 
 /** Helper error kind for a desktop without GNOME Mutter's ScreenCast API. */

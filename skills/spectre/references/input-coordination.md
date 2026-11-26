@@ -32,9 +32,9 @@ import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
    JVM already coordinates operations, so an outer lease self-deadlocks).
 5. **Multi-step critical sections:** wrap coupled actions (including screenshots/recordings, which do not acquire leases
    automatically) in reentrant `automator.withExclusiveInput { ... }`.
-6. **Agent attach skew:** attach starts the coordinator on a best-effort basis so read-only tree inspection still works
-   if the coordinator cannot launch; current target cores use `Required` for real input and fail closed, whereas legacy
-   pre-coordination target cores fall back to uncoordinated `RobotDriver`.
+6. **Agent attach skew:** current target cores must expose `InputLeasePolicy` and
+   `RobotDriver.synthetic(policy)`. Attach fails when either is absent; it never substitutes the
+   legacy real-OS driver or drops the requested policy.
 
 ## Inspecting and revoking stuck leases
 

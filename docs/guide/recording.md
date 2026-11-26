@@ -50,7 +50,22 @@ With `spectre-recording` at runtime, `ComposeAutomator.screenshot(windowIndex)` 
 `screenshot(node)` use native window capture. Core does not depend on recording.
 Injected or core-only deployments report an error for these overloads when native
 capture is unavailable. They do not substitute a framebuffer region.
-Use `screenshot(region)` for an explicit screen rectangle.
+Use `screenshot(region)` for an explicit screen rectangle. On macOS both that logical-size API and
+`screenshotAtDeviceScale(region)` run through the `spectre-screencapture` ScreenCaptureKit helper;
+they never call `java.awt.Robot.createScreenCapture`. The former downsamples the helper pixels to
+one pixel per AWT unit, while the latter preserves device pixels. A region that crosses displays is
+captured one display at a time and combined at the centre display's scale. The runtime needs both
+`spectre-recording` and `spectre-recording-macos`.
+
+The requested rectangle must be completely covered by the current display layout; off-display
+edges and gaps fail instead of becoming transparent pixels. Point-to-pixel dimensions use the
+platform's nearest-pixel rounding (at most half a device pixel), and every helper image must match
+that rounded size before Spectre scales it into the combined image.
+
+Region stills are one-shot captures and can take a second or more on macOS. Before each one,
+Spectre stops open window-stills sessions so a stuck `replayd` cannot leave two ScreenCaptureKit
+streams competing for frames. Prefer window-scoped `waitForVisualIdle()` sampling in polling loops;
+multi-display region stills pay the one-shot cost once per intersected display.
 For a top-level AWT window, call `AutoScreenshotter` directly:
 
 ```kotlin
@@ -81,11 +96,11 @@ Two limits apply:
 - **Two windows with the same position and size make the capture fail.** The helper cannot tell
   which one to capture, so it reports an error instead of guessing. This also applies to two
   windows that share a title on Windows or Linux X11.
-- **Linux Wayland window capture needs GNOME, and a Frame or Dialog that can take keyboard focus.**
-  Spectre binds a GNOME Mutter window stream to each window the first time it captures it (see
-  [Linux Wayland window capture](#linux-wayland-window-capture)). Titles do not matter there. A
-  translucent window, or a desktop other than GNOME, makes the capture fail with an error that
-  says why. Spectre never uses a crop of a monitor capture instead.
+- **Linux Wayland window capture needs GNOME and the bundled window-identity extension.**
+  Spectre binds a GNOME Mutter window stream to the requested Xwayland window (see
+  [Linux Wayland window capture](#linux-wayland-window-capture)). Titles and keyboard focus do not
+  select the target. A desktop other than GNOME makes the capture fail with an error that says
+  why. Spectre never uses a crop of a monitor capture instead.
 
 Video recording still needs a titled window: there is no `TitledWindow` adapter for a `JWindow`.
 Record the owner window or a screen region instead.
@@ -95,7 +110,7 @@ Record the owner window or a screen region instead.
 | macOS | ScreenCaptureKit helper (`spectre-screencapture --mode screenshot`) | Captures only the window source; overlapping apps are excluded | Requires `spectre-recording-macos` at runtime and Screen Recording permission |
 | Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | Captures the named top-level window | Requires `spectre-recording-windows`, Windows 10 version 1903 or newer, .NET 8 Desktop Runtime, Windows App Runtime 1.8, and a non-blank exact window title (or an untitled window found by its bounds) |
 | Linux Xorg/Xvfb | Linux helper + GStreamer `ximagesrc` | Captures visible screen pixels | The target window must be visible/frontmost, same limitation as `ComposeAutomator.screenshot(...)`; window mode needs a non-blank exact title (or an untitled window found by its bounds) |
-| Linux Wayland | Linux helper + GNOME Mutter window stream (`org.gnome.Mutter.ScreenCast`) | Captures only the window, even when other windows cover it; follows the window when it moves | GNOME only. Needs the session helper, so the one-time `spectre permissions request` grant. The first capture of each window may focus it briefly. Region stills use the portal monitor stream |
+| Linux Wayland | Linux helper + GNOME Mutter window stream (`org.gnome.Mutter.ScreenCast`) | Captures only the owner-bound target, even when other windows cover it; follows the window when it moves | GNOME only. Needs the session helper, so run `spectre permissions request` when no live session or reusable token is available. Capturing does not switch focus. Region stills use the portal monitor stream |
 
 An embedded `ComposePanel` needs its **host** top-level window for window capture.
 When the host exposes a titled `Frame`, capture that window and crop to the panel
@@ -134,21 +149,33 @@ Expected results by platform:
 - **Linux Wayland** — run with `XDG_RUNTIME_DIR` and the D-Bus session bus visible to the JVM,
   after `spectre permissions request`. The task binds a GNOME Mutter window stream to the smoke
   window and writes a one-frame PNG. No dialog opens. `:recording:runWaylandPortalWindowSmoke`
-  still tests the portal's window picker, which asks for every window.
+  checks that an unverifiable portal window request fails before capture.
 
 ## Linux Wayland consent
 
-Approve Spectre once, then never again. Run this while someone is at the seat:
+Start a Spectre portal session while someone is at the seat:
 
 ```bash
 spectre permissions request
 ```
 
-The desktop shows the Share / Allow remote interaction dialog. Select the whole screen, tick
-Remember, and click Share. Spectre stores the grant and keeps its session running, so later test
-runs, captures, recordings, and real input open no dialog. `spectre permissions check` reports the
-grant without opening a dialog. Each dialog step waits 300 seconds; change it with `--timeout`.
-From code, call `WaylandPortalAccess.preflight()` or `WaylandPortalAccess.request()`.
+The desktop shows its Share or Allow remote interaction dialog. Select the whole screen and
+approve it. Portal versions differ: there may be no **Remember** control and no reusable token.
+While the helper remains alive, later test runs, captures, recordings, and real input reuse that
+live session without another picker. Separately, if the portal returns a reusable restore token,
+Spectre stores it and can ask the portal to restore a session after the helper restarts. Restoration
+is not guaranteed: the token can expire or become invalid when monitors or permissions change.
+
+Inspect those two states without opening a dialog:
+
+```bash
+spectre permissions check --json
+```
+
+`sessionActive` means a helper is serving a live portal session now. `tokenStored` means an optional
+restore token is on disk; it is not required for reuse while `sessionActive` is true. The request
+command waits 300 seconds for each dialog step by default; change it with `--timeout`. From code,
+call `WaylandPortalAccess.preflight()` or `WaylandPortalAccess.request()`.
 
 Tests that use the JUnit integration never open the dialog themselves. Without a grant, the first
 capture or real input fails at once with an error that names `spectre permissions request`, and
@@ -158,17 +185,31 @@ the run prints that fix once. Set `-Dspectre.wayland.consentPrompt=allow` (or
 On a seated GNOME/Mutter desktop, Spectre uses **one** long-lived `spectre-wayland-helper`
 session for monitor capture and real OS input:
 
-1. The helper installs `dev.sebastiano.spectre.desktop` and calls the host portal
-   `Registry.Register` before any ScreenCast or RemoteDesktop method, so the grant is bound
-   to Spectre. An empty host `app_id` would lose that identity.
-2. It opens one RemoteDesktop session (keyboard + pointer + monitor source, persist until
-   revoked). The first run shows Share + Remember / Allow remote interaction. Later Spectre
-   processes on that seat connect to `$XDG_RUNTIME_DIR/spectre/wayland-session.sock`
-   through the existing portal session.
-3. Replacement `restore_token` values live under `$XDG_STATE_HOME/spectre/` (or
+1. The helper stages `dev.sebastiano.spectre.desktop` when applicable. If the host portal exposes
+   `org.freedesktop.host.portal.Registry`, it registers that identity before opening the portal
+   session; older backends without the optional interface are allowed and continue unregistered.
+2. It opens one RemoteDesktop session for keyboard, pointer, and a monitor source. Later Spectre
+   processes on that seat connect to `$XDG_RUNTIME_DIR/spectre/wayland-session.sock` and reuse the
+   live session.
+3. When supplied, replacement `restore_token` values live under `$XDG_STATE_HOME/spectre/` (or
    `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`). They are not stored in `~/.java/robot/`.
-4. If the compositor rejects a stored token, Spectre clears it, retries the dialog once,
-   and fails closed if that retry fails.
+4. If the helper has exited and `tokenStored` is false, the old socket pathname is not a grant.
+   Run `spectre permissions request` again; a new picker and helper are expected. If the portal
+   rejects a stored token, Spectre clears it and requests consent again rather than capturing with
+   the wrong authority.
+
+For reference, Ubuntu 22.04 with GNOME Shell 42.9, portal-gnome 42.1, public RemoteDesktop v1 and
+ScreenCast v4, and GNOME's RemoteDesktop backend v0 reported `granted=true`,
+`sessionActive=true`, and `tokenStored=false`. Separate screenshots and recordings reused one
+picker while the helper lived. After the helper was stopped, a second request restarted it and
+showed a second picker
+([live consent and dynamic-capture verification](https://github.com/rock3r/spectre/actions/runs/45749559957/job/139673792065),
+[helper-stop, restart, and second-request verification](https://github.com/rock3r/spectre/actions/runs/45749559957/job/139673792412)).
+Ubuntu 24.04 with GNOME 46 and the packaged Spectre CLI 0.10.0 reported `granted=true`,
+`sessionActive=true`, and `tokenStored=true`, wrote the token, and reused the live session across
+clips with one picker while the helper remained alive. Helper-restart restoration was not measured
+([native verification](https://github.com/rock3r/spectre/actions/runs/45746386387/job/139663371101)).
+These are verified scenarios, not a promise that every GNOME or Wayland version behaves alike.
 
 `RobotDriver()`, attach (including the inject payload, which talks to the existing seat
 socket without shipping `spectre-recording`), CLI, and MCP on Wayland use this helper. `RobotDriver(robot)` still
@@ -176,38 +217,37 @@ wraps the supplied `java.awt.Robot`. X11, macOS, and Windows keep their existing
 
 ### Linux Wayland window capture
 
-The portal's window source cannot serve tests: it asks the user to pick every window, and GNOME
-cannot restore that grant onto a new window. So window stills, `waitForVisualIdle()` samples, and
-window recording use GNOME Mutter's own `org.gnome.Mutter.ScreenCast` API through the same session
-helper. It needs no dialog. Its stream renders only the window, so other windows on top of it do
-not show, and it follows the window when it moves.
+Install the GNOME Shell extension bundled in the `spectre-recording-linux` jar, enable it, and
+start a new GNOME session. The installer chooses the entry point for the installed GNOME Shell
+version:
 
-Mutter selects the window that has keyboard focus. The first time Spectre captures a window, it
-focuses that window if needed, binds the stream, checks that the frame shows a window of the
-expected size, and gives focus back. The stream stays bound until the window closes.
+```bash
+jar xf spectre-recording-linux-<version>.jar \
+  native/linux/gnome-shell-extension
+bash native/linux/gnome-shell-extension/install.sh
+gnome-extensions enable spectre-window-identity@sebastiano.dev
+```
 
-GNOME ignores a Java window's own focus request (`toFront`, `requestFocus`) when another
-application, or no window, has focus. This happens, for example, when a test closes its window
-and the next test opens a new one. When the window does not get focus from its own request,
-Spectre asks the window manager to activate it, with the same request a taskbar sends
-(`_NET_ACTIVE_WINDOW`). Spectre does not give focus back to another application's window. Limits:
+The portal's window source cannot serve unattended tests: it asks the user to pick every window,
+and GNOME cannot restore that grant onto a new window. Window stills, `waitForVisualIdle()` samples,
+and window recording therefore use GNOME Mutter's own `org.gnome.Mutter.ScreenCast` API through
+the same session helper. It needs no window picker. Its stream renders only the requested window,
+so other windows on top do not show, and it follows the window when it moves.
+
+Spectre resolves the current Xwayland XID and owner PID, and the bundled
+`spectre-window-identity` GNOME Shell extension exchanges that exact pair for Mutter's internal
+window ID. The helper binds `RecordWindow` to that ID. This owner-bound lookup distinguishes
+same-title, same-size windows and neither reads nor changes keyboard focus. Limits:
 
 - **GNOME only.** On another Wayland desktop, window capture fails with an error. Capture a screen
   region instead, or run under X11 or Xvfb.
-- **Popup windows cannot be captured yet.** A `JWindow`, or any window that is not a `Frame` or
-  `Dialog`, never gets X keyboard focus under AWT: AWT keeps it on the owner frame, so Mutter
-  would record the owner. Window stills, visual-idle samples, and atomic captures of such a popup
-  fail at once with an `UnsupportedOperationException`. Capture the owner window or a screen
-  region instead. [#640](https://github.com/rock3r/spectre/issues/640) tracks binding by window
-  identity.
-- **The window must take focus when asked.** Spectre makes a non-focusable window focusable for
-  that moment. If AWT still does not report the window as focused after the window manager was
-  asked to activate it, for example because a modal dialog holds focus, the capture fails with an
-  error instead of risking another window.
-- **The first capture of a window must not run on the AWT event dispatch thread,** because
-  binding waits for focus events there. Later captures of a bound window work on any thread.
-- **Translucent windows cannot be bound yet**, because Spectre finds the window by its opaque
-  pixels.
+- **The target must be a current Xwayland window owned by the requesting JVM.** If the extension
+  cannot match both its XID and owner PID, capture fails instead of selecting a similarly titled,
+  sized, or focused window.
+- **The first bind must run off the AWT event dispatch thread** because it performs blocking helper
+  I/O; an already-bound stream can be reused on the EDT.
+- **The first frame must contain fully opaque (alpha 255) pixels with size-compatible bounds.** No
+  opaque pixels or bounds incompatible with the target AWT outer size fail binding.
 
 See [Recording limitations](../RECORDING-LIMITATIONS.md) for token env vars and the
 compositor matrix.
@@ -253,12 +293,9 @@ This matrix describes each recorder's source, movement behaviour, and requiremen
 | `FfmpegWindowRecorder` (deprecated) | Legacy named window (`gdigrab title=`) | Yes — `gdigrab` retracks the window across moves and resizes | Captures only the window's pixels. Compose `OnWindow` popups land in a separate OS window with a different title and are excluded. `OnSameCanvas` / `OnComponent` popups are part of the window surface and are captured | `ffmpeg` on `PATH`; visible window with a non-blank exact title | Windows |
 | `ScreenCaptureKitRecorder` | Named window (pid + title substring), optional window-relative crop, or screen region | Window mode follows moves/resizes of the host window; optional `sourceRect` crop is **fixed at start** (v1). Region mode is fixed at `start()` | Window mode (with or without crop) captures only the window's pixels — occluders excluded. Region mode captures visible display pixels including overlapping apps | `spectre-recording-macos` runtime helper (`spectre-screencapture`); macOS Screen Recording TCC for the launching app | macOS |
 | `LinuxX11Recorder` | Screen region or named X11 window (`ximagesrc`) | Region mode is fixed at `start()`; window mode resolves the XID from `WM_NAME` / `_NET_WM_NAME` and captures with `ximagesrc xid=` | Captures visible X server pixels for the selected source; occluding apps can appear in region capture. A title that does not match a mapped window fails; root/desktop recording is excluded | `spectre-recording-linux` runtime helper; `gst-launch-1.0` with `ximagesrc`, `videorate`, `x264enc`, and `mp4mux`; `DISPLAY`; `libX11.so.6` at runtime for named-window lookup | Linux Xorg/Xvfb; named XWayland windows only when the process is deliberately forced onto the X11 backend |
-| `WaylandPortalRecorder` | Monitor region (portal `SourceType.MONITOR`, cropped) | No — monitor-level source | Depends on the compositor. GNOME/Mutter validation includes the user's overlays and excludes apps occluding the recorded region | `spectre-recording-linux` runtime helper (`spectre-wayland-helper`); `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`. First human consent stores a `restore_token` under `$XDG_STATE_HOME/spectre/` so later agent sessions skip the dialog (#188) | Linux Wayland |
-| `WaylandPortalWindowRecorder` | Named window (portal `SourceType.WINDOW` + fixed crop) | **No.** The crop is computed once from `_GTK_FRAME_EXTENTS` at `start()` and stays at those pixel coordinates for the rest of the recording. Moving or resizing the window during recording misaligns the crop (typically the recording shows blank / black for the unrendered area of the original rectangle); see `WaylandPortalWindowRecorder`'s KDoc for the detailed rationale | The stream contains only the picked window's pixels; `OnWindow` popups are excluded | `spectre-recording-linux` runtime helper; `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`; `xprop` on `PATH`; compositor must publish `_GTK_FRAME_EXTENTS` (GNOME/Mutter verified; older Mutter / KDE / sway may fail with an error to avoid misaligned video) | Linux Wayland |
-
-Wayland window capture receives only the selected window's pixels.
-Other applications cannot occlude that source. Its crop stays fixed from `start()`,
-so moving or resizing the window can misalign the recording.
+| `WaylandPortalRecorder` | Monitor region (portal `SourceType.MONITOR`, cropped) | No — monitor-level source | Depends on the compositor; visible windows and overlays inside the monitor region can be captured | `spectre-recording-linux` runtime helper (`spectre-wayland-helper`); `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`. Human consent starts the shared helper; when the portal returns a `restore_token`, Spectre stores it under `$XDG_STATE_HOME/spectre/` (#188) | Linux Wayland |
+| GNOME Mutter window recorder | Exact owner-scoped Xwayland window, optionally cropped to a target-relative ROI | Yes; a fixed-at-start crop follows the target window | Captures only the target source; covering windows and the focused blue decoy are excluded | `spectre-recording-linux`, GNOME Mutter, a live session-helper grant, and the bundled window-identity extension | Linux Wayland on GNOME |
+| `WaylandPortalWindowRecorder` | Refuses window capture because the portal cannot verify the selected window’s identity. | — | — | — | — |
 
 For a `ComposePanel` inside a host window, use **window capture with a crop**.
 This includes Jewel tool windows in IntelliJ. Pass the host as a `TitledWindow`.
@@ -268,8 +305,10 @@ These bounds match window identity `surfaceBoundsInWindow`.
 macOS uses `SCStreamConfiguration.sourceRect`; Windows crops before encoding in WGC.
 The v1 crop stays **fixed from start**, so moving or resizing the panel can misalign frames.
 Spectre prints a stderr warning when using a crop.
-Linux X11 and Wayland do not support window crop and report an error.
-Use `startRegion(...)` explicitly if a fixed, occlusion-sensitive rectangle is acceptable.
+Linux X11 does not support window crop and reports an error. GNOME Wayland sends the
+window-relative ROI to its native Mutter stream backend, so the crop stays tied to the target and
+excludes occluding windows. Use `startRegion(...)` explicitly only when a fixed,
+occlusion-sensitive monitor rectangle is acceptable.
 
 ## `AutoRecorder` — pick a backend per call
 
@@ -359,19 +398,7 @@ Each platform has additional limits:
   same binary also owns Linux Xorg/Xvfb capture. On Wayland it drives
   `xdg-desktop-portal`'s ScreenCast interface and hands a PipeWire FD to
   `gst-launch-1.0`; on Xorg/Xvfb it runs GStreamer's `ximagesrc` directly.
-- **`WaylandPortalWindowRecorder` is explicit opt-in.** `AutoRecorder` no longer uses it,
-  because it asks the user to pick every window. It runs
-  `xprop` on the JFrame's XWayland window to read `_GTK_FRAME_EXTENTS`. It uses
-  those extents to calculate the crop within the stream. Mutter adds about
-  25 pixels of GTK shadow outside AWT's `frame.getBounds()`. Without the extents,
-  the crop clips the close button. On Debian/Ubuntu, `xprop` comes from
-  `x11-utils`; minimal images may need that package. The recorder throws
-  `IllegalStateException` if `xprop` or `_GTK_FRAME_EXTENTS` is unavailable.
-  Older Mutter, non-GTK CSD, and KDE or sway server-side decorations may lack
-  the property. Installing `xprop` only resolves the missing binary. Qt,
-  JavaFX, Electron, SDL, and other non-GTK windows may still lack the property.
-  Use `startRegion(...)` for explicit region capture. See
-  [Recording limitations](../RECORDING-LIMITATIONS.md#platform) for more.
+- Generic portal window capture fails before opening a picker. A title, frame size, or saved grant cannot identify the requested window. Use GNOME Mutter for supported windows or explicitly request a region.
 
 ## Direct backend selection
 
@@ -387,7 +414,7 @@ Instantiate a backend directly when a test needs a specific implementation:
 | `LinuxNativeScreenshotter`    | Linux Xorg/Xvfb screenshots via `ximagesrc`. Linux Wayland region screenshots via the portal monitor stream, and window screenshots via GNOME Mutter window streams. |
 | `ScreenCaptureKitRecorder`    | macOS-only window-targeted and region capture via the `spectre-recording-macos` Swift helper. |
 | `WaylandPortalRecorder`       | Linux Wayland region capture via `xdg-desktop-portal` (`SourceType.MONITOR`) and the `spectre-recording-linux` Rust helper. |
-| `WaylandPortalWindowRecorder` | Linux Wayland window-targeted capture via `xdg-desktop-portal` (`SourceType.WINDOW`). Asks the user to pick every window; `AutoRecorder` does not use it. |
+| `WaylandPortalWindowRecorder` | Refuses window capture because the portal cannot verify the selected window’s identity. |
 
 ## Per-OS prerequisites
 
@@ -504,6 +531,13 @@ try {
     handle.stop()
 }
 ```
+
+To read finalization diagnostics, import `dev.sebastiano.spectre.recording.stopWithResult`
+and call `handle.stopWithResult()`. The result contains the finalized output path.
+ScreenCaptureKit reports `droppedFrames`. ScreenCaptureKit and Windows Graphics Capture
+report `cropFixedAtStart` for a window-relative crop. A null diagnostic means the backend
+did not report it. CLI `record stop --json` and MCP `record_stop` return the same fields
+under `diagnostics`.
 
 Without `stop()`, the `ffmpeg`, native helper, or `gst-launch` process may keep writing.
 The output file may be truncated or unfinalised.

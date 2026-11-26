@@ -8,7 +8,8 @@ use crate::session_lock::{self, acquire_session_lock, SessionLock};
 use anyhow::{Context, Result};
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
 use nix::sys::signal::{kill, Signal};
-use nix::unistd::Pid;
+use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
+use nix::unistd::{geteuid, Pid};
 use std::collections::{BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -253,6 +254,15 @@ fn handle_client(
     windows: &Mutex<MutterWindowStreams>,
     client_id: u64,
 ) -> Result<()> {
+    let credentials =
+        getsockopt(&stream, PeerCredentials).context("reading session peer credentials")?;
+    if credentials.uid() != geteuid().as_raw() {
+        anyhow::bail!(
+            "refusing Wayland session client from uid {}",
+            credentials.uid()
+        );
+    }
+    let peer_pid = u32::try_from(credentials.pid()).context("invalid session peer pid")?;
     let _reap = DisconnectReap {
         state,
         windows,
@@ -269,7 +279,7 @@ fn handle_client(
         }
         let command: Command = serde_json::from_str(line.trim())
             .with_context(|| format!("parsing session command: {}", line.trim()))?;
-        let event = dispatch(command, state, windows, client_id);
+        let event = dispatch(command, state, windows, client_id, peer_pid);
         write_event(&mut writer, event)?;
     }
 }
@@ -321,6 +331,7 @@ fn dispatch(
     state: &Mutex<SessionState>,
     windows: &Mutex<MutterWindowStreams>,
     client_id: u64,
+    peer_pid: u32,
 ) -> Event {
     match command {
         Command::BindFocusedWindow {
@@ -334,6 +345,36 @@ fn dispatch(
             cursor_mode,
             client_id,
         )),
+        Command::BindWindow {
+            key,
+            output,
+            owner_pid,
+            binding_token,
+            cursor_mode,
+        } => {
+            if owner_pid != peer_pid {
+                Event::Error {
+                    kind: "Identity".into(),
+                    message: format!(
+                        "window owner PID {owner_pid} is not authenticated peer PID {peer_pid}"
+                    ),
+                }
+            } else {
+                window_event(bind_identity_window(
+                    windows,
+                    &key,
+                    &output,
+                    owner_pid,
+                    &binding_token,
+                    cursor_mode,
+                    client_id,
+                ))
+            }
+        }
+        Command::LocateWindow { .. } => Event::Error {
+            kind: "Protocol".into(),
+            message: "locate_window requires a one-shot child helper".into(),
+        },
         Command::WindowScreenshot { key, output } => {
             window_event(window_screenshot(windows, &key, &output))
         }
@@ -359,8 +400,8 @@ fn dispatch(
             },
         },
         Command::PointerMove { x, y } => with_session(state, |s| {
-            let (ox, oy) = s.stream.position;
-            s.notify_pointer_motion_absolute((x - ox) as f64, (y - oy) as f64)?;
+            let (x, y) = pointer_position_in_stream((x, y), s.stream.position, s.stream.size)?;
+            s.notify_pointer_motion_absolute(x, y)?;
             Ok(Event::InputAck)
         }),
         Command::PointerButton { button, pressed } => with_state(state, |s| {
@@ -386,8 +427,9 @@ fn dispatch(
             Ok(Event::InputAck)
         }),
         Command::Screenshot(command) => match run_screenshot(state, command) {
-            Ok(size) => Event::ScreenshotSaved {
+            Ok((size, region)) => Event::ScreenshotSaved {
                 output_size_bytes: size,
+                capture_region: Some([region.x, region.y, region.width, region.height]),
             },
             Err(e) => Event::Error {
                 kind: "Helper".into(),
@@ -411,6 +453,42 @@ fn dispatch(
             },
         },
     }
+}
+
+/// Map an AWT desktop point to the selected portal stream's absolute pointer space.
+///
+/// The ScreenCast `position` and `size` properties are defined in compositor coordinates; they
+/// are explicitly not PipeWire pixel dimensions. RemoteDesktop absolute pointer motion consumes
+/// that same logical coordinate space. Consequently the correct HiDPI conversion is translation
+/// by the selected stream's logical origin, not scaling from its captured buffer resolution.
+/// Keeping each stream's own origin and extent also handles negative layouts and monitors with
+/// different scale factors without assuming a single global desktop scale.
+fn pointer_position_in_stream(
+    point: (i32, i32),
+    stream_position: (i32, i32),
+    stream_size: (u32, u32),
+) -> Result<(f64, f64)> {
+    let (width, height) = stream_size;
+    if width == 0 || height == 0 {
+        anyhow::bail!("portal stream has empty logical extent {width}x{height}");
+    }
+
+    // Widen before subtracting: opposite signed i32 extrema do not fit in i32. Besides avoiding
+    // wrapping, this lets us reject points that cannot be represented inside the granted extent.
+    let x = i64::from(point.0) - i64::from(stream_position.0);
+    let y = i64::from(point.1) - i64::from(stream_position.1);
+    if x < 0 || y < 0 || x >= i64::from(width) || y >= i64::from(height) {
+        anyhow::bail!(
+            "pointer ({}, {}) is outside portal stream at ({}, {}) with logical size {}x{}",
+            point.0,
+            point.1,
+            stream_position.0,
+            stream_position.1,
+            width,
+            height
+        );
+    }
+    Ok((x as f64, y as f64))
 }
 
 fn with_session(
@@ -439,15 +517,40 @@ fn with_state(
     }
 }
 
-fn run_screenshot(state: &Mutex<SessionState>, command: ScreenshotCommand) -> Result<u64> {
+fn run_screenshot(
+    state: &Mutex<SessionState>,
+    command: ScreenshotCommand,
+) -> Result<(u64, crate::protocol::Region)> {
+    crate::protocol::require_portal_region(
+        command.target,
+        &command.source_types,
+        command.window_frame.is_some()
+            || command.window_title.is_some()
+            || command.window_owner_pid.is_some(),
+    )?;
+    session_screenshot_cursor_mode(&command)?;
     let output = PathBuf::from(&command.output);
     let (stream, owned) = {
         let guard = state.lock().expect("session mutex");
         let owned = guard.session.open_pipewire_remote()?;
         (guard.session.stream.clone(), owned)
     };
-    crate::screenshot::capture_from_stream(&stream, owned.as_raw_fd(), &command, &output)?;
-    Ok(std::fs::metadata(&output)?.len())
+    let region =
+        crate::screenshot::capture_from_stream(&stream, owned.as_raw_fd(), &command, &output)?;
+    Ok((std::fs::metadata(&output)?.len(), region))
+}
+
+fn session_screenshot_cursor_mode(
+    command: &ScreenshotCommand,
+) -> Result<crate::protocol::CursorMode> {
+    match command.cursor_mode {
+        None | Some(crate::protocol::CursorMode::Embedded) => {
+            Ok(crate::protocol::CursorMode::Embedded)
+        }
+        Some(requested) => anyhow::bail!(
+            "explicit cursor_mode {requested:?} cannot be honored: the active Wayland RemoteDesktop stream embeds the compositor cursor"
+        ),
+    }
 }
 
 fn run_recording_start(
@@ -455,6 +558,18 @@ fn run_recording_start(
     start: StartCommand,
     client_id: u64,
 ) -> Result<Event> {
+    crate::protocol::require_portal_region(
+        start.target,
+        &start.source_types,
+        start.window_frame.is_some()
+            || start.window_title.is_some()
+            || start.window_owner_pid.is_some(),
+    )?;
+    if start.cursor_mode != crate::protocol::CursorMode::Embedded {
+        anyhow::bail!(
+            "the active Wayland RemoteDesktop grant embeds the cursor; hidden cursor capture cannot be honored"
+        );
+    }
     let mut guard = state.lock().expect("session mutex");
     if guard.recording.is_some() {
         anyhow::bail!("a recording is already running on the Spectre Wayland session");
@@ -470,7 +585,9 @@ fn run_recording_start(
         start.region,
         stream.position,
         stream.size,
-        start.screen_size.and_then(crate::stream_region::screen_size_to_region),
+        start
+            .screen_size
+            .and_then(crate::stream_region::screen_size_to_region),
     )?;
     let argv = crate::gst::build_pipewire_argv(
         stream.node_id,
@@ -527,7 +644,7 @@ fn stop_recording(state: &Mutex<SessionState>) -> Result<u64> {
             if !status.success() {
                 anyhow::bail!("gst-launch exited with status {status:?}");
             }
-            return Ok(std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0));
+            return crate::recorder::finalized_size(&output);
         }
         if std::time::Instant::now() >= deadline {
             let _ = kill(Pid::from_raw(gst_pid_i32(pid)), Signal::SIGKILL);
@@ -572,6 +689,35 @@ fn bind_focused_window(
     })
 }
 
+fn bind_identity_window(
+    windows: &Mutex<MutterWindowStreams>,
+    key: &str,
+    output: &str,
+    owner_pid: u32,
+    binding_token: &str,
+    cursor_mode: crate::protocol::CursorMode,
+    client_id: u64,
+) -> Result<Event> {
+    let bound = {
+        let mut guard = windows
+            .lock()
+            .map_err(|e| anyhow::anyhow!("window stream mutex poisoned: {e}"))?;
+        guard.bind_identity(key, client_id, owner_pid, binding_token, cursor_mode)?
+    };
+    let output = PathBuf::from(output);
+    if let Err(e) = write_window_frame(bound.node_id, &output) {
+        if let Ok(mut guard) = windows.lock() {
+            guard.unbind(key);
+        }
+        return Err(e.context("reading the first frame of the identity-bound window"));
+    }
+    Ok(Event::WindowBound {
+        key: key.to_string(),
+        node_id: bound.node_id,
+        logical_size: [bound.logical_size.0, bound.logical_size.1],
+    })
+}
+
 fn window_screenshot(
     windows: &Mutex<MutterWindowStreams>,
     key: &str,
@@ -586,6 +732,7 @@ fn window_screenshot(
     write_window_frame(node_id, &output)?;
     Ok(Event::ScreenshotSaved {
         output_size_bytes: std::fs::metadata(&output)?.len(),
+        capture_region: None,
     })
 }
 
@@ -660,23 +807,98 @@ fn write_event(writer: &mut UnixStream, event: Event) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_held_input, disconnect_cleanup, portal_failure_exit_code, recording_owner_should_reap,
-        ClientInputHold, HeldInput, CONSENT_NOT_GRANTED_EXIT,
+        apply_held_input, disconnect_cleanup, pointer_position_in_stream, portal_failure_exit_code,
+        recording_owner_should_reap, ClientInputHold, HeldInput, CONSENT_NOT_GRANTED_EXIT,
     };
     use crate::portal::response_timeout_error;
     use std::collections::{BTreeSet, HashMap};
     use std::time::Duration;
 
     #[test]
+    fn session_screenshot_distinguishes_default_from_explicit_cursor_modes() {
+        use crate::protocol::{CursorMode, ScreenshotCommand};
+
+        fn parse(cursor: &str) -> ScreenshotCommand {
+            serde_json::from_str(&format!(
+                r#"{{"backend":"wayland_portal","target":"region","source_types":["monitor"],{cursor}"region":{{"x":0,"y":0,"width":10,"height":10}},"output":"/tmp/frame.png"}}"#
+            ))
+            .unwrap()
+        }
+
+        assert!(super::session_screenshot_cursor_mode(&parse("")).is_ok());
+        assert!(
+            super::session_screenshot_cursor_mode(&parse(r#""cursor_mode":"embedded","#)).is_ok()
+        );
+        for mode in ["hidden", "metadata"] {
+            let error = super::session_screenshot_cursor_mode(&parse(&format!(
+                r#""cursor_mode":"{mode}","#
+            )))
+            .unwrap_err();
+            assert!(format!("{error:#}").contains("explicit cursor_mode"));
+        }
+        assert_eq!(
+            super::session_screenshot_cursor_mode(&parse("")).unwrap(),
+            CursorMode::Embedded
+        );
+    }
+
+    #[test]
+    fn pointer_position_translates_negative_monitor_origin_in_logical_coordinates() {
+        assert_eq!(
+            pointer_position_in_stream((-1919, 100), (-1920, 0), (1920, 1080)).unwrap(),
+            (1.0, 100.0)
+        );
+    }
+
+    #[test]
+    fn pointer_position_keeps_portal_logical_coordinates_on_hidpi_monitors() {
+        // ScreenCast `position` and `size`, and RemoteDesktop absolute motion, all use the
+        // compositor's logical space. A 3840x2160 buffer displayed as 1920x1080 therefore does
+        // not justify multiplying these coordinates by two.
+        assert_eq!(
+            pointer_position_in_stream((2879, 1079), (1920, 0), (960, 1080)).unwrap(),
+            (959.0, 1079.0)
+        );
+    }
+
+    #[test]
+    fn pointer_position_uses_selected_stream_bounds_with_differently_scaled_monitors() {
+        assert_eq!(
+            pointer_position_in_stream((1920, -900), (1920, -1080), (1280, 1080)).unwrap(),
+            (0.0, 180.0)
+        );
+    }
+
+    #[test]
+    fn pointer_position_rejects_points_outside_the_selected_stream() {
+        for point in [(99, 200), (100, 199), (300, 200), (100, 400)] {
+            let error = pointer_position_in_stream(point, (100, 200), (200, 200)).unwrap_err();
+            assert!(format!("{error:#}").contains("outside portal stream"));
+        }
+    }
+
+    #[test]
+    fn pointer_position_rejects_empty_or_unrepresentable_stream_extents() {
+        assert!(pointer_position_in_stream((0, 0), (0, 0), (0, 1)).is_err());
+        assert!(pointer_position_in_stream((i32::MAX, 0), (i32::MIN, 0), (u32::MAX, 1)).is_err());
+    }
+
+    #[test]
     fn consent_failures_exit_with_the_consent_status() {
         let err = response_timeout_error(Duration::from_secs(60), "/request/path");
-        assert_eq!(portal_failure_exit_code(&err), Some(CONSENT_NOT_GRANTED_EXIT));
+        assert_eq!(
+            portal_failure_exit_code(&err),
+            Some(CONSENT_NOT_GRANTED_EXIT)
+        );
         assert_eq!(CONSENT_NOT_GRANTED_EXIT, 77);
     }
 
     #[test]
     fn other_portal_failures_keep_the_generic_error_exit() {
-        assert_eq!(portal_failure_exit_code(&anyhow::anyhow!("opening session bus")), None);
+        assert_eq!(
+            portal_failure_exit_code(&anyhow::anyhow!("opening session bus")),
+            None
+        );
     }
 
     #[test]
@@ -689,19 +911,9 @@ mod tests {
     #[test]
     fn disconnect_releases_that_clients_held_button_and_modifier() {
         let mut holds = HashMap::new();
-        apply_held_input(
-            &mut holds,
-            3,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
+        apply_held_input(&mut holds, 3, HeldInput::PointerButton(0x110), true);
         apply_held_input(&mut holds, 3, HeldInput::Key(0xffe3), true);
-        apply_held_input(
-            &mut holds,
-            9,
-            HeldInput::PointerButton(0x111),
-            true,
-        );
+        apply_held_input(&mut holds, 9, HeldInput::PointerButton(0x111), true);
 
         let cleanup = disconnect_cleanup(None, 3, &mut holds);
         assert!(!cleanup.reap_recording);
@@ -713,8 +925,7 @@ mod tests {
             }
         );
         assert_eq!(
-            cleanup.portal_releases,
-            cleanup.held_input,
+            cleanup.portal_releases, cleanup.held_input,
             "sole owner must notify the portal on disconnect"
         );
         assert_eq!(
@@ -728,19 +939,9 @@ mod tests {
     #[test]
     fn disconnect_does_not_release_input_still_held_by_another_client() {
         let mut holds = HashMap::new();
-        apply_held_input(
-            &mut holds,
-            3,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
+        apply_held_input(&mut holds, 3, HeldInput::PointerButton(0x110), true);
         apply_held_input(&mut holds, 3, HeldInput::Key(0xffe3), true);
-        apply_held_input(
-            &mut holds,
-            9,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
+        apply_held_input(&mut holds, 9, HeldInput::PointerButton(0x110), true);
         apply_held_input(&mut holds, 9, HeldInput::Key(0xffe1), true);
 
         let cleanup = disconnect_cleanup(None, 3, &mut holds);
@@ -762,18 +963,8 @@ mod tests {
     #[test]
     fn matching_release_leaves_nothing_to_unwind_on_disconnect() {
         let mut holds = HashMap::new();
-        apply_held_input(
-            &mut holds,
-            4,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
-        apply_held_input(
-            &mut holds,
-            4,
-            HeldInput::PointerButton(0x110),
-            false,
-        );
+        apply_held_input(&mut holds, 4, HeldInput::PointerButton(0x110), true);
+        apply_held_input(&mut holds, 4, HeldInput::PointerButton(0x110), false);
         apply_held_input(&mut holds, 4, HeldInput::Key(0xffe3), true);
         apply_held_input(&mut holds, 4, HeldInput::Key(0xffe3), false);
 

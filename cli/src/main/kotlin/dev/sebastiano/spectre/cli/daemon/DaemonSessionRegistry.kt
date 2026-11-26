@@ -12,6 +12,7 @@ import dev.sebastiano.spectre.cli.hotreload.ReloadAwareKeyGuard
 import dev.sebastiano.spectre.cli.hotreload.ReloadSettleErrorCategory
 import dev.sebastiano.spectre.cli.hotreload.mapReloadSettleOutcome
 import dev.sebastiano.spectre.cli.jdkPreflightError
+import dev.sebastiano.spectre.recording.RecordingResult
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -46,6 +47,8 @@ internal constructor(
         @Synchronized get() = sessionsByPid.isNotEmpty()
 
     private var shutdown: Boolean = false
+    private val shutdownLock = Any()
+    private var shutdownRecordingOutcomes: List<DaemonResponse.FinalizedRecording>? = null
 
     /**
      * Dispatches a daemon request. Long waits (#201), attach (may wait on same-PID detach), and
@@ -63,7 +66,11 @@ internal constructor(
             // close() tears down outside the monitor; must not run under @Synchronized.
             DaemonRequest.Shutdown -> {
                 close()
-                DaemonResponse.ShuttingDown
+                shutdownRecordingOutcomes
+                    .orEmpty()
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { DaemonResponse.ShuttingDownWithRecordings(it) }
+                    ?: DaemonResponse.ShuttingDown
             }
             else -> handleSynchronized(request)
         }
@@ -285,10 +292,10 @@ internal constructor(
                 }
             is DaemonRequest.StopRecording ->
                 invoke(request.sessionId) { automator ->
-                    DaemonResponse.RecordingStopped(
-                        request.sessionId,
-                        automator.stopRecording(sessionsByPid.values.map { it.sessionId }.toSet()),
-                    )
+                    val result =
+                        automator.stopRecording(sessionsByPid.values.map { it.sessionId }.toSet())
+                    DaemonResponse.RecordingStopped(request.sessionId, result.output.toString())
+                        .also { it.diagnostics = result.toDiagnostics() }
                 }
             is DaemonRequest.RecordingStatus ->
                 invoke(request.sessionId) { automator ->
@@ -328,6 +335,7 @@ internal constructor(
                 return@synchronized DaemonResponse.Attached(
                     sessionId = session.summary.sessionId,
                     targetPid = session.summary.targetPid,
+                    sessionInfo = session.summary.sessionInfo,
                 )
             }
             // Another detach may have started after we waited; re-check under the monitor.
@@ -366,7 +374,7 @@ internal constructor(
         (hotReload as? HotReloadSession)?.start()
         val session =
             DaemonSession(
-                summary = sessionSummaryFor(targetPid),
+                summary = sessionSummaryFor(targetPid, attached.sessionInfo),
                 automator = attached,
                 hotReloadSession = hotReload,
                 keyGuard = keyGuard,
@@ -375,6 +383,7 @@ internal constructor(
         return DaemonResponse.Attached(
             sessionId = session.summary.sessionId,
             targetPid = session.summary.targetPid,
+            sessionInfo = session.summary.sessionInfo,
         )
     }
 
@@ -413,11 +422,21 @@ internal constructor(
             // Finalize while other sessions remain known live (#185); then close so in-flight waits
             // observe a closed automator and fail closed instead of hanging on the full wait
             // budget.
-            session.automator.finalizeRecording(remainingLive)
+            val finalized = session.automator.finalizeWithReport(sessionId, remainingLive)
             hotReload?.close()
             session.automator.close()
             session.awaitIdleWaits()
-            return CaptureSessionReport.forDetach(sessionId)
+            return CaptureSessionReport.forDetach(
+                    sessionId,
+                    finalizedRecordingPath = finalized?.takeIf { it.error == null }?.outputPath,
+                )
+                .also {
+                    it.diagnostics = finalized?.diagnostics
+                    it.recordingError =
+                        finalized?.error?.let { error ->
+                            "Could not finalize ${finalized.outputPath}: $error"
+                        }
+                }
         } finally {
             RequestDiagnostics.forget(sessionId)
             synchronized(this) {
@@ -570,50 +589,56 @@ internal constructor(
         }
     }
 
-    override fun close() {
-        RequestDiagnostics.clear()
-        val snapshot: List<Pair<Long, DaemonSession>>
-        val ownedGates: List<Pair<Long, CountDownLatch>>
-        val waitGates: List<CountDownLatch>
-        synchronized(this) {
-            shutdown = true
-            snapshot = sessionsByPid.entries.map { it.key to it.value }
-            sessionsByPid.clear()
-            val owned = mutableListOf<Pair<Long, CountDownLatch>>()
-            for ((pid, _) in snapshot) {
-                // Do not overwrite a gate owned by an in-flight per-session detach.
-                if (!detachingByPid.containsKey(pid)) {
-                    val gate = CountDownLatch(1)
-                    detachingByPid[pid] = gate
-                    owned += pid to gate
+    override fun close(): Unit =
+        synchronized(shutdownLock) {
+            if (shutdownRecordingOutcomes != null) return
+            RequestDiagnostics.clear()
+            val snapshot: List<Pair<Long, DaemonSession>>
+            val ownedGates: List<Pair<Long, CountDownLatch>>
+            val waitGates: List<CountDownLatch>
+            synchronized(this) {
+                shutdown = true
+                snapshot = sessionsByPid.entries.map { it.key to it.value }
+                sessionsByPid.clear()
+                val owned = mutableListOf<Pair<Long, CountDownLatch>>()
+                for ((pid, _) in snapshot) {
+                    // Do not overwrite a gate owned by an in-flight per-session detach.
+                    if (!detachingByPid.containsKey(pid)) {
+                        val gate = CountDownLatch(1)
+                        detachingByPid[pid] = gate
+                        owned += pid to gate
+                    }
+                }
+                ownedGates = owned
+                waitGates = detachingByPid.values.toList()
+            }
+            val ownedPids = ownedGates.map { it.first }.toSet()
+            val recordingOutcomes = mutableListOf<DaemonResponse.FinalizedRecording>()
+            // Outside the monitor after clear so wait finally-blocks and sibling work can finish.
+            snapshot.forEach { (pid, session) ->
+                if (pid !in ownedPids) return@forEach
+                val ownedGate = ownedGates.first { it.first == pid }.second
+                val hotReload = session.retire()
+                try {
+                    session.automator
+                        .finalizeWithReport(session.sessionId, emptySet())
+                        ?.let(recordingOutcomes::add)
+                    hotReload?.close()
+                    session.automator.close()
+                    session.awaitIdleWaits()
+                } finally {
+                    synchronized(this) {
+                        if (detachingByPid[pid] === ownedGate) detachingByPid.remove(pid)
+                    }
+                    ownedGate.countDown()
                 }
             }
-            ownedGates = owned
-            waitGates = detachingByPid.values.toList()
-        }
-        val ownedPids = ownedGates.map { it.first }.toSet()
-        // Outside the monitor after clear so wait finally-blocks and sibling work can finish.
-        snapshot.forEach { (pid, session) ->
-            if (pid !in ownedPids) return@forEach
-            val ownedGate = ownedGates.first { it.first == pid }.second
-            val hotReload = session.retire()
-            try {
-                runCatching { session.automator.finalizeRecording(emptySet()) }
-                hotReload?.close()
-                session.automator.close()
-                session.awaitIdleWaits()
-            } finally {
-                synchronized(this) {
-                    if (detachingByPid[pid] === ownedGate) detachingByPid.remove(pid)
-                }
-                ownedGate.countDown()
+            // Join concurrent detach teardowns so Shutdown does not race agent close.
+            waitGates.forEach { gate ->
+                runCatching { gate.await(ATTACH_WAIT_DETACH_TIMEOUT_MS, TimeUnit.MILLISECONDS) }
             }
+            shutdownRecordingOutcomes = recordingOutcomes
         }
-        // Join concurrent detach teardowns so Shutdown does not race agent close.
-        waitGates.forEach { gate ->
-            runCatching { gate.await(ATTACH_WAIT_DETACH_TIMEOUT_MS, TimeUnit.MILLISECONDS) }
-        }
-    }
 }
 
 private const val WAIT_DRAIN_TIMEOUT_MS: Long = 90_000
@@ -756,5 +781,32 @@ private fun awaitCountDownLatch(timeoutMs: Long, latch: () -> CountDownLatch?): 
     }
 }
 
-private fun sessionSummaryFor(targetPid: Long): DaemonSessionSummary =
-    DaemonSessionSummary(sessionId = "pid-$targetPid", targetPid = targetPid)
+private fun sessionSummaryFor(
+    targetPid: Long,
+    sessionInfo: DaemonSessionInfo? = null,
+): DaemonSessionSummary =
+    DaemonSessionSummary(
+        sessionId = "pid-$targetPid",
+        targetPid = targetPid,
+        sessionInfo = sessionInfo,
+    )
+
+private fun RecordingResult.toDiagnostics(): DaemonResponse.RecordingDiagnostics =
+    DaemonResponse.RecordingDiagnostics(droppedFrames, cropFixedAtStart)
+
+private fun DaemonSessionAutomator.finalizeWithReport(
+    sessionId: String,
+    remainingLive: Set<String>,
+): DaemonResponse.FinalizedRecording? {
+    val path = recordingStatus().outputPath
+    val finalized = runCatching { finalizeRecording(remainingLive) }
+    val result = finalized.getOrNull()
+    val output = result?.output?.toString() ?: path ?: return null
+    val error = finalized.exceptionOrNull()
+    return DaemonResponse.FinalizedRecording(
+            sessionId,
+            output,
+            error?.message ?: error?.javaClass?.simpleName,
+        )
+        .also { it.diagnostics = result?.toDiagnostics() }
+}

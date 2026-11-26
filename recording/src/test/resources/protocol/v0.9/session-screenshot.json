@@ -1,0 +1,1 @@
+{"command":"screenshot","backend":"wayland_portal","target":"region","source_types":["monitor"],"cursor_mode":"embedded","region":{"x":-10,"y":20,"width":2,"height":3},"screen_size":[-100,0,100,100],"output":"OUTPUT"}

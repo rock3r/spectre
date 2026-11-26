@@ -472,33 +472,6 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `screenshot consults the screen-recording guard before capturing`() {
-        val guard = RecordingTccGuard()
-        val robot = RecordingRobotAdapter()
-        val capture = RecordingScreenCaptureAdapter()
-        val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard, capture)
-
-        driver.screenshot(Rectangle(0, 0, 4, 4))
-
-        assertEquals(0, guard.accessibilityCalls)
-        assertEquals(1, guard.screenRecordingCalls)
-        assertEquals(1, capture.captureCalls)
-        assertEquals(0, robot.captureCalls)
-    }
-
-    @Test
-    fun `screenshot that fails the screen-recording check does not capture`() {
-        val guard = RecordingTccGuard(screenRecordingThrows = true)
-        val robot = RecordingRobotAdapter()
-        val capture = RecordingScreenCaptureAdapter()
-        val driver = RobotDriver(robot, RecordingClipboardAdapter(), guard, capture)
-
-        assertFailsWith<IllegalStateException> { driver.screenshot(Rectangle(0, 0, 4, 4)) }
-
-        assertEquals(0, capture.captureCalls)
-    }
-
-    @Test
     fun `pasteText consults the accessibility guard before mutating the clipboard`() = runTest {
         // pasteText writes to and restores the clipboard, so a failed accessibility check
         // must short-circuit BEFORE the clipboard is touched. Otherwise a failing macOS run
@@ -542,12 +515,6 @@ class RobotDriverTest {
     fun `headless pasteText throws UnsupportedOperationException`() = runTest {
         val driver = RobotDriver.headless()
         assertFailsWith<UnsupportedOperationException> { driver.pasteText("hello") }
-    }
-
-    @Test
-    fun `headless screenshot throws UnsupportedOperationException`() {
-        val driver = RobotDriver.headless()
-        assertFailsWith<UnsupportedOperationException> { driver.screenshot() }
     }
 
     @Test
@@ -631,13 +598,23 @@ class RobotDriverTest {
     }
 
     @Test
-    fun `clickVerified proceeds when the witness cannot attach`() = runTest {
+    fun `clickVerified fails closed when the witness cannot attach`() = runTest {
         val witness = FakeInputDeliveryWitness(delivered = false, canObserve = false)
-        val driver = realInputDriver(witness)
+        val robot = RecordingRobotAdapter()
+        val driver =
+            RobotDriver(
+                robot = robot,
+                clipboard = RecordingClipboardAdapter(),
+                tccGuard = RecordingTccGuard(),
+                inputCapabilities =
+                    InputCapabilities(realOsInput = true, sharedSystemClipboard = false),
+                deliveryWitness = witness,
+            )
 
-        driver.clickVerified(screenX = 1, screenY = 2)
+        assertFailsWith<IllegalStateException> { driver.clickVerified(screenX = 1, screenY = 2) }
 
-        assertEquals(0, witness.observations, "being unable to check is not evidence of a problem")
+        assertEquals(0, witness.observations)
+        assertEquals(emptyList(), robot.events)
     }
 
     /** Coordinate clicks may legitimately land outside this JVM, so they stay unverified. */
@@ -657,11 +634,11 @@ class RobotDriverTest {
      * would dispatch the press. That must not be reported as the OS discarding input.
      */
     @Test
-    fun `clickVerified does not accuse the OS when this JVM is not dispatching events`() = runTest {
+    fun `clickVerified fails closed when this JVM does not drain its event queue`() = runTest {
         val witness = FakeInputDeliveryWitness(delivered = false, queueDrains = false)
         val driver = realInputDriver(witness)
 
-        driver.clickVerified(screenX = 1, screenY = 2)
+        assertFailsWith<IllegalStateException> { driver.clickVerified(screenX = 1, screenY = 2) }
 
         assertEquals(1, witness.closed, "the observation must still be detached")
     }
@@ -672,7 +649,12 @@ class RobotDriverTest {
         val driver = realInputDriver(witness)
 
         driver.clickVerified(screenX = 1, screenY = 2)
-        driver.scrollWheelVerified(screenX = 1, screenY = 2, wheelClicks = 1)
+        driver.scrollWheelVerified(
+            screenX = 1,
+            screenY = 2,
+            wheelClicks = 1,
+            target = java.awt.Panel(),
+        )
 
         // A press oracle would report every scroll as undelivered, since scrolling never presses.
         assertEquals(listOf(DispatchedInput.Press, DispatchedInput.Wheel), witness.watched)
@@ -687,41 +669,40 @@ class RobotDriverTest {
         val witness = FakeInputDeliveryWitness(delivered = false)
         val driver = realInputDriver(witness)
 
-        driver.scrollWheelVerified(screenX = 1, screenY = 2, wheelClicks = 0)
+        driver.scrollWheelVerified(
+            screenX = 1,
+            screenY = 2,
+            wheelClicks = 0,
+            target = java.awt.Panel(),
+        )
 
         assertEquals(0, witness.observations, "a no-op scroll must not be verified")
     }
 
-    /**
-     * The oracle is sound on Windows for every mouse verb, and on X11 for click/press (#470). macOS
-     * AppKit swallows the click that activates an inactive app, so a healthy first click produces
-     * no event — `AgentAttachIntegrationTest` relies on retrying exactly that. X11's wheel is
-     * button 4/5 presses, so a wheel oracle is still unsound there.
-     */
+    /** The targeted oracle is sound for supported mouse verbs on Windows, Linux, and macOS. */
     @Test
     fun `input delivery is verifiable for click presses on Windows and X11`() {
-        assertTrue(inputDeliveryVerifiable("Windows 11", DispatchedInput.Press))
-        assertTrue(inputDeliveryVerifiable("Linux", DispatchedInput.Press))
-        assertFalse(inputDeliveryVerifiable("Mac OS X", DispatchedInput.Press))
+        assertTrue(inputDeliveryVerifiable("Windows 11"))
+        assertTrue(inputDeliveryVerifiable("Linux"))
+        assertTrue(inputDeliveryVerifiable("Mac OS X"))
     }
 
     @Test
-    fun `input delivery is not verifiable for wheel on X11 or any verb on macOS`() {
-        assertTrue(inputDeliveryVerifiable("Windows 11", DispatchedInput.Wheel))
-        assertFalse(inputDeliveryVerifiable("Linux", DispatchedInput.Wheel))
-        assertFalse(inputDeliveryVerifiable("Mac OS X", DispatchedInput.Wheel))
-        assertFalse(inputDeliveryVerifiable("Mac OS X", DispatchedInput.Press))
+    fun `input delivery is verifiable for wheel on supported operating systems`() {
+        assertTrue(inputDeliveryVerifiable("Windows 11"))
+        assertTrue(inputDeliveryVerifiable("Linux"))
+        assertTrue(inputDeliveryVerifiable("Mac OS X"))
     }
 
     @Test
     fun `Linux is not a blanket skip for click presses`() {
         assertTrue(
-            inputDeliveryVerifiable("Linux", DispatchedInput.Press),
+            inputDeliveryVerifiable("Linux"),
             "Linux remaining a blanket skip would let an Xvfb click miss fail silently (#470)",
         )
         assertTrue(clickPressDeliveryVerifiable("Linux"))
         assertTrue(clickPressDeliveryVerifiable("Windows 11"))
-        assertFalse(clickPressDeliveryVerifiable("Mac OS X"))
+        assertTrue(clickPressDeliveryVerifiable("Mac OS X"))
     }
 
     @Test
@@ -760,6 +741,37 @@ class RobotDriverTest {
         )
 }
 
+/** Focused contracts for component-scoped delivery verification of compound pointer gestures. */
+class SwipeInputDeliveryWitnessTest {
+
+    @Test
+    fun `swipeVerified scopes its opening press to the intended input target`() = runTest {
+        val witness = FakeInputDeliveryWitness(delivered = true)
+        val driver =
+            RobotDriver(
+                robot = RecordingRobotAdapter(),
+                clipboard = RecordingClipboardAdapter(),
+                tccGuard = RecordingTccGuard(),
+                inputCapabilities =
+                    InputCapabilities(realOsInput = true, sharedSystemClipboard = false),
+                deliveryWitness = witness,
+            )
+        val target = java.awt.Panel()
+
+        driver.swipeVerified(
+            startX = 1,
+            startY = 2,
+            endX = 3,
+            endY = 4,
+            steps = 1,
+            duration = ZERO,
+            target = target,
+        )
+
+        assertEquals(target, witness.targets.single())
+    }
+}
+
 /** Reports a fixed verdict so delivery-verification policy can be tested without a real desktop. */
 private class FakeInputDeliveryWitness(
     private val delivered: Boolean,
@@ -770,16 +782,25 @@ private class FakeInputDeliveryWitness(
     /** Which event each dispatch asked to watch for — presses for clicks, a wheel for scrolls. */
     val watched: MutableList<DispatchedInput> = mutableListOf()
 
+    /** Component hierarchy each dispatch required, or null for intentionally unscoped input. */
+    val targets: MutableList<java.awt.Component?> = mutableListOf()
+
     var observations: Int = 0
         private set
 
     var closed: Int = 0
         private set
 
-    override fun observe(input: DispatchedInput): InputDeliveryWitness.Observation? {
+    override fun observe(
+        input: DispatchedInput,
+        target: java.awt.Component?,
+        screenX: Int?,
+        screenY: Int?,
+    ): InputDeliveryWitness.Observation? {
         if (!canObserve) return null
         observations++
         watched += input
+        targets += target
         return object : InputDeliveryWitness.Observation {
             override fun awaitDelivery(timeoutMs: Long): Boolean = delivered
 
@@ -792,20 +813,22 @@ private class FakeInputDeliveryWitness(
     }
 }
 
-private class RecordingTccGuard(
+internal class RecordingTccGuard(
     private val accessibilityThrows: Boolean = false,
     private val screenRecordingThrows: Boolean = false,
 ) :
     MacOsTccGuard(
         accessibilityProbe = { TccStatus.Granted },
         screenRecordingProbe = { TccStatus.Granted },
-        warn = {},
     ) {
 
     var accessibilityCalls: Int = 0
         private set
 
     var screenRecordingCalls: Int = 0
+        private set
+
+    var captureValidationCalls: Int = 0
         private set
 
     override fun requireAccessibility() {
@@ -817,16 +840,24 @@ private class RecordingTccGuard(
         screenRecordingCalls++
         if (screenRecordingThrows) error("test: screen recording denied")
     }
+
+    override fun validateCapture(image: BufferedImage) {
+        captureValidationCalls++
+    }
 }
 
-private class RecordingRobotAdapter(
+internal class RecordingRobotAdapter(
     override val autoDelayMs: Int = 0,
     private val sharedLog: MutableList<String>? = null,
     private val drainAfterPaste: Boolean = false,
     initialCapsLockOn: Boolean = false,
     private val allowCapsLockWrite: Boolean = true,
+    private val platformCapture: Boolean = false,
     override val deliversRealOsInput: Boolean = false,
 ) : RobotAdapter {
+    override val gatesMacOsScreenRecordingTcc: Boolean
+        get() = platformCapture
+
     override val requiresOffEdt: Boolean = false
     val events = mutableListOf<String>()
     val capsLockWrites = mutableListOf<Boolean>()
@@ -876,7 +907,7 @@ private class RecordingRobotAdapter(
         get() = drainAfterPaste
 }
 
-private class RecordingScreenCaptureAdapter : ScreenCaptureAdapter {
+internal class RecordingScreenCaptureAdapter : ScreenCaptureAdapter {
     var captureCalls: Int = 0
         private set
 
@@ -890,7 +921,7 @@ private class RecordingScreenCaptureAdapter : ScreenCaptureAdapter {
     }
 }
 
-private class RecordingClipboardAdapter : ClipboardAdapter {
+internal class RecordingClipboardAdapter : ClipboardAdapter {
     private var current: Transferable? = null
 
     var setCalls: Int = 0
