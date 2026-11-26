@@ -466,6 +466,74 @@ class InputCoordinatorClientDisconnectTest {
         }
     }
 
+    @Test
+    fun `release IO failure after retry fails the lease owner and fences the session`() {
+        val directory = Files.createTempDirectory("spc-rf-")
+        val endpoint = CoordinatorEndpoint(directory, directory.resolve("coordinator.sock"))
+        val codec = CoordinatorWireCodec()
+        val listener = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+        listener.bind(UnixDomainSocketAddress.of(endpoint.socketPath))
+        val sentinelClosed = CountDownLatch(1)
+        val serverThread =
+            Thread.ofVirtual().name("coordinator-release-failure-test").start {
+                val session = listener.accept()
+                assertEquals(CoordinatorWireKind.SESSION_OPEN, codec.read(session).kind)
+                codec.write(
+                    session,
+                    CoordinatorWireMessage(
+                        kind = CoordinatorWireKind.RESPONSE,
+                        coordinatorEpoch = EPOCH,
+                    ),
+                )
+                Thread.ofVirtual().start {
+                    codec.readOrNull(session)
+                    sentinelClosed.countDown()
+                }
+                listener.accept().use { acquireChannel ->
+                    val acquire = codec.read(acquireChannel)
+                    codec.write(
+                        acquireChannel,
+                        CoordinatorWireMessage(
+                            kind = CoordinatorWireKind.RESPONSE,
+                            requestId = acquire.requestId,
+                            coordinatorEpoch = EPOCH,
+                            leaseId = LEASE_ID,
+                            resourceKey = acquire.resourceKey,
+                            fence = 1,
+                        ),
+                    )
+                }
+                repeat(2) {
+                    listener.accept().use { releaseChannel ->
+                        assertEquals(CoordinatorWireKind.RELEASE, codec.read(releaseChannel).kind)
+                    }
+                }
+            }
+        val client =
+            LocalInputCoordinatorClient.connect(
+                endpoint,
+                DesktopResourceKey("test/release-failure"),
+                "release-failure-test",
+                codec,
+            )
+        try {
+            val lease = client.acquire(Duration.ofSeconds(2), "test")
+
+            assertFailsWith<java.io.EOFException> { lease.close() }
+            assertFalse(lease.isValid())
+            assertTrue(
+                sentinelClosed.await(2, TimeUnit.SECONDS),
+                "an ambiguous release must fence its session rather than unfence an unknown holder",
+            )
+        } finally {
+            client.close()
+            listener.close()
+            serverThread.join(2_000)
+            Files.deleteIfExists(endpoint.socketPath)
+            Files.deleteIfExists(directory)
+        }
+    }
+
     private companion object {
         const val EPOCH: String = "test-epoch"
         const val LEASE_ID: String = "test-lease"

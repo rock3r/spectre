@@ -1,5 +1,7 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.agent.transport.FrameLimits
 import java.io.IOException
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
@@ -8,6 +10,7 @@ import java.nio.channels.ClosedChannelException
 import java.nio.channels.FileChannel
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
+import java.nio.file.AccessDeniedException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -177,39 +180,31 @@ public constructor(
         }
     }
 
+    @Suppress("TooGenericExceptionCaught") // RPC boundary must preserve an error response.
     private fun handleConnection(client: SocketChannel) {
         var shutdownAfterResponse = false
         try {
             client.use { channel ->
                 val input = Channels.newInputStream(channel)
                 val output = Channels.newOutputStream(channel)
-                var acceptsShutdownRecordings = false
-                var handshakeComplete = false
-                var handshakeVersion: DaemonProtocolVersion? = null
+                val handshake = ConnectionHandshake()
                 while (running.get()) {
                     val request = DaemonWireCodec.readRequest(input) ?: return
                     synchronized(activityLock) { lastActivityNanos = System.nanoTime() }
-                    val response = handleRequest(request, handshakeComplete, handshakeVersion)
-                    if (request is DaemonRequest.Hello) {
-                        handshakeComplete = response is DaemonResponse.Hello
-                        acceptsShutdownRecordings =
-                            handshakeComplete && request.acceptsShutdownRecordings
-                        handshakeVersion = request.clientVersion.takeIf { handshakeComplete }
-                    }
-                    val isShutdown = request is DaemonRequest.Shutdown && handshakeComplete
+                    val response = processRequest(request, handshake)
+                    handshake.record(request, response)
+                    val isShutdown = request is DaemonRequest.Shutdown && handshake.complete
                     if (isShutdown) {
                         // Mark before write: a disconnected client must not leave this process
                         // listening after Shutdown (registry is already closed by handleRequest).
                         shutdownAfterResponse = true
                     }
-                    val wireResponse =
-                        if (
-                            response is DaemonResponse.ShuttingDownWithRecordings &&
-                                !acceptsShutdownRecordings
-                        )
-                            DaemonResponse.ShuttingDown
-                        else response
-                    runCatching { DaemonWireCodec.writeResponse(output, wireResponse) }
+                    if (runCatching { DaemonWireCodec.writeResponse(output, response) }.isFailure) {
+                        // A rejected or disconnected write cannot produce a response to a later
+                        // request on this stream. Close promptly instead of leaving the caller
+                        // waiting forever for a frame that was never written.
+                        return
+                    }
                     if (isShutdown) break
                 }
             }
@@ -219,6 +214,29 @@ public constructor(
             // dirs can be unlinked; always run when Shutdown was handled (write may have failed).
             if (shutdownAfterResponse) close()
         }
+    }
+
+    private fun processRequest(
+        request: DaemonRequest,
+        handshake: ConnectionHandshake,
+    ): DaemonResponse {
+        if (request is DaemonRequest.Hello) {
+            return handleRequest(request, handshake.complete, handshake.version)
+        }
+        val (operationResponse, warnings) =
+            RequestDiagnostics.capture(diagnosticSessionId(request)) {
+                try {
+                    handleRequest(request, handshake.complete, handshake.version)
+                } catch (exception: IOException) {
+                    logConnectionFailure(exception)
+                    operationFailure(exception)
+                } catch (exception: IllegalStateException) {
+                    logConnectionFailure(exception)
+                    operationFailure(exception)
+                }
+            }
+        val compatibleResponse = handshake.compatibleResponse(operationResponse)
+        return diagnosedResponse(compatibleResponse, warnings, handshake.acceptsDiagnosedResponses)
     }
 
     private fun handleRequest(
@@ -261,15 +279,56 @@ public constructor(
                 } else {
                     registry.handle(request)
                 }
+            DaemonRequest.Shutdown ->
+                if (handshakeComplete) registry.handle(request) else protocolHandshakeRequired()
             else ->
-                if (handshakeComplete) registry.handle(request)
-                else {
+                if (
+                    handshakeComplete &&
+                        handshakeVersion?.let(DaemonProtocol::supportsDiagnosedResponses) != true
+                ) {
                     DaemonResponse.Error(
                         code = DaemonErrorCode.ProtocolError,
-                        message = "send a compatible Hello request before session commands",
+                        message =
+                            "This Spectre client is too old to preserve daemon configuration " +
+                                "and diagnostics. Upgrade the client and retry.",
                     )
+                } else if (handshakeComplete) registry.handle(request)
+                else {
+                    protocolHandshakeRequired()
                 }
         }
+
+    private class ConnectionHandshake {
+        var complete: Boolean = false
+            private set
+
+        var version: DaemonProtocolVersion? = null
+            private set
+
+        private var acceptsShutdownRecordings: Boolean = false
+        var acceptsDiagnosedResponses: Boolean = false
+            private set
+
+        fun record(request: DaemonRequest, response: DaemonResponse) {
+            if (request !is DaemonRequest.Hello) return
+            complete = response is DaemonResponse.Hello
+            version = request.clientVersion.takeIf { complete }
+            acceptsShutdownRecordings = complete && request.acceptsShutdownRecordings
+            acceptsDiagnosedResponses =
+                complete &&
+                    (request.acceptsDiagnosedResponses ||
+                        DaemonProtocol.supportsDiagnosedResponses(request.clientVersion))
+        }
+
+        fun compatibleResponse(response: DaemonResponse): DaemonResponse =
+            if (
+                response is DaemonResponse.ShuttingDownWithRecordings && !acceptsShutdownRecordings
+            ) {
+                DaemonResponse.ShuttingDown
+            } else {
+                response
+            }
+    }
 
     private fun logConnectionFailure(exception: Exception) {
         System.err.println(
@@ -415,6 +474,75 @@ public constructor(
     }
 }
 
+private fun protocolHandshakeRequired(): DaemonResponse.Error =
+    DaemonResponse.Error(
+        code = DaemonErrorCode.ProtocolError,
+        message = "send a compatible Hello request before session commands",
+    )
+
+private fun operationFailure(exception: Exception): DaemonResponse.Error =
+    DaemonResponse.Error(
+        DaemonErrorCode.OperationFailed,
+        "${exception.javaClass.simpleName}: " + (exception.message ?: "daemon operation failed"),
+    )
+
+private fun diagnosticSessionId(request: DaemonRequest): String? =
+    (request as? DaemonRequest.SessionRequest)?.sessionId
+
+@OptIn(ExperimentalSpectreAgentApi::class)
+internal fun diagnosedResponse(
+    response: DaemonResponse,
+    warnings: List<String>,
+    acceptsDiagnosedResponses: Boolean,
+    maxFrameBytes: Int = FrameLimits.maxFrameBytes,
+    encoder: (DaemonResponse) -> ByteArray = DaemonWireCodec::encodeResponse,
+): DaemonResponse {
+    if (warnings.isEmpty() || !acceptsDiagnosedResponses) {
+        return response
+    }
+
+    val sizer = DiagnosedResponseSizer(response, encoder)
+    if (sizer.encodedSize(warnings) <= maxFrameBytes) {
+        return DaemonResponse.Diagnosed(response, warnings)
+    }
+
+    // The encoded size is monotone as retainedCount increases: each step adds a CBOR text item
+    // (at least one byte), while decrementing the marker's decimal count can remove at most one
+    // byte; CBOR list headers can only stay equal or grow. Binary search therefore finds the true
+    // maximal prefix, including across both marker-digit and CBOR-length header boundaries. The
+    // large polymorphic response was encoded once above; probes encode only a compact placeholder
+    // response plus the real warning envelope.
+    var smallest = 0
+    var largest = warnings.lastIndex
+    var retainedCount = -1
+    while (smallest <= largest) {
+        val candidateCount = (smallest + largest).ushr(1)
+        val candidateWarnings =
+            warnings.take(candidateCount) + truncationMarker(warnings.size - candidateCount)
+        if (sizer.encodedSize(candidateWarnings) <= maxFrameBytes) {
+            retainedCount = candidateCount
+            smallest = candidateCount + 1
+        } else {
+            largest = candidateCount - 1
+        }
+    }
+    if (retainedCount >= 0) {
+        return DaemonResponse.Diagnosed(
+            response,
+            warnings.take(retainedCount) + truncationMarker(warnings.size - retainedCount),
+        )
+    }
+
+    // A result can sit so close to the limit that even the envelope and shortest truthful marker
+    // do not fit. The negotiated protocol permits a bare response; preserve the user's result
+    // rather than replacing it with a warning/error envelope or attempting an impossible write.
+    return response
+}
+
+internal fun truncationMarker(discardedCount: Int): String =
+    "[spectre-daemon] diagnostics truncated to fit IPC frame " +
+        "(discarded $discardedCount warning(s)); see the per-socket daemon log"
+
 /** Thrown instead of replacing an existing daemon that is still accepting local connections. */
 public class DaemonAlreadyRunningException(socketPath: Path) :
     IOException("A Spectre daemon is already listening at $socketPath")
@@ -422,20 +550,20 @@ public class DaemonAlreadyRunningException(socketPath: Path) :
 /**
  * Keeps the daemon's per-user UDS directory and socket private on POSIX and Windows filesystems.
  */
-private sealed interface DaemonSocketProtection {
+internal sealed interface DaemonSocketProtection {
     @Throws(IOException::class)
     fun createMissingParents(socketPath: Path, validateAncestor: Boolean = true): List<Path> {
         val parent = (socketPath.parent ?: Path.of("")).toAbsolutePath().normalize()
-        if (Files.exists(parent, NOFOLLOW_LINKS)) {
+        val missingParents =
+            generateSequence(parent) { path -> path.parent }
+                .takeWhile { path -> !Files.exists(path, NOFOLLOW_LINKS) }
+                .toList()
+        if (missingParents.isEmpty()) {
             rejectSymbolicLink(parent)
             parent.parent?.let { validateAncestorChain(it, validateAncestor) }
             validateExistingDirectory(parent)
             return emptyList()
         }
-        val missingParents =
-            generateSequence(parent) { path -> path.parent }
-                .takeWhile { path -> !Files.exists(path, NOFOLLOW_LINKS) }
-                .toList()
         missingParents.last().parent?.let { validateAncestorChain(it, validateAncestor) }
         val createdParents = mutableListOf<Path>()
         try {
@@ -456,6 +584,32 @@ private sealed interface DaemonSocketProtection {
         }
         return createdParents.asReversed()
     }
+
+    fun prepareDiagnosticLog(path: Path) {
+        if (!Files.exists(path, NOFOLLOW_LINKS)) {
+            try {
+                createProtectedFile(path)
+            } catch (_: FileAlreadyExistsException) {
+                // A concurrent first launch published its private log.
+            }
+        }
+        if (!Files.isRegularFile(path, NOFOLLOW_LINKS)) {
+            throw IOException("Daemon diagnostic log must be a regular file: $path")
+        }
+        if (
+            Files.getOwner(path, NOFOLLOW_LINKS) !=
+                Files.getOwner(path.toAbsolutePath().parent, NOFOLLOW_LINKS)
+        ) {
+            throw IOException(
+                "Existing daemon diagnostic log $path must belong to the directory owner"
+            )
+        }
+        validatePrivateFile(path)
+    }
+
+    fun createProtectedFile(path: Path)
+
+    fun validatePrivateFile(path: Path)
 
     @Throws(IOException::class) fun createProtectedDirectory(directory: Path)
 
@@ -525,6 +679,16 @@ private data object Posix : DaemonSocketProtection {
         )
     }
 
+    override fun createProtectedFile(path: Path) {
+        Files.createFile(path, PosixFilePermissions.asFileAttribute(OWNER_ONLY_SOCKET_PERMISSIONS))
+    }
+
+    override fun validatePrivateFile(path: Path) {
+        if (Files.getPosixFilePermissions(path, NOFOLLOW_LINKS) != OWNER_ONLY_SOCKET_PERMISSIONS) {
+            throw IOException("Existing daemon diagnostic log $path must be owner-only")
+        }
+    }
+
     override fun protectSocket(socketPath: Path) {
         Files.setPosixFilePermissions(socketPath, OWNER_ONLY_SOCKET_PERMISSIONS)
     }
@@ -545,12 +709,30 @@ private data object Posix : DaemonSocketProtection {
 
 private data object WindowsAcl : DaemonSocketProtection {
     override fun createProtectedDirectory(directory: Path) {
-        Files.createDirectory(directory)
+        publishWithPrivateAcl(directory, Files.createTempDirectory(directory.parent, ".spectre-"))
+    }
+
+    override fun createProtectedFile(path: Path) {
+        publishWithPrivateAcl(
+            path,
+            Files.createTempFile(path.toAbsolutePath().parent, ".spectre-", ".tmp"),
+        )
+    }
+
+    // Windows needs the newly created object's actual owner to build its DACL. Publish only
+    // after setting that ACL so a concurrent launcher never observes an inherited intermediate ACL.
+    private fun publishWithPrivateAcl(path: Path, temporary: Path) {
         try {
-            setOwnerOnlyAcl(directory)
-        } catch (exception: IOException) {
-            runCatching { Files.deleteIfExists(directory) }
-            throw exception
+            setOwnerOnlyAcl(temporary)
+            try {
+                Files.move(temporary, path)
+            } catch (exception: AccessDeniedException) {
+                // Windows can report an existing destination directory as access denied.
+                if (!Files.exists(path, NOFOLLOW_LINKS)) throw exception
+                throw FileAlreadyExistsException(path.toString()).apply { initCause(exception) }
+            }
+        } finally {
+            Files.deleteIfExists(temporary)
         }
     }
 
@@ -559,19 +741,22 @@ private data object WindowsAcl : DaemonSocketProtection {
     }
 
     override fun validateExistingDirectory(directory: Path) {
+        if (!Files.isDirectory(directory, NOFOLLOW_LINKS)) {
+            throw IOException("Daemon socket parent must be a directory: $directory")
+        }
+        validateOwnerOnlyAcl(directory)
+    }
+
+    override fun validatePrivateFile(path: Path) {
+        validateOwnerOnlyAcl(path)
+    }
+
+    private fun validateOwnerOnlyAcl(path: Path) {
         val view =
-            Files.getFileAttributeView(directory, AclFileAttributeView::class.java)
-                ?: throw IOException("Filesystem at $directory does not support ACLs")
-        val owner = view.owner
-        if (
-            view.acl.isEmpty() ||
-                view.acl.any { entry ->
-                    entry.type() != AclEntryType.ALLOW ||
-                        entry.principal() != owner ||
-                        !entry.permissions().containsAll(ALL_ACL_PERMISSIONS)
-                }
-        ) {
-            throw IOException("Existing daemon socket directory $directory must be owner-only")
+            Files.getFileAttributeView(path, AclFileAttributeView::class.java, NOFOLLOW_LINKS)
+                ?: throw IOException("Filesystem at $path does not support ACLs")
+        if (view.acl != listOf(ownerOnlyAcl(view))) {
+            throw IOException("Existing daemon path $path must be owner-only")
         }
     }
 
@@ -579,14 +764,15 @@ private data object WindowsAcl : DaemonSocketProtection {
         val view =
             Files.getFileAttributeView(path, AclFileAttributeView::class.java)
                 ?: throw IOException("Filesystem at $path does not support ACLs")
-        val ownerOnly =
-            AclEntry.newBuilder()
-                .setType(AclEntryType.ALLOW)
-                .setPrincipal(view.owner)
-                .setPermissions(EnumSet.allOf(AclEntryPermission::class.java))
-                .build()
-        view.acl = listOf(ownerOnly)
+        view.acl = listOf(ownerOnlyAcl(view))
     }
+
+    private fun ownerOnlyAcl(view: AclFileAttributeView): AclEntry =
+        AclEntry.newBuilder()
+            .setType(AclEntryType.ALLOW)
+            .setPrincipal(view.owner)
+            .setPermissions(ALL_ACL_PERMISSIONS)
+            .build()
 }
 
 private val OWNER_ONLY_DIRECTORY_PERMISSIONS = PosixFilePermissions.fromString("rwx------")

@@ -12,6 +12,7 @@ import dev.sebastiano.spectre.input.OwnerOnlyEndpointProtection
 import java.io.IOException
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
+import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.channels.FileLock
 import java.nio.channels.OverlappingFileLockException
@@ -33,6 +34,7 @@ import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.LockSupport
 
 /** Same-user local coordinator server hosted in a small external JVM process. */
 @ExperimentalSpectreInputCoordinationApi
@@ -44,11 +46,28 @@ public class LocalCoordinatorServer(
     revokeGrace: Duration = Duration.ofSeconds(DEFAULT_REVOKE_GRACE_SECONDS),
     private val codec: CoordinatorWireCodec = CoordinatorWireCodec(),
 ) : AutoCloseable {
+    private var activeConnectionLimit: Int = MAX_ACTIVE_CONNECTIONS
+    private var connectionAccepted: () -> Unit = {}
+
+    internal constructor(
+        endpoint: CoordinatorEndpoint,
+        idleTimeout: Duration,
+        activeConnectionLimit: Int,
+        connectionAccepted: () -> Unit,
+    ) : this(endpoint = endpoint, idleTimeout = idleTimeout) {
+        require(activeConnectionLimit > 0) { "Active connection limit must be positive" }
+        this.activeConnectionLimit = activeConnectionLimit
+        this.connectionAccepted = connectionAccepted
+    }
+
     private val running = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
     private val ownsSocketPath = AtomicBoolean(false)
     private val terminated = CountDownLatch(1)
     private val activeConnections = AtomicInteger()
+    internal val activeConnectionCount: Int
+        get() = activeConnections.get()
+
     private val lastActivityNanos = AtomicLong(System.nanoTime())
     private val handlers: ExecutorService = Executors.newVirtualThreadPerTaskExecutor()
     private val initialFrameDeadlines = Executors.newSingleThreadScheduledExecutor { task ->
@@ -142,13 +161,13 @@ public class LocalCoordinatorServer(
         while (running.get()) {
             try {
                 val client = channel.accept()
-                activeConnections.incrementAndGet()
                 lastActivityNanos.set(System.nanoTime())
-                if (activeConnections.get() > MAX_ACTIVE_CONNECTIONS) {
-                    activeConnections.decrementAndGet()
-                    runCatching { client.close() }
+                if (activeConnections.get() >= activeConnectionLimit) {
+                    rejectOverCapacity(client, codec, activeConnectionLimit)
                     continue
                 }
+                activeConnections.incrementAndGet()
+                runCatching(connectionAccepted)
                 try {
                     handlers.submit {
                         try {
@@ -371,3 +390,46 @@ public class LocalCoordinatorServer(
         const val MAX_IDLE_CHECK_MILLIS: Long = 1_000
     }
 }
+
+private fun rejectOverCapacity(
+    client: SocketChannel,
+    codec: CoordinatorWireCodec,
+    connectionLimit: Int,
+) {
+    client.use {
+        runCatching {
+            val frame =
+                ByteBuffer.wrap(
+                    codec.encode(
+                        CoordinatorWireMessage(
+                            kind = CoordinatorWireKind.RESPONSE,
+                            ok = false,
+                            errorCode = "CONNECTION_LIMIT_EXCEEDED",
+                            message =
+                                "Input coordinator connection limit of $connectionLimit exceeded",
+                        )
+                    )
+                )
+            client.configureBlocking(false)
+            val deadline = System.nanoTime() + OVER_CAPACITY_WRITE_TIMEOUT.toNanos()
+            while (frame.hasRemaining() && System.nanoTime() < deadline) {
+                if (client.write(frame) == 0) LockSupport.parkNanos(REJECT_WRITE_RETRY_NANOS)
+            }
+            if (!frame.hasRemaining()) {
+                // Windows resets an AF_UNIX peer when a socket is closed with unread inbound
+                // bytes. Half-close first, then briefly drain the SESSION_OPEN request so the
+                // already-written structured rejection remains observable by the client.
+                client.shutdownOutput()
+                val discard = ByteBuffer.allocate(OVER_CAPACITY_DRAIN_BUFFER_BYTES)
+                while (System.nanoTime() < deadline && client.read(discard) >= 0) {
+                    discard.clear()
+                    LockSupport.parkNanos(REJECT_WRITE_RETRY_NANOS)
+                }
+            }
+        }
+    }
+}
+
+private const val REJECT_WRITE_RETRY_NANOS: Long = 100_000
+private const val OVER_CAPACITY_DRAIN_BUFFER_BYTES: Int = 1024
+private val OVER_CAPACITY_WRITE_TIMEOUT: Duration = Duration.ofMillis(100)

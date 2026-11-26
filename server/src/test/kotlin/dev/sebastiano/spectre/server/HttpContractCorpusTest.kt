@@ -143,7 +143,7 @@ private class HttpContractDriver(port: Int) : AutomatorContractDriver {
     }
 
     override fun screenshotProbe(): ScreenshotProbe? = runBlocking {
-        val image = client.screenshot()
+        val image = client.screenshot(fullscreen = true)
         ScreenshotProbe(byteCount = image.width * image.height, formatHint = "buffered-image")
     }
 
