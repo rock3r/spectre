@@ -392,6 +392,7 @@ public object SpectreMcpServer {
                     "out_dir" to "string",
                     "include_image" to "boolean",
                     "source" to "string",
+                    "allow_accessibility_enable" to "boolean",
                 )
                 .let { base ->
                     // session_id is required; other params are optional overrides.
@@ -428,12 +429,17 @@ public object SpectreMcpServer {
         val windowIndex = call.optionalInt("window_index") ?: 0
         val outDir = call.optionalString("out_dir")?.let(::normalizeRecordingOutputPath)
         val includeImage = call.optionalBoolean("include_image") ?: false
+        val allowAccessibilityEnable = call.optionalBoolean("allow_accessibility_enable") ?: false
+        require(!allowAccessibilityEnable || source == DaemonCaptureSource.Accessibility) {
+            "MCP tool argument 'allow_accessibility_enable' requires source accessibility"
+        }
         return request(
                 DaemonRequest.Capture(
                     sessionId = sessionId,
                     windowIndex = windowIndex,
                     outDir = outDir,
                     source = source,
+                    allowAccessibilityEnable = allowAccessibilityEnable,
                 )
             )
             .captureResult(includeImage)
@@ -630,6 +636,7 @@ private fun registerAccessibilityTool(
         put("maximum_depth", buildJsonObject { put("type", "integer") })
         put("maximum_node_count", buildJsonObject { put("type", "integer") })
         put("timeout_ms", buildJsonObject { put("type", "integer") })
+        put("allow_accessibility_enable", buildJsonObject { put("type", "boolean") })
     }
     server.addTool(
         name = "accessibility_tree",
@@ -649,6 +656,8 @@ private fun registerAccessibilityTool(
         val maximumDepth = call.accessibilityOptionalInt("maximum_depth") ?: 64
         val maximumNodeCount = call.accessibilityOptionalInt("maximum_node_count") ?: 10_000
         val timeoutMs = call.accessibilityOptionalLong("timeout_ms") ?: 750
+        val allowAccessibilityEnable =
+            call.accessibilityOptionalBoolean("allow_accessibility_enable") ?: false
         require(pid == null || pid > 0) { "MCP tool argument 'pid' must be positive" }
         require(windowIndex >= 0 && maximumDepth > 0 && maximumNodeCount > 0 && timeoutMs > 0) {
             "MCP accessibility target and traversal budgets must be valid"
@@ -662,6 +671,7 @@ private fun registerAccessibilityTool(
                     maximumDepth,
                     maximumNodeCount,
                     timeoutMs,
+                    allowAccessibilityEnable,
                 )
             )
             .accessibilityResult()
@@ -699,6 +709,17 @@ private fun CallToolRequest.accessibilityOptionalString(name: String): String? {
         "MCP tool argument '$name' must be a non-blank string"
     }
     return primitive.content
+}
+
+private fun CallToolRequest.accessibilityOptionalBoolean(name: String): Boolean? {
+    validateKnownArguments()
+    val element = arguments?.get(name) ?: return null
+    val primitive = element as? kotlinx.serialization.json.JsonPrimitive
+    require(primitive != null && !primitive.isString) {
+        "MCP tool argument '$name' must be true or false"
+    }
+    return primitive.content.toBooleanStrictOrNull()
+        ?: throw IllegalArgumentException("MCP tool argument '$name' must be true or false")
 }
 
 private fun CallToolRequest.accessibilityOptionalLong(name: String): Long? {
@@ -753,7 +774,15 @@ private val MCP_ARGUMENT_NAMES: Map<String, Set<String>> =
         "focus_window" to setOf("session_id", "window_index"),
         "type_text" to setOf("session_id", "text"),
         "screenshot" to setOf("session_id", "window_index", "surface_id", "fullscreen"),
-        "capture" to setOf("session_id", "window_index", "out_dir", "include_image", "source"),
+        "capture" to
+            setOf(
+                "session_id",
+                "window_index",
+                "out_dir",
+                "include_image",
+                "source",
+                "allow_accessibility_enable",
+            ),
         "accessibility_tree" to
             setOf(
                 "pid",
@@ -763,6 +792,7 @@ private val MCP_ARGUMENT_NAMES: Map<String, Set<String>> =
                 "maximum_depth",
                 "maximum_node_count",
                 "timeout_ms",
+                "allow_accessibility_enable",
             ),
         "record_start" to setOf("session_id", "output_path", "window_index", "fullscreen"),
         "record_stop" to setOf("session_id"),

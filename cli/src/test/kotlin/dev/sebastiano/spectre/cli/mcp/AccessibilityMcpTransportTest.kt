@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.cli.mcp
 
 import dev.sebastiano.spectre.cli.daemon.AccessibilityError
 import dev.sebastiano.spectre.cli.daemon.AccessibilityErrorCode
+import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import io.modelcontextprotocol.kotlin.sdk.server.ClientConnection
 import io.modelcontextprotocol.kotlin.sdk.shared.RequestOptions
@@ -25,6 +26,7 @@ import io.modelcontextprotocol.kotlin.sdk.types.ServerNotification
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
@@ -35,6 +37,102 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 class AccessibilityMcpTransportTest {
+    @Test
+    fun `MCP accessibility enable opt-in defaults false and accepts snake case true`() =
+        runBlocking {
+            val seen = mutableListOf<DaemonRequest>()
+            val server = SpectreMcpServer.create { request ->
+                seen += request
+                DaemonResponse.AccessibilityErrorResult(
+                    AccessibilityError(AccessibilityErrorCode.AccessibilityDisabled, "off")
+                )
+            }
+
+            invokeTool(server, "accessibility_tree", buildJsonObject { put("pid", 42) })
+            invokeTool(
+                server,
+                "accessibility_tree",
+                buildJsonObject {
+                    put("pid", 42)
+                    put("allow_accessibility_enable", false)
+                },
+            )
+            invokeTool(
+                server,
+                "accessibility_tree",
+                buildJsonObject {
+                    put("pid", 42)
+                    put("allow_accessibility_enable", true)
+                },
+            )
+            invokeTool(
+                server,
+                "capture",
+                buildJsonObject {
+                    put("session_id", "pid-42")
+                    put("source", "accessibility")
+                    put("allow_accessibility_enable", false)
+                },
+            )
+            invokeTool(
+                server,
+                "capture",
+                buildJsonObject {
+                    put("session_id", "pid-42")
+                    put("source", "accessibility")
+                    put("allow_accessibility_enable", true)
+                },
+            )
+
+            assertEquals(
+                false,
+                (seen[0] as DaemonRequest.AccessibilityTree).allowAccessibilityEnable,
+            )
+            assertEquals(
+                false,
+                (seen[1] as DaemonRequest.AccessibilityTree).allowAccessibilityEnable,
+            )
+            assertEquals(
+                true,
+                (seen[2] as DaemonRequest.AccessibilityTree).allowAccessibilityEnable,
+            )
+            assertEquals(false, (seen[3] as DaemonRequest.Capture).allowAccessibilityEnable)
+            assertEquals(true, (seen[4] as DaemonRequest.Capture).allowAccessibilityEnable)
+        }
+
+    @Test
+    fun `both MCP tools validate accessibility enable opt-in type and reject camel case`() =
+        runBlocking {
+            val server = SpectreMcpServer.create { error("must not forward invalid arguments") }
+            listOf(
+                    "accessibility_tree" to
+                        buildJsonObject {
+                            put("pid", 42)
+                            put("allow_accessibility_enable", "true")
+                        },
+                    "capture" to
+                        buildJsonObject {
+                            put("session_id", "pid-42")
+                            put("allow_accessibility_enable", "true")
+                        },
+                    "accessibility_tree" to
+                        buildJsonObject {
+                            put("pid", 42)
+                            put("allowAccessibilityEnable", true)
+                        },
+                    "capture" to
+                        buildJsonObject {
+                            put("session_id", "pid-42")
+                            put("allowAccessibilityEnable", true)
+                        },
+                )
+                .forEach { (tool, arguments) ->
+                    assertFailsWith<IllegalArgumentException> {
+                        invokeTool(server, tool, arguments)
+                    }
+                }
+        }
+
     @Test
     fun `accessibility errors stay structured failures through both MCP entry points`() =
         runBlocking {

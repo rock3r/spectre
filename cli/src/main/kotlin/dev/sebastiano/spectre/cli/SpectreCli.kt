@@ -285,7 +285,7 @@ private class RootCommand(
             FocusWindowCommand(request, output),
             TypeCommand(request, output),
             ScreenshotCommand(request, output),
-            CaptureCommand(request, output),
+            CaptureCommand(request, output, errorOutput),
             CapturesCommand(request, output),
             RecordCommand(request, output),
             PermissionsCommand(output),
@@ -367,6 +367,8 @@ private class AccessibilityTreeCommand(
     private val maximumDepth: Int by option("--maximum-depth").int().default(64)
     private val maximumNodeCount: Int by option("--maximum-node-count").int().default(10_000)
     private val timeoutMs: Long by option("--timeout-ms").long().default(750)
+    private val allowAccessibilityEnable: Boolean by
+        option("--allow-accessibility-enable").flag(default = false)
 
     override fun run() {
         if (listOf(pid, windowTitle, sessionId).count { it != null } != 1) {
@@ -387,6 +389,7 @@ private class AccessibilityTreeCommand(
                         maximumDepth,
                         maximumNodeCount,
                         timeoutMs,
+                        allowAccessibilityEnable,
                     )
                 )
         ) {
@@ -544,6 +547,7 @@ private class ScreenshotCommand(
 private class CaptureCommand(
     private val request: (DaemonRequest) -> DaemonResponse,
     private val output: Appendable,
+    private val errorOutput: Appendable,
 ) : CliktCommand(name = "capture") {
     private val sessionId: String by argument()
     private val windowIndex: Int by option("--window").int().default(0)
@@ -559,8 +563,13 @@ private class CaptureCommand(
             }
             .default(DaemonCaptureSource.Compose)
     private val json: Boolean by option("--json").flag(default = false)
+    private val allowAccessibilityEnable: Boolean by
+        option("--allow-accessibility-enable").flag(default = false)
 
     override fun run() {
+        if (allowAccessibilityEnable && source != DaemonCaptureSource.Accessibility) {
+            throw CliktError("--allow-accessibility-enable requires --source accessibility")
+        }
         val response =
             request(
                 DaemonRequest.Capture(
@@ -568,6 +577,7 @@ private class CaptureCommand(
                     windowIndex = windowIndex,
                     outDir = outDir?.toAbsolutePath()?.normalize()?.toString(),
                     source = source,
+                    allowAccessibilityEnable = allowAccessibilityEnable,
                 )
             )
         val capture =
@@ -583,6 +593,7 @@ private class CaptureCommand(
                 is DaemonResponse.Error -> throw DaemonCommandException(response)
                 else -> error("Daemon returned an unexpected response to capture")
             }
+        capture.notes.forEach { errorOutput.appendLine("notice: $it") }
         if (json) {
             output.append(
                 CLI_JSON.encodeToString(

@@ -59,6 +59,7 @@ internal data class AccessibilitySnapshotRequest(
     val maximumDepth: Int,
     val maximumNodeCount: Int,
     val timeoutMs: Long,
+    val allowAccessibilityEnable: Boolean = false,
 ) {
     init {
         require(maximumDepth > 0)
