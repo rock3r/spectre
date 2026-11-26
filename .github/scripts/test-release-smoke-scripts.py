@@ -1479,7 +1479,7 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
             helper.write_text("#!/bin/sh\n", encoding="utf-8")
             helper.chmod(0o755)
             out_dir = root / "build" / "smoke"
-            env = smoke_lib.prepare_linux_portal_token_env(root, out_dir)
+            env = smoke_lib.prepare_linux_portal_token_env(root, out_dir, environ={})
             token_dir = Path(env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"])
             self.assertEqual(out_dir / "wayland-restore-tokens", token_dir)
             self.assertTrue(token_dir.is_dir())
@@ -1599,7 +1599,7 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             out_dir = root / "build" / "smoke"
-            env = smoke_lib.prepare_linux_portal_token_env(root, out_dir)
+            env = smoke_lib.prepare_linux_portal_token_env(root, out_dir, environ={})
             self.assertEqual(
                 str(out_dir / "wayland-restore-tokens"),
                 env["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"],
