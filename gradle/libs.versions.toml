@@ -27,6 +27,7 @@ kotlin = "2.4.0"
 # `docs/PUBLISHING.md` for the release flow.
 mavenPublish = "0.37.0"
 mcpKotlinSdk = "0.15.0"
+jna = "5.18.1"
 junit4 = "4.13.2"
 junit5 = "5.14.4"
 # Use the upstream baseline of the IDE's 1.10.2-intellij-2 fork, not its private coordinates.
@@ -63,6 +64,7 @@ compose-uiToolingPreview = { module = "org.jetbrains.compose.ui:ui-tooling-previ
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
+jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
 junit4 = { module = "junit:junit", version.ref = "junit4" }
 junit5-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "junit5" }
 junit5-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit5" }

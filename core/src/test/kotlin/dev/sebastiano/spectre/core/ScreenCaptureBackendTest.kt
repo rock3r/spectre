@@ -101,6 +101,33 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `native window capture never probes the unrelated Robot permission owner`() {
+        assumeLiveAwtAvailable()
+        val frame = Frame("native-owner-test").apply { addNotify() }
+        var robotPermissionProbes = 0
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = {
+                    robotPermissionProbes++
+                    error("native capture must not consult the JVM Robot permission owner")
+                },
+                nativeCapture = {
+                    // A naturally black SCK image is valid evidence from the signed helper.
+                    BufferedImage(8, 8, BufferedImage.TYPE_INT_ARGB)
+                },
+                nativeCaptureDisambiguatesTitles = { true },
+            )
+        try {
+            val capture = backend.captureWindow(tracked(frame), Rectangle(frame.bounds))
+
+            assertEquals(8, capture.image.width)
+            assertEquals(0, robotPermissionProbes)
+        } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
     fun `native client images crop in their client-window coordinate space`() {
         assumeLiveAwtAvailable()
         val frame =

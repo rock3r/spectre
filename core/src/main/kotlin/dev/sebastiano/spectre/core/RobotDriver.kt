@@ -29,7 +29,7 @@ public class RobotDriver
 internal constructor(
     private val robot: RobotAdapter = AwtRobotAdapter(),
     private val clipboard: ClipboardAdapter = SystemClipboardAdapter(),
-    private val tccGuard: MacOsTccGuard = defaultTccGuardFor(robot, robot),
+    internal val tccGuard: MacOsTccGuard = defaultTccGuardFor(robot, robot),
     private val screenCapture: ScreenCaptureAdapter = robot,
     private val nativeRegionCapture: ((Rectangle) -> BufferedImage)? =
         nativeScreenRegionCaptureFor(RobotDriver::class.java.classLoader),
@@ -39,6 +39,9 @@ internal constructor(
     inputCapabilities: InputCapabilities? = null,
     internal val deliveryWitness: InputDeliveryWitness = AwtInputDeliveryWitness,
 ) : AutoCloseable by inputLeaseCoordinator {
+
+    /** Cooperative input policy selected when this driver was constructed. */
+    @InternalSpectreApi public val inputLeasePolicy: InputLeasePolicy = inputLeasePolicy
 
     /** Shared-OS-resource capabilities used by isolation integrations. */
     @ExperimentalSpectreInputCoordinationApi
@@ -472,7 +475,7 @@ internal constructor(
             return native(captureRegion).scaledTo(captureRegion.width, captureRegion.height)
         }
         tccGuard.requireScreenRecording()
-        return screenCapture.createScreenCapture(captureRegion)
+        return screenCapture.createScreenCapture(captureRegion).also(tccGuard::validateCapture)
     }
 
     /**
@@ -501,7 +504,9 @@ internal constructor(
             return native(captureRegion)
         }
         tccGuard.requireScreenRecording()
-        return screenCapture.createDeviceScaleScreenCapture(captureRegion)
+        return screenCapture
+            .createDeviceScaleScreenCapture(captureRegion)
+            .also(tccGuard::validateCapture)
     }
 
     private suspend fun runOffEdt(

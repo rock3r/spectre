@@ -52,14 +52,30 @@ public class SpectreCli(
     private val shutdownRequest: () -> DaemonResponse = { request(DaemonRequest.Shutdown) },
     private val output: Appendable = System.out,
     private val errorOutput: Appendable = System.err,
+    private val mcpRequest: (DaemonRequest) -> DaemonResponse = request,
 ) {
+    /**
+     * Source and binary compatible constructor retained for embedders from before MCP diagnostics.
+     */
+    public constructor(
+        request: (DaemonRequest) -> DaemonResponse,
+        shutdownRequest: () -> DaemonResponse,
+        output: Appendable,
+        errorOutput: Appendable,
+    ) : this(request, shutdownRequest, output, errorOutput, request)
+
     /** Creates a CLI client that auto-starts the per-user daemon when needed. */
     public constructor(
         output: Appendable = System.out,
         errorOutput: Appendable = System.err,
         socketPath: Path? = null,
     ) : this(
-        request = daemonRequest(socketPath),
+        request =
+            daemonRequest(
+                socketPath,
+                warningSink = { warning -> errorOutput.appendLine("warning: $warning") },
+            ),
+        mcpRequest = daemonRequest(socketPath, retainDiagnostics = true),
         shutdownRequest = daemonShutdownRequest(socketPath),
         output = output,
         errorOutput = errorOutput,
@@ -67,7 +83,7 @@ public class SpectreCli(
 
     /** Parses and executes one CLI invocation, returning zero when it succeeds. */
     public fun run(arguments: List<String>): Int {
-        val command = RootCommand(request, shutdownRequest, output, errorOutput)
+        val command = RootCommand(request, mcpRequest, shutdownRequest, output, errorOutput)
         return try {
             command.parse(versionFlagAsCommand(arguments))
             EXIT_SUCCESS
@@ -164,6 +180,7 @@ public class SpectreCli(
         val probe =
             RootCommand(
                 request = { error("usage probe must not contact the daemon") },
+                mcpRequest = { error("usage probe must not contact the daemon") },
                 shutdownRequest = { error("usage probe must not contact the daemon") },
                 output = StringBuilder(),
                 errorOutput = StringBuilder(),
@@ -237,6 +254,7 @@ private const val MINIMUM_JDK_FEATURE_VERSION: Int = 21
 
 private class RootCommand(
     request: (DaemonRequest) -> DaemonResponse,
+    mcpRequest: (DaemonRequest) -> DaemonResponse,
     shutdownRequest: () -> DaemonResponse,
     output: Appendable,
     errorOutput: Appendable,
@@ -271,7 +289,7 @@ private class RootCommand(
             PsCommand(request, output),
             DaemonCommand(request, shutdownRequest, output),
             InputLockCommand.default(output),
-            McpCommand(request),
+            McpCommand(mcpRequest),
             VersionCommand(output),
         )
         eagerOption(VERSION_FLAGS, help = "Print the Spectre CLI version and exit.") {
@@ -1272,8 +1290,11 @@ private class DaemonStatusCommand(
 
     override fun run() {
         val sessions =
-            (request(DaemonRequest.ListSessions) as? DaemonResponse.Sessions)?.sessions
-                ?: error("Daemon returned an unexpected response to list sessions")
+            when (val response = request(DaemonRequest.ListSessions)) {
+                is DaemonResponse.Sessions -> response.sessions
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> throw CliktError("Daemon returned an unexpected response to list sessions")
+            }
         if (json) {
             output.append(
                 CLI_JSON.encodeToString(
@@ -1464,6 +1485,8 @@ private fun NodeJson(node: NodeSnapshotDto): NodeJson =
 internal fun daemonRequest(
     socketPath: Path?,
     attachPreflight: (DaemonRequest) -> String? = ::attachStartupPreflight,
+    warningSink: (String) -> Unit = {},
+    retainDiagnostics: Boolean = false,
 ): (DaemonRequest) -> DaemonResponse = daemonRequest@{ request ->
     val resolvedSocketPath = socketPath ?: DaemonEndpoint.defaultSocketPath()
     if (
@@ -1473,16 +1496,19 @@ internal fun daemonRequest(
         for (legacySocketPath in DaemonEndpoint.legacySocketPaths()) {
             if (!Files.exists(legacySocketPath)) continue
             try {
-                return@daemonRequest DaemonClient(legacySocketPath).use { client ->
-                    client.request(request)
-                }
+                return@daemonRequest DaemonClient(
+                        legacySocketPath,
+                        warningSink,
+                        retainDiagnostics,
+                    )
+                    .use { client -> client.request(request) }
             } catch (_: IOException) {
                 // A stale legacy socket must not prevent probing older endpoints or new
                 // startup.
             }
         }
     }
-    DaemonClient(resolvedSocketPath).use { client ->
+    DaemonClient(resolvedSocketPath, warningSink, retainDiagnostics).use { client ->
         if (request == DaemonRequest.ListSessions) {
             try {
                 client.requestIfPresent(request)

@@ -19,6 +19,13 @@ public data class TrackedWindow(
     val composePanel: ComposePanel?,
     val isPopup: Boolean,
 ) {
+    /** The concrete showing Compose host used to witness node-targeted pointer delivery. */
+    internal val composeInputTarget: Component
+        get() =
+            composePanel
+                ?: (window as? JFrame)?.contentPane
+                ?: (window as? JDialog)?.contentPane
+                ?: window
 
     /**
      * Reflective overlay accessor used for Compose Desktop's `OnWindow` popup layers
@@ -50,7 +57,7 @@ public data class TrackedWindow(
      */
     val composeContentOrigin: Point
         get() =
-            locationOnScreenOrNull(composePanel)
+            composePanel?.let { locationOnScreenOrNull(it) ?: layoutScreenOrigin(it, window) }
                 ?: locationOnScreenOrNull((window as? JFrame)?.contentPane)
                 ?: locationOnScreenOrNull((window as? JDialog)?.contentPane)
                 ?: locationOnScreenOrNull(window)
@@ -78,7 +85,7 @@ public data class TrackedWindow(
      */
     val composeSurfaceBoundsOnScreen: Rectangle
         get() = readOnEdt {
-            screenBoundsOrNull(composePanel)
+            composePanel?.let { screenBoundsOrNull(it) ?: layoutScreenBounds(it, window) }
                 ?: screenBoundsOrNull((window as? JFrame)?.contentPane)
                 ?: screenBoundsOrNull((window as? JDialog)?.contentPane)
                 ?: screenBoundsOrNull(window)

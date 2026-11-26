@@ -117,6 +117,7 @@ public final class dev/sebastiano/spectre/testing/InputIsolationConfig$Companion
 	public static synthetic fun auto-LRDsOJo$default (Ldev/sebastiano/spectre/testing/InputIsolationConfig$Companion;JILjava/lang/Object;)Ldev/sebastiano/spectre/testing/InputIsolationConfig;
 	public final fun off ()Ldev/sebastiano/spectre/testing/InputIsolationConfig;
 	public final fun perInteraction ()Ldev/sebastiano/spectre/testing/InputIsolationConfig;
+	public final fun perInteraction-LRDsOJo (J)Ldev/sebastiano/spectre/testing/InputIsolationConfig;
 	public final fun perTest-LRDsOJo (J)Ldev/sebastiano/spectre/testing/InputIsolationConfig;
 	public static synthetic fun perTest-LRDsOJo$default (Ldev/sebastiano/spectre/testing/InputIsolationConfig$Companion;JILjava/lang/Object;)Ldev/sebastiano/spectre/testing/InputIsolationConfig;
 }

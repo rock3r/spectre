@@ -23,8 +23,8 @@ import org.junit.jupiter.api.TestInstance
  *   rectangle. A full default `stableFrames = 3` streak must complete against a static UI so
  *   one-shot helper cost cannot make visual idle unreachable by construction.
  *
- * Skips GitHub-hosted Windows: WGC still capture needs an interactive console (same gate as Issue14
- * screenshot warmup).
+ * GitHub-hosted Windows intentionally opts into desktop-region sampling because WGC still capture
+ * needs an interactive console. A separate assertion verifies that the default remains fail-closed.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class WaitForVisualIdleValidationTest {
@@ -34,10 +34,6 @@ class WaitForVisualIdleValidationTest {
     @BeforeAll
     fun start() {
         assumeFalse(GraphicsEnvironment.isHeadless(), "Needs a real AWT display")
-        assumeFalse(
-            isHostedWindows(),
-            "Live Windows Graphics Capture requires an interactive console",
-        )
         fixture.start()
     }
 
@@ -51,7 +47,11 @@ class WaitForVisualIdleValidationTest {
                 waitForTestTag("hidpi.target.40x0")
                 waitForIdle()
 
-                waitForVisualIdle(timeout = 5.seconds, stableFrames = 1)
+                waitForVisualIdle(
+                    timeout = 5.seconds,
+                    stableFrames = 1,
+                    allowScreenRegionFallback = isHostedWindows(),
+                )
             }
         }
 
@@ -64,9 +64,32 @@ class WaitForVisualIdleValidationTest {
                 waitForIdle()
 
                 // Default stableFrames; longer timeout absorbs cold helper + three warm stills.
-                waitForVisualIdle(timeout = 15.seconds, stableFrames = 3)
+                waitForVisualIdle(
+                    timeout = 15.seconds,
+                    stableFrames = 3,
+                    allowScreenRegionFallback = isHostedWindows(),
+                )
             }
         }
+
+    @Test
+    fun `hosted Windows fails closed before sampling a nonempty surface`() = runBlocking {
+        assumeTrue(isHostedWindows(), "Exercises the hosted Windows capture-policy gate")
+        with(fixture.automator) {
+            navigateToScenario("scenario.hidpi")
+            waitForTestTag("hidpi.target.40x0")
+            waitForIdle()
+
+            val error =
+                kotlin.test.assertFailsWith<UnsupportedOperationException> {
+                    waitForVisualIdle(timeout = 15.seconds, stableFrames = 1)
+                }
+            kotlin.test.assertTrue(
+                error.message.orEmpty().contains("non-interactive GitHub-hosted Windows runner"),
+                error.message,
+            )
+        }
+    }
 
     /**
      * #612: a focused text field blinks its caret about every 500 ms. Three stable samples must fit
@@ -81,13 +104,21 @@ class WaitForVisualIdleValidationTest {
             waitForTestTag("hidpi.target.40x0")
             waitForIdle()
             // Warm the native capture path once, so the measurement below is steady state.
-            waitForVisualIdle(timeout = 15.seconds, stableFrames = 1)
+            waitForVisualIdle(
+                timeout = 15.seconds,
+                stableFrames = 1,
+                allowScreenRegionFallback = isHostedWindows(),
+            )
 
             // Sample period on a static surface: every sample matches, so the wait takes about
             // `samples` sample periods. Printed for the #612 before/after numbers.
             val samples = 10
             val staticStart = TimeSource.Monotonic.markNow()
-            waitForVisualIdle(timeout = 15.seconds, stableFrames = samples)
+            waitForVisualIdle(
+                timeout = 15.seconds,
+                stableFrames = samples,
+                allowScreenRegionFallback = isHostedWindows(),
+            )
             println(
                 "visual-idle sample period: " +
                     "${staticStart.elapsedNow().inWholeMilliseconds / samples} ms"
@@ -99,16 +130,51 @@ class WaitForVisualIdleValidationTest {
                 if (waitForTestTag("focus.field.first").isFocused) Unit else null
             }
             waitForIdle()
-            waitForVisualIdle(timeout = 5.seconds, stableFrames = 3)
+            waitForVisualIdle(
+                timeout = 5.seconds,
+                stableFrames = 3,
+                allowScreenRegionFallback = isHostedWindows(),
+            )
         }
     }
 
     private companion object {
         fun isWindows(): Boolean =
             System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
-
-        fun isHostedWindows(): Boolean =
-            System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true) &&
-                System.getenv("GITHUB_ACTIONS") == "true"
     }
 }
+
+class HostedWindowsVisualIdlePolicyTest {
+    @Test
+    fun `self-hosted Windows Actions job uses native capture`() {
+        kotlin.test.assertFalse(
+            isHostedWindows(
+                osName = "Windows 11",
+                getenv = {
+                    when (it) {
+                        "GITHUB_ACTIONS" -> "true"
+                        "RUNNER_ENVIRONMENT" -> "self-hosted"
+                        else -> null
+                    }
+                },
+            )
+        )
+    }
+
+    @Test
+    fun `GitHub-hosted Windows job opts into screen-region fallback`() {
+        kotlin.test.assertTrue(
+            isHostedWindows(
+                osName = "Windows 11",
+                getenv = { if (it == "RUNNER_ENVIRONMENT") "github-hosted" else null },
+            )
+        )
+    }
+}
+
+private fun isHostedWindows(
+    osName: String = System.getProperty("os.name").orEmpty(),
+    getenv: (String) -> String? = System::getenv,
+): Boolean =
+    osName.startsWith("Windows", ignoreCase = true) &&
+        getenv("RUNNER_ENVIRONMENT") == "github-hosted"

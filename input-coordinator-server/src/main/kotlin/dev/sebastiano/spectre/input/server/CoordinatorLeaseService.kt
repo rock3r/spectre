@@ -26,10 +26,12 @@ internal class CoordinatorLeaseService(
     recoveryGrace: Duration,
     recoveryRecord: RecoveryRecord? = null,
     private val recoveryLedger: RecoveryLedger? = null,
+    clock: MonotonicClock = MonotonicClock { TimeUnit.NANOSECONDS.toMillis(System.nanoTime()) },
+    scheduleMaintenance: ((() -> Unit) -> AutoCloseable) = ::scheduleExpiryMaintenance,
 ) : AutoCloseable {
     private val machine =
         LeaseStateMachine(
-            clock = MonotonicClock { TimeUnit.NANOSECONDS.toMillis(System.nanoTime()) },
+            clock = clock,
             epoch = epoch,
             maxWaitersPerResource = MAX_WAITERS_PER_RESOURCE,
             heartbeatTimeoutMillis = heartbeatTimeout.toMillis(),
@@ -41,18 +43,7 @@ internal class CoordinatorLeaseService(
     private val pendingAcquires = mutableMapOf<String, CompletableFuture<CoordinatorWireMessage>>()
     private val requestTracker = AcquisitionRequestTracker()
     private val wireMapper = CoordinatorWireMapper()
-    private val expiryExecutor = Executors.newSingleThreadScheduledExecutor { task ->
-        Thread(task, "spectre-input-expiry").apply { isDaemon = true }
-    }
-
-    init {
-        expiryExecutor.scheduleWithFixedDelay(
-            ::expire,
-            EXPIRY_INTERVAL_MILLIS,
-            EXPIRY_INTERVAL_MILLIS,
-            TimeUnit.MILLISECONDS,
-        )
-    }
+    private val maintenance = scheduleMaintenance(::expire)
 
     @Synchronized
     fun acquire(message: CoordinatorWireMessage): CompletableFuture<CoordinatorWireMessage> {
@@ -288,7 +279,7 @@ internal class CoordinatorLeaseService(
     }
 
     override fun close() {
-        expiryExecutor.shutdownNow()
+        maintenance.close()
         synchronized(this) {
             pendingAcquires.values.forEach { future ->
                 future.complete(error("COORDINATOR_CLOSED", "Input coordinator stopped"))
@@ -366,9 +357,23 @@ internal class CoordinatorLeaseService(
 
     private companion object {
         const val MAX_WAITERS_PER_RESOURCE: Int = 128
-        const val EXPIRY_INTERVAL_MILLIS: Long = 10
     }
 }
+
+private fun scheduleExpiryMaintenance(maintenance: () -> Unit): AutoCloseable {
+    val executor = Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "spectre-input-expiry").apply { isDaemon = true }
+    }
+    executor.scheduleWithFixedDelay(
+        maintenance,
+        EXPIRY_INTERVAL_MILLIS,
+        EXPIRY_INTERVAL_MILLIS,
+        TimeUnit.MILLISECONDS,
+    )
+    return AutoCloseable { executor.shutdownNow() }
+}
+
+private const val EXPIRY_INTERVAL_MILLIS: Long = 10
 
 private class AcquisitionRequestTracker {
     private val cancelledBeforeAcquire = LinkedHashSet<CancelledAcquire>()

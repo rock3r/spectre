@@ -101,16 +101,21 @@ internal object WindowIdentityReflectiveMapper {
         klass.getMethod(name).invoke(target)
 
     private fun boundsToRect(bounds: Any?): RectDto {
-        if (bounds == null) return RectDto(0, 0, 0, 0)
+        requireNotNull(bounds) { "Incomplete window identity: bounds could not be read" }
         val klass = bounds.javaClass
         return runCatching {
-                RectDto(
-                    x = (klass.getMethod("getX").invoke(bounds) as Number).toInt(),
-                    y = (klass.getMethod("getY").invoke(bounds) as Number).toInt(),
-                    width = (klass.getMethod("getWidth").invoke(bounds) as Number).toInt(),
-                    height = (klass.getMethod("getHeight").invoke(bounds) as Number).toInt(),
+            RectDto(
+                x = (klass.getMethod("getX").invoke(bounds) as Number).toInt(),
+                y = (klass.getMethod("getY").invoke(bounds) as Number).toInt(),
+                width = (klass.getMethod("getWidth").invoke(bounds) as Number).toInt(),
+                height = (klass.getMethod("getHeight").invoke(bounds) as Number).toInt(),
+            )
+        }
+            .getOrElse { cause ->
+                throw IllegalStateException(
+                    "Incomplete window identity: unsupported bounds type ${bounds.javaClass.name}",
+                    cause,
                 )
             }
-            .getOrDefault(RectDto(0, 0, 0, 0))
     }
 }

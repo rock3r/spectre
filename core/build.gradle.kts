@@ -33,6 +33,12 @@ dependencies {
     testImplementation(libs.kotlin.testJunit5)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(projects.inputCoordinatorServer)
+    // Only the live test fixture calls composable functions.
+    add(
+        "kotlinCompilerPluginClasspathTest",
+        "org.jetbrains.kotlin:kotlin-compose-compiler-plugin-embeddable:${libs.versions.kotlin.get()}",
+    )
+    testRuntimeOnly(org.jetbrains.compose.ComposePlugin.DesktopDependencies.currentOs)
     testRuntimeOnly(projects.recording)
     // The opt-in native fixture exercises the same bundled helper resource as :agent tests.
     testRuntimeOnly(projects.recordingMacos)

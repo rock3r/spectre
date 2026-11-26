@@ -34,7 +34,7 @@ private class CapturesListCommand(
 
     override fun run() {
         // Listing is best-effort for live status; a down daemon marks everything closed.
-        val liveIds = liveSessionIdsOrEmpty(request)
+        val liveIds = requireLiveSessionIds(request)
         val entries = CaptureLifecycle.ledger().listExisting()
         val rows =
             entries
@@ -94,6 +94,9 @@ private class CapturesPruneCommand(
         if (keepValue != null && keepValue < 0) {
             throw CliktError("--keep must be zero or a positive integer")
         }
+        if (keep == null && olderThan == null && !all && sessionId == null) {
+            throw CliktError("Specify --keep, --older-than, --all, or --session")
+        }
         // Fail closed: if we cannot learn live sessions, refuse to prune so we never delete
         // attached sessions' captures by treating the live set as empty.
         val liveIds = requireLiveSessionIds(request)
@@ -137,6 +140,11 @@ private class CapturesPruneCommand(
             }
         }
         output.appendLine()
+        if (result.failedPaths.isNotEmpty()) {
+            throw CliktError(
+                "Failed to delete ${result.failedPaths.size} capture(s): ${result.failedPaths.joinToString()}"
+            )
+        }
     }
 }
 

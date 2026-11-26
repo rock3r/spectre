@@ -18,6 +18,51 @@ import kotlin.test.assertTrue
 class WaitOpsReflectiveHandlerTest {
 
     @Test
+    fun `WaitForVisualIdle refuses fail-closed policy on a legacy target`() {
+        val response =
+            ReflectiveAutomatorHandler(WaitFakeAutomator())
+                .handle(AgentRequest.WaitForVisualIdle(allowScreenRegionFallback = false))
+
+        check(response is AgentResponse.Error) { "expected Error, got $response" }
+        assertEquals(AgentErrorCategory.UnsupportedOperation.wireName, response.category)
+        assertTrue(response.message.contains("cannot enforce"), response.message)
+    }
+
+    @Test
+    fun `WaitForVisualIdle permits explicit fallback on a legacy target`() {
+        val fake = WaitFakeAutomator()
+        val response =
+            ReflectiveAutomatorHandler(fake)
+                .handle(AgentRequest.WaitForVisualIdle(allowScreenRegionFallback = true))
+
+        check(response is AgentResponse.Ok) { "expected Ok, got $response" }
+        assertEquals(1, fake.legacyVisualIdleCalls)
+    }
+
+    @Test
+    fun `WaitForVisualIdle prefers modern overload declared after legacy for both policies`() {
+        assertModernOverloadSelected(ModernAfterLegacyFake())
+    }
+
+    @Test
+    fun `WaitForVisualIdle prefers modern overload declared before legacy for both policies`() {
+        assertModernOverloadSelected(ModernBeforeLegacyFake())
+    }
+
+    private fun assertModernOverloadSelected(fake: BothVisualIdleOverloadsFake) {
+        val handler = ReflectiveAutomatorHandler(fake)
+        listOf(false, true).forEach { allowFallback ->
+            val response =
+                handler.handle(
+                    AgentRequest.WaitForVisualIdle(allowScreenRegionFallback = allowFallback)
+                )
+            check(response is AgentResponse.Ok) { "expected Ok, got $response" }
+        }
+        assertEquals(listOf(false, true), fake.modernFallbackArguments)
+        assertEquals(0, fake.legacyVisualIdleCalls)
+    }
+
+    @Test
     fun `WaitForNode success returns the matched node`() {
         val node = WaitFakeNode(keyValue = "btn", testTagValue = "Counter")
         val fake = WaitFakeAutomator(allNodesValue = listOf(node))
@@ -161,13 +206,14 @@ private class FakeIdleTimeoutException(message: String) : RuntimeException(messa
  * JVM-public stand-in for ComposeAutomator wait surface. Must not be package-private:
  * [BlockingSuspendInvoker] is in this package but Method.invoke still requires a public class.
  */
-internal class WaitFakeAutomator(
+internal open class WaitFakeAutomator(
     private val allNodesValue: List<Any> = emptyList(),
     private val waitForNodeImpl: ((String?, String?, Long, Long) -> Any?)? = null,
     private val waitForIdleImpl: ((Long, Long, Long) -> Any?)? = null,
     private val waitUntilGoneImpl: ((String?, String?, Long, Long) -> Any?)? = null,
     private val waitForVisualIdleImpl: ((Long, Int, Long) -> Any?)? = null,
 ) {
+    var legacyVisualIdleCalls = 0
     val waitForNodeTags = mutableListOf<String?>()
     val waitForNodeTimeoutRaw = mutableListOf<Long>()
     val waitForIdleTimeoutRaw = mutableListOf<Long>()
@@ -208,12 +254,13 @@ internal class WaitFakeAutomator(
     }
 
     @Suppress("unused", "UNUSED_PARAMETER")
-    fun waitForVisualIdle(
+    open fun waitForVisualIdle(
         timeoutRaw: Long,
         stableFrames: Int,
         pollRaw: Long,
         continuation: kotlin.coroutines.Continuation<Any?>,
     ): Any? {
+        legacyVisualIdleCalls++
         waitForVisualIdleImpl?.let {
             return it(timeoutRaw, stableFrames, pollRaw)
         }
@@ -254,6 +301,57 @@ internal class WaitFakeAutomator(
     }
 }
 
+internal interface BothVisualIdleOverloadsFake {
+    val modernFallbackArguments: MutableList<Boolean>
+    val legacyVisualIdleCalls: Int
+}
+
+internal class ModernAfterLegacyFake : WaitFakeAutomator(), BothVisualIdleOverloadsFake {
+    override fun waitForVisualIdle(
+        timeoutRaw: Long,
+        stableFrames: Int,
+        pollRaw: Long,
+        continuation: kotlin.coroutines.Continuation<Any?>,
+    ): Any? = super.waitForVisualIdle(timeoutRaw, stableFrames, pollRaw, continuation)
+
+    override val modernFallbackArguments = mutableListOf<Boolean>()
+
+    @Suppress("unused", "UNUSED_PARAMETER")
+    fun waitForVisualIdle(
+        timeoutRaw: Long,
+        stableFrames: Int,
+        pollRaw: Long,
+        allowScreenRegionFallback: Boolean,
+        continuation: kotlin.coroutines.Continuation<Any?>,
+    ): Any? {
+        modernFallbackArguments += allowScreenRegionFallback
+        return Unit
+    }
+}
+
+internal class ModernBeforeLegacyFake : WaitFakeAutomator(), BothVisualIdleOverloadsFake {
+    override val modernFallbackArguments = mutableListOf<Boolean>()
+
+    @Suppress("unused", "UNUSED_PARAMETER")
+    fun waitForVisualIdle(
+        timeoutRaw: Long,
+        stableFrames: Int,
+        pollRaw: Long,
+        allowScreenRegionFallback: Boolean,
+        continuation: kotlin.coroutines.Continuation<Any?>,
+    ): Any? {
+        modernFallbackArguments += allowScreenRegionFallback
+        return Unit
+    }
+
+    override fun waitForVisualIdle(
+        timeoutRaw: Long,
+        stableFrames: Int,
+        pollRaw: Long,
+        continuation: kotlin.coroutines.Continuation<Any?>,
+    ): Any? = super.waitForVisualIdle(timeoutRaw, stableFrames, pollRaw, continuation)
+}
+
 internal class WaitFakeNode(
     private val keyValue: String,
     private val testTagValue: String? = null,
@@ -262,6 +360,9 @@ internal class WaitFakeNode(
     private val roleValue: String? = null,
     private val contentDescriptionValue: String? = null,
     private val isFocusedValue: Boolean = false,
+    private val isDisabledValue: Boolean = false,
+    private val isSelectedValue: Boolean = false,
+    private val isClickableValue: Boolean = false,
     private val isVisibleValue: Boolean = true,
     private val boundsOnScreenValue: Rectangle = Rectangle(0, 0, 0, 0),
 ) {
@@ -278,6 +379,12 @@ internal class WaitFakeNode(
     @Suppress("unused") fun getContentDescription(): String? = contentDescriptionValue
 
     @Suppress("unused") fun isFocused(): Boolean = isFocusedValue
+
+    @Suppress("unused") fun isDisabled(): Boolean = isDisabledValue
+
+    @Suppress("unused") fun isSelected(): Boolean = isSelectedValue
+
+    @Suppress("unused") fun isClickable(): Boolean = isClickableValue
 
     @Suppress("unused") fun isVisible(): Boolean = isVisibleValue
 

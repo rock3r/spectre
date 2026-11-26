@@ -1,0 +1,10 @@
+{
+  "windowRole": "Window",
+  "buttonRole": "Button",
+  "checkboxRole": "CheckBox",
+  "textRole": "Edit",
+  "textValue": "Ada Lovelace",
+  "popoverRole": "Window",
+  "checkedState": "On",
+  "disabledState": "disabled"
+}

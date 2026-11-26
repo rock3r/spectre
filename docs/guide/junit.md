@@ -34,10 +34,11 @@ The same `inputIsolation` constructor is available on `ComposeAutomatorRule` for
   create the automator before it can inspect capabilities, so factory-time focus is not covered;
   use `PerTest` when setup itself needs isolation.
 - `PerInteraction` relies on core operation/scoped leases. The input-isolation-only constructor
-  creates a default driver with `InputLeasePolicy.Required`; custom factories must select
-  `InputLeasePolicy.Auto` or `Required` themselves. Legacy no-argument wrappers remain
-  uncoordinated. The wrappers close their default coordination-enabled driver after test evidence
-  and teardown complete.
+  creates a default driver with `InputLeasePolicy.Required`; explicit custom-factory wrappers
+  validate that the returned driver selects `InputLeasePolicy.Auto` or `Required`, and fail the
+  test instead of silently running uncoordinated. Legacy no-argument wrappers remain uncoordinated.
+  The wrappers close their default coordination-enabled driver after test evidence and teardown
+  complete.
 - `Off` declares that coordination is external or intentionally disabled.
 
 During a synchronous custom factory, `PerTest` exposes its lease on the invoking thread.
@@ -47,7 +48,10 @@ the returned automator.
 
 JUnit 5 stores the lease per invocation, so parameter-injected automators remain parallel-safe.
 JUnit 4 wraps the complete `Statement.evaluate()` lifecycle. Owner diagnostics contain class and
-method identity, never parameter values. `LaunchAndAttachExtension` and `LaunchAndAttachRule` do
+method identity, never parameter values. `PerInteraction` applies the configured acquisition timeout
+and that same owner identity to every operation lease. `Auto` degrades only when the coordinator
+runtime provider is absent; if a coordinator exists but the EDT cannot establish a session, the
+operation fails rather than silently sending uncoordinated input. `LaunchAndAttachExtension` and `LaunchAndAttachRule` do
 not expose `PerTest`: input runs in the target JVM and currently uses target-side operation leases;
 holding a separate test-JVM lease would self-deadlock.
 
@@ -317,7 +321,7 @@ import org.junit.jupiter.api.TestInfo
 
 @Test
 fun homeMatchesGold(testInfo: TestInfo, automator: ComposeAutomator): Unit = runSpectreTest {
-    automator.waitForVisualIdle()
+    automator.waitForVisualIdle() // requires native window capture
     assertMatchesGold(
         testInfo = testInfo,
         name = "main-window",
