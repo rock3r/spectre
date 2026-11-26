@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "snapshot": {
+    "schemaVersion": 2,
+    "source": "os-accessibility",
+    "capturedAt": "2026-11-25T00:00:00Z",
+    "windows": [
+      {
+        "key": "w0",
+        "title": "fixture",
+        "bounds": { "x": 0, "y": 0, "width": 10, "height": 10 },
+        "boundsSpace": "screen"
+      }
+    ],
+    "nodes": [
+      {
+        "key": "w0/child",
+        "parentKey": null,
+        "id": null,
+        "platformRole": "label",
+        "role": "label",
+        "name": "unknown geometry",
+        "states": [],
+        "value": null,
+        "bounds": null,
+        "onScreen": null
+      }
+    ],
+    "notes": []
+  }
+}

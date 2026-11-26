@@ -221,6 +221,21 @@ class AccessibilityHelperClientTest {
     }
 
     @Test
+    fun `decodes successful nodes with unknown geometry`() {
+        val response = AccessibilityHelperClient { _, _, _ ->
+            javaClass.getResource("/accessibility/unknown-geometry.json")!!.readText()
+        }
+            .snapshot(
+                AccessibilitySnapshotRequest(Target.ProcessId(42), 20, 2_000, 750),
+                java.nio.file.Path.of("recorded-helper"),
+            )
+
+        val node = assertIs<AccessibilitySnapshotResponse.Success>(response).snapshot.nodes.single()
+        assertNull(node.bounds)
+        assertNull(node.onScreen)
+    }
+
+    @Test
     fun `rejects incoherent envelope and invalid snapshot identity`() {
         val request = AccessibilitySnapshotRequest(Target.ProcessId(1), 1, 1, 100)
         val helper = Path.of("recorded-helper")

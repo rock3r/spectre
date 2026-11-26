@@ -97,6 +97,12 @@ lacks both `enabled` and `sensitive`. Some AccessKit buttons expose both flags e
 application disables them. Their application-level disability cannot be determined from those
 flags or from the absence of an Action interface.
 
+On Linux, `platformRole` uses the provider’s `GetRoleName` result when available and the
+AT-SPI role name for a known numeric ID otherwise. The reader reports `disabled` when a
+nonempty state set lacks both `enabled` and `sensitive`. Some AccessKit buttons expose both
+flags even when the application disables them. Their application-level disability cannot be
+determined from those flags or from the absence of an Action interface.
+
 ## Errors and partial results
 
 ```json

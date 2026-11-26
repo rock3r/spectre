@@ -15,6 +15,7 @@
 //! `Command::pre_exec` + `nix::fcntl`. Both pain points the JVM side had simply don't exist
 //! in this language environment.
 
+mod accessibility;
 mod gst;
 mod identity;
 mod input_map;
@@ -38,6 +39,9 @@ use std::sync::mpsc;
 use std::thread;
 
 fn main() -> Result<()> {
+    if env::args().nth(1).as_deref() == Some("accessibility-snapshot") {
+        return accessibility::serve();
+    }
     if env::args().any(|a| a == "--session") {
         return session::serve();
     }
