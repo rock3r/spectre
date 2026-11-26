@@ -386,7 +386,8 @@ Popups and movement follow the monitor-region limits described above.
 - Still capture follows the same rule, so a `spectre capture` PNG and a recording of the same
   window come out at the same resolution. See
   [Atomic capture — Pixel scale](guide/capture.md#pixel-scale).
-- `Rectangle` coordinates passed to `start(...)` are in screen pixels. Prefer
+- `Rectangle` coordinates passed to `start(...)` are logical AWT screen units (points on macOS),
+  while the encoded dimensions are backing pixels. Prefer
   `AutomatorNode.boundsOnScreen`; it already divides by the display scale and adds the Compose
   surface's screen origin. `boundsInWindow` is already in Compose / device pixels (density-scaled)
   and window-relative; manual conversion requires division by the display scale **and** addition
