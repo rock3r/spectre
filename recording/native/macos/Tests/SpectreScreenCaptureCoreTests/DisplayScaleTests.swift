@@ -99,6 +99,39 @@ final class DisplayScaleTests: XCTestCase {
         XCTAssertThrowsError(try resolver.pixelDimensions(for: 41))
     }
 
+    func testRegionRecordingUsesSelectedDisplaysBackingPixelDimensions() throws {
+        let resolver = DisplayDimensionResolver(
+            bounds: { id in
+                XCTAssertEqual(id, 41)
+                return CGRect(x: 0, y: 0, width: 1728, height: 1117)
+            },
+            modePixels: { _ in CGSize(width: 3456, height: 2234) },
+            rotation: { _ in 0 },
+            screenScale: { _ in nil })
+
+        XCTAssertEqual(
+            try resolver.outputSize(
+                for: CGSize(width: 400, height: 300),
+                on: 41,
+                minimumDimension: 2),
+            CGSize(width: 800, height: 600))
+    }
+
+    func testRegionOutputAppliesEncoderMinimumAfterIndependentScaleAndRounding() throws {
+        let resolver = DisplayDimensionResolver(
+            bounds: { _ in CGRect(x: 0, y: 0, width: 2000, height: 1000) },
+            modePixels: { _ in CGSize(width: 1000, height: 2000) },
+            rotation: { _ in 0 },
+            screenScale: { _ in nil })
+
+        XCTAssertEqual(
+            try resolver.outputSize(
+                for: CGSize(width: 1, height: 1),
+                on: 73,
+                minimumDimension: 2),
+            CGSize(width: 2, height: 2))
+    }
+
     func testOneLogicalPixelProducesOnePixelOnOneXDisplay() throws {
         let dimensions = DisplayPixelDimensions(width: 1920, height: 1080)
         let bounds = CGRect(x: 0, y: 0, width: 1920, height: 1080)

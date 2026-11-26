@@ -66,6 +66,16 @@ struct DisplayDimensionResolver {
         }
         throw CLIError(code: 5, message: "cannot resolve backing pixels for display \(displayID)")
     }
+
+    func outputSize(
+        for logicalSize: CGSize, on displayID: CGDirectDisplayID, minimumDimension: Int
+    ) throws -> CGSize {
+        let output = try pixelDimensions(for: displayID).outputSize(
+            for: logicalSize, in: bounds(displayID))
+        return CGSize(
+            width: max(minimumDimension, Int(output.width)),
+            height: max(minimumDimension, Int(output.height)))
+    }
 }
 
 func dominantDisplayID(
@@ -952,18 +962,15 @@ final class Recorder {
                 height = max(2, Int(output.height))
             }
         case .region(let display, let region):
-            // Region screenshots are still artifacts and preserve backing-store pixels, just like
-            // window screenshots. Video keeps its existing explicit output dimensions.
-            if args.mode == .screenshot {
-                let bounds = displayDimensions.bounds(display.displayID)
-                let pixels = try displayDimensions.pixelDimensions(for: display.displayID)
-                let output = try pixels.outputSize(for: region.sourceRect().size, in: bounds)
-                width = Int(output.width)
-                height = Int(output.height)
-            } else {
-                width = max(1, region.width)
-                height = max(1, region.height)
-            }
+            // Both stills and movies preserve the selected display's backing pixels. Keep the
+            // original point-space sourceRect; only the output buffer dimensions are scaled.
+            let minimumDimension = args.mode == .recording ? 2 : 1
+            let output = try displayDimensions.outputSize(
+                for: region.sourceRect().size,
+                on: display.displayID,
+                minimumDimension: minimumDimension)
+            width = Int(output.width)
+            height = Int(output.height)
             filter = SCContentFilter(display: display, excludingWindows: [])
             sourceRect = region.sourceRect()
         }
