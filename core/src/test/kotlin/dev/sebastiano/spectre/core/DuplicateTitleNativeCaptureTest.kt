@@ -3,7 +3,10 @@
 package dev.sebastiano.spectre.core
 
 import java.awt.Frame
+import java.awt.GraphicsConfiguration
+import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
+import java.awt.Toolkit
 import java.awt.Window
 import java.awt.image.BufferedImage
 import java.util.concurrent.TimeUnit
@@ -57,15 +60,19 @@ class DuplicateTitleNativeCaptureTest {
     @Test
     fun `duplicate window titles still fail when the frames match too`() {
         assumeLiveAwtAvailable()
-        val requestedBounds = Rectangle(10, 20, 100, 80)
+        val graphicsConfiguration =
+            GraphicsEnvironment.getLocalGraphicsEnvironment()
+                .defaultScreenDevice
+                .defaultConfiguration
+        val requestedBounds = legalBounds(graphicsConfiguration)
         val first =
-            Frame("same title").apply {
+            Frame("same title", graphicsConfiguration).apply {
                 isUndecorated = true
                 bounds = requestedBounds
                 isVisible = true
             }
         val second =
-            Frame("same title").apply {
+            Frame("same title", graphicsConfiguration).apply {
                 isUndecorated = true
                 bounds = requestedBounds
                 isVisible = true
@@ -113,4 +120,21 @@ class DuplicateTitleNativeCaptureTest {
 
     private fun tracked(window: Window): TrackedWindow =
         TrackedWindow("test", window, composePanel = null, isPopup = false)
+
+    private fun legalBounds(graphicsConfiguration: GraphicsConfiguration): Rectangle {
+        val screen = graphicsConfiguration.bounds
+        val insets = Toolkit.getDefaultToolkit().getScreenInsets(graphicsConfiguration)
+        val left = screen.x.toLong() + insets.left
+        val top = screen.y.toLong() + insets.top
+        val width = (screen.width.toLong() - insets.left - insets.right).coerceAtLeast(1)
+        val height = (screen.height.toLong() - insets.top - insets.bottom).coerceAtLeast(1)
+        val windowWidth = minOf(100L, width)
+        val windowHeight = minOf(80L, height)
+        return Rectangle(
+            (left + (width - windowWidth) / 2).toInt(),
+            (top + (height - windowHeight) / 2).toInt(),
+            windowWidth.toInt(),
+            windowHeight.toInt(),
+        )
+    }
 }
