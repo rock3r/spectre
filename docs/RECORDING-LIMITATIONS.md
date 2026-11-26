@@ -256,11 +256,12 @@ X11, macOS, and Windows keep their input and capture paths.
   Region stills taken by `LinuxNativeScreenshotter.captureRegion()` and the shared Wayland
   session use that session's compositor-provided `Embedded` cursor stream. Consequently, these
   ordinary APIs capture the cursor when the compositor supplies it; they do **not** promise a
-  cursor-free image. Their protocol command deliberately omits `cursor_mode`, meaning “use the
-  active session's cursor semantics.” An explicit `Embedded` request is accepted. Explicit
-  `Hidden` and `Metadata` requests fail rather than silently returning pixels with different
-  cursor semantics, because a cursor mode cannot be changed after the portal stream is opened.
-  X11 still capture continues to request a hidden cursor explicitly.
+  cursor-free image. Default held-session requests send `cursor_mode=Embedded`, matching the
+  active session's cursor policy and remaining compatible with released 0.9.0 helpers. The new
+  helper also accepts an omitted cursor mode as `Embedded`. Explicit `Hidden` and `Metadata`
+  requests fail rather than silently returning pixels with different cursor semantics, because a
+  cursor mode cannot be changed after the portal stream is opened. X11 still capture continues to
+  request a hidden cursor explicitly.
 
   **HiDPI / mixed AWT and portal coordinates.** On fractional-scale Wayland, AWT/XWayland
   often reports a larger virtual desktop than the ScreenCast stream. For example,
