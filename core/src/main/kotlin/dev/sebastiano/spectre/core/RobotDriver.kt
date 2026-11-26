@@ -452,10 +452,10 @@ internal constructor(
      *
      * ## Visibility
      *
-     * Screenshots are region-based OS framebuffer captures. Window and node helpers crop to their
-     * current screen bounds, so the target window should be visible and frontmost before capture.
-     * Occluding windows or off-screen portions affect the returned pixels until Spectre grows
-     * native window-capture backends.
+     * This method is a region-based OS framebuffer capture, so occluding windows and off-screen
+     * portions affect its pixels. Window- and node-scoped capture use native window backends
+     * instead; when one is unavailable, capture fails instead of substituting a Robot region
+     * capture.
      *
      * ## Trust boundary
      *
@@ -493,9 +493,9 @@ internal constructor(
      * the *centre* of [region], not per display, so a rectangle spanning monitors of different
      * densities is captured at the centre display's scale: parts on lower-density displays are
      * upscaled, and — when the centre lands on the lower-density monitor — the higher-density parts
-     * are downsampled. Single-display captures are unaffected, as are window-scoped stills while
-     * the native still bridge is present — but not the Robot fallback used when it is absent; see
-     * [highestResolutionVariant].
+     * are downsampled. Single-display captures are unaffected. Window-scoped stills use their
+     * native capture backend and fail closed when it is unavailable; they do not substitute this
+     * Robot capture. See [highestResolutionVariant].
      */
     public fun screenshotAtDeviceScale(region: Rectangle? = null): BufferedImage {
         tccGuard.requireScreenRecording()

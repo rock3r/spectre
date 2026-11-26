@@ -23,9 +23,9 @@ import java.nio.file.Path
  *   OS sees, so any mismatch here is a caller bug rather than an encoder quirk.
  * - The window must be **visible** — gdigrab can't capture minimised windows. Z-order and occlusion
  *   don't matter; the encoder reads from the window's backing store directly.
- * - **Jewel-in-IDE tool windows have no top-level title.** Callers in that scenario should fall
- *   back to region capture; [AutoRecorder] handles that fallback automatically when
- *   [TitledWindow.title] is null/blank.
+ * - **Jewel-in-IDE tool windows have no top-level title.** Window capture therefore fails for those
+ *   surfaces. Callers that accept a different capture surface must explicitly request region
+ *   capture.
  *
  * On hosts other than Windows, the spawned ffmpeg subprocess will exit immediately because no
  * gdigrab device exists. [spawnFfmpegRecording]'s startup probe surfaces that as a clear
@@ -65,8 +65,8 @@ internal constructor(
         val title = window.title
         require(!title.isNullOrBlank()) {
             "FfmpegWindowRecorder requires a non-blank window title; got \"$title\". " +
-                "Callers without a title (e.g. Jewel-in-IDE tool windows) should route to " +
-                "FfmpegRecorder region capture instead — AutoRecorder handles that fallback."
+                "Callers without a title (e.g. Jewel-in-IDE tool windows) must explicitly " +
+                "request FfmpegRecorder region capture if that different surface is acceptable."
         }
         val argv = FfmpegCli.gdigrabWindowCapture(ffmpegPath, title, output, options)
         return spawnFfmpegRecording(processFactory, argv, output)
