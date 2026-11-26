@@ -197,6 +197,9 @@ jobs:
           archive="cli/build/construo/distributions/windowsX64/spectre-windowsX64.zip"
           powershell -NoProfile -Command "Expand-Archive -Force '$archive' '$RUNNER_TEMP/windows-cli'"
           launcher=$(find "$RUNNER_TEMP/windows-cli" -name spectre.exe -type f -print -quit)
+          app_jar=$(find "$RUNNER_TEMP/windows-cli" -name '*-all.jar' -type f -print -quit)
+          jar tf "$app_jar" | grep -Fxq native/windows/x64/spectre-window-capture.exe
+          jar tf "$app_jar" | grep -Fxq native/windows/arm64/spectre-window-capture.exe
           "$launcher" --version
           "$launcher" --help >/dev/null
 
