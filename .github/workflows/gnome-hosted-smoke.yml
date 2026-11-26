@@ -87,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [capture]
+        mode: [geometry-calibration]
         replica: [1]
 
     steps:

@@ -227,10 +227,23 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
         for contract in ("--all", "_NET_WM_WINDOW_TYPE_NORMAL", "selection-failures",
                          "client-xwininfo", "frame-xwininfo", "videoconvert",
                          "video/x-raw,format=RGBA", "snapshot=true", "gstreamer.log",
-                         "pipewire-monitor.stderr", 'f"{kind}-awt.json"'):
+                         "pipewire-monitor.stderr", 'f"{case_name}-awt.json"'):
             self.assertIn(contract, probe)
-        self.assertIn("f.setBounds(x,y,480,320)", fixture)
-        self.assertNotIn("f.setBounds(x,y,480,283)", fixture)
+        for contract in (
+            '"name":"public-decorated-480x320","decorated":True,"x":200,"y":200,"width":480,"height":320',
+            '"name":"historical-decorated-480x283","decorated":True,"x":200,"y":237,"width":480,"height":283',
+            '"name":"matching-undecorated-480x320","decorated":False,"x":200,"y":200,"width":480,"height":320',
+            '"requested":{"units":"AWT user-space pixels",**case}',
+            '"client":x11_geometry',
+            '"frame":x11_geometry',
+            'assert len(summary["windows"])==3',
+        ):
+            self.assertIn(contract, probe)
+        for contract in ("caseName", "decorated", "requestedTopLevelBounds",
+                         "f.setBounds(x,y,width,height)"):
+            self.assertIn(contract, fixture)
+        self.assertIn("actual_pid==pid and normal and fixture_class", probe)
+        self.assertNotIn("frame.returncode==0 and props.returncode", probe)
 
     def test_geometry_extension_gates_pid_xid_and_ancestry(self):
         extension = VERIFICATION_EXTENSION.read_text()
