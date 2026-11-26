@@ -52,7 +52,6 @@ from smoke_lib import (  # noqa: E402
     apply_linux_seat_env,
     apply_linux_toolchain_path,
     assert_junit_testcases_passed,
-    assert_linux_portal_tokens_captured,
     assert_accessibility_snapshot,
     assert_accessibility_limit_result,
     assert_mcp_fixture_e2e_executed,
@@ -78,6 +77,7 @@ from smoke_lib import (  # noqa: E402
     portal_token_warmup_skip_reason,
     portal_warmup_failure_hint,
     portal_warmup_operator_banner,
+    remote_desktop_portal_version,
     virtual_monitor_warmup_hint,
     wayland_x11_fallback_failure,
     prepare_linux_portal_token_env,
@@ -93,6 +93,8 @@ from smoke_lib import (  # noqa: E402
     scenario_result,
     utc_now_iso,
     validate_report,
+    verify_linux_portal_warmup,
+    wayland_portal_preflight_command,
     wayland_portal_warmup_command,
     write_json_report,
     write_markdown_report,
@@ -1066,7 +1068,7 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
         add(
             scenario_result(
                 "portal-token-warmup",
-                name="Capture persistent ScreenCast restore token",
+                name="Verify Wayland portal grant reuse",
                 result="n/a",
                 reason=portal_skip,
                 hard=True,
@@ -1076,7 +1078,7 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
         add(
             scenario_result(
                 "portal-token-warmup",
-                name="Capture persistent ScreenCast restore token",
+                name="Verify Wayland portal grant reuse",
                 result=RESULT_FAIL,
                 detail=seat_monitor_error,
                 log=str(out_dir / "seat-monitor.log"),
@@ -1122,7 +1124,7 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
             }
             warmup = run_scenario(
                 "portal-token-warmup",
-                name="Capture persistent ScreenCast restore token",
+                name="Verify Wayland portal grant reuse",
                 command=wayland_portal_warmup_command(gradle),
                 cwd=ROOT,
                 # --no-daemon pays JVM startup + configuration on top of the dialog wait.
@@ -1133,8 +1135,35 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
             )
             if warmup.result == RESULT_PASS:
                 try:
-                    assert_linux_portal_tokens_captured(
-                        scenario_env, expected_mtime_ns=before_mtime
+                    # Run the real noninteractive preflight in a fresh JVM. Never call request()
+                    # here: it intentionally overrides the ordinary no-prompt policy.
+                    reuse_log = out_dir / "portal-token-warmup-live-reuse.log"
+                    reuse_code, reuse_error, _ = run_command(
+                        wayland_portal_preflight_command(gradle),
+                        cwd=ROOT,
+                        timeout=180,
+                        log_path=reuse_log,
+                        env=scenario_env,
+                        overall_deadline=overall_deadline,
+                    )
+                    if reuse_code != 0:
+                        raise RuntimeError(
+                            "noninteractive live-session preflight failed: "
+                            + (reuse_error or f"exit {reuse_code}")
+                        )
+                    portal_version, version_error = remote_desktop_portal_version(
+                        env=scenario_env
+                    )
+                    if portal_version is None:
+                        raise RuntimeError(
+                            "could not verify org.freedesktop.portal.RemoteDesktop version: "
+                            + version_error
+                        )
+                    warmup.detail = verify_linux_portal_warmup(
+                        portal_version=portal_version,
+                        env=scenario_env,
+                        live_reuse_output=_read_log(str(reuse_log)),
+                        expected_mtime_ns=before_mtime,
                     )
                 except RuntimeError as error:
                     warmup = scenario_result(

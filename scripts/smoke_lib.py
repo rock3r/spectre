@@ -2362,9 +2362,97 @@ def assert_linux_portal_tokens_captured(
         )
 
 
+REMOTE_DESKTOP_PERSISTENCE_VERSION = 2
+
+
+def remote_desktop_portal_version(
+    *,
+    env: Mapping[str, str] | None = None,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> tuple[int | None, str]:
+    """Read the live portal's RemoteDesktop interface version, strictly."""
+    command = [
+        "gdbus",
+        "call",
+        "--session",
+        "--dest",
+        "org.freedesktop.portal.Desktop",
+        "--object-path",
+        "/org/freedesktop/portal/desktop",
+        "--method",
+        "org.freedesktop.DBus.Properties.Get",
+        "org.freedesktop.portal.RemoteDesktop",
+        "version",
+    ]
+    merged_env = os.environ.copy()
+    if env is not None:
+        merged_env.update(env)
+        for key, value in env.items():
+            if value == "":
+                merged_env.pop(key, None)
+    try:
+        result = run(
+            command,
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+            env=merged_env,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, str(error)
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+    if result.returncode != 0:
+        return None, (stderr.strip() or stdout.strip() or f"exit {result.returncode}")
+    if stderr.strip():
+        return None, f"unexpected Properties.Get stderr: {stderr.strip()}"
+    match = re.fullmatch(r"\(<uint32 ([0-9]+)>,\)\s*", stdout)
+    if match is None:
+        return None, f"unexpected Properties.Get response: {stdout.strip() or '(empty)'}"
+    version = int(match.group(1))
+    if version == 0:
+        return None, "unexpected Properties.Get RemoteDesktop version 0"
+    return version, ""
+
+
+def verify_linux_portal_warmup(
+    *,
+    portal_version: int | None,
+    env: Mapping[str, str],
+    live_reuse_output: str,
+    expected_mtime_ns: Mapping[str, int] | int | None = None,
+) -> str:
+    """Fail closed unless the fresh grant is active and its capability evidence is valid."""
+    if portal_version is None:
+        raise RuntimeError(
+            "could not verify org.freedesktop.portal.RemoteDesktop version; capability unknown"
+        )
+    if not (
+        re.search(r"(?m)^Wayland portal grant: granted\s*$", live_reuse_output)
+        and re.search(r"(?m)^Session helper: running\s*$", live_reuse_output)
+    ):
+        raise RuntimeError(
+            "noninteractive preflight did not verify the newly granted session is still active"
+        )
+    if portal_version == 1:
+        return (
+            "hard PASS (live-only): RemoteDesktop v1; newly granted session remains active "
+            "under noninteractive preflight"
+        )
+    if portal_version < REMOTE_DESKTOP_PERSISTENCE_VERSION:
+        raise RuntimeError(f"unsupported RemoteDesktop version {portal_version}")
+    assert_linux_portal_tokens_captured(env, expected_mtime_ns=expected_mtime_ns)
+    return (
+        f"hard PASS (persisted): RemoteDesktop v{portal_version}; fresh restore token and "
+        "newly granted active session verified"
+    )
+
+
 # Calls WaylandPortalAccess.request, the same operation as `spectre permissions request`: one
 # RemoteDesktop grant, restore token stored, session helper left running for later cells.
 WAYLAND_PORTAL_WARMUP_TASK = ":recording:requestWaylandPortalGrant"
+WAYLAND_PORTAL_PREFLIGHT_TASK = ":recording:checkWaylandPortalGrant"
 # spectre-wayland-helper waits this long for each portal Response during the warmup.
 WAYLAND_PORTAL_RESPONSE_TIMEOUT_SECONDS = 60
 LINUX_SEAT_ENV_KEYS: tuple[str, ...] = (
@@ -2664,6 +2752,16 @@ def wayland_portal_warmup_command(gradle: str) -> list[str]:
         "--no-daemon",
         WAYLAND_PORTAL_WARMUP_TASK,
         f"-PwaylandGrantTimeoutSeconds={WAYLAND_PORTAL_RESPONSE_TIMEOUT_SECONDS}",
+        "--console=plain",
+    ]
+
+
+def wayland_portal_preflight_command(gradle: str) -> list[str]:
+    """Check the warmup's live session in a fresh JVM without invoking request()."""
+    return [
+        gradle,
+        "--no-daemon",
+        WAYLAND_PORTAL_PREFLIGHT_TASK,
         "--console=plain",
     ]
 

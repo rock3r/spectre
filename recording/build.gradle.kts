@@ -1283,6 +1283,19 @@ tasks.register<JavaExec>("requestWaylandPortalGrant") {
     errorOutput = System.err
 }
 
+// QA-only, noninteractive counterpart used after the attended release-harness grant. This must
+// remain wired to preflight(): request() deliberately permits a prompt even when prompting is
+// disabled for ordinary capture paths.
+tasks.register<JavaExec>("checkWaylandPortalGrant") {
+    group = "verification"
+    description = "Checks the Linux Wayland portal grant without opening a consent dialog."
+    onlyIf { OperatingSystem.current().isLinux }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("dev.sebastiano.spectre.recording.portal.WaylandPortalGrantCheckKt")
+    standardOutput = System.out
+    errorOutput = System.err
+}
+
 // Attended GNOME Wayland smoke (#642): window stills and window recording through Mutter window
 // streams, with another window covering the target. Run after `spectre permissions request`; it
 // must open no dialog.

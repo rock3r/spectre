@@ -1719,6 +1719,81 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
                 expected_mtime_ns=before,
             )
 
+    def test_remote_desktop_v1_accepts_only_verified_live_reuse(self):
+        detail = smoke_lib.verify_linux_portal_warmup(
+            portal_version=1,
+            env={},
+            live_reuse_output="Wayland portal grant: granted\nSession helper: running\n",
+        )
+        self.assertIn("live-only", detail)
+
+    def test_remote_desktop_v1_rejects_absent_active_session(self):
+        with self.assertRaises(RuntimeError):
+            smoke_lib.verify_linux_portal_warmup(
+                portal_version=1,
+                env={},
+                live_reuse_output=(
+                    "Wayland portal grant: granted\nSession helper: not running\n"
+                ),
+            )
+
+    def test_remote_desktop_v2_requires_fresh_restore_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "wayland-rd-restore-token-rd-monitor-embedded"
+            target.write_text("token-abc\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "not refreshed"):
+                smoke_lib.verify_linux_portal_warmup(
+                    portal_version=2,
+                    env={"SPECTRE_WAYLAND_RESTORE_TOKEN_DIR": tmp},
+                    live_reuse_output=(
+                        "Wayland portal grant: granted\nSession helper: running\n"
+                    ),
+                    expected_mtime_ns=target.stat().st_mtime_ns + 1,
+                )
+
+    def test_remote_desktop_version_probe_is_strict_and_uses_supplied_seat(self):
+        seen = {}
+
+        def run(*args, **kwargs):
+            seen.update(kwargs)
+            return subprocess.CompletedProcess([], 0, "(<uint32 2>,)\n", "")
+
+        version, error = smoke_lib.remote_desktop_portal_version(
+            env={"DBUS_SESSION_BUS_ADDRESS": "unix:path=/real-seat/bus"}, run=run
+        )
+        self.assertEqual((2, ""), (version, error))
+        self.assertEqual(
+            "unix:path=/real-seat/bus", seen["env"]["DBUS_SESSION_BUS_ADDRESS"]
+        )
+
+        for output in (
+            "(<uint32 0>,)\n",
+            "(<uint32 2>,) trailing\n",
+            "proxy (<uint32 2>,)\n",
+            "(uint32 2,)\n",
+            "",
+        ):
+            with self.subTest(output=output):
+                version, error = smoke_lib.remote_desktop_portal_version(
+                    run=lambda *args, **kwargs: subprocess.CompletedProcess(
+                        [], 0, output, ""
+                    )
+                )
+                self.assertIsNone(version)
+                self.assertTrue(error)
+
+    def test_remote_desktop_version_probe_rejects_stderr_and_signal_status(self):
+        for completed in (
+            subprocess.CompletedProcess([], 0, "(<uint32 2>,)\n", "proxy warning"),
+            subprocess.CompletedProcess([], -9, "(<uint32 2>,)\n", ""),
+        ):
+            with self.subTest(completed=completed):
+                version, error = smoke_lib.remote_desktop_portal_version(
+                    run=lambda *args, **kwargs: completed
+                )
+                self.assertIsNone(version)
+                self.assertTrue(error)
+
     @staticmethod
     def _xauth_entry(display: str, *, family: int = 256, address: bytes = b"bepi") -> bytes:
         def field(value: bytes) -> bytes:
@@ -1963,6 +2038,14 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
             f"-PwaylandGrantTimeoutSeconds={smoke_lib.WAYLAND_PORTAL_RESPONSE_TIMEOUT_SECONDS}",
             command,
         )
+
+    def test_wayland_portal_preflight_never_invokes_interactive_request(self):
+        command = smoke_lib.wayland_portal_preflight_command("/repo/gradlew")
+        self.assertIn(":recording:checkWaylandPortalGrant", command)
+        self.assertNotIn(":recording:requestWaylandPortalGrant", command)
+        source = RELEASE_SMOKE.read_text(encoding="utf-8")
+        self.assertEqual(1, source.count("wayland_portal_warmup_command(gradle)"))
+        self.assertIn("wayland_portal_preflight_command(gradle)", source)
 
     def test_release_smoke_runs_warmup_through_no_daemon_command(self):
         source = RELEASE_SMOKE.read_text(encoding="utf-8")
