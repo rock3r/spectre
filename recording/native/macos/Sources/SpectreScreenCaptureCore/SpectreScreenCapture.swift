@@ -8,6 +8,79 @@ import ImageIO
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 
+struct DisplayPixelDimensions: Equatable {
+    let width: Int
+    let height: Int
+
+    func outputSize(for logicalSize: CGSize, in bounds: CGRect) throws -> CGSize {
+        guard width > 0, height > 0, bounds.width > 0, bounds.height > 0 else {
+            throw CLIError(code: 5, message: "display has invalid logical or backing dimensions")
+        }
+        return CGSize(
+            width: max(1, Int((logicalSize.width * CGFloat(width) / bounds.width).rounded())),
+            height: max(1, Int((logicalSize.height * CGFloat(height) / bounds.height).rounded())))
+    }
+}
+
+struct DisplayDimensionResolver {
+    let bounds: (CGDirectDisplayID) -> CGRect
+    let modePixels: (CGDirectDisplayID) -> CGSize?
+    let rotation: (CGDirectDisplayID) -> Double
+    let screenScale: (CGDirectDisplayID) -> CGFloat?
+
+    init(
+        bounds: @escaping (CGDirectDisplayID) -> CGRect = CGDisplayBounds,
+        modePixels: @escaping (CGDirectDisplayID) -> CGSize? = { displayID in
+            guard let mode = CGDisplayCopyDisplayMode(displayID) else { return nil }
+            return CGSize(width: CGFloat(mode.pixelWidth), height: CGFloat(mode.pixelHeight))
+        },
+        rotation: @escaping (CGDirectDisplayID) -> Double = CGDisplayRotation,
+        screenScale: @escaping (CGDirectDisplayID) -> CGFloat? = { displayID in
+            NSScreen.screens.first { screen in
+                (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
+                    .uint32Value == displayID
+            }?.backingScaleFactor
+        }
+    ) {
+        self.bounds = bounds
+        self.modePixels = modePixels
+        self.rotation = rotation
+        self.screenScale = screenScale
+    }
+
+    func pixelDimensions(for displayID: CGDirectDisplayID) throws -> DisplayPixelDimensions {
+        let displayBounds = bounds(displayID)
+        guard displayBounds.width > 0, displayBounds.height > 0 else {
+            throw CLIError(code: 5, message: "display \(displayID) has invalid logical bounds")
+        }
+        if let pixels = modePixels(displayID), pixels.width > 0, pixels.height > 0 {
+            if abs(rotation(displayID).truncatingRemainder(dividingBy: 180)) == 90 {
+                return DisplayPixelDimensions(width: Int(pixels.height), height: Int(pixels.width))
+            }
+            return DisplayPixelDimensions(width: Int(pixels.width), height: Int(pixels.height))
+        }
+        if let scale = screenScale(displayID), scale > 0 {
+            return DisplayPixelDimensions(
+                width: Int((displayBounds.width * scale).rounded()),
+                height: Int((displayBounds.height * scale).rounded()))
+        }
+        throw CLIError(code: 5, message: "cannot resolve backing pixels for display \(displayID)")
+    }
+}
+
+func dominantDisplayID(
+    for frame: CGRect, displays: [(CGDirectDisplayID, CGRect)]
+) -> CGDirectDisplayID? {
+    displays
+        .map { display -> (CGDirectDisplayID, CGFloat) in
+            let overlap = frame.intersection(display.1)
+            return (display.0, overlap.isNull ? 0 : overlap.width * overlap.height)
+        }
+        .filter { $0.1 > 0 }
+        .max(by: { $0.1 < $1.1 })?
+        .0
+}
+
 // MARK: - CLI contract
 //
 // spectre-screencapture
@@ -343,8 +416,9 @@ struct Arguments {
                 throw CLIError(code: 2, message: "--mode stills only supports --source window")
             }
             guard region != nil else { throw CLIError(code: 2, message: "--region is required") }
-            guard mode == .recording else {
-                throw CLIError(code: 2, message: "region source only supports --mode recording")
+            guard mode == .recording || mode == .screenshot else {
+                throw CLIError(
+                    code: 2, message: "region source only supports --mode recording or screenshot")
             }
             if crop != nil {
                 throw CLIError(
@@ -612,6 +686,7 @@ func onScreenWindowCandidates() -> [WindowCandidate<CGWindowID>] {
 //    foot-gun on `await writer.finishWriting()`.
 final class Recorder {
     private let args: Arguments
+    private let displayDimensions: DisplayDimensionResolver
     private let lock = NSLock()
     private var stream: SCStream?
     private var writer: AVAssetWriter?
@@ -648,8 +723,9 @@ final class Recorder {
     // and the handler being wired up.
     private let stopRequested = DispatchSemaphore(value: 0)
 
-    init(arguments: Arguments) {
+    init(arguments: Arguments, displayDimensions: DisplayDimensionResolver = DisplayDimensionResolver()) {
         self.args = arguments
+        self.displayDimensions = displayDimensions
     }
 
     func run() async throws {
@@ -708,48 +784,21 @@ final class Recorder {
         }
     }
 
-    /// Pick the backing-scale factor of the NSScreen with the largest overlap area with the
-    /// target window. For windows that straddle displays in a mixed-DPI setup (Retina laptop +
-    /// non-Retina external), `NSScreen.screens` ordering would otherwise let us pick the wrong
-    /// scale and produce stretched / cropped output. SCWindow and CGDisplayBounds both use the
-    /// top-left global coordinate space; AppKit screen frames do not.
-    private func backingScaleFactor(for windowFrame: CGRect) throws -> CGFloat {
-        let dominant = NSScreen.screens
-            .map { screen -> (NSScreen, CGFloat) in
-                guard
-                    let number = screen.deviceDescription[
-                        NSDeviceDescriptionKey("NSScreenNumber")
-                    ] as? NSNumber
-                else { return (screen, 0) }
-                let overlap = windowFrame.intersection(
-                    CGDisplayBounds(CGDirectDisplayID(number.uint32Value)))
-                let area = overlap.isNull ? 0 : overlap.width * overlap.height
-                return (screen, area)
-            }
-            .filter { $0.1 > 0 }
-            .max(by: { $0.1 < $1.1 })?
-            .0
-        guard let dominant else {
-            throw CLIError(code: 5, message: "cannot determine backing scale for target window")
+    /// Pick scale from CoreGraphics display IDs. SCDisplay and CGDisplayBounds both use the
+    /// top-left display coordinate space; NSScreen.frame uses AppKit's bottom-left space and must
+    /// never be intersected with either one on vertically arranged desktops.
+    private func backingPixelDimensions(for windowFrame: CGRect) throws -> (CGRect, DisplayPixelDimensions) {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else {
+            throw CLIError(code: 5, message: "cannot enumerate active displays")
         }
-        return dominant.backingScaleFactor
-    }
-
-    /// Match an SCDisplay to NSScreen by the stable Core Graphics display identifier rather than
-    /// intersecting frames expressed in ScreenCaptureKit's top-left and AppKit's bottom-left
-    /// coordinate systems.
-    private func backingScaleFactor(for display: SCDisplay) throws -> CGFloat {
-        guard let screen = NSScreen.screens.first(where: { candidate in
-            guard let number = candidate.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
-                as? NSNumber
-            else { return false }
-            return CGDirectDisplayID(number.uint32Value) == display.displayID
-        }) else {
-            throw CLIError(
-                code: 5,
-                message: "cannot determine backing scale for display id \(display.displayID)")
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else {
+            throw CLIError(code: 5, message: "cannot read active displays")
         }
-        return screen.backingScaleFactor
+        let displays = ids.prefix(Int(count)).map { ($0, CGDisplayBounds($0)) }
+        let id = dominantDisplayID(for: windowFrame, displays: displays) ?? CGMainDisplayID()
+        return (displayDimensions.bounds(id), try displayDimensions.pixelDimensions(for: id))
     }
 
     /// Refuse to overwrite a directory if the caller mistakenly passed one as `--output`.
@@ -859,11 +908,17 @@ final class Recorder {
 
     private func sortedDisplays(_ displays: [SCDisplay]) -> [SCDisplay] {
         let mainDisplayId = CGMainDisplayID()
-        return displays.sorted { lhs, rhs in
+        let sorted = displays.sorted { lhs, rhs in
             if lhs.displayID == mainDisplayId { return true }
             if rhs.displayID == mainDisplayId { return false }
             if lhs.frame.minX != rhs.frame.minX { return lhs.frame.minX < rhs.frame.minX }
             return lhs.frame.minY < rhs.frame.minY
+        }
+        // A mirrored display can be present as a second SCDisplay at the same desktop frame while
+        // AWT exposes only one capture rectangle (or vice versa). Both sides number unique frames,
+        // so a mirror never shifts every later --display-index onto the wrong physical display.
+        return sorted.reduce(into: [SCDisplay]()) { unique, display in
+            if !unique.contains(where: { $0.frame == display.frame }) { unique.append(display) }
         }
     }
 
@@ -875,11 +930,8 @@ final class Recorder {
 
         switch target {
         case .window(let targetWindow):
-            // Use the backing-scale of the screen the target window actually lives on, not
-            // `NSScreen.main`'s. Mixed-DPI setups (Retina laptop + non-Retina external) would
-            // otherwise pick the wrong scale and produce stretched / cropped output for windows
-            // off the main screen. Never guess a scale when the display cannot be identified.
-            let scale = try backingScaleFactor(for: targetWindow.frame)
+            // Use the CG display ID whose top-left-space bounds dominate the window.
+            let (displayBounds, pixels) = try backingPixelDimensions(for: targetWindow.frame)
 
             // Window-attached filter — output is the target window's pixels (optionally cropped
             // via sourceRect for embedded Compose surfaces / handle-less panels, issue #186).
@@ -890,17 +942,28 @@ final class Recorder {
                 // Crop is window-relative points (same space as SCWindow.frame / AWT user space).
                 // Fixed at start for v1 — mid-recording resize/move of the surface is not followed.
                 sourceRect = validatedCrop.sourceRect()
-                width = max(2, Int((CGFloat(validatedCrop.width) * scale).rounded()))
-                height = max(2, Int((CGFloat(validatedCrop.height) * scale).rounded()))
+                let output = try pixels.outputSize(for: validatedCrop.sourceRect().size, in: displayBounds)
+                width = max(2, Int(output.width))
+                height = max(2, Int(output.height))
             } else {
                 sourceRect = nil
-                width = max(2, Int((targetWindow.frame.width * scale).rounded()))
-                height = max(2, Int((targetWindow.frame.height * scale).rounded()))
+                let output = try pixels.outputSize(for: targetWindow.frame.size, in: displayBounds)
+                width = max(2, Int(output.width))
+                height = max(2, Int(output.height))
             }
         case .region(let display, let region):
-            let scale = try backingScaleFactor(for: display)
-            width = max(2, Int((CGFloat(region.width) * scale).rounded()))
-            height = max(2, Int((CGFloat(region.height) * scale).rounded()))
+            // Region screenshots are still artifacts and preserve backing-store pixels, just like
+            // window screenshots. Video keeps its existing explicit output dimensions.
+            if args.mode == .screenshot {
+                let bounds = displayDimensions.bounds(display.displayID)
+                let pixels = try displayDimensions.pixelDimensions(for: display.displayID)
+                let output = try pixels.outputSize(for: region.sourceRect().size, in: bounds)
+                width = Int(output.width)
+                height = Int(output.height)
+            } else {
+                width = max(1, region.width)
+                height = max(1, region.height)
+            }
             filter = SCContentFilter(display: display, excludingWindows: [])
             sourceRect = region.sourceRect()
         }

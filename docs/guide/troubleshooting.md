@@ -656,7 +656,15 @@ needs and throws on first use if either is denied:
   process. A "not allowed assistive access" denial throws with an actionable
   message naming the wrapping app to grant; an inconclusive probe (no `osascript`,
   AppleEvents/Automation refusal, etc.) fails with an inconclusive diagnostic.
-- **Screen Recording** — required for `Robot.createScreenCapture` to return real
+- **Screen Recording** — required by the `spectre-screencapture` ScreenCaptureKit helper for
+  macOS window, region, and fullscreen stills. `screenshot(region)` and
+  `screenshotAtDeviceScale(region)` do not call Robot or run Robot's CoreGraphics permission probe.
+  The helper preflights its own access and fails with grant instructions instead of prompting for
+  the JVM. Add `spectre-recording-macos` at runtime. A multi-display region uses sequential
+  display-scoped captures, so it can be slower than a region contained by one display.
+
+When the native helper is not in use, **Screen Recording** is required for
+`Robot.createScreenCapture` to return real
   pixels. Without it the call silently returns an all-black image. A locked
   screen can produce the same symptom, so the probe first checks whether macOS
   reports the console session as locked; if so, unlock the screen and retry. If
@@ -665,7 +673,7 @@ needs and throws on first use if either is denied:
   inconclusive rather than proof of denial because legitimate pixels can be
   black too. A cached Robot grant is rechecked after an unexpectedly black Robot
   capture, while a conclusively granted and unlocked state preserves naturally
-  black content.
+black content.
 
 Native window stills use the separately signed ScreenCaptureKit helper. Its
 Screen Recording grant belongs to the helper app, not the target JVM or the app
@@ -681,17 +689,14 @@ quit and relaunch it after granting access. If Gradle was launched from a
 shell, also stop its daemon with `./gradlew --stop`.
 
 !!! note "macOS 26+ Screen Recording"
-    Starting with macOS 26, toggling Screen Recording in System Settings grants
-    picker-based access only. The first direct `Robot.createScreenCapture` call
-    (i.e. the first `automator.screenshot(...)`) pops a second system dialog —
-    "allow *App* to bypass the system private window picker". Accept this dialog.
-    It appears once per app per boot; subsequent calls are
-    silent. CI runners that require fully-headless captures should use a notarised
-    wrapper with the appropriate entitlement pre-granted.
+    Spectre 0.10 region and fullscreen stills use the same signed helper as window captures and
+    recordings. Grant that helper through `spectre permissions request`; do not grant the JVM's
+    legacy private-picker bypass. A test run that only uses Spectre screenshot APIs should not show
+    a capture prompt naming `java` or `com.jetbrains.jbr.java`.
 
-The two probes are independent: a consumer who only takes screenshots is not
-punished for missing Accessibility, and vice versa. Probe results are cached
-after the first call, so subsequent operations have no extra cost.
+Accessibility input probing and the helper's Screen Recording preflight are independent: a consumer
+who only takes screenshots is not punished for missing Accessibility, and input-only use does not
+start a capture helper.
 
 When real OS input or capture is unnecessary (in CI, in tests, etc.), use
 `RobotDriver.headless()`. It bypasses the AWT Robot entirely and skips the TCC

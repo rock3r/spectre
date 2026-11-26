@@ -3,8 +3,13 @@ package dev.sebastiano.spectre.recording.screencapturekit
 import dev.sebastiano.spectre.recording.HelperStillSessions
 import dev.sebastiano.spectre.recording.StillHelper
 import dev.sebastiano.spectre.recording.WindowScreenshotter
+import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.concurrent.TimeUnit
+import javax.imageio.ImageIO
 
 /**
  * macOS still screenshot backend backed by the bundled ScreenCaptureKit helper.
@@ -37,6 +42,41 @@ internal constructor(
         }
         val title = checkNotNull(window.title)
         return captureFromSession(windowOwnerPid, titleContains = title, frame = null)
+    }
+
+    internal fun captureRegion(region: Rectangle, displayIndex: Int): BufferedImage {
+        requireScreenCaptureAccess()
+        val helperPath = helperExtractor.extract()
+        val output = Files.createTempFile("spectre-sck-region-screenshot-", ".png")
+        var process: Process? = null
+        try {
+            val argv =
+                HelperArguments(
+                        mode = "screenshot",
+                        source = HelperSource.Region,
+                        region = region,
+                        displayIndex = displayIndex,
+                        output = output,
+                        fps = SCREENSHOT_FRAME_RATE,
+                        captureCursor = false,
+                        discoveryTimeoutMs = SCREENSHOT_DISCOVERY_TIMEOUT_MS,
+                    )
+                    .toArgv(helperPath)
+            // A stuck replayd can starve a second SCK stream while a stills helper owns one.
+            stillSessions.stopAll()
+            process = processFactory.start(argv)
+            waitForScreenshot(process, argv, output)
+            return ImageIO.read(output.toFile())
+                ?: error("spectre-screencapture did not produce a readable PNG at $output")
+        } catch (e: InterruptedException) {
+            process?.destroyForcibly()
+            Thread.currentThread().interrupt()
+            throw e
+        } catch (e: IOException) {
+            throw IllegalStateException("spectre-screencapture screenshot failed", e)
+        } finally {
+            Files.deleteIfExists(output)
+        }
     }
 
     private fun captureFromSession(
@@ -95,9 +135,24 @@ internal object ScreenCaptureKitStillHelper : StillHelper {
     override fun timeoutMessage(process: Process, message: String): String = message
 }
 
+private fun waitForScreenshot(process: Process, argv: List<String>, output: Path) {
+    if (!process.waitFor(SCREENSHOT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+        process.destroyForcibly()
+        process.waitFor(FORCE_KILL_WAIT_SECONDS, TimeUnit.SECONDS)
+        error(
+            "Timed out after $SCREENSHOT_TIMEOUT_SECONDS seconds waiting for " +
+                "spectre-screencapture screenshot. Argv: $argv"
+        )
+    }
+    val exit = process.exitValue()
+    check(exit == 0) { messageForHelperExit(exit, argv, output) }
+}
+
 private const val SCREENSHOT_DISCOVERY_TIMEOUT_MS: Int = 2000
 private const val SCREENSHOT_FRAME_RATE: Int = 30
 // Allow the helper's 2s window discovery and 10s first-frame budgets, plus startup slack.
+private const val SCREENSHOT_TIMEOUT_SECONDS: Long = 15L
+private const val FORCE_KILL_WAIT_SECONDS: Long = 1L
 private const val EXIT_ARGUMENTS_REJECTED: Int = 2
 private const val EXIT_WINDOW_NOT_FOUND: Int = 3
 private const val EXIT_SCREEN_RECORDING_DENIED: Int = 4

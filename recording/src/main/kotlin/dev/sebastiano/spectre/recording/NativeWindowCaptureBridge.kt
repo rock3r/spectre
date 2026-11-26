@@ -1,17 +1,22 @@
 package dev.sebastiano.spectre.recording
 
+import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitScreenshotter
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import dev.sebastiano.spectre.recording.screencapturekit.asFramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.asTitledWindow
 import java.awt.Dialog
 import java.awt.EventQueue
 import java.awt.Frame
+import java.awt.GraphicsEnvironment
+import java.awt.Rectangle
 import java.awt.Window
+import java.awt.geom.Area
 import java.awt.image.BufferedImage
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
+import kotlin.math.roundToInt
 
 /**
  * Optional runtime bridge for core's window-scoped still capture route.
@@ -85,6 +90,48 @@ internal object NativeWindowCaptureBridge {
     internal fun captureWindow(window: Window): BufferedImage =
         withCaptureLock(window) { screenshotter.captureWindow(captureTargetFor(window)) }
 
+    /** macOS screen-region still entry point loaded reflectively by core. */
+    @JvmStatic
+    @JvmName("captureScreenRegion")
+    internal fun captureScreenRegion(region: Rectangle): BufferedImage {
+        val environment = GraphicsEnvironment.getLocalGraphicsEnvironment()
+        val primary = environment.defaultScreenDevice
+        val devices =
+            environment.screenDevices.sortedWith(
+                compareBy(
+                    { it !== primary },
+                    { it.defaultConfiguration.bounds.x },
+                    { it.defaultConfiguration.bounds.y },
+                )
+            )
+        val center = java.awt.Point(region.x + region.width / 2, region.y + region.height / 2)
+        val target =
+            devices
+                .firstOrNull { it.defaultConfiguration.bounds.contains(center) }
+                ?.defaultConfiguration ?: primary.defaultConfiguration
+        val screenshotter = ScreenCaptureKitScreenshotter()
+        val displays =
+            uniqueRegionDisplays(
+                devices.map { device ->
+                    val configuration = device.defaultConfiguration
+                    RegionDisplay(
+                        captureIndex = 0,
+                        bounds = Rectangle(configuration.bounds),
+                        scaleX = configuration.defaultTransform.scaleX,
+                        scaleY = configuration.defaultTransform.scaleY,
+                    )
+                }
+            )
+        return composeScreenRegion(
+            region = region,
+            displays = displays,
+            outputScaleX = target.defaultTransform.scaleX,
+            outputScaleY = target.defaultTransform.scaleY,
+        ) { local, index ->
+            screenshotter.captureRegion(local, index)
+        }
+    }
+
     /**
      * How the native helper finds [window]. A [Frame] or [Dialog] is found by its title. Any other
      * host (a Swing `JWindow`, a plain AWT [Window]) has no title, so it is found by its on-screen
@@ -157,6 +204,82 @@ internal object NativeWindowCaptureBridge {
     internal fun captureLockFor(window: Window): ReentrantLock =
         synchronized(captureLocks) { captureLocks.getOrPut(window, ::ReentrantLock) }
 }
+
+internal data class RegionDisplay(
+    val captureIndex: Int,
+    val bounds: Rectangle,
+    val scaleX: Double,
+    val scaleY: Double,
+)
+
+/** Matches the native helper's mirrored-frame de-duplication and resulting display indices. */
+internal fun uniqueRegionDisplays(displays: List<RegionDisplay>): List<RegionDisplay> =
+    displays
+        .distinctBy { it.bounds }
+        .mapIndexed { index, display -> display.copy(captureIndex = index) }
+
+/** Combines display-local SCK captures only after proving that they cover the whole request. */
+internal fun composeScreenRegion(
+    region: Rectangle,
+    displays: List<RegionDisplay>,
+    outputScaleX: Double,
+    outputScaleY: Double,
+    capture: (Rectangle, Int) -> BufferedImage,
+): BufferedImage {
+    require(region.width > 0 && region.height > 0) { "Capture region must be non-empty: $region" }
+    val parts = displays.mapNotNull { display ->
+        val intersection = region.intersection(display.bounds)
+        if (intersection.isEmpty) null else display to intersection
+    }
+    val uncovered = Area(region)
+    parts.forEach { (_, part) -> uncovered.subtract(Area(part)) }
+    require(uncovered.isEmpty) {
+        "macOS ScreenCaptureKit displays do not cover requested region $region; " +
+            "uncovered rectangle ${uncovered.bounds}"
+    }
+
+    val output =
+        BufferedImage(
+            scaledDimension(region.width, outputScaleX),
+            scaledDimension(region.height, outputScaleY),
+            BufferedImage.TYPE_INT_ARGB,
+        )
+    val graphics = output.createGraphics()
+    try {
+        parts.forEach { (display, part) ->
+            val local =
+                Rectangle(
+                    part.x - display.bounds.x,
+                    part.y - display.bounds.y,
+                    part.width,
+                    part.height,
+                )
+            val image = capture(local, display.captureIndex)
+            val expectedWidth = scaledDimension(part.width, display.scaleX)
+            val expectedHeight = scaledDimension(part.height, display.scaleY)
+            require(image.width == expectedWidth && image.height == expectedHeight) {
+                "macOS ScreenCaptureKit returned ${image.width}x${image.height} pixels for " +
+                    "display-local rectangle $local (desktop rectangle $part); expected " +
+                    "${expectedWidth}x${expectedHeight}"
+            }
+            graphics.drawImage(
+                image,
+                scaledDimension(part.x - region.x, outputScaleX),
+                scaledDimension(part.y - region.y, outputScaleY),
+                scaledDimension(part.width, outputScaleX),
+                scaledDimension(part.height, outputScaleY),
+                null,
+            )
+        }
+    } finally {
+        graphics.dispose()
+    }
+    return output
+}
+
+/** SCK and AWT may differ by at most half a pixel because both round point dimensions. */
+private fun scaledDimension(points: Int, scale: Double): Int =
+    (points * scale).roundToInt().coerceAtLeast(if (points == 0) 0 else 1)
 
 /**
  * [cache] is the JVM-lifetime result. [waitScoped] is the Robot decision for this wait when [cache]
