@@ -110,7 +110,7 @@ Record the owner window or a screen region instead.
 | macOS | ScreenCaptureKit helper (`spectre-screencapture --mode screenshot`) | Captures only the window source; overlapping apps are excluded | Requires `spectre-recording-macos` at runtime and Screen Recording permission |
 | Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | Captures the named top-level window | Requires `spectre-recording-windows`, Windows 10 version 1903 or newer, .NET 8 Desktop Runtime, Windows App Runtime 1.8, and a non-blank exact window title (or an untitled window found by its bounds) |
 | Linux Xorg/Xvfb | Linux helper + GStreamer `ximagesrc` | Captures visible screen pixels | The target window must be visible/frontmost, same limitation as `ComposeAutomator.screenshot(...)`; window mode needs a non-blank exact title (or an untitled window found by its bounds) |
-| Linux Wayland | Linux helper + GNOME Mutter window stream (`org.gnome.Mutter.ScreenCast`) | Captures only the owner-bound target, even when other windows cover it; follows the window when it moves | GNOME only. Needs the session helper, so run `spectre permissions request` when no live session or reusable token is available. Capturing does not switch focus. Region stills use the portal monitor stream |
+| Linux Wayland | Linux helper + GNOME Mutter window stream (`org.gnome.Mutter.ScreenCast`) | Captures only the window, even when other windows cover it; follows the window when it moves | GNOME only. Needs a live session-helper grant or a restorable portal token; run `spectre permissions request` when neither is available. The identity extension selects the requesting process's exact Xwayland window without changing focus. Region stills use the portal monitor stream |
 
 An embedded `ComposePanel` needs its **host** top-level window for window capture.
 When the host exposes a titled `Frame`, capture that window and crop to the panel
@@ -217,37 +217,40 @@ wraps the supplied `java.awt.Robot`. X11, macOS, and Windows keep their existing
 
 ### Linux Wayland window capture
 
-Install the GNOME Shell extension bundled in the `spectre-recording-linux` jar, enable it, and
-start a new GNOME session. The installer chooses the entry point for the installed GNOME Shell
-version:
+The portal's window source cannot serve unattended tests: it asks the user to pick each window,
+and GNOME cannot restore that grant onto a new window. Window stills, `waitForVisualIdle()`
+samples, and window recording therefore use GNOME Mutter's own
+`org.gnome.Mutter.ScreenCast` API through the session helper. The stream renders only the target
+window, follows it when it moves, and excludes windows covering it.
 
-```bash
-jar xf spectre-recording-linux-<version>.jar \
-  native/linux/gnome-shell-extension
-bash native/linux/gnome-shell-extension/install.sh
-gnome-extensions enable spectre-window-identity@sebastiano.dev
-```
+Install and enable the window-identity extension using the canonical instructions in
+[Troubleshooting](troubleshooting.md#linux-wayland-window-capture-fails-could-not-bind-a-gnome-mutter-window-stream).
+The extension resolves the requesting JVM's PID and exact Xwayland XID, then issues a one-use token
+for that source. The helper verifies the token's owner and the first frame's geometry before it
+exposes the stream. It does **not** select or focus whichever window happens to have keyboard
+focus. A blue decoy can retain focus and fully cover the requested red or green source without its
+pixels entering the still or recording.
 
-The portal's window source cannot serve unattended tests: it asks the user to pick every window,
-and GNOME cannot restore that grant onto a new window. Window stills, `waitForVisualIdle()` samples,
-and window recording therefore use GNOME Mutter's own `org.gnome.Mutter.ScreenCast` API through
-the same session helper. It needs no window picker. Its stream renders only the requested window,
-so other windows on top do not show, and it follows the window when it moves.
+A window-relative recording crop remains native window capture. `cropInWindow` is target-relative
+AWT user space; Spectre converts that ROI into stream pixels and sends it to the supported Linux
+backend. The output contains exactly that rectangle of the target stream, not a screen or monitor
+crop. This is the same fixed-at-start crop described under the
+[recorder capability matrix](#recorder-capability-matrix).
 
-Spectre resolves the current Xwayland XID and owner PID, and the bundled
-`spectre-window-identity` GNOME Shell extension exchanges that exact pair for Mutter's internal
-window ID. The helper binds `RecordWindow` to that ID. This owner-bound lookup distinguishes
-same-title, same-size windows and neither reads nor changes keyboard focus. Limits:
+Limits:
 
-- **GNOME only.** On another Wayland desktop, window capture fails with an error. Capture a screen
-  region instead, or run under X11 or Xvfb.
-- **The target must be a current Xwayland window owned by the requesting JVM.** If the extension
-  cannot match both its XID and owner PID, capture fails instead of selecting a similarly titled,
-  sized, or focused window.
-- **The first bind must run off the AWT event dispatch thread** because it performs blocking helper
-  I/O; an already-bound stream can be reused on the EDT.
-- **The first frame must contain fully opaque (alpha 255) pixels with size-compatible bounds.** No
-  opaque pixels or bounds incompatible with the target AWT outer size fail binding.
+- **GNOME only.** Other Wayland desktops do not expose Mutter's API. Capture a screen region
+  explicitly, or run under X11 or Xvfb.
+- **The extension is required.** A missing, disabled, or incompatible extension fails closed; use
+  the installer and checks in the troubleshooting entry linked above.
+- **The first capture of a window must not run on the AWT event dispatch thread,** because binding
+  performs blocking helper I/O. Later captures of an already-bound window work on any thread.
+- **The first frame must contain fully opaque (alpha 255) pixels whose bounding rectangle matches
+  the target AWT outer dimensions at a supported scale, within tolerance.** No opaque pixels or
+  size-incompatible bounds fail binding; partly translucent windows are not rejected categorically.
+
+Spectre never falls back to the portal window picker, the focused window, the source's owner, or a
+monitor crop when identity or validation fails.
 
 See [Recording limitations](../RECORDING-LIMITATIONS.md) for token env vars and the
 compositor matrix.
@@ -414,7 +417,18 @@ Instantiate a backend directly when a test needs a specific implementation:
 | `LinuxNativeScreenshotter`    | Linux Xorg/Xvfb screenshots via `ximagesrc`. Linux Wayland region screenshots via the portal monitor stream, and window screenshots via GNOME Mutter window streams. |
 | `ScreenCaptureKitRecorder`    | macOS-only window-targeted and region capture via the `spectre-recording-macos` Swift helper. |
 | `WaylandPortalRecorder`       | Linux Wayland region capture via `xdg-desktop-portal` (`SourceType.MONITOR`) and the `spectre-recording-linux` Rust helper. |
+| GNOME Mutter window recorder | Linux Wayland window capture and target-relative crop through an owner-verified window-identity token; selected by `AutoRecorder`, not instantiated as a public backend. |
 | `WaylandPortalWindowRecorder` | Refuses window capture because the portal cannot verify the selected window’s identity. |
+
+## Verified GNOME behaviour
+
+The release checks exercised the public Spectre CLI **0.10.0** and native recording path; they did
+not replace window capture with monitor screenshots:
+
+- Ubuntu 24.04 / GNOME 46 recorded two live-changing **220 × 140** target-relative crops from
+  separate decorated and undecorated JVM windows. The blue covering window kept focus throughout,
+  while the crops contained the requested red/green source and no blue decoy pixels.
+  [Native crop, motion, and focus evidence](https://github.com/rock3r/spectre/actions/runs/45739871299/job/139641944779)
 
 ## Per-OS prerequisites
 
