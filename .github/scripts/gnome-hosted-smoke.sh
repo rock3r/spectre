@@ -44,6 +44,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
   at-spi2-core dbus-user-session ffmpeg git gnome-shell gnome-shell-extension-prefs \
   libdbus-1-dev libpipewire-0.3-dev mutter pipewire pipewire-audio-client-libraries \
+  libspa-0.2-dev \
   pkg-config python3 python3-dbus zenity wireplumber pipewire-bin xwayland x11-utils xauth xdotool \
   python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-gtk-4.0 python3-pil python3-pyatspi \
   libgl1-mesa-dri libegl-mesa0 libxkbcommon-x11-0 xdg-desktop-portal-gnome \

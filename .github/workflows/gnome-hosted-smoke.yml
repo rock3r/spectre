@@ -87,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [accessibility, atspi-ownership, atspi-distinct-content]
+        mode: [portal, capture, accessibility, atspi-ownership, atspi-distinct-content, identity, mutter-control, geometry-calibration]
 
     steps:
       - name: Check out temporary workflow tooling

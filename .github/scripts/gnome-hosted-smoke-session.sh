@@ -44,7 +44,7 @@ export QT_QPA_PLATFORM=wayland
 export SPECTRE_CAPTURE_BACKEND=wayland
 export NO_AT_BRIDGE=0
 
-if [[ "$SMOKE_MODE" == mutter-control ]]; then
+if [[ "$SMOKE_MODE" == mutter-control || "$SMOKE_MODE" == geometry-calibration ]]; then
   extension_uuid=spectre-mutter-control-verification@sebastiano.dev
   extension_source="$(dirname "$0")/../gnome-shell-extensions/$extension_uuid"
 else
@@ -90,7 +90,7 @@ dbus-update-activation-environment --systemd XDG_CURRENT_DESKTOP XDG_SESSION_TYP
 timeout 5s gdbus wait --session org.gnome.Mutter.ScreenCast
 gnome-extensions enable "$extension_uuid"
 gnome-extensions list --enabled | grep -Fx "$extension_uuid"
-if [[ "$SMOKE_MODE" == mutter-control ]]; then
+if [[ "$SMOKE_MODE" == mutter-control || "$SMOKE_MODE" == geometry-calibration ]]; then
   timeout 10s gdbus wait --session dev.sebastiano.Spectre.MutterControlVerification
 fi
 pw-cli info 0 >"$SMOKE_ARTIFACTS/pipewire-core.txt"
@@ -99,7 +99,7 @@ pw-cli info 0 >"$SMOKE_ARTIFACTS/pipewire-core.txt"
 # accessibility bus is enabled. Do this before either grant, and wait for both
 # the public broker and GNOME implementation rather than relying on activation
 # races hidden inside the test client.
-if [[ "$SMOKE_MODE" == portal || "$SMOKE_MODE" == capture ]]; then
+if [[ "$SMOKE_MODE" == portal || "$SMOKE_MODE" == capture || "$SMOKE_MODE" == geometry-calibration ]]; then
   gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
     --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled '<true>'
   timeout 15s gdbus wait --session --activate org.freedesktop.portal.Desktop
@@ -120,6 +120,18 @@ if [[ "$SMOKE_MODE" == cli-recording-live ]]; then
   mkdir -m 0700 "$SPECTRE_WAYLAND_SESSION_DIR" "$SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"
   /usr/bin/python3 "$(dirname "$0")/gnome-cli-recording-live.py" \
     2> >(tee "$SMOKE_ARTIFACTS/cli-recording-live.stderr" >&2)
+  exit 0
+fi
+
+if [[ "$SMOKE_MODE" == geometry-calibration ]]; then
+  export GDK_BACKEND=x11
+  # Exercise the ordinary public portal and its stock visible GNOME grant first.  This does not
+  # provide or persist a restore token; the private API below remains independently identity-gated.
+  /usr/bin/python3 "$(dirname "$0")/gnome-portal-dialog-warmup.py" \
+    --mode portal --artifacts "$SMOKE_ARTIFACTS" \
+    2>&1 | tee "$SMOKE_ARTIFACTS/geometry-portal-grant.log"
+  /usr/bin/python3 "$(dirname "$0")/gnome-geometry-calibration.py" \
+    2>&1 | tee "$SMOKE_ARTIFACTS/geometry-calibration.log"
   exit 0
 fi
 

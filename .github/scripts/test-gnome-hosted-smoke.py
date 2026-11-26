@@ -13,13 +13,16 @@ SESSION = ROOT / ".github/scripts/gnome-hosted-smoke-session.sh"
 BRANCH = "release-0.10/gnome-hosted-smoke"
 CANDIDATE = "7ececf7a7ac361d87417bb07108cc475f7cf890e"
 ATSPI_SHA = "ebda65d1c23604dbea9dccc987293259afe3c0ef"
-FIXTURE_SHA = "96cd6cb20e44d5d26a4cfb93d8a3f8e1b6375aa8"
+FIXTURE_SHA = "e3368c3c2476f9b955290cfdcb05722908f1f4a5"
 IDENTITY = ROOT / ".github/scripts/gnome-window-identity-probe.py"
 MUTTER_CONTROL = ROOT / ".github/scripts/gnome-mutter-control-probe.py"
 VERIFICATION_EXTENSION = ROOT / ".github/gnome-shell-extensions/spectre-mutter-control-verification@sebastiano.dev/extension.js"
 WARMUP = ROOT / ".github/scripts/gnome-portal-dialog-warmup.py"
 ATSPI_OWNERSHIP = ROOT / ".github/scripts/gnome-atspi-ownership-probe.py"
 ATSPI_DISTINCT = ROOT / ".github/scripts/gnome-atspi-distinct-content-probe.py"
+GEOMETRY = ROOT / ".github/scripts/gnome-geometry-calibration.py"
+GEOMETRY_FIXTURE = ROOT / ".github/scripts/GnomeGeometryFixture.java"
+GEOMETRY_PW = ROOT / ".github/scripts/gnome-geometry-pw.c"
 
 
 class GnomeHostedSmokeContractTest(unittest.TestCase):
@@ -90,7 +93,7 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
 
     def test_atspi_distinct_content_is_an_independent_native_wayland_cell(self):
         probe = ATSPI_DISTINCT.read_text()
-        self.assertIn("mode: [accessibility, atspi-ownership, atspi-distinct-content]", self.workflow)
+        self.assertIn("atspi-distinct-content", self.workflow)
         self.assertIn('SMOKE_MODE" == atspi-distinct-content', self.session)
         self.assertEqual(self.workflow.count("matrix.mode == 'atspi-distinct-content'"), 3)
         for contract in (
@@ -146,7 +149,7 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
 
     def test_identity_is_independent_public_api_evidence(self):
         identity = IDENTITY.read_text()
-        self.assertIn("mode: [portal, capture, accessibility, atspi-ownership, identity, mutter-control]", self.workflow)
+        self.assertIn("identity, mutter-control, geometry-calibration", self.workflow)
         self.assertIn("SMOKE_MODE\" == identity", self.session)
         for contract in ("LookupWindow", "RecordWindow", "PipeWireStreamAdded", "gst-launch-1.0",
                          "focusSamples", "focusObservedXids", "interiorColorCounts", "pipeWireNode"):
@@ -156,7 +159,7 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
     def test_mutter_control_uses_separate_caller_owned_verification_service(self):
         probe = MUTTER_CONTROL.read_text()
         extension = VERIFICATION_EXTENSION.read_text()
-        self.assertIn("mode: [portal, capture, accessibility, atspi-ownership, identity, mutter-control]", self.workflow)
+        self.assertIn("identity, mutter-control, geometry-calibration", self.workflow)
         self.assertIn('SMOKE_MODE" == mutter-control', self.session)
         for contract in (
             "GetConnectionUnixProcessID", "get_client_type()", "Meta.WindowClientType.X11",
@@ -204,6 +207,24 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
             self.assertNotIn(token, warmup)
         self.assertNotRegex(self.session, r"portal-dialog-warmup.py.*\|\|\s*true")
         self.assertIn("gir1.2-gtk-4.0", self.driver)
+
+    def test_geometry_calibration_is_isolated_real_measurement(self):
+        probe, fixture, pipewire = GEOMETRY.read_text(), GEOMETRY_FIXTURE.read_text(), GEOMETRY_PW.read_text()
+        self.assertIn("geometry-calibration", self.workflow)
+        self.assertIn('SMOKE_MODE" == geometry-calibration', self.session)
+        self.assertIn("--mode portal", self.session)
+        self.assertNotIn("./gradlew", self.session[self.session.index('SMOKE_MODE" == geometry-calibration'):self.session.index('SMOKE_MODE" == portal')])
+        for contract in ("InspectDescendantX11Window", "xwininfo", "_NET_FRAME_EXTENTS", "GetCurrentState", "mutterWindowIdUint64", "signed pixel differences", "geometry-calibration.json"):
+            self.assertIn(contract, probe)
+        for contract in ("getBounds()", "getLocationOnScreen()", "getInsets()", "getDefaultTransform()", "getBounds()"):
+            self.assertIn(contract, fixture)
+        for contract in ("SPA_META_VideoCrop", "SPA_META_VideoTransform", '"present\\\":false', "pw_stream_dequeue_buffer"):
+            self.assertIn(contract, pipewire)
+
+    def test_geometry_extension_gates_pid_xid_and_ancestry(self):
+        extension = VERIFICATION_EXTENSION.read_text()
+        for contract in ("InspectDescendantX11Window", "_isDescendant", "GetConnectionUnixProcessID", "get_pid() !== pid", "get_description()", "get_frame_rect()", "get_buffer_rect()", "get_client_content_rect"):
+            self.assertIn(contract, extension)
 
 
 if __name__ == "__main__":
