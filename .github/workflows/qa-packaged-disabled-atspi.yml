@@ -16,6 +16,7 @@ jobs:
     if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && (github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'Verify public disabled accessibility'))
     runs-on: ubuntu-24.04
     env:
+      ATTACHED_CHECK: ${{ endsWith(github.event.head_commit.message, 'attached and standalone') }}
       REUSE_STOCK_ZIP: ${{ startsWith(github.event.head_commit.message, 'Verify public disabled accessibility stock replay') }}
     timeout-minutes: 60
     steps:
@@ -57,7 +58,7 @@ jobs:
       - name: Install native build and private desktop dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang pkg-config libdbus-1-dev libatspi2.0-dev libpipewire-0.3-dev libspa-0.2-dev libxkbcommon-x11-0 libgtk-3-0t64 gir1.2-gtk-3.0 python3-gi python3-pyatspi at-spi2-core dbus-x11 xvfb x11-utils openbox unzip xauth libxcursor-dev libx11-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev libgtk-3-dev
+          sudo apt-get install -y --no-install-recommends clang pkg-config libdbus-1-dev libatspi2.0-dev libpipewire-0.3-dev libspa-0.2-dev libxkbcommon-x11-0 libgtk-3-0t64 gir1.2-gtk-3.0 python3-gi python3-pyatspi at-spi2-core dbus-x11 xvfb x11-utils openbox unzip xauth libxcursor-dev libx11-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev libgtk-3-dev libatk-wrapper-java libatk-wrapper-java-jni ffmpeg gstreamer1.0-tools gstreamer1.0-x gstreamer1.0-plugins-good
       - name: Authenticate the successful product ZIP for a smoke-script-only replay
         if: env.REUSE_STOCK_ZIP == 'true'
         working-directory: product
@@ -76,6 +77,14 @@ jobs:
             git apply --index "$patch"
             tree=$(git write-tree)
             test "$tree" = e7fa72a41fce1cb30ea8ac80fe15d96469474cf4
+            if [[ "$ATTACHED_CHECK" == true ]]; then
+              attached="$RUNNER_TEMP/attached.patch"
+              base64 --decode "$GITHUB_WORKSPACE/scratch/.github/qa-packaged-disabled-atspi/attached-0284.diff.b64" > "$attached"
+              echo "9f60bc0aa0974e56eac6cff801460bbc38c64c99a17ed048084db3c18240234a  $attached" | sha256sum --check --strict
+              git apply --3way --index "$attached"
+              tree=$(git write-tree)
+              test "$tree" = f4c712714ec5afed4bccbb5d96cde5766ca51651
+            fi
             printf '%s\n' "$tree" >"$RUNNER_TEMP/qa-packaged-disabled-atspi/stock-result-tree.txt"
             git diff --cached --name-only "$original" >"$RUNNER_TEMP/qa-packaged-disabled-atspi/replay-source-changes.txt"
           else
@@ -84,7 +93,7 @@ jobs:
           test -s "$RUNNER_TEMP/qa-packaged-disabled-atspi/replay-source-changes.txt"
           while IFS= read -r changed; do
             case "$changed" in
-              scripts/release-smoke.py|scripts/smoke_lib.py|scripts/mcp-stdio-smoke.py|.github/scripts/test-release-smoke-scripts.py|docs/*.md) ;;
+              cli/src/test/kotlin/dev/sebastiano/spectre/cli/daemon/DaemonFixtureIntegrationTest.kt|.github/workflows/validation-linux.yml|scripts/release-smoke.py|scripts/smoke_lib.py|scripts/mcp-stdio-smoke.py|.github/scripts/test-release-smoke-scripts.py|docs/*.md) ;;
               *) echo "Package identity cannot be reused across change to: $changed" >&2; exit 1 ;;
             esac
           done < "$RUNNER_TEMP/qa-packaged-disabled-atspi/replay-source-changes.txt"
@@ -157,7 +166,7 @@ jobs:
           QA_ARTIFACTS: ${{ runner.temp }}/qa-packaged-disabled-atspi
         run: dbus-run-session -- scratch/.github/qa-packaged-disabled-atspi/run-session.sh
       - name: Run the unmodified stock AccessKit release-smoke case against the same extracted ZIP
-        if: always() && env.PACKAGED_CLI != '' && !endsWith(github.event.head_commit.message, 'GTK only')
+        if: always() && env.PACKAGED_CLI != '' && env.ATTACHED_CHECK != 'true' && !endsWith(github.event.head_commit.message, 'GTK only')
         working-directory: product
         shell: bash
         run: |
@@ -170,6 +179,46 @@ jobs:
           started = time.monotonic()
           result = runpy.run_path(str(script))['_accesskit_cli_smoke'](Path(os.environ['PACKAGED_CLI']), os.environ['VERSION_NAME'])
           print(json.dumps({'result':'pass','detail':result,'wallSeconds':round(time.monotonic()-started,3)}))
+          PYTHON
+      - name: Verify the standalone MCP on the real Rust AccessKit fixture
+        if: always() && env.ATTACHED_CHECK == 'true' && env.PACKAGED_CLI != ''
+        working-directory: product
+        run: |
+          set -euo pipefail
+          qa="$GITHUB_WORKSPACE/scratch/.github/qa-packaged-disabled-atspi"
+          out="$RUNNER_TEMP/qa-packaged-disabled-atspi"
+          export PYTHONPATH="$qa/observer" QA_RESPONSE_LOG="$out/standalone-responses.jsonl"
+          xvfb-run -a -s '-screen 0 1280x720x24 -nolisten tcp' python3 "$qa/independent-legs.py" standalone 2>&1 | tee "$out/standalone.log"
+      - name: Verify the single exact attached CLI and MCP JUnit case
+        if: always() && env.ATTACHED_CHECK == 'true' && env.PACKAGED_CLI != ''
+        working-directory: product
+        run: |
+          set -euo pipefail
+          qa="$GITHUB_WORKSPACE/scratch/.github/qa-packaged-disabled-atspi"
+          out="$RUNNER_TEMP/qa-packaged-disabled-atspi"
+          test -f /usr/share/java/java-atk-wrapper.jar
+          dpkg -L libatk-wrapper-java-jni | grep libatk-wrapper.so | tee "$out/atk-provider.txt"
+          export PYTHONPATH="$qa/observer" QA_RESPONSE_LOG="$out/attached-responses.jsonl"
+          xvfb-run -a -s '-screen 0 1280x720x24 -nolisten tcp' python3 "$qa/independent-legs.py" attached 2>&1 | tee "$out/attached.log"
+      - name: Require exactly one executed JUnit test and retain full failure output
+        if: always() && env.ATTACHED_CHECK == 'true' && env.PACKAGED_CLI != ''
+        working-directory: product
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/qa-packaged-disabled-atspi"
+          cp cli/build/test-results/test/TEST-*DaemonFixtureIntegrationTest.xml "$out/"
+          python3 - "$out" <<'PYTHON'
+          from pathlib import Path
+          import sys,xml.etree.ElementTree as ET
+          paths=list(Path(sys.argv[1]).glob("TEST-*DaemonFixtureIntegrationTest.xml"))
+          assert len(paths)==1, paths
+          suite=ET.parse(paths[0]).getroot()
+          cases=suite.findall('testcase')
+          print(suite.attrib, [c.get('name') for c in cases])
+          assert len(cases)==1 and 'packaged CLI and MCP capture an attached JVM' in cases[0].get('name','')
+          for failure in cases[0]:
+              print(failure.tag, failure.attrib, (failure.text or '')[:7000])
+          assert all(suite.get(k) == '0' for k in ['skipped','errors','failures']) and suite.get('tests')=='1'
           PYTHON
       - name: Upload compact evidence only
         if: always()
