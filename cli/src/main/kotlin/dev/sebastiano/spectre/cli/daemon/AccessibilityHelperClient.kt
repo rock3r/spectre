@@ -302,22 +302,39 @@ private fun runHelper(argv: List<String>, stdin: String, timeoutMs: Long): Strin
 
 internal fun exchangeWithHelper(process: Process, stdin: String, timeoutMs: Long): String {
     val executor = Executors.newFixedThreadPool(2, DaemonThreadFactory)
-    val deadlineNanos = System.nanoTime() + (timeoutMs + PROCESS_GRACE_MS) * NANOS_PER_MILLISECOND
+    val deadlineNanos = deadlineAfterMillis(timeoutMs, PROCESS_GRACE_MS)
     val output =
         executor.submit<String> { process.inputStream.bufferedReader().use { it.readText() } }
     val input =
         executor.submit<Unit> { process.outputStream.bufferedWriter().use { it.write(stdin) } }
-    var interrupted = false
+    val exchange = runCatching { performExchange(process, input, output, deadlineNanos, timeoutMs) }
+    val cleanup = cleanup(process, input, output, executor)
+    val primaryFailure = exchange.exceptionOrNull()
+    if (cleanup.failure != null) {
+        if (primaryFailure != null) primaryFailure.addSuppressed(cleanup.failure)
+        else throw cleanup.failure
+    }
+    if (cleanup.interrupted || primaryFailure is InterruptedException) {
+        Thread.currentThread().interrupt()
+    }
+    primaryFailure?.let { throw it }
+    return exchange.getOrThrow()
+}
+
+private fun performExchange(
+    process: Process,
+    input: java.util.concurrent.Future<Unit>,
+    output: java.util.concurrent.Future<String>,
+    deadlineNanos: Long,
+    timeoutMs: Long,
+): String =
     try {
         input.get(remainingMillis(deadlineNanos), TimeUnit.MILLISECONDS)
         check(process.waitFor(remainingMillis(deadlineNanos), TimeUnit.MILLISECONDS)) {
             "Accessibility helper exceeded its ${timeoutMs}ms deadline"
         }
         check(process.exitValue() == 0) { "Accessibility helper exited ${process.exitValue()}" }
-        return output.get(remainingMillis(deadlineNanos), TimeUnit.MILLISECONDS)
-    } catch (exception: InterruptedException) {
-        interrupted = true
-        throw exception
+        output.get(remainingMillis(deadlineNanos), TimeUnit.MILLISECONDS)
     } catch (exception: TimeoutException) {
         throw IllegalStateException(
             "Accessibility helper exceeded its ${timeoutMs}ms deadline",
@@ -325,31 +342,47 @@ internal fun exchangeWithHelper(process: Process, stdin: String, timeoutMs: Long
         )
     } catch (exception: ExecutionException) {
         throw exception.cause ?: exception
-    } finally {
-        // waitFor and awaitTermination return immediately when interrupted. Clear the flag while
-        // cleanup runs, then restore it so callers observe both bounded reaping and interruption.
-        interrupted = interrupted || Thread.interrupted()
-        val cleanupDeadline = System.nanoTime() + PROCESS_GRACE_MS * NANOS_PER_MILLISECOND
-        val descendants = process.descendants().toList().asReversed()
-        descendants.forEach { it.destroyForcibly() }
-        // Start every owned process terminating before spending the shared grace period waiting.
-        // In particular, ProcessHandle's exit notification can precede Process.waitFor updating the
-        // Process object on Windows, so reap the parent through Process itself below.
-        process.destroyForcibly()
-        interrupted = waitForExit(process, cleanupDeadline) || interrupted
-        descendants.forEach { interrupted = waitForExit(it, cleanupDeadline) || interrupted }
-        input.cancel(true)
-        output.cancel(true)
-        executor.shutdownNow()
-        try {
-            executor.awaitTermination(remainingMillis(cleanupDeadline), TimeUnit.MILLISECONDS)
-        } catch (cleanupInterrupted: InterruptedException) {
-            interrupted = true
-        }
-        val cleanupFailed = process.isAlive || descendants.any { it.isAlive }
-        if (interrupted) Thread.currentThread().interrupt()
-        check(!cleanupFailed) { "Accessibility helper did not stop within its cleanup deadline" }
     }
+
+private data class CleanupResult(val interrupted: Boolean, val failure: IllegalStateException?)
+
+private fun cleanup(
+    process: Process,
+    input: java.util.concurrent.Future<Unit>,
+    output: java.util.concurrent.Future<String>,
+    executor: java.util.concurrent.ExecutorService,
+): CleanupResult {
+    var interrupted = Thread.interrupted()
+    val cleanupDeadline = deadlineAfterMillis(PROCESS_GRACE_MS)
+    val descendants = process.descendants().toList().asReversed()
+    descendants.forEach { it.destroyForcibly() }
+    // Start every owned process terminating before spending the shared grace period waiting. In
+    // particular, ProcessHandle's exit notification can precede Process.waitFor updating the
+    // Process object on Windows, so reap the parent through Process itself below.
+    process.destroyForcibly()
+    descendants.forEach { interrupted = waitForExit(it, cleanupDeadline) || interrupted }
+    interrupted = waitForExit(process, cleanupDeadline) || interrupted
+    input.cancel(true)
+    output.cancel(true)
+    executor.shutdownNow()
+    try {
+        executor.awaitTermination(remainingMillis(cleanupDeadline), TimeUnit.MILLISECONDS)
+    } catch (cleanupInterrupted: InterruptedException) {
+        interrupted = true
+    }
+    val failure =
+        if (process.isAlive || descendants.any { it.isAlive }) {
+            IllegalStateException("Accessibility helper did not stop within its cleanup deadline")
+        } else {
+            null
+        }
+    return CleanupResult(interrupted, failure)
+}
+
+private fun deadlineAfterMillis(timeoutMs: Long, graceMs: Long = 0): Long {
+    val maximumMillis = Long.MAX_VALUE / NANOS_PER_MILLISECOND
+    val durationMillis = timeoutMs.coerceAtMost(maximumMillis - graceMs) + graceMs
+    return System.nanoTime() + durationMillis * NANOS_PER_MILLISECOND
 }
 
 private fun waitForExit(process: Process, deadlineNanos: Long): Boolean {
