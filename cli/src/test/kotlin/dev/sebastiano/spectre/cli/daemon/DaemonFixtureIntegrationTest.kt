@@ -24,6 +24,7 @@ import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -62,6 +63,50 @@ class DaemonFixtureIntegrationTest {
         assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a Compose Desktop display")
         val executable = System.getProperty("spectre.cli.distributionExecutable")
         assumeTrue(!executable.isNullOrBlank(), "Requires the installable packaged executable")
+        assumeTrue(
+            System.getenv("GSETTINGS_BACKEND") == "memory",
+            "Requires the release smoke's isolated GSettings backend",
+        )
+        val busAddress = System.getenv("DBUS_SESSION_BUS_ADDRESS").orEmpty()
+        val busPath =
+            Regex("(?:^|;)unix:path=([^,;]+)")
+                .find(busAddress)
+                ?.groupValues
+                ?.get(1)
+                ?.let(Paths::get)
+        assumeTrue(busPath != null && Files.exists(busPath), "Requires an existing private D-Bus")
+        val busDirectory = requireNotNull(busPath).parent
+        val socketDirectory =
+            System.getenv("SPECTRE_DAEMON_SOCKET_DIR")?.takeIf(String::isNotBlank)?.let(Paths::get)
+        assumeTrue(
+            socketDirectory != null && Files.isDirectory(socketDirectory),
+            "Requires the release smoke's private daemon socket directory",
+        )
+        val privateSocketDirectory = requireNotNull(socketDirectory)
+        val ownerProbe = Files.createTempFile("spectre-owner-probe-", ".tmp")
+        try {
+            val owner = Files.getOwner(ownerProbe)
+            assumeTrue(
+                Files.getOwner(busDirectory) == owner,
+                "Private D-Bus must be owned by the test user",
+            )
+            assumeTrue(
+                Files.getPosixFilePermissions(busDirectory) ==
+                    PosixFilePermissions.fromString("rwx------"),
+                "Private D-Bus directory must have mode 0700",
+            )
+            assumeTrue(
+                Files.getOwner(privateSocketDirectory) == owner,
+                "Daemon socket directory must be owned by the test user",
+            )
+            assumeTrue(
+                Files.getPosixFilePermissions(privateSocketDirectory) ==
+                    PosixFilePermissions.fromString("rwx------"),
+                "Daemon socket directory must have mode 0700",
+            )
+        } finally {
+            Files.deleteIfExists(ownerProbe)
+        }
         val atkWrapper = Paths.get("/usr/share/java/java-atk-wrapper.jar")
         assertTrue(
             Files.isRegularFile(atkWrapper),
@@ -91,11 +136,13 @@ class DaemonFixtureIntegrationTest {
                             "--accessibility-pid",
                             fixture.pid.toString(),
                             "--accessibility-capture",
-                            "--daemon-user",
-                            "spectre-attached-a11y-${UUID.randomUUID()}",
                             "--",
                             executable,
                         )
+                        .apply {
+                            environment()["SPECTRE_DAEMON_SOCKET_DIR"] =
+                                privateSocketDirectory.toString()
+                        }
                         .redirectErrorStream(true)
                         .redirectOutput(outputFile.toFile())
                         .start()
