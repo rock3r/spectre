@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.core
 import java.nio.file.Path
 import kotlin.io.path.readText
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DocsGuidanceContractTest {
@@ -38,6 +39,18 @@ class DocsGuidanceContractTest {
         assertContains(docs, "unsafeTakeover=true")
         assertContains(docs, "best-effort attempt")
         assertContains(docs, "does not rewrite the Windows ACL")
+    }
+
+    @Test
+    fun `skill documents fail closed visual idle capture`() {
+        val skill = root.resolve("skills/spectre/SKILL.md").readText()
+
+        assertContains(skill, "Missing helpers fail immediately")
+        assertContains(skill, "allowScreenRegionFallback = true")
+        assertFalse(
+            skill.contains("falls back to `Robot` region capture"),
+            "waitForVisualIdle must not promise an implicit Robot region fallback",
+        )
     }
 
     private fun assertContains(haystack: String, needle: String) {

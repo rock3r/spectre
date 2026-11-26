@@ -157,9 +157,8 @@ IntelliJ EDT dispatchers, wrap waits in `withContext(Dispatchers.Default) { ... 
 - `waitForVisualIdle(stableFrames = 3)` — consecutive pixel-stable frames using required native
   window capture; use before screenshots or after animations. Missing helpers fail immediately.
   Use `allowScreenRegionFallback = true` only when occlusion-sensitive desktop crops are acceptable.
-  Uses native window capture when `:recording` and a runnable helper exist, falls back to `Robot` region capture when
-  `:recording` is absent or the helper cannot launch, and fails fast on missing Wayland grants or unsupported Wayland
-  `JWindow` popups (`#640`).
+  Without that explicit fallback opt-in, an absent `:recording` module, a helper that cannot launch, missing Wayland
+  grants, or an unsupported Wayland `JWindow` popup (`#640`) fails fast instead of sampling desktop pixels.
 
 ### Screenshots and atomic capture
 
