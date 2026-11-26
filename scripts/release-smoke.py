@@ -103,6 +103,9 @@ from smoke_lib import (  # noqa: E402
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+LINUX_ACCESSIBILITY_ENABLE_NOTE = (
+    "enabled Linux accessibility for this snapshot; restored the previous setting afterwards"
+)
 OUT = ROOT / "build" / "smoke"
 
 # Default overall budget for a full baseline (seconds). Overridable via CLI.
@@ -313,9 +316,13 @@ def _private_linux_dbus(required: bool):
     if not required:
         yield {}
         return
+    daemon_environment = os.environ.copy()
+    daemon_environment.pop("AT_SPI_BUS_ADDRESS", None)
+    daemon_environment["GSETTINGS_BACKEND"] = "memory"
     process = subprocess.Popen(
         ["dbus-daemon", "--session", "--nofork", "--print-address=1"],
         cwd=ROOT,
+        env=daemon_environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -325,7 +332,10 @@ def _private_linux_dbus(required: bool):
         address = _read_process_line(process, timeout=10).strip()
         if not address:
             raise RuntimeError("private D-Bus daemon emitted no session address")
-        yield {"DBUS_SESSION_BUS_ADDRESS": address}
+        yield {
+            "DBUS_SESSION_BUS_ADDRESS": address,
+            "GSETTINGS_BACKEND": "memory",
+        }
     finally:
         _terminate_owned_process(process)
 
@@ -350,6 +360,18 @@ def _assert_linux_accessibility_disabled(env: dict[str, str], operation: str) ->
         )
 
 
+def _accesskit_success_detail(system: str) -> str:
+    platform_detail = (
+        "Linux default refusal, public CLI/MCP opt-in notes, immediate D-Bus restoration, "
+        if system == "Linux"
+        else ""
+    )
+    return (
+        "real packaged CLI read fixture by pid and title; "
+        f"{platform_detail}stable native roles, values, ownership, and schemaVersion=2 verified"
+    )
+
+
 def _accesskit_cli_smoke(executable: Path, expected_version: str) -> str:
     system = platform.system()
     manifest = ROOT / "fixtures/accesskit/Cargo.toml"
@@ -368,6 +390,11 @@ def _accesskit_cli_smoke(executable: Path, expected_version: str) -> str:
         # smoke must not disable a desktop which was already enabled by its user.
         with _private_linux_dbus(system == "Linux") as bus_environment:
             environment = {**os.environ, **daemon_environment, **bus_environment}
+            if system == "Linux":
+                # Keep the real display/runtime seat, but isolate both the a11y bus
+                # address and GSettings state from the operator's desktop session.
+                environment.pop("AT_SPI_BUS_ADDRESS", None)
+                environment["GSETTINGS_BACKEND"] = "memory"
             process = subprocess.Popen(
                 [*prefix, str(fixture)],
                 cwd=ROOT,
@@ -409,7 +436,11 @@ def _accesskit_cli_smoke(executable: Path, expected_version: str) -> str:
                         )
                     snapshot = json.loads(completed.stdout[json_start:])
                     if system == "Linux":
-                        if "notice:" not in completed.stderr or not snapshot.get("notes"):
+                        expected_notice = f"notice: {LINUX_ACCESSIBILITY_ENABLE_NOTE}"
+                        if (
+                            expected_notice not in completed.stderr
+                            or LINUX_ACCESSIBILITY_ENABLE_NOTE not in snapshot.get("notes", [])
+                        ):
                             raise AssertionError(
                                 "Linux opt-in must be exposed in CLI stderr and snapshot notes"
                             )
@@ -438,12 +469,9 @@ def _accesskit_cli_smoke(executable: Path, expected_version: str) -> str:
                         [
                             sys.executable,
                             str(ROOT / "scripts" / "mcp-stdio-smoke.py"),
-                            "--expected-version",
-                            expected_version,
-                            "--accessibility-pid",
-                            str(fixture_pid),
-                            "--",
-                            str(executable),
+                            "--expected-version", expected_version,
+                            "--accessibility-pid", str(fixture_pid),
+                            "--", str(executable),
                         ],
                         cwd=ROOT,
                         env=environment,
@@ -451,11 +479,7 @@ def _accesskit_cli_smoke(executable: Path, expected_version: str) -> str:
                         timeout=120,
                     )
                     _assert_linux_accessibility_disabled(environment, "packaged MCP")
-                return (
-                    "real packaged CLI read fixture by pid and title; Linux default refusal, "
-                    "public CLI/MCP opt-in notes, immediate D-Bus restoration, stable native "
-                    "roles, values, ownership, and schemaVersion=2 verified"
-                )
+                return _accesskit_success_detail(system)
             finally:
                 try:
                     _terminate_owned_process(process)

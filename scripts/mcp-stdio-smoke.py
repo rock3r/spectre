@@ -232,16 +232,10 @@ def main() -> None:
                 result = _tool_call(process, next_id, "accessibility_tree", arguments)
                 next_id += 1
                 state = subprocess.run(
-                    [
-                        "gdbus", "call", "--session", "--dest", "org.a11y.Bus",
-                        "--object-path", "/org/a11y/bus", "--method",
-                        "org.freedesktop.DBus.Properties.Get", "org.a11y.Status", "IsEnabled",
-                    ],
-                    env=env,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
+                    ["gdbus", "call", "--session", "--dest", "org.a11y.Bus",
+                     "--object-path", "/org/a11y/bus", "--method",
+                     "org.freedesktop.DBus.Properties.Get", "org.a11y.Status", "IsEnabled"],
+                    env=env, check=True, capture_output=True, text=True, timeout=30,
                 )
                 if "false" not in state.stdout.lower():
                     fail("accessibility_tree did not immediately restore IsEnabled=false", process)
@@ -260,8 +254,17 @@ def main() -> None:
                 snapshot = json.loads(_text_content(enabled))
             except json.JSONDecodeError:
                 fail(f"accessibility_tree opt-in returned invalid JSON: {enabled}", process)
-            if not snapshot.get("nodes") or not snapshot.get("notes"):
-                fail(f"accessibility_tree opt-in omitted nodes or enablement note: {snapshot}", process)
+            expected_ids = {"fixture-window", "primary-button", "newsletter", "account-name"}
+            actual_ids = {node.get("id") for node in snapshot.get("nodes", [])}
+            expected_note = (
+                "enabled Linux accessibility for this snapshot; restored the previous setting afterwards"
+            )
+            if not expected_ids.issubset(actual_ids) or expected_note not in snapshot.get("notes", []):
+                fail(
+                    "accessibility_tree opt-in omitted fixture IDs or exact enable/restore note: "
+                    f"{snapshot}",
+                    process,
+                )
 
         lifecycle = "tools+unknown-detach"
         if args.attach_pid is not None:
