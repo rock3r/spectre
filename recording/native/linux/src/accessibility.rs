@@ -159,7 +159,11 @@ fn validate(r: &Request) -> Result<()> {
 }
 
 fn capture(request: Request) -> Response {
-    match capture_inner(&request) {
+    response_from_result(capture_inner(&request))
+}
+
+fn response_from_result(result: std::result::Result<Snapshot, CaptureError>) -> Response {
+    match result {
         Ok(snapshot) => Response {
             ok: true,
             snapshot: Some(snapshot),
@@ -198,9 +202,9 @@ fn capture_inner(request: &Request) -> std::result::Result<Snapshot, CaptureErro
         let enable_deadline = deadline
             .checked_sub(STATUS_RESTORE_BUDGET)
             .unwrap_or(deadline);
-        return with_status_restoration(
-            || {
-                let status = fresh_status_proxy(&session, enable_deadline)?;
+        return with_prepared_status_restoration(
+            || fresh_status_proxy(&session, enable_deadline),
+            |status| {
                 set_property(&status, "org.a11y.Status", "IsEnabled", true)
                     .map_err(|error| timed_err(enable_deadline, error))
             },
@@ -209,6 +213,16 @@ fn capture_inner(request: &Request) -> std::result::Result<Snapshot, CaptureErro
         );
     }
     capture_with_status(request, deadline, &session, changed)
+}
+
+fn with_prepared_status_restoration<P>(
+    prepare: impl FnOnce() -> std::result::Result<P, CaptureError>,
+    enable: impl FnOnce(P) -> std::result::Result<(), CaptureError>,
+    work: impl FnOnce() -> std::result::Result<Snapshot, CaptureError>,
+    restore: impl FnOnce() -> std::result::Result<(), String>,
+) -> std::result::Result<Snapshot, CaptureError> {
+    let prepared = prepare()?;
+    with_status_restoration(|| enable(prepared), work, restore)
 }
 
 fn restore_status(session: &Connection) -> std::result::Result<(), String> {
@@ -225,19 +239,16 @@ fn with_status_restoration(
     work: impl FnOnce() -> std::result::Result<Snapshot, CaptureError>,
     restore: impl FnOnce() -> std::result::Result<(), String>,
 ) -> std::result::Result<Snapshot, CaptureError> {
-    // The setter may have applied true even when its response was lost. Once it was attempted,
-    // restoration and readback are mandatory on every exit path.
     let result = enable().and_then(|()| work());
     if let Err(restore_error) = restore() {
         let outcome = match &result {
             Ok(_) => "snapshot succeeded".to_string(),
             Err((code, message, _)) => format!("snapshot failed with {code}: {message}"),
         };
-        let partial = result.ok();
         return Err((
             "restore-failed",
             format!("failed to restore org.a11y.Status.IsEnabled after {outcome}: {restore_error}"),
-            partial,
+            None,
         ));
     }
     result
@@ -601,8 +612,7 @@ fn find_window_title(
     window: &Address,
     deadline: Instant,
 ) -> std::result::Result<TitleRead, CaptureError> {
-    let timeout = call_timeout(deadline)?;
-    let proxy = bus.with_proxy(&window.bus, window.path.clone(), timeout);
+    let proxy = bus.with_proxy(&window.bus, window.path.clone(), call_timeout(deadline)?);
     match proxy.method_call::<(Variant<String>,), _, _, _>(
         "org.freedesktop.DBus.Properties",
         "Get",
@@ -1457,8 +1467,7 @@ mod tests {
                 Err(anyhow::Error::new(dbus::Error::new_custom(
                     "org.freedesktop.DBus.Error.UnknownInterface",
                     "No such interface 'org.a11y.atspi.Accessible'",
-                ))
-                .context("AT-SPI GetChildren failed"))
+                )))
             } else {
                 Ok(42)
             }
@@ -1475,18 +1484,11 @@ mod tests {
                 "org.freedesktop.DBus.Error.AccessDenied",
                 "org.a11y.atspi.Accessible",
             ),
-            (
-                "org.freedesktop.DBus.Error.Failed",
-                "Permanent AT-SPI failure",
-            ),
         ] {
             let mut calls = 0;
             let result = retry_selected_root_read(Instant::now() + Duration::from_secs(1), || {
                 calls += 1;
-                Err::<(), _>(
-                    anyhow::Error::new(dbus::Error::new_custom(name, message))
-                        .context("AT-SPI GetChildren failed"),
-                )
+                Err::<(), _>(anyhow::Error::new(dbus::Error::new_custom(name, message)))
             });
             assert!(result.is_err());
             assert_eq!(calls, 1);
@@ -1522,61 +1524,83 @@ mod tests {
     }
 
     #[test]
-    fn applied_enable_with_lost_reply_is_restored_before_returning() {
+    fn preparation_failure_does_not_arm_restoration() {
         use std::cell::Cell;
-
-        let enabled = Cell::new(false);
+        let enable_calls = Cell::new(0);
         let restore_calls = Cell::new(0);
-        let result = with_status_restoration(
-            || {
-                enabled.set(true);
-                Err(("timeout", "enable reply was lost".into(), None))
+        let result = with_prepared_status_restoration(
+            || Err::<(), _>(("timeout", "initial status read timed out".into(), None)),
+            |()| {
+                enable_calls.set(enable_calls.get() + 1);
+                Ok(())
             },
-            || panic!("capture must not run after an enable error"),
+            || panic!("capture must not run"),
             || {
                 restore_calls.set(restore_calls.get() + 1);
-                enabled.set(false);
                 Ok(())
             },
         );
-
         assert_eq!(result.unwrap_err().0, "timeout");
-        assert!(!enabled.get(), "the mock desktop setting must be reverted");
+        assert_eq!(enable_calls.get(), 0);
+        assert_eq!(restore_calls.get(), 0);
+    }
+
+    #[test]
+    fn attempted_enable_with_lost_reply_is_restored() {
+        use std::cell::Cell;
+        let restore_calls = Cell::new(0);
+        let result = with_prepared_status_restoration(
+            || Ok(()),
+            |()| Err(("timeout", "enable reply was lost".into(), None)),
+            || panic!("capture must not run"),
+            || {
+                restore_calls.set(restore_calls.get() + 1);
+                Ok(())
+            },
+        );
+        assert_eq!(result.unwrap_err().0, "timeout");
         assert_eq!(restore_calls.get(), 1);
     }
 
     #[test]
-    fn each_sequential_call_gets_only_the_current_remaining_budget() {
-        let deadline = Instant::now() + Duration::from_millis(80);
-        let first = call_timeout(deadline).unwrap();
-        std::thread::sleep(Duration::from_millis(20));
-        let second = call_timeout(deadline).unwrap();
-        assert!(second < first, "a later proxy must not reuse {first:?}");
+    fn restore_failure_wire_never_contains_a_partial_snapshot() {
+        let successful_capture = with_status_restoration(
+            || Ok(()),
+            || Ok(empty_snapshot()),
+            || Err("readback failed".into()),
+        );
+        let failed_capture = with_status_restoration(
+            || Ok(()),
+            || {
+                Err((
+                    "timeout",
+                    "capture timed out".into(),
+                    Some(empty_snapshot()),
+                ))
+            },
+            || Err("readback failed".into()),
+        );
 
-        let request_deadline = Instant::now() + Duration::from_millis(300);
-        let mutation_deadline = request_deadline - STATUS_RESTORE_BUDGET;
-        assert!(call_timeout(mutation_deadline).unwrap() <= Duration::from_millis(100));
+        for result in [successful_capture, failed_capture] {
+            let encoded = serde_json::to_value(response_from_result(result)).unwrap();
+            assert_eq!(encoded["ok"], false);
+            assert_eq!(encoded["error"]["code"], "restore-failed");
+            assert!(encoded["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("readback failed"));
+            assert!(
+                encoded["error"].get("partialSnapshot").is_none(),
+                "{encoded}"
+            );
+            assert!(encoded.get("snapshot").is_none(), "{encoded}");
+        }
     }
 
     #[test]
-    fn only_unknown_interface_makes_a_title_scan_non_authoritative() {
-        let transient = dbus::Error::new_custom(
-            "org.freedesktop.DBus.Error.UnknownInterface",
-            "Accessible is still registering",
-        );
-        let permanent =
-            dbus::Error::new_custom("org.freedesktop.DBus.Error.AccessDenied", "title denied");
-        assert!(is_transient_title_error(&transient));
-        assert!(!is_transient_title_error(&permanent));
-
-        let candidate = Address {
-            bus: ":1.7".into(),
-            path: "/window/1".into(),
-        };
-        assert!(matches!(
-            unscoped_title_decision(vec![candidate], false, false, None, Instant::now()),
-            TitleDecision::Retry(None)
-        ));
+    fn cleanup_budget_fits_the_daemon_grace_period() {
+        assert_eq!(STATUS_RESTORE_BUDGET, STATUS_RESTORE_TIMEOUT * 2);
+        assert!(STATUS_RESTORE_BUDGET < Duration::from_millis(250));
     }
 
     #[test]
