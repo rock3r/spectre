@@ -1,0 +1,416 @@
+diff --git a/recording/native/linux/src/accessibility.rs b/recording/native/linux/src/accessibility.rs
+index c8a8a7a686b861c94590a967f06e3b42f3aa1bc3..2b1dfa02b2b1eed1a9a8773be5b5902664b66aca 100644
+--- a/recording/native/linux/src/accessibility.rs
++++ b/recording/native/linux/src/accessibility.rs
+@@ -1311,166 +1311,177 @@ fn walk_cached(
+             Some(key.clone()),
+             depth + 1,
+             request,
+             deadline,
+             window,
+             snapshot,
+         )?;
+     }
+     if children_truncated {
+         return node_limit_error(request.maximum_node_count, snapshot);
+     }
+     Ok(())
+ }
+ 
+ #[allow(clippy::too_many_arguments)]
+ fn walk(
+     bus: &Arc<SyncConnection>,
+     data: NodeData,
+     key: String,
+     parent: Option<String>,
+     depth: usize,
+     request: &Request,
+     deadline: Instant,
+     window: &Rect,
+     snapshot: &mut Snapshot,
++) -> std::result::Result<(), CaptureError> {
++    walk_with_reader(
++        data,
++        key,
++        parent,
++        depth,
++        request,
++        deadline,
++        window,
++        snapshot,
++        &|child, deadline| read_node(bus, child, deadline),
++    )
++}
++
++#[allow(clippy::too_many_arguments)]
++fn walk_with_reader(
++    data: NodeData,
++    key: String,
++    parent: Option<String>,
++    depth: usize,
++    request: &Request,
++    deadline: Instant,
++    window: &Rect,
++    snapshot: &mut Snapshot,
++    read: &impl Fn(&Address, Instant) -> Result<NodeData>,
+ ) -> std::result::Result<(), CaptureError> {
+     check_deadline(deadline, Some(snapshot))?;
+     if snapshot.nodes.len() >= request.maximum_node_count {
+         return Err((
+             "limit-reached",
+             format!("maximumNodeCount {} reached", request.maximum_node_count),
+             Some(std::mem::replace(snapshot, empty_snapshot())),
+         ));
+     }
+     let on_screen = data
+         .bounds
+         .as_ref()
+         .map(|bounds| intersects(bounds, window));
+     snapshot.nodes.push(Node {
+         key: key.clone(),
+         parent_key: parent,
+         id: data.id.clone(),
+         platform_role: data.platform_role,
+         role: data.raw_role.and_then(normalize_raw_role),
+         name: data.name,
+         states: data.states,
+         value: data.value,
+         on_screen,
+         bounds: data.bounds,
+     });
+     if depth >= request.maximum_depth && !data.children.is_empty() {
+         return Err((
+             "limit-reached",
+             format!("maximumDepth {} reached", request.maximum_depth),
+             Some(std::mem::replace(snapshot, empty_snapshot())),
+         ));
+     }
+ 
+     let prefetch_count = child_prefetch_count(
+         snapshot.nodes.len(),
+         request.maximum_node_count,
+         data.children.len(),
+     );
+     if prefetch_count == 0 && !data.children.is_empty() {
+         return node_limit_error(request.maximum_node_count, snapshot);
+     }
+     let children_truncated = prefetch_count < data.children.len();
+ 
+-    // Fetch siblings in bounded parallel batches. Joining in input order keeps key assignment and
+-    // the final traversal deterministic while avoiding a serial GetRole/GetState/GetInterfaces
+-    // property farm. Eight workers also bounds outstanding D-Bus calls and memory.
+-    let mut child_data = Vec::new();
+-    for batch in data.children[..prefetch_count].chunks(8) {
++    let mut completed_children = Vec::new();
++    for (index, child_address) in data.children[..prefetch_count].iter().enumerate() {
+         check_deadline(deadline, Some(snapshot))?;
+-        let results = std::thread::scope(|scope| {
+-            let handles: Vec<_> = batch
+-                .iter()
+-                .cloned()
+-                .map(|child| {
+-                    let bus = Arc::clone(bus);
+-                    scope.spawn(move || {
+-                        let result = read_node(&bus, &child, deadline);
+-                        (child, result)
+-                    })
+-                })
+-                .collect();
+-            handles
+-                .into_iter()
+-                .map(|handle| handle.join().unwrap())
+-                .collect::<Vec<_>>()
+-        });
+-        for (child_address, result) in results {
+-            let child_data_result = match result {
+-                Ok(data) => data,
+-                Err(error) => {
+-                    return Err(structural_read_error(error, deadline, snapshot));
+-                }
+-            };
+-            child_data.push((child_address, child_data_result));
+-        }
+-    }
+-    let mut ids = HashMap::new();
+-    for (_, child) in &child_data {
+-        if let Some(id) = &child.id {
+-            *ids.entry(id.clone()).or_insert(0usize) += 1;
+-        }
+-    }
+-    for (index, (_child, child_node)) in child_data.into_iter().enumerate() {
+-        let duplicate = child_node
+-            .id
+-            .as_ref()
+-            .map(|id| ids[id] > 1)
+-            .unwrap_or(false);
+-        let child_key = format!(
+-            "{}/{}",
+-            key,
+-            child_segment(
+-                child_node.id.as_deref(),
+-                index,
+-                duplicate,
+-                children_truncated
+-            )
+-        );
+-        walk(
+-            bus,
++        let child_node = read(child_address, deadline)
++            .map_err(|error| structural_read_error(error, deadline, snapshot))?;
++        let child_id = child_node.id.clone();
++        // Until every sibling has been read, only a positional key is safe: an unread sibling may
++        // duplicate this id. A completed, non-truncated set is renamed below.
++        let provisional_key = format!("{key}/{index}");
++        let child_start = snapshot.nodes.len();
++        walk_with_reader(
+             child_node,
+-            child_key,
++            provisional_key,
+             Some(key.clone()),
+             depth + 1,
+             request,
+             deadline,
+             window,
+             snapshot,
++            read,
+         )?;
++        completed_children.push((child_start, snapshot.nodes.len(), child_id));
++    }
++    if !children_truncated {
++        let mut ids = HashMap::new();
++        for (_, _, id) in &completed_children {
++            if let Some(id) = id {
++                *ids.entry(id.clone()).or_insert(0usize) += 1;
++            }
++        }
++        for (index, (start, end, id)) in completed_children.into_iter().enumerate() {
++            let duplicate = id.as_ref().is_some_and(|id| ids[id] > 1);
++            let old_prefix = format!("{key}/{index}");
++            let new_prefix = format!(
++                "{key}/{}",
++                child_segment(id.as_deref(), index, duplicate, false)
++            );
++            rename_subtree(&mut snapshot.nodes[start..end], &old_prefix, &new_prefix);
++        }
+     }
+     if children_truncated {
+         return node_limit_error(request.maximum_node_count, snapshot);
+     }
+     Ok(())
+ }
+ 
++fn rename_subtree(nodes: &mut [Node], old_prefix: &str, new_prefix: &str) {
++    for node in nodes {
++        if node.key == old_prefix || node.key.starts_with(&format!("{old_prefix}/")) {
++            node.key = format!("{new_prefix}{}", &node.key[old_prefix.len()..]);
++        }
++        if let Some(parent) = &mut node.parent_key {
++            if parent == old_prefix || parent.starts_with(&format!("{old_prefix}/")) {
++                *parent = format!("{new_prefix}{}", &parent[old_prefix.len()..]);
++            }
++        }
++    }
++}
++
+ fn child_prefetch_count(current: usize, maximum: usize, child_count: usize) -> usize {
+     maximum.saturating_sub(current).min(child_count)
+ }
+ 
+ fn child_segment(id: Option<&str>, index: usize, duplicate: bool, truncated: bool) -> String {
+     // An unread sibling may repeat an apparently unique id. Positional keys make a partial
+     // snapshot agree with a complete traversal in that case.
+     segment(id, index, duplicate || truncated)
+ }
+ 
+ fn node_limit_error(
+     maximum_node_count: usize,
+     snapshot: &mut Snapshot,
+ ) -> std::result::Result<(), CaptureError> {
+     Err((
+         "limit-reached",
+         format!("maximumNodeCount {maximum_node_count} reached"),
+         Some(std::mem::replace(snapshot, empty_snapshot())),
+     ))
+ }
+ 
+ fn structural_read_error(
+     error: impl std::fmt::Display,
+     deadline: Instant,
+     snapshot: &mut Snapshot,
+@@ -2498,50 +2509,176 @@ mod tests {
+         );
+ 
+         root.children.clear();
+         request.maximum_depth = 0;
+         let mut snapshot = empty_snapshot();
+         assert!(walk_cached(
+             &mut HashMap::new(),
+             root,
+             "w0/root".into(),
+             None,
+             0,
+             &request,
+             Instant::now() + Duration::from_secs(1),
+             &Rect {
+                 x: 0,
+                 y: 0,
+                 width: 1,
+                 height: 1
+             },
+             &mut snapshot,
+         )
+         .is_ok());
+         assert_eq!(snapshot.nodes.len(), 1);
+     }
+     #[test]
++    fn uncached_walk_stops_before_late_sibling_at_depth_boundary() {
++        use std::sync::Mutex;
++
++        let address = |path: &str| Address {
++            bus: ":1.42".into(),
++            path: path.to_string().into(),
++        };
++        let node = |id: &str, role: u32, children: Vec<Address>| NodeData {
++            id: Some(id.into()),
++            raw_role: Some(role),
++            platform_role: Some(format!("role-{role}")),
++            name: Some(id.into()),
++            states: vec![],
++            value: None,
++            bounds: None,
++            children,
++            interfaces: vec![],
++        };
++        let root = node(
++            "root",
++            68,
++            vec![address("/first"), address("/late_failing")],
++        );
++        let calls = Mutex::new(Vec::new());
++        let read = |child: &Address, _| {
++            calls.lock().unwrap().push(child.path.to_string());
++            match child.path.to_string().as_str() {
++                "/first" => Ok(node("first", 43, vec![address("/grandchild")])),
++                _ => anyhow::bail!("late sibling must not be requested"),
++            }
++        };
++        let mut request = request();
++        request.maximum_depth = 1;
++        request.maximum_node_count = 10;
++        let mut snapshot = empty_snapshot();
++        let result = walk_with_reader(
++            root,
++            "w0/root".into(),
++            None,
++            0,
++            &request,
++            Instant::now() + Duration::from_secs(1),
++            &Rect {
++                x: 0,
++                y: 0,
++                width: 1,
++                height: 1,
++            },
++            &mut snapshot,
++            &read,
++        );
++
++        let (code, message, partial) = result.unwrap_err();
++        assert_eq!(
++            (code, message.as_str()),
++            ("limit-reached", "maximumDepth 1 reached")
++        );
++        let partial = partial.unwrap();
++        assert_eq!(calls.into_inner().unwrap(), ["/first"]);
++        assert_eq!(partial.nodes.len(), 2);
++        assert_eq!(partial.nodes[1].platform_role.as_deref(), Some("role-43"));
++        assert_eq!(partial.nodes[1].key, "w0/root/0");
++    }
++
++    #[test]
++    fn uncached_walk_preserves_complete_keys_and_deeper_boundary_order() {
++        use std::sync::Mutex;
++
++        let address = |path: &str| Address {
++            bus: ":1.42".into(),
++            path: path.to_string().into(),
++        };
++        let node = |id: &str, children: Vec<Address>| NodeData {
++            id: Some(id.into()),
++            raw_role: None,
++            platform_role: None,
++            name: None,
++            states: vec![],
++            value: None,
++            bounds: None,
++            children,
++            interfaces: vec![],
++        };
++        let tree: HashMap<String, NodeData> = HashMap::from([
++            ("/a".into(), node("same", vec![])),
++            ("/b".into(), node("same", vec![])),
++        ]);
++        let calls = Mutex::new(Vec::new());
++        let read = |a: &Address, _| {
++            calls.lock().unwrap().push(a.path.to_string());
++            tree.get(&a.path.to_string())
++                .cloned()
++                .ok_or_else(|| anyhow::anyhow!("unexpected read"))
++        };
++        let mut request = request();
++        request.maximum_depth = 3;
++        request.maximum_node_count = 10;
++        let mut snapshot = empty_snapshot();
++        walk_with_reader(
++            node("root", vec![address("/a"), address("/b")]),
++            "w0/root".into(),
++            None,
++            0,
++            &request,
++            Instant::now() + Duration::from_secs(1),
++            &Rect {
++                x: 0,
++                y: 0,
++                width: 1,
++                height: 1,
++            },
++            &mut snapshot,
++            &read,
++        )
++        .unwrap();
++        assert_eq!(calls.into_inner().unwrap(), ["/a", "/b"]);
++        assert_eq!(
++            snapshot
++                .nodes
++                .iter()
++                .map(|n| n.key.as_str())
++                .collect::<Vec<_>>(),
++            ["w0/root", "w0/root/0", "w0/root/1"]
++        );
++    }
++    #[test]
+     fn rejects_process_target_outside_linux_pid_range() {
+         let request: Request = serde_json::from_str(
+             r#"{"target":{"type":"process-id","value":2147483648},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#,
+         )
+         .unwrap();
+         assert!(validate(&request).is_err());
+     }
+     #[test]
+     fn keys_escape_and_fall_back_for_duplicates() {
+         assert_eq!(segment(Some("a/b~c"), 0, false), "a~1b~0c");
+         assert_eq!(segment(Some("same"), 2, true), "2");
+         assert_eq!(segment(None, 3, false), "3");
+         assert_eq!(segment(Some("123"), 4, false), "~2123");
+     }
+     #[test]
+     fn tiny_budget_bounds_prefetch_and_keeps_repeated_sibling_key_stable() {
+         assert_eq!(child_prefetch_count(1, 1, 10), 0);
+         assert_eq!(child_prefetch_count(1, 3, 10), 2);
+         assert_eq!(child_prefetch_count(3, 3, 10), 0);
+ 
+         // A truncated sibling list cannot prove that an id is unique. Use the positional form
+         // that a complete traversal also uses when a later sibling repeats the id.
+         assert_eq!(child_segment(Some("repeated"), 0, false, true), "0");
+         assert_eq!(child_segment(Some("repeated"), 0, true, false), "0");
+     }
