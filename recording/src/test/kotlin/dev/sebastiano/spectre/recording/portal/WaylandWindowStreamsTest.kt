@@ -69,11 +69,74 @@ class WaylandWindowStreamsTest {
     fun `identity binder still refuses a stale or resized window`() {
         val session = FakeSession(frameWindow = Rectangle(0, 0, 490, 310))
         val identity = MutterWindowIdentity(7722, Region(200, 237, 480, 283), Dimension(480, 320))
+        var now = 0L
 
         assertFailsWith<WaylandCaptureUnavailableException> {
-            IdentityWindowStreamBinder<String>(session) { identity }
+            IdentityWindowStreamBinder<String>(
+                    session = session,
+                    paintWaitMs = 100,
+                    sleep = { now += it * 1_000_000 },
+                    nanoTime = { now },
+                    identityOf = { identity },
+                )
                 .bind("stale", "k1", CursorMode.HIDDEN)
         }
+        assertEquals(listOf("k1"), session.unbound)
+    }
+
+    @Test
+    fun `identity binder waits for the actual painted frame before calibration`() {
+        val session = FakeSession(Rectangle(25, 25, 400, 300), transparentFrames = 2)
+        val identity = MutterWindowIdentity(42, Region(10, 20, 400, 300))
+
+        val stream =
+            IdentityWindowStreamBinder<String>(session, sleep = {}) { identity }
+                .bind("main", "new-key", CursorMode.HIDDEN)
+
+        assertEquals(Point(25, 25), stream.origin)
+        assertEquals(2, session.screenshots)
+        assertTrue(session.unbound.isEmpty())
+    }
+
+    @Test
+    fun `identity binder times out transparently and releases only its new key`() {
+        val session = FakeSession(Rectangle(0, 0, 400, 300), transparentFrames = 100)
+        var now = 0L
+        val binder =
+            IdentityWindowStreamBinder<String>(
+                session = session,
+                paintWaitMs = 100,
+                sleep = { now += it * 1_000_000 },
+                nanoTime = { now },
+                identityOf = { MutterWindowIdentity(42, Region(10, 20, 400, 300)) },
+            )
+
+        val error =
+            assertFailsWith<WaylandCaptureUnavailableException> {
+                binder.bind("main", "new-key", CursorMode.HIDDEN)
+            }
+
+        assertTrue(error.message.orEmpty().contains("transparent"), error.message)
+        assertEquals(listOf("new-key"), session.unbound)
+    }
+
+    @Test
+    fun `identity binder preserves polling failure when cleanup also fails`() {
+        val session = FakeSession(Rectangle(0, 0, 400, 300), transparentFrames = 1)
+        session.screenshotFailure = IllegalStateException("paint read failed")
+        session.unbindFailure = IllegalStateException("cleanup failed")
+        val binder =
+            IdentityWindowStreamBinder<String>(session, sleep = {}) {
+                MutterWindowIdentity(42, Region(0, 0, 400, 300))
+            }
+
+        val error =
+            assertFailsWith<IllegalStateException> {
+                binder.bind("main", "new-key", CursorMode.HIDDEN)
+            }
+
+        assertEquals("paint read failed", error.message)
+        assertEquals(listOf("new-key"), session.unbound)
     }
 
     @Test
@@ -485,6 +548,8 @@ class WaylandWindowStreamsTest {
         val unbound = mutableListOf<String>()
         val recordings = mutableListOf<Command.StartWindowRecording>()
         var lastIdentity: MutterWindowIdentity? = null
+        var screenshotFailure: RuntimeException? = null
+        var unbindFailure: RuntimeException? = null
 
         override fun bindFocused(
             key: String,
@@ -505,6 +570,7 @@ class WaylandWindowStreamsTest {
         }
 
         override fun screenshot(key: String): BufferedImage {
+            screenshotFailure?.let { throw it }
             if (forgetNextScreenshot) {
                 forgetNextScreenshot = false
                 throw WaylandHelperErrorException(HELPER_ERROR_WINDOW_NOT_BOUND, "no stream")
@@ -515,6 +581,7 @@ class WaylandWindowStreamsTest {
 
         override fun unbind(key: String) {
             unbound += key
+            unbindFailure?.let { throw it }
         }
 
         override fun startRecording(

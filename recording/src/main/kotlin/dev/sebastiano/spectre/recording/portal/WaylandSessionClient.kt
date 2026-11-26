@@ -37,10 +37,17 @@ private fun locateWindow(
         check(process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
             "window identity helper timed out"
         }
-        val line = process.inputReader(StandardCharsets.UTF_8).use { it.readLine() }
-        check(process.exitValue() == 0 && line != null) { "window identity helper failed" }
+        val line =
+            checkNotNull(process.inputReader(StandardCharsets.UTF_8).use { it.readLine() }) {
+                "window identity helper failed (exit ${process.exitValue()})"
+            }
         return when (val event = json.decodeFromString(Event.serializer(), line)) {
-            is Event.WindowLocated -> event.bindingToken
+            is Event.WindowLocated -> {
+                check(process.exitValue() == 0) {
+                    "window identity helper failed (exit ${process.exitValue()})"
+                }
+                event.bindingToken
+            }
             is Event.Error -> throw WaylandHelperErrorException(event.kind, event.message)
             else -> error("unexpected reply to locate_window: $event")
         }
