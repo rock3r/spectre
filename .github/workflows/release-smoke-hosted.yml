@@ -133,7 +133,14 @@ jobs:
           "$@"
           SESSION
           chmod +x "$RUNNER_TEMP/x11-session-tools/"*
-          echo "$RUNNER_TEMP/x11-session-tools" >> "$GITHUB_PATH"
+          # Record an independent ready Openbox/D-Bus control, then give the release
+          # script the distribution's unchanged xvfb-run, its documented X11 default.
+          PATH="$RUNNER_TEMP/x11-session-tools:$PATH" xvfb-run -a bash -c '
+            xprop -root _NET_SUPPORTING_WM_CHECK
+            xdpyinfo | grep dimensions
+            gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.a11y.Bus.GetAddress
+          ' > "$RUNNER_TEMP/release-smoke-identity/openbox-control.txt"
+          command -v xvfb-run > "$RUNNER_TEMP/release-smoke-identity/harness-xvfb-run.txt"
 
       - name: Set up stable Rust for the Linux native helper
         uses: dtolnay/rust-toolchain@stable
