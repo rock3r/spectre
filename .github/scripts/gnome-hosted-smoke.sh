@@ -69,6 +69,7 @@ systemd-run \
   --setenv="SMOKE_ARTIFACTS=$SMOKE_ARTIFACTS" \
   --setenv="SMOKE_REPO=$SMOKE_REPO" \
   --setenv="SMOKE_MODE=$SMOKE_MODE" \
+  --setenv="CANDIDATE_SHA=$CANDIDATE_SHA" \
   --setenv="ATSPI_REPO=$ATSPI_REPO" \
   --setenv="FIXTURE_CHECKOUT=$FIXTURE_CHECKOUT" \
   "$SMOKE_SESSION_SCRIPT"

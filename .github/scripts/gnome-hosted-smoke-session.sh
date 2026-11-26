@@ -20,6 +20,9 @@ session_diagnostics() {
   loginctl session-status "$session_id" >"$SMOKE_ARTIFACTS/login-session.txt" 2>&1
   busctl --user list >"$SMOKE_ARTIFACTS/user-bus.txt" 2>&1
   pw-dump >"$SMOKE_ARTIFACTS/pw-dump.json" 2>"$SMOKE_ARTIFACTS/pw-dump.stderr"
+  gnome-shell --version >"$SMOKE_ARTIFACTS/shell-version.txt" 2>&1
+  gnome-extensions info "${extension_uuid:-unavailable}" >"$SMOKE_ARTIFACTS/extension-info.txt" 2>&1
+  gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.NameHasOwner dev.sebastiano.Spectre.WindowIdentity >"$SMOKE_ARTIFACTS/identity-service-owner.txt" 2>&1
   gnome-extensions list --enabled >"$SMOKE_ARTIFACTS/enabled-extensions.txt" 2>&1
   cp -a /tmp/spectre-mutter-window-smoke "$SMOKE_ARTIFACTS/" 2>/dev/null
   if [[ -s "$SMOKE_ARTIFACTS/helper.pid" ]]; then

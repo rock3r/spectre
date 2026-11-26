@@ -10,6 +10,8 @@ on:
   push:
     branches: [release-0.10/gnome-hosted-smoke]
     paths-ignore:
+      - .github/workflows/gnome-jammy-smoke.yml
+      - .github/smoke-overlays/jammy-identity.patch
       - .github/reader-overlays/726-packaged-smoke.patch
       - .github/workflows/a11y-packaged-release-cell.yml
       - .github/release-smoke-hosted.env
@@ -21,7 +23,7 @@ permissions:
 
 jobs:
   public-wayland-cli-recording-live:
-    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Verify AT-SPI') && !startsWith(github.event.head_commit.message, 'Calibrate') && !startsWith(github.event.head_commit.message, 'Capture original') && github.event.head_commit.message != 'Provision XRandR for live geometry calibration'
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Verify Jammy') && !startsWith(github.event.head_commit.message, 'Verify AT-SPI') && !startsWith(github.event.head_commit.message, 'Calibrate') && !startsWith(github.event.head_commit.message, 'Capture original') && github.event.head_commit.message != 'Provision XRandR for live geometry calibration'
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     steps:
@@ -80,7 +82,7 @@ jobs:
           retention-days: 7
 
   gnome-mutter-window-identity:
-    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Verify packaged')
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Verify Jammy') && !startsWith(github.event.head_commit.message, 'Verify packaged')
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     strategy:

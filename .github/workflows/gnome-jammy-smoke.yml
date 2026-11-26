@@ -1,0 +1,82 @@
+name: Temporary Jammy GNOME public capture
+on:
+  push:
+    branches: [release-0.10/gnome-hosted-smoke]
+    paths:
+      - .github/workflows/gnome-jammy-smoke.yml
+      - .github/smoke-overlays/jammy-identity.patch
+permissions:
+  contents: read
+jobs:
+  jammy-gnome:
+    name: GNOME Shell 42 / ${{ matrix.mode }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [capture, cli-recording-live]
+    timeout-minutes: 55
+    steps:
+      - name: Check out temporary workflow tooling
+        uses: actions/checkout@v6
+        with:
+          path: smoke-tooling
+          persist-credentials: false
+
+      - name: Check out the release candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.candidate_sha || '51cf4ee24572c14fe48da0fb15be1b3d9aaea9b6' }}
+          persist-credentials: false
+          path: candidate
+
+      - name: Verify the immutable public GNOME candidate
+        working-directory: candidate
+        run: |
+          test "$(git rev-parse HEAD)" = 51cf4ee24572c14fe48da0fb15be1b3d9aaea9b6
+          test "$(git write-tree)" = d889d474eee688cbf3da4a141b3407777a313af8
+          test -z "$(git status --porcelain)"
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          build-root-directory: candidate
+
+      - name: Run installed CLI and public recording API on the attended GNOME seat
+        env:
+          ATSPI_REPO: unused
+          FIXTURE_CHECKOUT: unused
+          SMOKE_MODE: ${{ matrix.mode }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || '51cf4ee24572c14fe48da0fb15be1b3d9aaea9b6' }}
+          SMOKE_ARTIFACTS: ${{ runner.temp }}/gnome-cli-recording-live
+          SMOKE_REPO: ${{ github.workspace }}/candidate
+          SMOKE_SESSION_SCRIPT: ${{ github.workspace }}/smoke-tooling/.github/scripts/gnome-hosted-smoke-session.sh
+        run: |
+          export SMOKE_USER="$(id -un)" RUST_BIN="$(dirname "$(command -v cargo)")"
+          sudo --preserve-env=ATSPI_REPO,FIXTURE_CHECKOUT,SMOKE_MODE,SMOKE_USER,RUST_BIN,CANDIDATE_SHA,JAVA_HOME,SMOKE_ARTIFACTS,SMOKE_REPO,SMOKE_SESSION_SCRIPT .github/scripts/gnome-hosted-smoke.sh
+        working-directory: smoke-tooling
+
+      - name: Record Jammy distribution and component versions
+        if: always()
+        shell: bash
+        run: |
+          out="$RUNNER_TEMP/gnome-cli-recording-live"
+          mkdir -p "$out"
+          cat /etc/os-release > "$out/host-os-release.txt"
+          dpkg-query -W gnome-shell mutter pipewire gstreamer1.0-pipewire xdg-desktop-portal-gnome > "$out/host-versions.txt" || true
+          gnome-shell --version > "$out/shell-version.txt" || true
+
+      - name: Upload CLI and recording live evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jammy-gnome-${{ matrix.mode }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gnome-cli-recording-live/
+          if-no-files-found: error
+          retention-days: 7
