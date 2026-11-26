@@ -4,6 +4,7 @@ import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
 import java.awt.Rectangle
+import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
 import java.awt.datatransfer.Transferable
@@ -14,9 +15,12 @@ import java.awt.event.MouseListener
 import java.awt.event.MouseMotionListener
 import java.awt.event.MouseWheelEvent
 import java.awt.event.MouseWheelListener
+import java.awt.event.WindowAdapter
+import java.awt.event.WindowEvent
 import java.awt.image.BufferedImage
 import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import javax.swing.AbstractAction
 import javax.swing.JFrame
@@ -224,6 +228,42 @@ class SyntheticInputParityTest {
                 ),
                 counts,
                 "expected click-count to advance to 2 on the second click pair, got $counts",
+            )
+        } finally {
+            disposeFrame(frame.frame)
+        }
+    }
+
+    @Test
+    @Timeout(value = TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+    fun `frame fixture restores requested placement after a delayed native placement`() {
+        assumeLiveAwtAvailable()
+        val target = MouseTargetPanel()
+        val delayedPlacementApplied = CountDownLatch(1)
+        val frame =
+            showFrameOnEdt(target) {
+                addWindowListener(
+                    object : WindowAdapter() {
+                        override fun windowOpened(event: WindowEvent) {
+                            // Model a WM acknowledging the map and applying its placement only
+                            // after Swing has already made the target report isShowing=true.
+                            SwingUtilities.invokeLater {
+                                setLocation(DELAYED_FRAME_OFFSET_PX, DELAYED_FRAME_OFFSET_PX)
+                                delayedPlacementApplied.countDown()
+                            }
+                        }
+                    }
+                )
+            }
+        try {
+            assertTrue(
+                delayedPlacementApplied.await(SHOW_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                "controlled delayed placement was not applied",
+            )
+            assertEquals(
+                FRAME_OFFSET_PX to FRAME_OFFSET_PX,
+                frame.frameLocationOnScreen(),
+                "the fixture must return only after the requested native placement is settled",
             )
         } finally {
             disposeFrame(frame.frame)
@@ -547,7 +587,46 @@ class SyntheticInputParityTest {
             Thread.sleep(POLL_INTERVAL_MS)
         }
         check(target.isShowing) { "Test JFrame did not become visible" }
-        return TestFrame(frame!!)
+        val shownFrame = checkNotNull(frame)
+        awaitNativeFramePlacement(shownFrame, target)
+        return TestFrame(shownFrame)
+    }
+
+    private fun awaitNativeFramePlacement(frame: JFrame, target: JPanel) {
+        // isShowing becomes true as soon as AWT maps the peer, before a reparenting WM has
+        // necessarily sent its final ConfigureNotify. Let already-queued map callbacks run, then
+        // re-assert the requested location. On X11 that ConfigureRequest is ordered after the map;
+        // Toolkit.sync plus locationOnScreen read-back observes the native acknowledgement rather
+        // than trusting JFrame's pre-map coordinates.
+        drainEdt()
+        var matchingObservations = 0
+        var placementMatches = false
+        var lastObserved = "not observed"
+        val observations = ArrayDeque<String>()
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(SHOW_TIMEOUT_SECONDS)
+        while (System.nanoTime() < deadline && matchingObservations < SETTLED_OBSERVATIONS) {
+            SwingUtilities.invokeAndWait {
+                frame.setLocation(FRAME_OFFSET_PX, FRAME_OFFSET_PX)
+                Toolkit.getDefaultToolkit().sync()
+                val location = frame.locationOnScreen
+                lastObserved =
+                    "screen=(${location.x},${location.y}) frame=(${frame.x},${frame.y}) " +
+                        "showing=${target.isShowing}"
+                placementMatches =
+                    location.x == FRAME_OFFSET_PX &&
+                        location.y == FRAME_OFFSET_PX &&
+                        target.isShowing
+            }
+            if (observations.size == MAX_PLACEMENT_DIAGNOSTICS) observations.removeFirst()
+            observations.addLast(lastObserved)
+            matchingObservations = if (placementMatches) matchingObservations + 1 else 0
+            if (matchingObservations < SETTLED_OBSERVATIONS) Thread.sleep(POLL_INTERVAL_MS)
+        }
+        check(matchingObservations == SETTLED_OBSERVATIONS) {
+            "Test JFrame native placement did not settle at " +
+                "($FRAME_OFFSET_PX,$FRAME_OFFSET_PX) within ${SHOW_TIMEOUT_SECONDS}s; " +
+                "last=$lastObserved recent=${observations.joinToString()}"
+        }
     }
 
     private fun waitForScreenshotColor(
@@ -613,6 +692,15 @@ class SyntheticInputParityTest {
             center = (origin.x + target.width / 2) to (origin.y + target.height / 2)
         }
         return center
+    }
+
+    private fun TestFrame.frameLocationOnScreen(): Pair<Int, Int> {
+        var location = 0 to 0
+        SwingUtilities.invokeAndWait {
+            val origin = frame.locationOnScreen
+            location = origin.x to origin.y
+        }
+        return location
     }
 
     private fun TestFrame.targetTopLeftOnScreen(target: JPanel): java.awt.Point {
@@ -710,6 +798,9 @@ class SyntheticInputParityTest {
         const val POLL_INTERVAL_MS: Long = 25L
         const val FRAME_SIZE_PX: Int = 200
         const val FRAME_OFFSET_PX: Int = 100
+        const val DELAYED_FRAME_OFFSET_PX: Int = 20
         const val REGION_SIZE_PX: Int = 60
+        const val SETTLED_OBSERVATIONS: Int = 4
+        const val MAX_PLACEMENT_DIAGNOSTICS: Int = 12
     }
 }
