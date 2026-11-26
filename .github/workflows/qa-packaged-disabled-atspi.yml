@@ -1,0 +1,126 @@
+name: Verify public disabled accessibility packaged surfaces
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [release-0.10/gnome-hosted-smoke]
+    paths:
+      - .github/qa-public-disabled-atspi.env
+
+permissions:
+  contents: read
+
+jobs:
+  packaged-disabled-atspi:
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && (github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'Verify public disabled accessibility'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out scratch QA without credentials
+        uses: actions/checkout@v6
+        with:
+          path: scratch
+          persist-credentials: false
+      - name: Authenticate exact public source input
+        shell: bash
+        run: |
+          set -euo pipefail
+          control=scratch/.github/qa-public-disabled-atspi.env
+          test "$(grep -Evc '^(#.*|$|PUBLIC_SHA=(HOLD|[0-9a-f]{40})|VERSION_NAME=0\.10\.0)$' "$control")" -eq 0
+          source "$control"
+          [[ "$PUBLIC_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'PUBLIC_SHA remains HOLD; coordinator must pin the exact public SHA' >&2; exit 1; }
+          git init --quiet product
+          git -C product remote add origin https://github.com/rock3r/spectre.git
+          git -C product fetch --quiet --no-tags --depth=1 origin "$PUBLIC_SHA"
+          git -C product checkout --quiet --detach FETCH_HEAD
+          test "$(git -C product rev-parse HEAD)" = "$PUBLIC_SHA"
+          test -z "$(git -C product status --porcelain=v1 --untracked-files=all)"
+          printf 'PUBLIC_SHA=%s\nVERSION_NAME=%s\n' "$PUBLIC_SHA" "$VERSION_NAME" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/qa-packaged-disabled-atspi"
+          git -C product show -s --format='%H %T %cI %s' >"$RUNNER_TEMP/qa-packaged-disabled-atspi/source.txt"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          build-root-directory: product
+          cache-read-only: true
+      - name: Install native build and private desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang pkg-config libdbus-1-dev libatspi2.0-dev libpipewire-0.3-dev libspa-0.2-dev libxkbcommon-x11-0 libgtk-3-0t64 gir1.2-gtk-3.0 python3-gi python3-pyatspi at-spi2-core dbus-x11 xvfb x11-utils openbox unzip xauth libxcursor-dev libx11-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev libgtk-3-dev
+      - name: Build and extract the exact 0.10.0 Linux x64 Roast package
+        working-directory: product
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon -PVERSION_NAME="$VERSION_NAME" :cli:packageLinuxX64 --console=plain
+          zip=$(find cli/build/construo/distributions/linuxX64 -maxdepth 1 -type f -name '*.zip' -print -quit)
+          test -n "$zip"
+          unzip -q "$zip" -d "$RUNNER_TEMP/public-package"
+          cli=$(find "$RUNNER_TEMP/public-package" -type f -name spectre -perm -111 -print -quit)
+          test -n "$cli"
+          case "$cli" in "$RUNNER_TEMP/public-package"/*) ;; *) exit 1;; esac
+          python3 - "$zip" "$RUNNER_TEMP/qa-packaged-disabled-atspi/archive-identity.json" <<'PY'
+          import io, json, struct, sys, zipfile
+          archive, output = sys.argv[1:]
+          jar_basename = "cli-0.10.0-all.jar"
+          helper_name = "native/linux/x86_64/spectre-wayland-helper"
+          with zipfile.ZipFile(archive) as outer:
+              jars = [item for item in outer.infolist() if item.filename.rsplit("/", 1)[-1] == jar_basename]
+              if len(jars) != 1:
+                  raise SystemExit(f"expected one {jar_basename} in Roast ZIP, found {[x.filename for x in jars]!r}")
+              with zipfile.ZipFile(io.BytesIO(outer.read(jars[0]))) as jar:
+                  try:
+                      helper = jar.getinfo(helper_name)
+                  except KeyError as error:
+                      raise SystemExit(f"{helper_name} absent from {jars[0].filename}") from error
+                  header = jar.read(helper)[:20]
+          machine = struct.unpack_from("<H", header, 18)[0] if header[:4] == b"\x7fELF" and len(header) >= 20 else None
+          if machine != 62:
+              raise SystemExit(f"packaged helper ELF machine is {machine!r}, expected x86_64 (62)")
+          with open(output, "w") as stream:
+              json.dump({"outerJar": jars[0].filename, "jarEntry": helper_name, "elfMachine": machine}, stream)
+              stream.write("\n")
+          PY
+          sha256sum "$zip" >"$RUNNER_TEMP/qa-packaged-disabled-atspi/package.sha256"
+          "$cli" --version >"$RUNNER_TEMP/qa-packaged-disabled-atspi/version.txt"
+          grep -Eq '0\.10\.0' "$RUNNER_TEMP/qa-packaged-disabled-atspi/version.txt"
+          printf 'PACKAGED_CLI=%s\n' "$cli" >> "$GITHUB_ENV"
+      - name: Run QA oracle guards
+        run: python3 scratch/.github/qa-packaged-disabled-atspi/test_verify.py -v
+      - name: Exercise packaged CLI, daemon, and MCP on a private disabled bus
+        shell: bash
+        env:
+          QA_DIR: ${{ github.workspace }}/scratch/.github/qa-packaged-disabled-atspi
+          QA_ARTIFACTS: ${{ runner.temp }}/qa-packaged-disabled-atspi
+        run: dbus-run-session -- scratch/.github/qa-packaged-disabled-atspi/run-session.sh
+      - name: Run the unmodified stock AccessKit release-smoke case against the same extracted ZIP
+        if: always() && env.PACKAGED_CLI != ''
+        working-directory: product
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS SPECTRE_DAEMON_SOCKET_DIR SPECTRE_ACCESSIBILITY_HELPER SPECTRE_ACCESSIBILITY_HELPER_PATH SPECTRE_ACCESSIBILITY_SOCKET
+          PYTHONPATH="$PWD/scripts" python3 - <<'PYTHON' 2>&1 | tee "$RUNNER_TEMP/qa-packaged-disabled-atspi/stock-accesskit-release-cell.log"
+          import json, os, runpy, time
+          from pathlib import Path
+          script = Path('scripts/release-smoke.py').resolve()
+          started = time.monotonic()
+          result = runpy.run_path(str(script))['_accesskit_cli_smoke'](Path(os.environ['PACKAGED_CLI']), os.environ['VERSION_NAME'])
+          print(json.dumps({'result':'pass','detail':result,'wallSeconds':round(time.monotonic()-started,3)}))
+          PYTHON
+      - name: Upload compact evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-disabled-atspi-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qa-packaged-disabled-atspi
+          if-no-files-found: error
+          retention-days: 14
