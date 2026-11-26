@@ -222,7 +222,7 @@ internal object LaunchReadiness {
             // stack a full attachTimeoutMs UDS wait after the stage deadline.
             val options = attachOptions.copy(udsPath = udsPath, attachTimeoutMs = remainingMs)
             try {
-                return AgentAttach.attach(attachedPid, options)
+                return AgentAttach.attachLaunched(attachedPid, options, remainingMs)
             } catch (ex: AttachInterruptedException) {
                 Thread.currentThread().interrupt()
                 throw LaunchAgentBootstrapException(
