@@ -88,19 +88,22 @@ Headless runners without a seated GNOME session do not expose
 Unit tests check token persistence, reuse, and removal without a live portal.
 First consent still needs a real compositor seat and a person to accept the dialog.
 
-## Linux Wayland: one approval, up front
+## Linux Wayland: consent and helper lifetime
 
-On Linux Wayland, a person must accept the portal consent dialog **once**:
-`spectre permissions request` (or `WaylandPortalAccess.request()`) opens it, stores the
-grant, and leaves the session helper running. `spectre permissions check` reports the grant
-without a dialog. After that, no Spectre run opens a dialog, as long as the stored token
-stays valid. What can still require a new approval:
+On Linux Wayland, a person must accept the portal consent dialog before Spectre can use
+monitor capture or remote input. `spectre permissions request` (or
+`WaylandPortalAccess.request()`) opens it and leaves the session helper running;
+`spectre permissions check --json` reports `granted`, `sessionActive`, and `tokenStored`
+without opening a dialog. Calls reuse the live helper without another picker. Reuse after that
+helper stops depends on whether the portal returned a stored restore token. What can require a
+new approval:
 
 - The user revokes the grant, or deletes the token file.
 - The monitor changes identity. The token names the monitor by vendor, product, and serial,
   and Mutter gives every new virtual monitor a new serial.
 - The grant covers one monitor. A region on another monitor cannot be captured with it.
-- A desktop other than GNOME may not restore RemoteDesktop grants without a dialog.
+- The portal returns no restore token, or rejects a previously stored token when a new helper
+  starts. Restore support is compositor- and portal-version-dependent.
 
 On GNOME, window stills, `waitForVisualIdle()` samples, and window recording use Mutter's
 `org.gnome.Mutter.ScreenCast` window streams through the session helper. Starting the helper
@@ -123,10 +126,12 @@ Settings:
 - `SPECTRE_WAYLAND_CONSENT_TIMEOUT_SECS` sets how long the session helper waits for each
   dialog step (default 60). `spectre permissions request --timeout` sets it for the request.
 
-`spectre-wayland-helper --session` installs `dev.sebastiano.spectre.desktop` and calls
-`org.freedesktop.host.portal.Registry.Register` **before** `SelectDevices` and
-`SelectSources`. It opens **one** RemoteDesktop session for keyboard, pointer, and
-monitor access with `persist_mode=2`. Spectre stores replacement `restore_token` files under
+`spectre-wayland-helper --session` installs `dev.sebastiano.spectre.desktop`. When the
+portal exposes `org.freedesktop.host.portal.Registry`, the helper registers that application
+before `SelectDevices` and `SelectSources`; older backends that do not expose the interface
+continue without registration. It opens **one** RemoteDesktop session for keyboard, pointer,
+and monitor access with `persist_mode=2`. When the portal returns a `restore_token`, Spectre
+stores it under
 `$XDG_STATE_HOME/spectre/` with file mode `0600` and directory mode `0700`.
 Use `SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` or `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` to change the
 location. Spectre does not store these tokens under `~/.java/robot/`.
@@ -159,10 +164,11 @@ Parallel JVMs connect to its socket, sharing one Robot portal session.
 - **Coordinates**: pointer motion is translated by the granted stream origin. Fractional
   HiDPI and a monitor other than the restored one can still miss; pick the same screen at
   first consent.
-- **Later CLI and agent sessions:** The helper restores the RemoteDesktop grant
-  without another dialog. This behaviour was validated on GNOME/mutter; other
-  compositors remain best-effort. Portal tokens are single-use. Each successful
-  `Start` writes a replacement file. A cancelled dialog stores no token.
+- **Later CLI and agent sessions:** While the helper is live, clients reuse its active
+  RemoteDesktop session without another dialog. After a helper restart, dialog-free restoration
+  is available only when `tokenStored` is true and the portal accepts the token. Portal tokens
+  are single-use; each successful restored `Start` writes the replacement returned by the
+  portal. A cancelled dialog, or a successful grant with no returned token, stores no token.
 - **Invalidation**: if SelectDevices/SelectSources/Start rejects the token, Spectre clears
   the file, retries interactively once, and fails closed if that retry fails.
 
@@ -267,16 +273,28 @@ X11, macOS, and Windows keep their input and capture paths.
   window streams. In unattended SSH/headless runs without a grant, a capture fails with an
   error that names `spectre permissions request`. It never returns a silent blank PNG.
 
-  Public Ubuntu 24.04/GNOME 46 evidence validates the Mutter path. The
-  [static occluded-window run](https://github.com/rock3r/spectre/actions/runs/45737657330)
-  produced a 91-frame, 3.03-second movie without exposing the foreground window. The
-  [changing-crop run](https://github.com/rock3r/spectre/actions/runs/45739871299) produced
-  220×140 crops whose sampled frames changed from red to green, and the
-  [public CLI run](https://github.com/rock3r/spectre/actions/runs/45741500107) exercised the
-  packaged command-line path. These runs establish the behavior on GNOME 46; the separately
-  updated shared GNOME 42 installer is not evidence that GNOME 42 is fixed here. The native
-  `pipewiresrc` `keepalive-time` property, expressed in milliseconds, maintains cadence when a
-  target's contents do not change.
+  Public native-desktop evidence covers both supported Ubuntu GNOME baselines:
+
+  - **Ubuntu 22.04, GNOME Shell 42.9:** the public portal advertised RemoteDesktop v1 and
+    ScreenCast v4, while the GNOME RemoteDesktop backend advertised v0. The packaged public
+    `permissions request` and `permissions check --json` path reported `granted: true` and
+    `sessionActive: true`, but `tokenStored: false`. Static and changing Mutter window captures
+    decoded successfully, and the live helper reused consent without a second picker. After the
+    helper was deliberately stopped, its old socket had no listener; the next permissions
+    request displayed a second genuine picker, which was accepted to create a new helper, still
+    without a token. See the [live-session and capture run](https://github.com/rock3r/spectre/actions/runs/45749559957/job/139673792065)
+    and [helper-restart run](https://github.com/rock3r/spectre/actions/runs/45749559957/job/139673792412).
+  - **Ubuntu 24.04, GNOME 46:** the packaged CLI reported `granted: true`,
+    `sessionActive: true`, and `tokenStored: true`; a screenshot and recording reused the live
+    helper without a second picker. That run did not restart the Noble helper, so it does not by
+    itself prove post-restart restoration. See the [Noble packaged-CLI run](https://github.com/rock3r/spectre/actions/runs/45746386387/job/139663371101).
+
+  Separate native Mutter streams also captured two application windows independently while
+  focus remained elsewhere, including when both windows had the same title. This validates the
+  local, owner-scoped Mutter identity path on these GNOME configurations; it does not establish
+  equivalent behaviour for every Wayland compositor or for the explicit portal window path.
+  The native `pipewiresrc` `keepalive-time` property, expressed in milliseconds, maintains
+  cadence when a target's contents do not change.
   Routine validation does not cover KDE Plasma, sway, wlroots, other distributions,
   or other Ubuntu versions.
   Use `WaylandPortalRecorder` for region capture until a compositor-specific lookup exists.

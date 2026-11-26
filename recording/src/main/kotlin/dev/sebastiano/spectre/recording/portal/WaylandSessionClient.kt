@@ -101,14 +101,14 @@ internal constructor(
         waylandConsentPrompt(System::getProperty, envLookup)
     },
     private val screenshotSender: ((Command) -> Event)? = null,
-    private val identityProcessFactory: (Path, Map<String, String>) -> Process =
+    identityProcessFactory: (Path, Map<String, String>) -> Process =
         fun(helper, environment): Process =
             ProcessBuilder(helper.toString())
                 .apply { environment().putAll(environment) }
                 .redirectError(ProcessBuilder.Redirect.INHERIT)
                 .start(),
-    private val identityTimeoutSeconds: Long = IDENTITY_TIMEOUT_SECONDS,
-    private val identityDestroyTimeoutMs: Long = IDENTITY_DESTROY_TIMEOUT_MS,
+    identityTimeoutSeconds: Long = IDENTITY_TIMEOUT_SECONDS,
+    identityDestroyTimeoutMs: Long = IDENTITY_DESTROY_TIMEOUT_MS,
 ) {
     constructor() :
         this(
