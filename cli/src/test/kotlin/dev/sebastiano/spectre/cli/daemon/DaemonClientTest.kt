@@ -26,6 +26,52 @@ import org.junit.jupiter.api.condition.OS
 @OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonClientTest {
     @Test
+    fun `operation exceptions preserve diagnostics without leaking them to later requests`() {
+        val failures =
+            ArrayDeque<RuntimeException>().apply {
+                add(SecurityException("OS discovery denied"))
+                add(IllegalArgumentException("invalid VM identifier"))
+            }
+        val socketPath = temporaryDaemonClientSocketPath()
+        val registry = DaemonSessionRegistry {
+            val failure = failures.removeFirst()
+            RequestDiagnostics.report("attach warning: ${failure.message}")
+            throw failure
+        }
+        val server = DaemonServer(socketPath, registry)
+        val client = DaemonClient(socketPath, retainDiagnostics = true)
+
+        try {
+            listOf(
+                    SecurityException("OS discovery denied"),
+                    IllegalArgumentException("invalid VM identifier"),
+                )
+                .forEachIndexed { index, failure ->
+                    assertEquals(
+                        DaemonResponse.Diagnosed(
+                            response =
+                                DaemonResponse.Error(
+                                    DaemonErrorCode.OperationFailed,
+                                    "${failure.javaClass.simpleName}: ${failure.message}",
+                                ),
+                            warnings = listOf("attach warning: ${failure.message}"),
+                        ),
+                        client.request(DaemonRequest.Attach(index.toLong() + 1)),
+                    )
+                }
+
+            assertEquals(
+                DaemonResponse.Sessions(emptyList()),
+                client.request(DaemonRequest.ListSessions),
+            )
+        } finally {
+            server.close()
+            assertTrue(server.awaitTermination())
+            deleteTemporaryDaemonClientSocketPath(socketPath)
+        }
+    }
+
+    @Test
     fun `accessibility capture rejects an old daemon before sending the capture request`() {
         val socketPath = temporaryDaemonClientSocketPath()
         val receivedAfterHello = AtomicReference<DaemonRequest?>()

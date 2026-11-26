@@ -216,6 +216,7 @@ public constructor(
         }
     }
 
+    @Suppress("TooGenericExceptionCaught") // RPC boundary must preserve an error response.
     private fun processRequest(
         request: DaemonRequest,
         handshake: ConnectionHandshake,
@@ -227,10 +228,7 @@ public constructor(
             RequestDiagnostics.capture(diagnosticSessionId(request)) {
                 try {
                     handleRequest(request, handshake.complete, handshake.version)
-                } catch (exception: IOException) {
-                    logConnectionFailure(exception)
-                    operationFailure(exception)
-                } catch (exception: IllegalStateException) {
+                } catch (exception: Exception) {
                     logConnectionFailure(exception)
                     operationFailure(exception)
                 }
