@@ -312,7 +312,7 @@ internal fun nativeWindowCaptureFor(classLoader: ClassLoader): ((Window) -> Buff
 
 internal fun nativeScreenRegionCaptureFor(
     classLoader: ClassLoader
-): ((Rectangle) -> BufferedImage)? {
+): ((Rectangle?) -> BufferedImage)? {
     val bridge =
         try {
             Class.forName(NATIVE_WINDOW_CAPTURE_BRIDGE, false, classLoader)
@@ -321,13 +321,24 @@ internal fun nativeScreenRegionCaptureFor(
         }
     val capture =
         try {
-            bridge.getMethod("captureScreenRegion", Rectangle::class.java)
+            bridge.getMethod("captureScreenRegionOrDesktop", Rectangle::class.java)
         } catch (_: NoSuchMethodException) {
-            return null
+            // Older recording modules still accept explicit rectangles through the legacy bridge.
+            try {
+                bridge.getMethod("captureScreenRegion", Rectangle::class.java)
+            } catch (_: NoSuchMethodException) {
+                return null
+            }
         }
     return { region ->
         try {
-            capture.invoke(null, region) as BufferedImage
+            val compatibleRegion =
+                if (capture.name == "captureScreenRegion" && region == null) {
+                    virtualDesktopBounds()
+                } else {
+                    region
+                }
+            capture.invoke(null, compatibleRegion) as BufferedImage
         } catch (e: InvocationTargetException) {
             val cause = e.cause ?: e
             if (cause is RuntimeException) throw cause

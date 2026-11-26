@@ -11,6 +11,26 @@ import kotlin.test.assertTrue
 
 class RobotDriverScreenshotTest {
     @Test
+    fun `macOS no-arg screenshots preserve null through native boundary`() {
+        val requested = mutableListOf<Rectangle?>()
+        val native = BufferedImage(40, 20, BufferedImage.TYPE_INT_ARGB)
+        val driver =
+            RobotDriver(
+                robot = RecordingRobotAdapter(platformCapture = true),
+                clipboard = RecordingClipboardAdapter(),
+                nativeRegionCapture = { region ->
+                    requested += region
+                    native
+                },
+                isMacOs = { true },
+            )
+
+        assertTrue(driver.screenshot().width > 0)
+        assertTrue(driver.screenshotAtDeviceScale() === native)
+        assertEquals(listOf<Rectangle?>(null, null), requested)
+    }
+
+    @Test
     fun `screenshot consults the screen-recording guard before capturing`() {
         val guard = RecordingTccGuard()
         val robot = RecordingRobotAdapter()
