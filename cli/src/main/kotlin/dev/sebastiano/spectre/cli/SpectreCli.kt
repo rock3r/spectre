@@ -376,7 +376,7 @@ private class AccessibilityTreeCommand(
                 throw DaemonCommandException(
                     DaemonResponse.Error(
                         DaemonErrorCode.OperationFailed,
-                        "${response.error.code}: ${response.error.message}",
+                        "${response.error.rawCode ?: response.error.code}: ${response.error.message}",
                     )
                 )
             }
@@ -557,7 +557,7 @@ private class CaptureCommand(
                     throw DaemonCommandException(
                         DaemonResponse.Error(
                             DaemonErrorCode.OperationFailed,
-                            "${response.error.code}: ${response.error.message}",
+                            "${response.error.rawCode ?: response.error.code}: ${response.error.message}",
                         )
                     )
                 is DaemonResponse.Error -> throw DaemonCommandException(response)
