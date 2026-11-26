@@ -66,7 +66,7 @@ grep -F -q 'taskkill.exe /PID $p.Id /T /F' "$script" || fail "timeout does not c
 grep -F -q 'timed out after {1}s' "$script" || fail "timeout diagnostic is missing"
 grep -F -q '"--stop"' "$script" || fail "packaged Gradle-ish launch does not reset attach-tainted daemons"
 invoke_gradle_body="$(awk '/function Invoke-Gradle/{p=1; next} p && /^function /{exit} p' "$script")"
-echo "$invoke_gradle_body" | grep -F -q '"--no-daemon"' || fail "Windows smoke Gradle calls must not leave a daemon holding redirected output open"
+grep -F -q '"--no-daemon"' <<< "$invoke_gradle_body" || fail "Windows smoke Gradle calls must not leave a daemon holding redirected output open"
 
 # --- Shared schemaVersion report + stable scenario IDs (#398) ---
 grep -F -q 'schemaVersion' "$script" || fail "Windows report missing schemaVersion"
@@ -164,13 +164,13 @@ grep -F -q 'GradleError' "$script" || fail "teardown probe must take the current
 # Codex: a hung Gradle that already wrote green XML + MessageIOException must not
 # pass. Only a prompt "exited with code" teardown is waivable.
 probe_body="$(awk '/function Test-PointerMoveTeardownRace/{p=1; next} p && /^function /{exit} p' "$script")"
-echo "$probe_body" | grep -F -q 'timed out after' || fail "teardown probe must reject Invoke-Native timeout errors"
-echo "$probe_body" | grep -F -q 'exited with code' || fail "teardown probe must require a prompt nonzero Gradle exit"
+grep -F -q 'timed out after' <<< "$probe_body" || fail "teardown probe must reject Invoke-Native timeout errors"
+grep -F -q 'exited with code' <<< "$probe_body" || fail "teardown probe must require a prompt nonzero Gradle exit"
 # Codex #519: a cache/report "Could not write" on a full disk must not waive
 # the required pointer-move smoke. Only the #500/#72 loopback test-event
 # socket (MessageIOException + 127.0.0.1) is waivable.
-echo "$probe_body" | grep -F -q '127.0.0.1' || fail "teardown probe must require the 127.0.0.1 test-event socket"
-if echo "$probe_body" | grep -E -q -- '-or \$raw -match "Could not write"'; then
+grep -F -q '127.0.0.1' <<< "$probe_body" || fail "teardown probe must require the 127.0.0.1 test-event socket"
+if grep -E -q -- '-or \$raw -match "Could not write"' <<< "$probe_body"; then
   fail "teardown probe still waives generic Could not write failures"
 fi
 grep -F -q 'macos-tcc' "$script" || fail "Windows runner missing macos-tcc required scenario id"
@@ -189,16 +189,16 @@ grep -F -q '$limitLines[0] -ne $expectedError' "$script" || fail "Windows Access
 # daemon status (which deliberately does not start a missing daemon). It must restore the exact
 # prior process value and only clean up when a real daemon socket proves this cell owns state.
 a11y_body="$(awk '/\$a11yStep = Invoke-Step -Id "a11y-accesskit-windows"/{p=1} p && /\[void\]\$results.Add\(\$a11yStep\)/{exit} p' "$script")"
-echo "$a11y_body" | grep -F -q '[Guid]::NewGuid()' || fail "Windows AccessKit cell must use a GUID-isolated daemon endpoint"
-echo "$a11y_body" | grep -F -q 'SPECTRE_DAEMON_SOCKET_DIR' || fail "Windows AccessKit cell must select the private daemon endpoint"
-if echo "$a11y_body" | grep -F -q '"daemon", "status"'; then
+grep -F -q '[Guid]::NewGuid()' <<< "$a11y_body" || fail "Windows AccessKit cell must use a GUID-isolated daemon endpoint"
+grep -F -q 'SPECTRE_DAEMON_SOCKET_DIR' <<< "$a11y_body" || fail "Windows AccessKit cell must select the private daemon endpoint"
+if grep -F -q '"daemon", "status"' <<< "$a11y_body"; then
   fail "Windows AccessKit cell must not run the non-starting daemon status command"
 fi
-echo "$a11y_body" | grep -F -q 'Get-ChildItem' || fail "Windows AccessKit cleanup must discover owned daemon sockets"
-echo "$a11y_body" | grep -F -q '"daemon", "kill"' || fail "Windows AccessKit cleanup must gracefully stop an owned daemon"
-echo "$a11y_body" | grep -F -q '$previousDaemonSocketDir' || fail "Windows AccessKit cell must preserve and restore the prior endpoint value"
-echo "$a11y_body" | grep -F -q '$actionError' || fail "Windows AccessKit cleanup must preserve the original cell failure"
-echo "$a11y_body" | grep -F -q '$cleanupErrors' || fail "Windows AccessKit cell must fail when cleanup alone fails"
+grep -F -q 'Get-ChildItem' <<< "$a11y_body" || fail "Windows AccessKit cleanup must discover owned daemon sockets"
+grep -F -q '"daemon", "kill"' <<< "$a11y_body" || fail "Windows AccessKit cleanup must gracefully stop an owned daemon"
+grep -F -q '$previousDaemonSocketDir' <<< "$a11y_body" || fail "Windows AccessKit cell must preserve and restore the prior endpoint value"
+grep -F -q '$actionError' <<< "$a11y_body" || fail "Windows AccessKit cleanup must preserve the original cell failure"
+grep -F -q '$cleanupErrors' <<< "$a11y_body" || fail "Windows AccessKit cell must fail when cleanup alone fails"
 
 # --- Optional: parse with pwsh when present (macOS/Linux CI agents may have it) ---
 # Note: this is PowerShell Core parse, not Desktop 5.1; ASCII byte check is the 5.1 stand-in.
