@@ -104,7 +104,7 @@ jobs:
           cache-read-only: true
 
       - name: Prewarm exact public Gradle distribution and verified Foojay plugin dependencies
-        if: startsWith(github.event.head_commit.message, 'Ship final Linux verified upstream recovery') || startsWith(github.event.head_commit.message, 'Ship final Linux dependency recovery')
+        if: startsWith(github.event.head_commit.message, 'Ship final Linux verified upstream recovery') || startsWith(github.event.head_commit.message, 'Ship final Linux dependency recovery') || startsWith(github.event.head_commit.message, 'Preserve Openbox upstream')
         working-directory: candidate
         env:
           GH_TOKEN: ${{ github.token }}
