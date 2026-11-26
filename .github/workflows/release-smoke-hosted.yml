@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   release-smoke-xvfb:
-    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke'
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Diagnose Windows')
     runs-on: ubuntu-24.04
     # The committed harness owns an unmodified 7,200-second execution budget. Leave
     # enough time around it for a clean checkout, tool installation, and report upload.
@@ -166,3 +166,86 @@ jobs:
             ${{ runner.temp }}/release-smoke-identity/phase.txt
           if-no-files-found: error
           retention-days: 14
+
+
+  short-java-exit:
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && startsWith(github.event.head_commit.message, 'Diagnose Windows')
+    runs-on: windows-latest
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [1, 2]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: aa8d5b2731f42886356e563c3e40c64807f1ae1b
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+      - name: Repeated native Windows short-launch classification
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = aa8d5b2731f42886356e563c3e40c64807f1ae1b
+          cat > "$RUNNER_TEMP/replay-short-launch.py" <<'PYTHON'
+          import os
+          import json
+          from pathlib import Path
+          import shutil
+          import subprocess
+          import sys
+          import tempfile
+          from xml.etree import ElementTree as ET
+
+          checkout = Path.cwd()
+          out = Path(sys.argv[1]).absolute()
+          out.mkdir(parents=True, exist_ok=True)
+          reps = int(sys.argv[2])
+          wrapper = checkout / "gradlew.bat"
+          output = checkout / "agent/build/test-results/test"
+          matcher = "*LaunchAndAttachIntegrationTest.java -version exits as stage PROCESS_ALIVE with stderr capture files*"
+          for index in range(1, reps + 1):
+              name = f"repetition-{index:02}"
+              command = [str(wrapper), ":agent:test", "--tests", matcher, "--rerun", "--console=plain"]
+              runner = Path.home()/".codex/skills/gradle-run/scripts/gradle_run.py"
+              if runner.is_file() and "GITHUB_ACTIONS" not in os.environ:
+                  managed = [sys.executable, str(runner), "--root", str(out/"gradle-run")]
+                  workflow = json.loads(subprocess.check_output(managed+["create"], text=True))["workflow"]
+                  command = managed+["run","--workflow",workflow,"--scope","targeted","--question","Does the short java version child retain PROCESS_ALIVE classification under Windows?","--"]+command
+              with (out/(name+".log")).open("w",encoding="utf-8") as log:
+                  proc = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
+              if runner.is_file() and "GITHUB_ACTIONS" not in os.environ:
+                  subprocess.run(managed+["finish","--workflow",workflow],check=True)
+              matches = list(output.glob("TEST-*LaunchAndAttachIntegrationTest.xml"))
+              if len(matches) != 1:
+                  raise Exception(f"{name}: expected one report, got {matches} (Gradle {proc.returncode})")
+              report = ET.parse(matches[0]).getroot()
+              cases = [t for t in report.findall("testcase") if "java -version exits" in t.attrib.get("name","")]
+              if len(cases) != 1:
+                  raise Exception(f"{name}: expected the single short-exit test, got {len(cases)}")
+              case = cases[0]
+              if case.find("skipped") is not None:
+                  raise Exception(f"{name}: unexpectedly skipped")
+              shutil.copy2(matches[0],out/(name+".xml"))
+              fail = case.find("failure")
+              status = "pass" if proc.returncode == 0 and fail is None else "fail"
+              print(name,status,case.get("time"),flush=True)
+              with (out/"receipts.jsonl").open("a",encoding="utf-8") as receipt:
+                  receipt.write(json.dumps({"repetition":index,"status":status,"seconds":case.get("time"),"returncode":proc.returncode,"failure":None if fail is None else fail.text})+"\n")
+          if any(json.loads(line)["status"] != "pass" for line in (out/"receipts.jsonl").read_text().splitlines()):
+              raise SystemExit(1)
+          PYTHON
+          python "$RUNNER_TEMP/replay-short-launch.py" "$RUNNER_TEMP/short-launch-receipts" 24
+      - name: Upload per-process assertions and full cause XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: short-java-exit-windows-${{ matrix.replica }}
+          path: ${{ runner.temp }}/short-launch-receipts
+          if-no-files-found: error
+          retention-days: 7
