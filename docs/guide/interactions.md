@@ -65,8 +65,8 @@ Coordination is cooperative: it prevents participating Spectre clients from inte
 cannot block a human, an older Spectre version, or another automation framework. A contended EDT
 call fails immediately with `ContendedEdtInputLeaseException`; acquire the scope from a non-EDT
 test thread or use JUnit per-test isolation instead of blocking the AUT's event thread.
-`Auto` also avoids opening a new coordinator session from the EDT: without an already-connected
-session it proceeds uncoordinated. Choose `Required` when that fallback is unacceptable.
+With a provider installed, a missing coordinator session on the EDT fails the operation.
+Explicit `Auto` permits uncoordinated input only when the provider is missing.
 
 The **attach path uses `Required`** whenever the target can coordinate at all — an injected agent
 drives the target's default synthetic driver (or real OS input if that target opted in) into a

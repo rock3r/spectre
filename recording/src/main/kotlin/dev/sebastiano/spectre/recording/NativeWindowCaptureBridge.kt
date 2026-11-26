@@ -34,12 +34,9 @@ internal object NativeWindowCaptureBridge {
     /**
      * True when the host can actually run a native still (not merely load this class).
      *
-     * Linux stills spawn `gst-launch-1.0` via the bundled helper. If that binary is missing,
-     * visual- idle treats native capture as unavailable and falls back to Robot region sampling
-     * (#503). An interrupted or timed-out probe is not globally cached: a later `waitForVisualIdle`
-     * may retry. The inconclusive Robot decision is keyed to [waitId] so overlapping waits cannot
-     * clear each other's state. A timeout is also copied to other waits that were already open
-     * behind the same in-flight probe, so a second 3s `--version` cannot eat the default 5s wait.
+     * A missing GStreamer executable makes native capture unavailable. The visual-idle caller
+     * decides whether its capture policy permits region sampling. An interrupted or timed-out probe
+     * is scoped to [waitId] so a later wait can retry. Queued waits share its timeout.
      */
     @JvmStatic
     @JvmName("isPlatformCaptureUsable")
@@ -282,8 +279,9 @@ private fun scaledDimension(points: Int, scale: Double): Int =
     (points * scale).roundToInt().coerceAtLeast(if (points == 0) 0 else 1)
 
 /**
- * [cache] is the JVM-lifetime result. [waitScoped] is the Robot decision for this wait when [cache]
- * is null so later frames do not start another probe; a later wait clears it and retries.
+ * [cache] is the JVM-lifetime result. [waitScoped] is the native availability result for this wait
+ * when [cache] is null so later frames do not start another probe; a later wait clears it and
+ * retries.
  */
 internal data class CompletedProbe(
     val usableNow: Boolean,
@@ -309,7 +307,10 @@ internal fun rememberCompletedProbe(
     )
 }
 
-/** Per-wait inconclusive Robot decisions. Ending one wait must not drop another wait's slot. */
+/**
+ * Per-wait inconclusive native availability results. Ending one wait must not drop another wait's
+ * slot.
+ */
 internal class WaitScopedProbeTable {
     private val nextId = AtomicLong()
     private val tableLock = Any()
