@@ -149,10 +149,11 @@ class ScreenCaptureKitStillSessionsTest {
         screenshotter(factory, stillSessions = sessions)
             .captureWindow(UniqueTitledWindow("Spectre"), 4242L)
         val output = Files.createTempFile("spectre-sck-after-stills-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         try {
             recorder(factory, sessions)
                 .start(UniqueTitledWindow("Spectre"), 4242L, output, RecordingOptions())
-                .stop()
+                .use { Files.write(output, byteArrayOf(1, 2)) }
         } finally {
             output.deleteIfExists()
         }

@@ -680,6 +680,7 @@ final class Recorder {
     private var sessionStarted = false
     private var pipelineError: Error?
     private var framesSeen: Int = 0
+    private var recordingFile: URL?
     private var framesAppended: Int = 0
     // Wakes startup after either its first successfully appended frame or a terminal pipeline
     // error. The waiter inspects the protected state to distinguish the two outcomes.
@@ -726,6 +727,9 @@ final class Recorder {
         // + window discovery cost. Pure precondition check, doesn't depend on a window
         // existing.
         try validateOutputPath(args.output)
+        defer {
+            if let recordingFile { _ = unlink(recordingFile.path) }
+        }
 
         let target = try await discoverTarget()
         try await startCapture(target: target)
@@ -740,19 +744,28 @@ final class Recorder {
             }
         }
         try await finalize()
+        let (seen, appended, dropped) = frameCounts()
         // Diagnostic counters always printed to stderr so the JVM-side smoke can see whether
         // the helper actually saw frames or was just sat there idle.
         FileHandle.standardError.write(
             Data(
-                "spectre-screencapture: frames seen=\(framesSeen) accepted=\(framesAppended) dropped=\(framesDropped)\n"
+                "spectre-screencapture: frames seen=\(seen) accepted=\(appended) dropped=\(dropped)\n"
                     .utf8)
         )
-        if let pipelineError {
+        if let pipelineError = currentPipelineError() {
             throw CLIError(
                 code: 5, message: "capture pipeline error: \(pipelineError.localizedDescription)")
         }
         if let waitError {
             throw waitError
+        }
+        if let recordingFile {
+            guard rename(recordingFile.path, args.output.path) == 0 else {
+                throw CLIError(code: 5, message: "cannot install finalized recording: \(String(cString: strerror(errno)))")
+            }
+        }
+        if args.mode == .recording && ProcessInfo.processInfo.environment["SPECTRE_RECORDING_RESULT"] == "1" {
+            FileHandle.standardOutput.write(Data("RECORDING_RESULT \(dropped) \(args.crop != nil)\n".utf8))
         }
     }
 
@@ -955,14 +968,18 @@ final class Recorder {
         // Without this re-check, the unconditional `removeItem` would silently `rm -rf`
         // that directory tree — the destructive failure mode the guard is supposed to
         // prevent. Cheap stat call; runs once per recording start.
-        if args.mode != .stills {
+        if args.mode == .screenshot {
             try validateOutputPath(args.output)
             try? FileManager.default.removeItem(at: args.output)
         }
 
         if args.mode == .recording {
+            // Publish only after a frame was accepted and AVAssetWriter finished successfully.
+            let temporary = args.output.deletingLastPathComponent()
+                .appendingPathComponent(".spectre-\(UUID().uuidString).\(args.output.pathExtension)")
+            recordingFile = temporary
             let writer = try AVAssetWriter(
-                outputURL: args.output, fileType: args.fileType.assetWriterFileType)
+                outputURL: temporary, fileType: args.fileType.assetWriterFileType)
             let videoSettings: [String: Any] = [
                 AVVideoCodecKey: AVVideoCodecType.h264,
                 AVVideoWidthKey: width,
@@ -1385,6 +1402,12 @@ final class Recorder {
         }
     }
 
+    private func frameCounts() -> (Int, Int, Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (framesSeen, framesAppended, framesDropped)
+    }
+
     private func didAppendFrame() -> Bool {
         lock.lock()
         let didAppendFrame = framesAppended > 0
@@ -1436,10 +1459,15 @@ final class Recorder {
         self.pixelBufferAdaptor = nil
         lock.unlock()
 
-        guard let writer, let videoInput else { return }
+        guard let writer, let videoInput else {
+            if args.mode == .recording {
+                throw CLIError(code: 5, message: "missing recording writer at finalization")
+            }
+            return
+        }
         videoInput.markAsFinished()
         await writer.finishWriting()
-        if writer.status == .failed {
+        if writer.status != .completed {
             throw CLIError(
                 code: 5,
                 message:

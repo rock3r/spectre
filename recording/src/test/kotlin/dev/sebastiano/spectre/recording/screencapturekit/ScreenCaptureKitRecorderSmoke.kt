@@ -3,6 +3,7 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
 import dev.sebastiano.spectre.recording.RecordingOptions
+import dev.sebastiano.spectre.recording.stopWithResult
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
@@ -81,6 +82,7 @@ private fun runSmoke() {
     // If THAT shows the tick text, Swing is painting and any blankness in the .mp4 is on the
     // SCK side. If it does NOT, Swing isn't painting and we have a UI bug to chase.
     Thread.sleep(RECORD_DURATION_MS / 2)
+    SwingUtilities.invokeAndWait { frame.setSize(frame.width + 80, frame.height + 40) }
     val frameBounds = frame.bounds
     val robotShot = Robot().createScreenCapture(frameBounds)
     ImageIO.write(robotShot, "png", File(midRecordingPng.toString()))
@@ -89,13 +91,20 @@ private fun runSmoke() {
     animator.join()
     println("Animation done — ticks fired: $ticks")
 
-    handle.stop()
+    val result = handle.stopWithResult()
+    checkNotNull(result.droppedFrames) { "SCK did not report its final dropped-frame count" }
     val sizeBytes = if (Files.exists(output)) Files.size(output) else -1
     println("Recording stopped → $output (${sizeBytes} bytes)")
 
-    SwingUtilities.invokeLater {
-        frame.isVisible = false
-        frame.dispose()
+    val closedOutput = Files.createTempFile("spectre-sck-close-", ".mp4")
+    try {
+        val closed = recorder.start(window = frame.asTitledWindow(), output = closedOutput)
+        SwingUtilities.invokeAndWait { frame.dispose() }
+        Thread.sleep(WINDOW_SETTLE_MS)
+        check(runCatching { closed.stop() }.isFailure) { "Closed window reported success" }
+        check(Files.size(closedOutput) == 0L) { "Closed window published a partial movie" }
+    } finally {
+        Files.deleteIfExists(closedOutput)
     }
 }
 

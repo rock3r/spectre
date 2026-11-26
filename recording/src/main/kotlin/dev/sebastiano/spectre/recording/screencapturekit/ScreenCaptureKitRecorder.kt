@@ -2,9 +2,15 @@ package dev.sebastiano.spectre.recording.screencapturekit
 
 import dev.sebastiano.spectre.recording.HelperStillSessions
 import dev.sebastiano.spectre.recording.Recorder
+import dev.sebastiano.spectre.recording.RecordingFileStamp
 import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
+import dev.sebastiano.spectre.recording.RecordingResult
+import dev.sebastiano.spectre.recording.RecordingResultProvider
+import dev.sebastiano.spectre.recording.recordingFileStamp
+import dev.sebastiano.spectre.recording.validateRecordingOutput
 import java.awt.Rectangle
+import java.io.BufferedReader
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -219,7 +225,9 @@ internal constructor(
         // A stills session left open by an earlier screenshot would keep this capture from
         // getting any frames.
         stillSessions.stopAll()
+        val previous = recordingFileStamp(output)
         val process = processFactory.start(argv)
+        val stdout = process.inputStream.bufferedReader()
 
         // Wait for the helper to either:
         //   - emit the READY marker on stdout (target discovered, SCK is streaming
@@ -231,7 +239,7 @@ internal constructor(
         // race.
         val ready =
             try {
-                awaitHelperReady(process, READY_WAIT_MILLIS)
+                awaitHelperReady(process, stdout, READY_WAIT_MILLIS)
             } catch (e: InterruptedException) {
                 // destroyForcibly() is asynchronous on the JVM. Without a bounded wait
                 // here we can return from start() while the helper is still alive +
@@ -277,6 +285,9 @@ internal constructor(
             process = process,
             output = output,
             cleanup = cleanup,
+            stdout = stdout,
+            previous = previous,
+            cropFixedAtStart = "--crop" in argv,
         )
     }
 
@@ -290,19 +301,21 @@ internal constructor(
      * the JDK's process input stream's `readLine` blocks indefinitely without a timeout primitive
      * of its own.
      */
-    private fun awaitHelperReady(process: Process, budgetMs: Long): Boolean {
+    private fun awaitHelperReady(
+        process: Process,
+        stdout: BufferedReader,
+        budgetMs: Long,
+    ): Boolean {
         val ready = AtomicBoolean(false)
         val readerStarted = CountDownLatch(1)
         val reader =
             Thread.ofPlatform().name("spectre-sck-helper-ready-reader").daemon(true).start {
                 readerStarted.countDown()
-                process.inputStream.bufferedReader().use { reader ->
-                    while (true) {
-                        val line = reader.readLine() ?: return@start
-                        if (line.trim() == READY_MARKER) {
-                            ready.set(true)
-                            return@start
-                        }
+                while (true) {
+                    val line = stdout.readLine() ?: return@start
+                    if (line.trim() == READY_MARKER) {
+                        ready.set(true)
+                        return@start
                     }
                 }
             }
@@ -333,8 +346,8 @@ internal constructor(
     internal object SystemProcessFactory : ProcessFactory {
         override fun start(argv: List<String>): Process =
             ProcessBuilder(argv)
-                // Pipe stdout so the JVM can read the helper's READY marker; the helper
-                // writes nothing else to stdout so the pipe buffer stays small.
+                // Older consumers close stdout after READY. Request final diagnostics explicitly.
+                .apply { environment()["SPECTRE_RECORDING_RESULT"] = "1" }
                 .redirectOutput(ProcessBuilder.Redirect.PIPE)
                 // Inherit stderr so the helper's diagnostic counters and any error messages
                 // surface in the host JVM's stderr without us needing a reader thread to drain
@@ -396,7 +409,12 @@ private class ScreenCaptureKitRecordingHandle(
     private val process: Process,
     override val output: Path,
     private val cleanup: () -> Unit,
-) : RecordingHandle {
+    private val stdout: BufferedReader,
+    private val previous: RecordingFileStamp?,
+    private val cropFixedAtStart: Boolean,
+) : RecordingHandle, RecordingResultProvider {
+    override lateinit var recordingResult: RecordingResult
+        private set
 
     private val stopInitiated = AtomicBoolean(false)
     private val finished = CountDownLatch(1)
@@ -425,6 +443,12 @@ private class ScreenCaptureKitRecordingHandle(
         @Suppress("TooGenericExceptionCaught")
         try {
             stopInternal()
+            validateRecordingOutput(output, previous = previous)
+            val report =
+                stdout.lineSequence().firstOrNull { it.startsWith("RECORDING_RESULT ") }?.split(' ')
+            val dropped = report?.getOrNull(1)?.toLongOrNull()?.takeIf { it >= 0 }
+            val fixedCrop = report?.getOrNull(2)?.toBooleanStrictOrNull() ?: cropFixedAtStart
+            recordingResult = RecordingResult(output, dropped, fixedCrop)
         } catch (t: Throwable) {
             primary = t
         }
@@ -439,7 +463,11 @@ private class ScreenCaptureKitRecordingHandle(
         val wasInterrupted = Thread.interrupted()
         @Suppress("TooGenericExceptionCaught")
         try {
-            cleanup()
+            try {
+                stdout.close()
+            } finally {
+                cleanup()
+            }
         } catch (t: Throwable) {
             if (primary == null) primary = t else primary.addSuppressed(t)
         } finally {
@@ -470,6 +498,7 @@ private class ScreenCaptureKitRecordingHandle(
             // Any other failure here still goes to the SIGTERM fallback.
         }
         var interrupted = false
+        var forced = false
         val gracefulExit =
             try {
                 process.waitFor(SHUTDOWN_GRACE_SECONDS, TimeUnit.SECONDS)
@@ -487,6 +516,7 @@ private class ScreenCaptureKitRecordingHandle(
                     false
                 }
             if (!terminatedAfterDestroy) {
+                forced = true
                 process.destroyForcibly()
                 try {
                     process.waitFor(FORCE_KILL_SECONDS, TimeUnit.SECONDS)
@@ -503,6 +533,7 @@ private class ScreenCaptureKitRecordingHandle(
             )
         }
         failIfHelperCrashed()
+        check(!forced) { "Recording helper was forcibly terminated before finalizing $output." }
     }
 
     private fun failIfHelperCrashed() {

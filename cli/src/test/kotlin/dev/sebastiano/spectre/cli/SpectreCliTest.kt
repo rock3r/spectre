@@ -410,6 +410,51 @@ class SpectreCliTest {
     }
 
     @Test
+    fun `detach reports an automatically finalized recording`() {
+        val output = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = {
+                    DaemonResponse.Detached(
+                        sessionId = "pid-42",
+                        finalizedRecordingPath = "/tmp/recording.mp4",
+                    )
+                },
+                output = output,
+            )
+
+        assertEquals(0, cli.run(listOf("detach", "pid-42")))
+        assertTrue(output.toString().contains("Finalized active recording: /tmp/recording.mp4"))
+    }
+
+    @Test
+    fun `daemon kill reports every finalized recording and failure`() {
+        val output = StringBuilder()
+        val cli =
+            SpectreCli(
+                request = { error("unexpected daemon request") },
+                shutdownRequest = {
+                    DaemonResponse.ShuttingDownWithRecordings(
+                        listOf(
+                            DaemonResponse.FinalizedRecording("pid-1", "/tmp/one.mp4"),
+                            DaemonResponse.FinalizedRecording(
+                                "pid-2",
+                                "/tmp/two.mp4",
+                                "output was empty",
+                            ),
+                        )
+                    )
+                },
+                output = output,
+            )
+
+        assertEquals(0, cli.run(listOf("daemon", "kill")))
+        assertTrue(output.toString().contains("Finalized active recording for pid-1"))
+        assertTrue(output.toString().contains("Failed to finalize active recording for pid-2"))
+        assertTrue(output.toString().contains("output was empty"))
+    }
+
+    @Test
     fun `attach prints stable JSON session output`() {
         val output = StringBuilder()
         val cli =

@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording.portal
 
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonClassDiscriminator
@@ -53,7 +54,10 @@ internal sealed interface Command {
         /** Untitled-window selector: root coordinates, device pixels. X11 only. */
         @SerialName("window_frame") val windowFrame: Region? = null,
         @SerialName("window_owner_pid") val windowOwnerPid: Long? = null,
-        @SerialName("cursor_mode") val cursorMode: CursorMode,
+        /** Explicit requirement; null accepts an existing session stream's cursor semantics. */
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        @SerialName("cursor_mode")
+        val cursorMode: CursorMode? = null,
         @SerialName("region") val region: Region,
         @SerialName("screen_size") val screenSize: List<Int>? = null,
         @SerialName("output") val output: String,

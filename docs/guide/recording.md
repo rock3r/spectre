@@ -520,5 +520,12 @@ try {
 }
 ```
 
+To read finalization diagnostics, import `dev.sebastiano.spectre.recording.stopWithResult`
+and call `handle.stopWithResult()`. The result contains the finalized output path.
+ScreenCaptureKit reports `droppedFrames`. ScreenCaptureKit and Windows Graphics Capture
+report `cropFixedAtStart` for a window-relative crop. A null diagnostic means the backend
+did not report it. CLI `record stop --json` and MCP `record_stop` return the same fields
+under `diagnostics`.
+
 Without `stop()`, the `ffmpeg`, native helper, or `gst-launch` process may keep writing.
 The output file may be truncated or unfinalised.
