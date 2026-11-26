@@ -2,6 +2,8 @@
 
 package dev.sebastiano.spectre.agent.launch
 
+import com.sun.tools.attach.AgentLoadException
+import com.sun.tools.attach.AttachNotSupportedException
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import kotlin.test.Test
 import kotlin.test.assertFalse
@@ -157,8 +159,4 @@ class LaunchReadinessAttachRetryTest {
             )
         )
     }
-
-    private class AttachNotSupportedException(message: String) : RuntimeException(message)
-
-    private class AgentLoadException(message: String) : RuntimeException(message)
 }
