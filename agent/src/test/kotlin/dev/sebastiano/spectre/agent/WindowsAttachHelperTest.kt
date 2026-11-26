@@ -83,6 +83,8 @@ class WindowsAttachHelperTest {
 
     @Test
     fun `diagnostics and launch classification work without jdk attach module`() {
+        val stdoutPath = directory.resolve("limited-module.out")
+        val stderrPath = directory.resolve("limited-module.err")
         val process =
             ProcessBuilder(
                     Path.of(System.getProperty("java.home"), "bin", "java").toString(),
@@ -92,13 +94,27 @@ class WindowsAttachHelperTest {
                     System.getProperty("java.class.path"),
                     WindowsAttachWithoutModuleFixture::class.java.name,
                 )
+                .redirectOutput(stdoutPath.toFile())
+                .redirectError(stderrPath.toFile())
                 .start()
 
-        assertTrue(process.waitFor(10, TimeUnit.SECONDS), "limited-module child did not terminate")
-        val stdout = process.inputStream.bufferedReader().readText()
-        val stderr = process.errorStream.bufferedReader().readText()
-        assertEquals(0, process.exitValue(), "stdout=$stdout\nstderr=$stderr")
-        assertEquals("attach-without-module-ok", stdout.trim())
+        try {
+            assertTrue(
+                process.waitFor(FIXTURE_STARTUP_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                "limited-module child did not terminate\n${limitedModuleOutput(stdoutPath, stderrPath)}",
+            )
+            val stdout = Files.readString(stdoutPath)
+            val output = limitedModuleOutput(stdoutPath, stderrPath)
+            assertEquals(0, process.exitValue(), output)
+            assertEquals("attach-without-module-ok", stdout.trim(), output)
+        } finally {
+            if (process.isAlive) process.destroyForcibly()
+            assertTrue(
+                process.waitFor(FIXTURE_CLEANUP_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                "limited-module child did not stop during cleanup\n" +
+                    limitedModuleOutput(stdoutPath, stderrPath),
+            )
+        }
     }
 
     @Test
@@ -209,8 +225,16 @@ class WindowsAttachHelperTest {
     private fun encode(value: String): String =
         Base64.getUrlEncoder().withoutPadding().encodeToString(value.toByteArray())
 
+    private fun limitedModuleOutput(stdout: Path, stderr: Path): String =
+        "stdout=${readOutput(stdout)}\nstderr=${readOutput(stderr)}"
+
+    private fun readOutput(path: Path): String =
+        if (Files.exists(path)) Files.readString(path) else "<unavailable>"
+
     private companion object {
         const val EXIT_RELEASE: Int = 1
+        const val FIXTURE_STARTUP_TIMEOUT_SECONDS: Long = 90
+        const val FIXTURE_CLEANUP_TIMEOUT_SECONDS: Long = 10
     }
 }
 
