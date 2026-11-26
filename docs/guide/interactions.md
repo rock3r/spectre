@@ -369,9 +369,12 @@ public surface:
   (Accessibility for input, Screen Recording for capture) and throws
   `IllegalStateException` with remediation guidance when either is denied — see
   [Troubleshooting](troubleshooting.md#macos-robotdriver-throws-illegalstateexception-about-tcc).
-  On Wayland, the first seated run shows one Share + Remember / Allow remote interaction
-  dialog; later Spectre processes reuse the helper session. See
-  [Linux Wayland consent](recording.md#linux-wayland-consent).
+  On Wayland, a seated user accepts the portal picker when there is no reusable grant. Later
+  Spectre processes reuse the live helper session without another picker. A portal-provided
+  token may allow restoration after the helper exits; token validity, monitor selection, and
+  permissions still apply. See the detailed
+  [Linux Wayland consent workflow](recording.md#linux-wayland-consent), including the verified
+  Ubuntu 22.04 and 24.04 differences.
 - **`RobotDriver(robot)`** — real OS input through an existing `java.awt.Robot` that you
   already built (for example, one for a non-default `GraphicsDevice`). It always sends input
   through that `Robot`, which on X11 means XTest. On Linux Wayland, that input does not use

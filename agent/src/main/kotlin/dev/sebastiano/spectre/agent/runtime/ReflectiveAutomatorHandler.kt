@@ -350,7 +350,7 @@ internal class ReflectiveAutomatorHandler(
         refreshWindowsMethod.invoke(automator)
         val allNodes = allNodesMethod.invoke(automator) as List<*>
         val focusedNodes =
-            allNodes.filterNotNull().filter { nodeBooleanProperty(it, methodName = "isFocused") }
+            allNodes.filterNotNull().filter { requireNodeBoolean(it, methodName = "isFocused") }
         if (focusedNodes.isEmpty()) {
             return AgentResponse.Error(
                 message =
@@ -470,28 +470,24 @@ internal class ReflectiveAutomatorHandler(
     }
 
     /**
-     * Encodes the fullscreen still, preferring screen pixels but staying inside the frame budget.
+     * Encodes the fullscreen still at screen-pixel resolution or fails.
      *
      * Screen-pixel stills carry 4x the pixels of the logical ones on a 2x display, and the whole
      * virtual desktop is the one still whose size no caller bounds — a multi-monitor HiDPI desktop
-     * can encode past the frame budget, which would fail the request outright. Dropping to the
-     * logical still keeps a command that works today working.
-     *
-     * That fallback is best-effort, not a guarantee: with a small budget no desktop screenshot fits
-     * at any resolution, so there is nothing to degrade to. When even the logical still overruns,
-     * this reports [AgentErrorCategory.PayloadTooLarge] naming the flag that fixes it, rather than
-     * letting the framing layer substitute its own generic message further downstream.
+     * can encode past the frame budget. That reports [AgentErrorCategory.PayloadTooLarge] rather
+     * than silently substituting the logical-resolution API.
      */
     private fun fullscreenStill(deviceScaleMethod: Method?, regionMethod: Method?): AgentResponse {
-        // Older injected cores expose only screenshot(Rectangle?). The caller rejects the request
-        // before this point when neither method is present, so one of the two is always non-null.
-        if (deviceScaleMethod != null) {
-            val deviceScalePng = encodeFullscreenStill(deviceScaleMethod)
-            if (regionMethod == null || deviceScalePng.size <= maxStillPngBytes) {
-                return stillWithinBudget(deviceScalePng)
-            }
+        if (deviceScaleMethod == null) {
+            checkNotNull(regionMethod)
+            return AgentResponse.Error(
+                message =
+                    "This target core cannot produce the promised device-scale fullscreen still. " +
+                        "Upgrade spectre-core; Spectre will not silently return logical resolution.",
+                category = AgentErrorCategory.UnsupportedOperation.wireName,
+            )
         }
-        return stillWithinBudget(encodeFullscreenStill(checkNotNull(regionMethod)))
+        return stillWithinBudget(encodeFullscreenStill(deviceScaleMethod))
     }
 
     private fun stillWithinBudget(png: ByteArray): AgentResponse =
@@ -501,7 +497,7 @@ internal class ReflectiveAutomatorHandler(
             AgentResponse.Error(
                 message =
                     "Fullscreen still is too large for the agent IPC frame limit " +
-                        "(png=${png.size}B, max≈${maxStillPngBytes}B) even at logical resolution. " +
+                        "(device-scale png=${png.size}B, max≈${maxStillPngBytes}B). " +
                         "Raise the budget with --max-frame-bytes / SPECTRE_MAX_FRAME_BYTES, or " +
                         "capture a window instead of the whole desktop.",
                 category = AgentErrorCategory.PayloadTooLarge.wireName,
@@ -734,32 +730,16 @@ internal class ReflectiveAutomatorHandler(
      * Bounds and title failures fall back rather than nulling the entry — dropping a tracked
      * surface from `windows()` while `allNodes()` still exposes `window:*` keys is the #362 bug.
      */
-    private fun mapTrackedWindowResilient(index: Int, trackedWindow: Any?): WindowSummaryDto? {
-        if (trackedWindow == null) return null
-        // Catch broad failures so one bad surface cannot empty the whole windows() list while
-        // allNodes() still exposes its keys (#362). Reflective invoke wraps target exceptions in
-        // InvocationTargetException; ClassCastException / IllegalStateException can surface too.
-        @Suppress("TooGenericExceptionCaught")
-        return try {
-            mapTrackedWindow(index, trackedWindow)
-        } catch (ex: Exception) {
-            System.err.println(
-                "[spectre-agent] mapTrackedWindow failed for index=$index: " +
-                    "${ex.javaClass.simpleName}: " +
-                    ((ex as? ReflectiveOperationException)?.targetMessage() ?: ex.message)
-            )
-            fallbackWindowSummary(index, trackedWindow)
+    private fun mapTrackedWindowResilient(index: Int, trackedWindow: Any?): WindowSummaryDto? =
+        trackedWindow?.let {
+            mapTrackedWindow(index, it)
         }
-    }
 
     private fun mapTrackedWindow(index: Int, trackedWindow: Any): WindowSummaryDto {
         val klass = trackedWindow.javaClass
         val surfaceId = klass.getMethod("getSurfaceId").invoke(trackedWindow) as String
         val isPopup = klass.getMethod("isPopup").invoke(trackedWindow) as Boolean
-        val bounds = runCatching {
-            klass.getMethod("getComposeSurfaceBoundsOnScreen").invoke(trackedWindow)
-        }
-            .getOrNull()
+        val bounds = klass.getMethod("getComposeSurfaceBoundsOnScreen").invoke(trackedWindow)
         val title = extractWindowTitle(trackedWindow, klass)
         return WindowSummaryDto(
             index = index,
@@ -771,39 +751,25 @@ internal class ReflectiveAutomatorHandler(
         )
     }
 
-    private fun fallbackWindowSummary(index: Int, trackedWindow: Any): WindowSummaryDto? {
-        return try {
-            val klass = trackedWindow.javaClass
-            val surfaceId =
-                klass.getMethod("getSurfaceId").invoke(trackedWindow) as? String ?: return null
-            val isPopup = runCatching {
-                klass.getMethod("isPopup").invoke(trackedWindow) as Boolean
-            }
-                .getOrDefault(false)
-            WindowSummaryDto(
-                index = index,
-                surfaceId = surfaceId,
-                title = extractWindowTitle(trackedWindow, klass),
-                isPopup = isPopup,
-                bounds = RectDto(0, 0, 0, 0),
-                isShowing = extractIsShowing(trackedWindow, klass),
-            )
-        } catch (_: ReflectiveOperationException) {
-            null
-        }
-    }
-
-    /** Reads AWT `Window.isShowing` via `TrackedWindow.getWindow()`. Defaults true if unknown. */
+    /** Reads AWT `Window.isShowing`; an unreadable state is an incomplete snapshot. */
     private fun extractIsShowing(trackedWindow: Any, klass: Class<*>): Boolean {
-        val window =
-            runCatching { klass.getMethod("getWindow").invoke(trackedWindow) }.getOrNull()
-                ?: return true
-        return runCatching {
-            window.javaClass.methods
-                .firstOrNull { it.name == "isShowing" && it.parameterCount == 0 }
-                ?.invoke(window) as? Boolean
+        val windowGetter =
+            klass.methods.firstOrNull { it.name == "getWindow" && it.parameterCount == 0 }
+                ?: error("Incomplete window snapshot: getWindow could not be read")
+        val window = windowGetter.invoke(trackedWindow)
+        if (window == null) {
+            val legacyGetter =
+                klass.methods.firstOrNull { it.name == "isShowing" && it.parameterCount == 0 }
+                    ?: error("Incomplete window snapshot: isShowing could not be read")
+            return legacyGetter.invoke(trackedWindow) as? Boolean
+                ?: error("Incomplete window snapshot: isShowing was not Boolean")
         }
-            .getOrNull() ?: true
+        val getter =
+            window.javaClass.methods.firstOrNull {
+                it.name == "isShowing" && it.parameterCount == 0
+            } ?: error("Incomplete window snapshot: isShowing could not be read")
+        return getter.invoke(window) as? Boolean
+            ?: error("Incomplete window snapshot: isShowing was not Boolean")
     }
 
     /**
@@ -844,6 +810,7 @@ internal class ReflectiveAutomatorHandler(
                     .firstOrNull { it.name == "getContentDescription" && it.parameterCount == 0 }
                     ?.invoke(node) as? String
         val bothBounds = nodeState.bothBounds(node)
+        val isVisible = requireNodeBoolean(node, methodName = "isVisible")
         return NodeSnapshotDto(
             key = extractKey(node),
             testTag =
@@ -860,12 +827,10 @@ internal class ReflectiveAutomatorHandler(
             role = mapRoleWireName(node),
             contentDescription = singularDescription,
             contentDescriptions = descriptions.ifEmpty { listOfNotNull(singularDescription) },
-            isFocused = nodeBooleanProperty(node, methodName = "isFocused", default = false),
-            isDisabled = nodeBooleanProperty(node, methodName = "isDisabled", default = false),
-            isSelected = nodeBooleanProperty(node, methodName = "isSelected", default = false),
-            // isVisible is part of the long-standing AutomatorNode contract — fail loudly if
-            // absent.
-            isVisible = requireNodeBoolean(node, methodName = "isVisible"),
+            isFocused = requireNodeBoolean(node, methodName = "isFocused"),
+            isDisabled = requireNodeBoolean(node, methodName = "isDisabled"),
+            isSelected = requireNodeBoolean(node, methodName = "isSelected"),
+            isVisible = isVisible,
             bounds =
                 boundsToRect(
                     // One EDT read for both bounds when the node offers it; otherwise
@@ -877,7 +842,7 @@ internal class ReflectiveAutomatorHandler(
                             }
                             ?.invoke(node)
                 ),
-            isClickable = nodeBooleanProperty(node, methodName = "isClickable", default = false),
+            isClickable = requireNodeBoolean(node, methodName = "isClickable"),
             toggleableState = nodeState.toggleableState(node),
             progress = nodeState.progress(node),
             parentKey = nodeState.parentKey(node, ::extractKey),
@@ -911,21 +876,6 @@ internal class ReflectiveAutomatorHandler(
             ?: (raw as? Number)?.toInt()?.let { ROLE_ORDINAL_WIRE_NAMES[it] }
     }
 
-    /**
-     * Soft boolean lookup: missing accessors return [default]. Used for optional snapshot fields
-     * (`isDisabled` / `isSelected` / `isFocused`) so older fakes and partial test doubles still map
-     * cleanly.
-     */
-    private fun nodeBooleanProperty(
-        node: Any,
-        methodName: String,
-        default: Boolean = false,
-    ): Boolean {
-        val method = resolveBooleanMethod(node, methodName)
-        if (method === MISSING_BOOLEAN_METHOD) return default
-        return method.invoke(node) as Boolean
-    }
-
     /** Hard boolean lookup: missing accessor is an AutomatorNode API mismatch. */
     private fun requireNodeBoolean(node: Any, methodName: String): Boolean {
         val method = resolveBooleanMethod(node, methodName)
@@ -955,18 +905,18 @@ internal class ReflectiveAutomatorHandler(
             .invoke(node) as? String
 
     private fun boundsToRect(bounds: Any?): RectDto {
-        if (bounds == null) return RectDto(0, 0, 0, 0)
+        requireNotNull(bounds) { "Incomplete snapshot: bounds could not be read" }
         val klass = bounds.javaClass
         // Try AWT-style getX/getY/getWidth/getHeight first; fall back to Compose Rect's
         // left/top/right/bottom.
         return runCatching {
-                RectDto(
-                    x = (klass.getMethod("getX").invoke(bounds) as Number).toInt(),
-                    y = (klass.getMethod("getY").invoke(bounds) as Number).toInt(),
-                    width = (klass.getMethod("getWidth").invoke(bounds) as Number).toInt(),
-                    height = (klass.getMethod("getHeight").invoke(bounds) as Number).toInt(),
-                )
-            }
+            RectDto(
+                x = (klass.getMethod("getX").invoke(bounds) as Number).toInt(),
+                y = (klass.getMethod("getY").invoke(bounds) as Number).toInt(),
+                width = (klass.getMethod("getWidth").invoke(bounds) as Number).toInt(),
+                height = (klass.getMethod("getHeight").invoke(bounds) as Number).toInt(),
+            )
+        }
             .recoverCatching {
                 val left = (klass.getMethod("getLeft").invoke(bounds) as Number).toFloat()
                 val top = (klass.getMethod("getTop").invoke(bounds) as Number).toFloat()
@@ -974,7 +924,12 @@ internal class ReflectiveAutomatorHandler(
                 val bottom = (klass.getMethod("getBottom").invoke(bounds) as Number).toFloat()
                 RectDto(left.toInt(), top.toInt(), (right - left).toInt(), (bottom - top).toInt())
             }
-            .getOrDefault(RectDto(0, 0, 0, 0))
+            .getOrElse { cause ->
+                throw IllegalStateException(
+                    "Incomplete snapshot: unsupported bounds type ${bounds.javaClass.name}",
+                    cause,
+                )
+            }
     }
 
     private fun ReflectiveOperationException.targetMessage(): String {

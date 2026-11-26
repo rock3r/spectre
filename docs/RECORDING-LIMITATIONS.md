@@ -71,50 +71,52 @@ Headless runners without a seated GNOME session do not expose
 Unit tests check token persistence, reuse, and removal without a live portal.
 First consent still needs a real compositor seat and a person to accept the dialog.
 
-## Linux Wayland: one approval, up front
+## Linux Wayland consent { #linux-wayland-one-approval-up-front }
 
-On Linux Wayland, a person must accept the portal consent dialog **once**:
-`spectre permissions request` (or `WaylandPortalAccess.request()`) opens it, stores the
-grant, and leaves the session helper running. `spectre permissions check` reports the grant
-without a dialog. After that, no Spectre run opens a dialog, as long as the stored token
-stays valid. What can still require a new approval:
+On Linux Wayland, a seated user must accept a portal picker whenever there is no active
+session that the request can reuse. `spectre permissions request` (or
+`WaylandPortalAccess.request()`) starts a long-lived helper, and
+`spectre permissions check` reports whether that session is active without opening a picker.
+While the helper lives, later Spectre processes connect to it and read, record, and send input
+through the same grant. A leftover socket pathname does not mean that a helper is still listening.
 
-- The user revokes the grant, or deletes the token file.
-- The monitor changes identity. The token names the monitor by vendor, product, and serial,
-  and Mutter gives every new virtual monitor a new serial.
-- The grant covers one monitor. A region on another monitor cannot be captured with it.
-- A desktop other than GNOME may not restore RemoteDesktop grants without a dialog.
+A portal may also return a reusable token. When it does, Spectre stores each replacement token
+and asks the portal to restore the grant when possible. Tokens are optional, and reuse still
+depends on their validity, the selected monitor, and current permissions. A picker can therefore
+return after the helper exits, or when the grant cannot be restored. Other reasons include:
 
-On GNOME, window stills, visual-idle samples, and window recording use Mutter window
-streams through the session helper. Starting the helper requires a RemoteDesktop grant.
-Binding a window through Mutter then needs no separate window-picker grant.
-GNOME shows its screen-sharing indicator in the top bar while window streams run. Each bound
-stream lives until its window closes or the session helper's client disconnects.
+- The user revokes the grant or deletes a stored token.
+- The selected monitor changes identity, or the requested region is on another monitor.
+- The portal or compositor does not support restoring this grant without a picker.
+
+On supported GNOME/Mutter versions, window stills, visual-idle samples, and window recording use
+Mutter window streams through the session helper. Starting the helper requires a RemoteDesktop
+grant, but binding a window then needs no separate window-picker grant. GNOME shows its
+screen-sharing indicator while window streams run. Each bound stream lives until its window
+closes or the session helper's client disconnects.
 
 Settings:
 
 - `SPECTRE_WAYLAND_CONSENT_PROMPT=never` (or `-Dspectre.wayland.consentPrompt=never`) forbids
-  any implicit dialog: without a stored grant, capture and input fail at once with the
+  any implicit picker: without an active or restorable grant, capture and input fail at once with the
   `spectre permissions request` fix. The JUnit integration sets it unless the build sets
   either value. `allow` restores the old behaviour.
 - `SPECTRE_WAYLAND_CONSENT_TIMEOUT_SECS` sets how long the session helper waits for each
-  dialog step (default 60). `spectre permissions request --timeout` sets it for the request.
+  picker step (default 60). `spectre permissions request --timeout` sets it for the request.
 
 `spectre-wayland-helper --session` installs `dev.sebastiano.spectre.desktop` and calls
 `org.freedesktop.host.portal.Registry.Register` **before** `SelectDevices` and
 `SelectSources`. It opens **one** RemoteDesktop session for keyboard, pointer, and
-monitor access with `persist_mode=2`. Spectre stores replacement `restore_token` files under
-`$XDG_STATE_HOME/spectre/` with file mode `0600` and directory mode `0700`.
+monitor access with `persist_mode=2`. If the portal supplies a `restore_token`, Spectre stores
+its replacement under `$XDG_STATE_HOME/spectre/` with file mode `0600` and directory mode `0700`.
 Use `SPECTRE_WAYLAND_RESTORE_TOKEN_PATH` or `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR` to change the
 location. Spectre does not store these tokens under `~/.java/robot/`.
 
 On Wayland, in-process `RobotDriver()`, attach, CLI, and MCP use that helper for input
-and monitor capture. The helper holds one session for the user seat.
-Parallel JVMs connect to its socket, sharing one Robot portal session.
+and monitor capture. Parallel JVMs connect to its socket and share the live portal session.
 
-- **First run without `spectre permissions request`:** If no token exists or the
-  compositor rejects it, and implicit dialogs are allowed, the portal shows a
-  Share + Remember / Allow remote interaction dialog. A person must accept it.
+- **First request:** If there is no active or restorable grant and implicit pickers are allowed,
+  the portal asks the user to choose and allow the source.
   If nobody answers within 60 seconds, or the user cancels it, the helper exits with status
   77. The JVM then fails later captures at once with the same error, instead of opening a
   new dialog for each one. A capture that gives up on its own budget first (for example a
@@ -135,12 +137,24 @@ Parallel JVMs connect to its socket, sharing one Robot portal session.
 - **Coordinates**: pointer motion is translated by the granted stream origin. Fractional
   HiDPI and a monitor other than the restored one can still miss; pick the same screen at
   first consent.
-- **Later CLI and agent sessions:** The helper restores the RemoteDesktop grant
-  without another dialog. This behaviour was validated on GNOME/mutter; other
-  compositors remain best-effort. Portal tokens are single-use. Each successful
-  `Start` writes a replacement file. A cancelled dialog stores no token.
+- **Later processes:** they reuse a live helper without another picker. After a helper restart,
+  Spectre requests restoration only when the portal previously supplied a token. Portal tokens
+  are single-use; each successful `Start` that returns a replacement rewrites the file.
+  A cancelled picker stores no token.
 - **Invalidation**: if SelectDevices/SelectSources/Start rejects the token, Spectre clears
   the file, retries interactively once, and fails closed if that retry fails.
+
+All four native capture tests covered static and red/green covered windows plus both genuine
+public dynamic crops, with exact source ownership and no focus switching. Ubuntu 22.04/GNOME 42
+reused the live helper across 651
+observations but returned no token; after the helper exited, a normal request showed a second
+picker ([request/check](https://github.com/rock3r/spectre/actions/runs/45749559957/job/139673792065),
+[capture](https://github.com/rock3r/spectre/actions/runs/45749559957/job/139673792412)).
+Ubuntu 24.04/GNOME 46 with packaged 0.10 returned and stored a token and used one picker while
+the helper remained live; helper-restart reuse was not exercised
+([verification](https://github.com/rock3r/spectre/actions/runs/45746386387/job/139663371101)).
+These results do not generalise to every GNOME or Wayland environment. See
+[Linux Wayland consent](guide/recording.md#linux-wayland-consent) for the detailed workflow.
 
 X11, macOS, and Windows keep their input and capture paths.
 `RobotDriver(robot)` still wraps the supplied `java.awt.Robot`.
@@ -213,8 +227,9 @@ X11, macOS, and Windows keep their input and capture paths.
   `SourceType.WINDOW` and crops the isolated stream to window size.
   `LinuxNativeScreenshotter` uses the same helper for a one-frame PNG.
   The JVM exchanges newline-delimited JSON with the helper over standard streams.
-  **Approve once with `spectre permissions request`.** Later calls reuse the portal grant
-  through the running session or the stored `restore_token`.
+  **Request consent with `spectre permissions request`.** Later calls reuse the live helper;
+  after it exits, restoration is attempted only when the portal supplied a reusable token. See
+  [Linux Wayland consent](guide/recording.md#linux-wayland-consent) for the detailed workflow.
   The helper exists because dbus-java could not decode the Unix file descriptor.
   Rust can pass it to `gst-launch-1.0`; JVM `ProcessBuilder` does not expose the
   required `fcntl(F_SETFD, ...)` control. macOS also uses a separate capture helper.

@@ -413,6 +413,8 @@ class ComposeAutomatorPublicSurfaceTest {
                 "windowIdentity",
                 "captureWithWindowStill",
                 "captureWithUntitledWindowStill",
+                "getInputLeasePolicy",
+                "bindInputLeaseOptions",
             )
 
         // Public factory methods on ComposeAutomator.Companion. R1 narrowed `inProcess(...)`
