@@ -1,5 +1,3 @@
-import org.gradle.api.services.BuildService
-import org.gradle.api.services.BuildServiceParameters
 import org.gradle.internal.os.OperatingSystem
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
@@ -81,10 +79,9 @@ tasks.test { useJUnitPlatform { excludeTags(headedRobotTag) } }
 // test-event channel, producing two observed shapes:
 //   - "No tests found for given includes" on filtered tasks (Linux 2026-05-11 run 25697771548)
 //   - "Could not write '/127.0.0.1:NNNN'" historically on Windows (originally #72)
-// Both vanish if the sibling tasks run sequentially. Rather than turning off CC for this
-// invocation (`--no-configuration-cache`, the bigger hammer), pin the validation Test tasks to
-// a single-usage shared `BuildService` so Gradle serializes them while CC stays on. Idea: Nelson
-// Osacky / Emil Kantis — https://kantis.github.io/posts/preventing-gradle-task-parallelism/.
+// Both vanish if the sibling tasks run sequentially. They now use the root build's narrow
+// native-desktop Test lease, which also prevents cross-project focus theft without duplicating
+// this module's former lease. Configuration cache remains enabled.
 //
 // The BuildService eliminated the parallel-scheduling shape but a residual cold-daemon flake
 // kept reappearing on validation-linux (e.g. PR #156 runs 26355760756, 26357320841,
@@ -99,21 +96,6 @@ tasks.test { useJUnitPlatform { excludeTags(headedRobotTag) } }
 // case on CI — both workflows invoke `:validationTest :validationTestPopupLayers`), so the
 // daemon's class-scan state is warm by the time a filter-bearing task fires. Workaround for
 // the trigger, not a root-cause fix; revisit if Gradle releases a fix or local repros surface.
-abstract class ValidationTestSerialiser : BuildService<BuildServiceParameters.None>
-
-val validationTestSerialiser =
-    gradle.sharedServices.registerIfAbsent(
-        "validationTestSerialiser",
-        ValidationTestSerialiser::class,
-    ) {
-        maxParallelUsages.set(1)
-    }
-
-tasks
-    .withType<Test>()
-    .matching { it.name.startsWith("validationTest") }
-    .configureEach { usesService(validationTestSerialiser) }
-
 // Backs the `input-coord-headed-robot` release-smoke cell. Run headed: a real macOS/Windows
 // desktop, or Linux under `xvfb-run`. Unlike the `input-coord-*` protocol cells this one cannot
 // pass headless, which is the entire point of it existing.
@@ -158,9 +140,8 @@ val headedRobotContentionTest by
                 .orElse("false")
                 .get(),
         )
-        // Real OS input plus a forked coordinator: the validation Test tasks are serialised for
-        // the same reason, and a concurrent worker JVM here would contend for the actual keyboard.
-        usesService(validationTestSerialiser)
+        // Root scheduling gives this task the same native-desktop lease as validation and the
+        // live desktop suites in other projects.
     }
 
 // Mark every validation-driven worker JVM as a macOS UI element. AppKit treats UI-element
