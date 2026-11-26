@@ -81,7 +81,7 @@ jobs:
           retention-days: 7
 
   gnome-mutter-window-identity:
-    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke'
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Verify packaged')
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     strategy:

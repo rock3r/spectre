@@ -20,10 +20,11 @@ object PublicWaylandCliRecordingLive {
     fun main(args: Array<String>) {
         val artifacts = Path.of(requireNotNull(System.getenv("SMOKE_ARTIFACTS")))
         val decoyPid = requireNotNull(System.getenv("DECOY_PID")).toLong()
+        val decoyXid = requireNotNull(System.getenv("DECOY_XID")).toLong()
         val red = window(TITLE, Color.RED, 180, 170)
         try {
             Thread.sleep(1_500)
-            focusDecoy(decoyPid, "before-title-rejection")
+            focusDecoy(decoyPid, decoyXid, "before-title-rejection")
             val rejected = runCatching {
                 AutoScreenshotter().captureWindowByTitle(TITLE, decoyPid)
             }.exceptionOrNull()
@@ -36,31 +37,31 @@ object PublicWaylandCliRecordingLive {
                 "${rejected::class.qualifiedName}: ${rejected.message}\n",
             )
 
-            focusDecoy(decoyPid, "before-red-still")
+            focusDecoy(decoyPid, decoyXid, "before-red-still")
             val redImage = AutoScreenshotter().captureWindow(red.asTitledWindow())
             val redFile = artifacts.resolve("red-covered.png")
             ImageIO.write(redImage, "png", redFile.toFile())
             requireColor(redImage, Color.RED, "red still")
-            requireActivePid(decoyPid, "after-red")
+            requireActive(decoyPid, decoyXid, "after-red")
 
-            focusDecoy(decoyPid, "before-red-recording")
+            focusDecoy(decoyPid, decoyXid, "before-red-recording")
             val movie = artifacts.resolve("red-covered.mp4")
             movie.deleteIfExists()
             val recording = AutoRecorder().startWindow(red.asTitledWindow(), movie, RecordingOptions())
             Thread.sleep(3_500)
             recording.stop()
             check(Files.size(movie) > 10_000) { "recording is suspiciously small" }
-            requireActivePid(decoyPid, "after-recording")
+            requireActive(decoyPid, decoyXid, "after-recording")
 
             val green = window("Spectre governed green target", Color.GREEN, 500, 100)
             try {
                 Thread.sleep(1_000)
-                focusDecoy(decoyPid, "before-green-still")
-                requireActivePid(decoyPid, "green-refocused")
+                focusDecoy(decoyPid, decoyXid, "before-green-still")
+                requireActive(decoyPid, decoyXid, "green-refocused")
                 val greenImage = AutoScreenshotter().captureWindow(green.asTitledWindow())
                 ImageIO.write(greenImage, "png", artifacts.resolve("green-covered.png").toFile())
                 requireColor(greenImage, Color.GREEN, "green still")
-                requireActivePid(decoyPid, "after-green")
+                requireActive(decoyPid, decoyXid, "after-green")
             } finally {
                 SwingUtilities.invokeAndWait { green.dispose() }
             }
@@ -86,23 +87,25 @@ object PublicWaylandCliRecordingLive {
         return result
     }
 
-    private fun requireActivePid(pid: Long, phase: String) {
-        val active = ProcessBuilder("xdotool", "getactivewindow", "getwindowpid").start()
-        val observed = active.inputReader().readText().trim().toLongOrNull()
-        check(active.waitFor() == 0 && observed == pid) {
-            "blue decoy lost real-seat focus at $phase: expected $pid, observed $observed"
+    private fun requireActive(pid: Long, xid: Long, phase: String) {
+        val active = ProcessBuilder("xdotool", "getactivewindow").start()
+        val observedXid = active.inputReader().readText().trim().toLongOrNull()
+        check(active.waitFor() == 0 && observedXid == xid) {
+            "blue decoy lost real-seat focus at $phase: expected XID $xid, observed $observedXid"
+        }
+        val owner = ProcessBuilder("xdotool", "getwindowpid", xid.toString()).start()
+        val observedPid = owner.inputReader().readText().trim().toLongOrNull()
+        check(owner.waitFor() == 0 && observedPid == pid) {
+            "blue decoy XID owner changed at $phase: expected PID $pid, observed $observedPid"
         }
     }
 
-    private fun focusDecoy(pid: Long, phase: String) {
-        val search = ProcessBuilder("xdotool", "search", "--onlyvisible", "--pid", pid.toString())
-            .redirectErrorStream(true).start()
-        val ids = search.inputReader().readLines().filter { it.isNotBlank() }
-        check(search.waitFor() == 0 && ids.size == 1) { "expected one blue XID at $phase: $ids" }
-        check(ProcessBuilder("xdotool", "windowactivate", "--sync", ids.single()).start().waitFor() == 0)
-        check(ProcessBuilder("xdotool", "windowraise", ids.single()).start().waitFor() == 0)
+    private fun focusDecoy(pid: Long, xid: Long, phase: String) {
+        requireActive(pid, xid, "$phase/pre-activation")
+        check(ProcessBuilder("xdotool", "windowactivate", "--sync", xid.toString()).start().waitFor() == 0)
+        check(ProcessBuilder("xdotool", "windowraise", xid.toString()).start().waitFor() == 0)
         Thread.sleep(300)
-        requireActivePid(pid, phase)
+        requireActive(pid, xid, phase)
     }
 
     private fun requireColor(image: BufferedImage, expected: Color, label: String) {

@@ -45,12 +45,22 @@ class CliRecordingLiveContractTest(unittest.TestCase):
             "packagedJavaVersion", "portal-observations.jsonl", "tokenStored",
         ):
             self.assertIn(contract, DRIVER)
+        self.assertIn('"--all", "--onlyvisible", "--pid", str(pid)', DRIVER)
+        self.assertIn('"--name", pattern', DRIVER)
+        self.assertIn('"xprop", "-id", xid, "_NET_WM_PID"', DRIVER)
+        self.assertIn('env["DECOY_XID"] = xid', DRIVER)
+        self.assertIn('System.getenv("DECOY_XID")', FIXTURE)
+        self.assertNotIn('ProcessBuilder("xdotool", "search"', FIXTURE)
 
     def test_observer_is_process_isolated_and_outputs_are_sanitized(self):
         self.assertIn('"--observe"', DRIVER)
         self.assertNotIn("threading", DRIVER)
         self.assertIn("def sanitized", DRIVER)
         self.assertIn("<redacted>", DRIVER)
+        self.assertIn("except GLib.GError as error", DRIVER)
+        self.assertIn('"event": "application-disappeared"', DRIVER)
+        self.assertIn('"dialogSamples": len(samples)', DRIVER)
+        self.assertIn("samples[-1][\"monotonic\"] < observer_after_green", DRIVER)
         self.assertNotIn("object : TitledWindow", FIXTURE)
         self.assertIn("awtOwnerArgumentIdentityChecked", FIXTURE)
 

@@ -14,6 +14,7 @@ import time
 import zipfile
 
 import dbus
+from gi.repository import GLib
 from PIL import Image
 
 _portal_path = Path(__file__).with_name("gnome-portal-dialog-warmup.py")
@@ -50,14 +51,49 @@ def observe_dialogs(pid: int, output: Path, ready: Path) -> None:
     # This process owns its pyatspi Registry and D-Bus connection. pyatspi's singleton Registry is
     # not safe to access from a watcher thread while the parent drives the picker.
     import pyatspi
-    ready.write_text("ready\n")
     with output.open("a", buffering=1) as receipt:
         while True:
-            count = sum(1 for app in pyatspi.Registry.getDesktop(0) if app.get_process_id() == pid
-                        for node in portal.descendants(app)
-                        if node.name == portal.TITLE and node.getRoleName() in ("dialog", "frame"))
-            receipt.write(json.dumps({"monotonic": time.monotonic(), "pickerCount": count}) + "\n")
+            try:
+                apps = [app for app in pyatspi.Registry.getDesktop(0)
+                        if app.get_process_id() == pid]
+                count = sum(1 for app in apps for node in portal.descendants(app)
+                            if node.name == portal.TITLE and
+                            node.getRoleName() in ("dialog", "frame"))
+                receipt.write(json.dumps({"monotonic": time.monotonic(),
+                                          "pickerCount": count}) + "\n")
+                if not ready.exists():
+                    ready.write_text("sampled\n")
+            except GLib.GError as error:
+                if "atspi_error" not in str(error).lower() or \
+                        "application no longer exists" not in str(error).lower():
+                    raise
+                receipt.write(json.dumps({"monotonic": time.monotonic(),
+                                          "event": "application-disappeared"}) + "\n")
             time.sleep(.1)
+
+
+def decoy_xid(pid: int, title: str, artifacts: Path) -> str:
+    pattern = f"^{re.escape(title)}$"
+    search = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(pid),
+                             "--name", pattern], text=True, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    candidates = [value for value in search.stdout.splitlines() if value.isdecimal()]
+    metadata = []
+    for xid in candidates:
+        props = subprocess.run(["xprop", "-id", xid, "_NET_WM_PID", "WM_CLASS", "WM_NAME",
+                                "_NET_WM_NAME"], text=True, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT).stdout
+        match = re.search(r"_NET_WM_PID\(CARDINAL\) = (\d+)", props)
+        metadata.append({"xid": xid, "netWmPid": int(match.group(1)) if match else None,
+                         "xprop": props})
+    (artifacts / "decoy-x11-selection.json").write_text(json.dumps({
+        "expectedPid": pid, "titlePattern": pattern, "searchExitCode": search.returncode,
+        "searchStderr": search.stderr, "candidates": metadata,
+    }, indent=2) + "\n")
+    owned = [item["xid"] for item in metadata if item["netWmPid"] == pid]
+    if search.returncode != 0 or len(candidates) != 1 or len(owned) != 1:
+        raise RuntimeError(f"expected one visible client XID owned by decoy PID {pid}: {metadata}")
+    return owned[0]
 
 
 def colors(path: Path) -> dict[str, float]:
@@ -107,6 +143,7 @@ def main() -> None:
         if watcher.poll() is not None: raise RuntimeError("independent portal observer exited")
         time.sleep(.1)
     else: raise RuntimeError("independent portal observer was not ready")
+    observer_before_grant = time.monotonic()
     request_out = artifacts / "cli-permissions-request.json"
     request_err = artifacts / "cli-permissions-request.stderr"
     try:
@@ -132,6 +169,9 @@ def main() -> None:
             "stderrBytes": request_err.stat().st_size if request_err.exists() else 0,
         }, indent=2) + "\n")
     proof = json.loads(request_out.read_text())
+    observer_after_grant = time.monotonic()
+    if watcher.poll() is not None:
+        raise RuntimeError("independent portal observer stopped during grant")
     request_out.write_text(json.dumps(proof, indent=2) + "\n")
     receipt(receipts, "permissions-request", exitCode=request.returncode,
             granted=proof.get("granted"), sessionActive=proof.get("sessionActive"),
@@ -176,9 +216,12 @@ def main() -> None:
             if ready.is_file(): break
             if decoy.poll() is not None: raise RuntimeError("blue decoy exited")
             time.sleep(.1)
-        subprocess.run(["xdotool", "search", "--pid", str(decoy.pid), "windowactivate", "--sync"], check=True)
+        xid = decoy_xid(decoy.pid, "Spectre governed same-title target", artifacts)
+        subprocess.run(["xdotool", "windowactivate", "--sync", xid], check=True)
+        subprocess.run(["xdotool", "windowraise", xid], check=True)
         env = os.environ.copy()
         env["DECOY_PID"] = str(decoy.pid)
+        env["DECOY_XID"] = xid
         env["SPECTRE_LIVE_VERIFICATION_SOURCE"] = str(source.parent)
         run = subprocess.run([
             str(repo / "gradlew"), "--no-daemon", "-I",
@@ -191,6 +234,10 @@ def main() -> None:
             print(run.stderr, file=sys.stderr, end="")
             raise RuntimeError("public recording live process failed")
         receipt(receipts, "public-api-captures", exitCode=run.returncode)
+        observer_after_green = time.monotonic()
+        time.sleep(.25)
+        if watcher.poll() is not None:
+            raise RuntimeError("independent portal observer stopped before post-green sample")
     finally:
         if decoy.poll() is None:
             decoy.terminate()
@@ -226,12 +273,19 @@ def main() -> None:
     stop_watcher()
     atexit.unregister(stop_watcher)
     observations = [json.loads(line) for line in observation_file.read_text().splitlines()]
-    nonzero_runs = sum(current["pickerCount"] > 0 and (i == 0 or observations[i-1]["pickerCount"] == 0)
-                       for i, current in enumerate(observations))
-    if nonzero_runs != 1 or max(item["pickerCount"] for item in observations) != 1:
+    samples = [item for item in observations if "pickerCount" in item]
+    nonzero_runs = sum(current["pickerCount"] > 0 and
+                       (i == 0 or samples[i-1]["pickerCount"] == 0)
+                       for i, current in enumerate(samples))
+    if (not samples or samples[0]["monotonic"] > observer_before_grant or
+            not any(observer_before_grant <= item["monotonic"] <= observer_after_grant and
+                    item["pickerCount"] > 0 for item in samples) or
+            samples[-1]["monotonic"] < observer_after_green or nonzero_runs != 1 or
+            max(item["pickerCount"] for item in samples) != 1):
         raise RuntimeError(f"expected exactly one singular consent picker, observed {nonzero_runs}")
     evidence = {"selectedSource": selected, "pickerAppearances": nonzero_runs,
-                "maxConcurrentPickers": max(item["pickerCount"] for item in observations),
+                "maxConcurrentPickers": max(item["pickerCount"] for item in samples),
+                "dialogSamples": len(samples),
                 "portalObservations": observations,
                 "tokenStored": token_stored,
                 "grantMarkerExists": marker.is_file() if marker else False,
