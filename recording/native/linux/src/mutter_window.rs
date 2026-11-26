@@ -93,6 +93,7 @@ pub fn is_service_missing(message: &str) -> bool {
 #[derive(Debug, Clone)]
 pub struct BoundWindow {
     session_path: String,
+    service_owner: String,
     pub node_id: u32,
     pub logical_size: (i32, i32),
     pub owner: u64,
@@ -178,7 +179,7 @@ impl MutterWindowStreams {
             return false;
         };
         if let Some(conn) = self.connection.as_ref() {
-            stop_session(conn, &bound.session_path);
+            stop_session(conn, &bound.service_owner, &bound.session_path);
         }
         true
     }
@@ -200,8 +201,8 @@ fn keys_owned_by(windows: &HashMap<String, BoundWindow>, owner: u64) -> Vec<Stri
         .collect()
 }
 
-fn stop_session(conn: &Connection, session_path: &str) {
-    let proxy = conn.with_proxy(MUTTER_SCREEN_CAST_BUS, session_path, CALL_TIMEOUT);
+fn stop_session(conn: &Connection, service_owner: &str, session_path: &str) {
+    let proxy = conn.with_proxy(service_owner, session_path, CALL_TIMEOUT);
     if let Err(e) = proxy.method_call::<(), _, _, _>(SESSION_INTERFACE, "Stop", ()) {
         eprintln!("spectre-wayland-helper: stopping Mutter session {session_path}: {e}");
     }
@@ -212,11 +213,8 @@ fn bind_focused_window(
     owner: u64,
     cursor_mode: CursorMode,
 ) -> Result<BoundWindow> {
-    let manager = conn.with_proxy(
-        MUTTER_SCREEN_CAST_BUS,
-        MUTTER_SCREEN_CAST_PATH,
-        CALL_TIMEOUT,
-    );
+    let service_owner = mutter_service_owner(conn)?;
+    let manager = conn.with_proxy(&service_owner, MUTTER_SCREEN_CAST_PATH, CALL_TIMEOUT);
     let empty: PropMap = HashMap::new();
     let (session_path,): (DBusPath,) = manager
         .method_call(MUTTER_SCREEN_CAST_BUS, "CreateSession", (empty,))
@@ -236,10 +234,10 @@ fn bind_focused_window(
             }
         })?;
     let session_path = session_path.to_string();
-    match record_and_start(conn, &session_path, owner, cursor_mode) {
+    match record_and_start(conn, &service_owner, &session_path, owner, cursor_mode) {
         Ok(bound) => Ok(bound),
         Err(e) => {
-            stop_session(conn, &session_path);
+            stop_session(conn, &service_owner, &session_path);
             Err(e)
         }
     }
@@ -251,20 +249,24 @@ fn bind_window_id(
     cursor_mode: CursorMode,
     window_id: u64,
 ) -> Result<BoundWindow> {
-    let manager = conn.with_proxy(
-        MUTTER_SCREEN_CAST_BUS,
-        MUTTER_SCREEN_CAST_PATH,
-        CALL_TIMEOUT,
-    );
+    let service_owner = mutter_service_owner(conn)?;
+    let manager = conn.with_proxy(&service_owner, MUTTER_SCREEN_CAST_PATH, CALL_TIMEOUT);
     let empty: PropMap = HashMap::new();
     let (session_path,): (DBusPath,) = manager
         .method_call(MUTTER_SCREEN_CAST_BUS, "CreateSession", (empty,))
         .map_err(|e| anyhow!("org.gnome.Mutter.ScreenCast.CreateSession: {e}"))?;
     let session_path = session_path.to_string();
-    match record_and_start_with_id(conn, &session_path, owner, cursor_mode, Some(window_id)) {
+    match record_and_start_with_id(
+        conn,
+        &service_owner,
+        &session_path,
+        owner,
+        cursor_mode,
+        Some(window_id),
+    ) {
         Ok(bound) => Ok(bound),
         Err(e) => {
-            stop_session(conn, &session_path);
+            stop_session(conn, &service_owner, &session_path);
             Err(e)
         }
     }
@@ -272,21 +274,23 @@ fn bind_window_id(
 
 fn record_and_start(
     conn: &Connection,
+    service_owner: &str,
     session_path: &str,
     owner: u64,
     cursor_mode: CursorMode,
 ) -> Result<BoundWindow> {
-    record_and_start_with_id(conn, session_path, owner, cursor_mode, None)
+    record_and_start_with_id(conn, service_owner, session_path, owner, cursor_mode, None)
 }
 
 fn record_and_start_with_id(
     conn: &Connection,
+    service_owner: &str,
     session_path: &str,
     owner: u64,
     cursor_mode: CursorMode,
     window_id: Option<u64>,
 ) -> Result<BoundWindow> {
-    let session = conn.with_proxy(MUTTER_SCREEN_CAST_BUS, session_path, CALL_TIMEOUT);
+    let session = conn.with_proxy(service_owner, session_path, CALL_TIMEOUT);
     let properties = record_window_properties(cursor_mode, window_id);
     let (stream_path,): (DBusPath,) = session
         .method_call(SESSION_INTERFACE, "RecordWindow", (properties,))
@@ -296,8 +300,7 @@ fn record_and_start_with_id(
     // Subscribe before Start: Mutter announces the PipeWire node once the stream is running.
     let node: Arc<Mutex<Option<u32>>> = Arc::new(Mutex::new(None));
     let node_slot = Arc::clone(&node);
-    let mut rule = dbus::message::MatchRule::new_signal(STREAM_INTERFACE, "PipeWireStreamAdded");
-    rule.path = Some(stream_path.clone().into());
+    let rule = pipewire_stream_added_match(&stream_path, service_owner)?;
     let token = conn
         .add_match(rule, move |(node_id,): (u32,), _conn, _msg| {
             *node_slot.lock().unwrap() = Some(node_id);
@@ -311,16 +314,63 @@ fn record_and_start_with_id(
     let _ = conn.remove_match(token);
     let node_id = node_id?;
 
-    let stream = conn.with_proxy(MUTTER_SCREEN_CAST_BUS, &stream_path, CALL_TIMEOUT);
+    let stream = conn.with_proxy(service_owner, &stream_path, CALL_TIMEOUT);
     let parameters: PropMap = stream
         .get(STREAM_INTERFACE, "Parameters")
         .unwrap_or_default();
     Ok(BoundWindow {
         session_path: session_path.to_string(),
+        service_owner: service_owner.to_string(),
         node_id,
         logical_size: parse_size(&parameters).unwrap_or((0, 0)),
         owner,
     })
+}
+
+fn mutter_service_owner(conn: &Connection) -> Result<String> {
+    let result: std::result::Result<(String,), dbus::Error> = conn
+        .with_proxy(
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            CALL_TIMEOUT,
+        )
+        .method_call(
+            "org.freedesktop.DBus",
+            "GetNameOwner",
+            (MUTTER_SCREEN_CAST_BUS,),
+        );
+    result.map(|(owner,)| owner).map_err(|e| {
+        let message = e.to_string();
+        if is_service_missing(&message) {
+            typed(
+                ERROR_KIND_MUTTER_UNAVAILABLE,
+                format!("this Wayland desktop has no GNOME Mutter ScreenCast API ({message})"),
+            )
+        } else {
+            anyhow!("resolving the owner of {MUTTER_SCREEN_CAST_BUS}: {message}")
+        }
+    })
+}
+
+fn pipewire_stream_added_match(
+    stream_path: &str,
+    service_owner: &str,
+) -> Result<dbus::message::MatchRule<'static>> {
+    let mut rule = dbus::message::MatchRule::new_signal(STREAM_INTERFACE, "PipeWireStreamAdded");
+    rule.path = Some(
+        stream_path
+            .to_string()
+            .try_into()
+            .context("invalid Mutter stream path")?,
+    );
+    rule.sender = Some(
+        service_owner
+            .to_string()
+            .try_into()
+            .context("invalid Mutter unique bus owner")?,
+    );
+    rule.strict_sender = true;
+    Ok(rule)
 }
 
 fn record_window_properties(cursor_mode: CursorMode, window_id: Option<u64>) -> PropMap {
@@ -369,6 +419,42 @@ fn parse_size(parameters: &PropMap) -> Option<(i32, i32)> {
 mod tests {
     use super::*;
 
+    const MUTTER_OWNER: &str = ":1.42";
+
+    fn stream_added_message(sender: &str) -> dbus::Message {
+        let mut message = dbus::Message::new_signal(
+            "/org/gnome/Mutter/ScreenCast/Stream/u1",
+            STREAM_INTERFACE,
+            "PipeWireStreamAdded",
+        )
+        .unwrap()
+        .append1(61_u32);
+        message.set_sender(Some(sender.into()));
+        message
+    }
+
+    #[test]
+    fn pipewire_stream_added_match_is_scoped_to_the_verified_mutter_owner() {
+        let rule =
+            pipewire_stream_added_match("/org/gnome/Mutter/ScreenCast/Stream/u1", MUTTER_OWNER)
+                .unwrap();
+
+        assert_eq!(
+            rule.sender.as_ref().map(ToString::to_string).as_deref(),
+            Some(MUTTER_OWNER)
+        );
+        assert!(rule.matches(&stream_added_message(MUTTER_OWNER)));
+    }
+
+    #[test]
+    fn pipewire_stream_added_match_rejects_the_same_signal_from_another_owner() {
+        let rule =
+            pipewire_stream_added_match("/org/gnome/Mutter/ScreenCast/Stream/u1", MUTTER_OWNER)
+                .unwrap();
+
+        assert!(!rule.matches(&stream_added_message(":1.99")));
+    }
+
     #[test]
     fn window_id_is_dbus_uint64_without_truncation() {
         let window_id = u64::MAX - 1;
@@ -390,6 +476,7 @@ mod tests {
     fn bound(owner: u64) -> BoundWindow {
         BoundWindow {
             session_path: format!("/org/gnome/Mutter/ScreenCast/Session/u{owner}"),
+            service_owner: MUTTER_OWNER.into(),
             node_id: 61,
             logical_size: (2560, 1440),
             owner,
