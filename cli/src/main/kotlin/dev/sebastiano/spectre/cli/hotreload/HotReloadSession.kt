@@ -10,6 +10,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -68,6 +69,7 @@ internal constructor(
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
     // Internal orchestration barrier for integration tests; production construction uses the no-op.
     private val onLifecycleSubscribedForTesting: () -> Unit = {},
+    private val onOrchestrationChannelRegisteredForTesting: () -> Unit = {},
 ) : HotReloadCapability {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val handleRef = AtomicReference<OrchestrationHandle?>(null)
@@ -108,9 +110,14 @@ internal constructor(
     }
 
     private suspend fun awaitConnectedHandle(handle: OrchestrationHandle) {
+        // asChannel registers with OrchestrationSource synchronously. Do that before publishing the
+        // handle: callers treat isConnected/the returned handle as usable and may trigger a reload
+        // immediately, while launching the pump coroutine itself is only scheduled work.
+        val channel = handle.asChannel()
+        onOrchestrationChannelRegisteredForTesting()
         handleRef.set(handle)
         // One reader for the handle; invalidation + waiters share fanned-out lifecycle events.
-        val pump = scope.launch { pumpLifecycle(handle) }
+        val pump = scope.launch { pumpLifecycle(channel) }
         try {
             // Suspend until the handle finishes (app exit / disconnect).
             handle.await()
@@ -132,8 +139,7 @@ internal constructor(
      * to concurrent [waitForReloadSettled] subscribers so they cannot steal messages from each
      * other.
      */
-    private suspend fun pumpLifecycle(handle: OrchestrationHandle) {
-        val channel = handle.asChannel()
+    private suspend fun pumpLifecycle(channel: ReceiveChannel<OrchestrationMessage>) {
         try {
             while (scope.isActive && !closed.get()) {
                 val message = channel.receiveCatching().getOrNull()
