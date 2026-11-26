@@ -713,9 +713,17 @@ fn read_cached_window(
         .collect();
     let mut replies = HashMap::with_capacity(calls.len());
     while replies.len() < calls.len() {
-        let timeout = call_timeout_anyhow(deadline)?;
-        let Some(mut message) = bus.channel().blocking_pop_message(timeout)? else {
-            anyhow::bail!("deadline exceeded waiting for cached AT-SPI enrichment replies")
+        let mut message = loop {
+            match bus
+                .channel()
+                .blocking_pop_message(call_timeout_anyhow(deadline)?)?
+            {
+                Some(message) => break message,
+                None if Instant::now() >= deadline => {
+                    anyhow::bail!("deadline exceeded waiting for cached AT-SPI enrichment replies")
+                }
+                None => continue,
+            }
         };
         if !matches!(
             message.msg_type(),
@@ -737,10 +745,7 @@ fn read_cached_window(
         };
         let reply = match message.as_result() {
             Ok(message) => decode_cached_reply(message, call.kind)?,
-            Err(error) if is_dbus_timeout_error(&error) || Instant::now() >= deadline => {
-                return Err(error.into())
-            }
-            Err(_) => CachedReply::Unsupported,
+            Err(error) => classify_cached_error(&error, call.kind, deadline)?,
         };
         replies.insert(serial, reply);
     }
@@ -748,12 +753,33 @@ fn read_cached_window(
 }
 
 fn cached_reply_matches(kind: MessageType, sender: Option<&str>, owner: &str) -> bool {
-    match kind {
-        // Errors such as LimitsExceeded and NoReply can be synthesized by the bus daemon, so
-        // their sender is not the destination owner. The reply serial still identifies our call.
-        MessageType::Error => true,
-        MessageType::MethodReturn => sender == Some(owner),
-        _ => false,
+    matches!(kind, MessageType::MethodReturn | MessageType::Error)
+        && matches!(sender, Some(value) if value == owner || (kind == MessageType::Error && value == "org.freedesktop.DBus"))
+}
+
+fn classify_cached_error(
+    error: &dbus::Error,
+    kind: CachedCallKind,
+    deadline: Instant,
+) -> Result<CachedReply> {
+    if is_dbus_timeout_error(error) || Instant::now() >= deadline {
+        return Err(dbus::Error::new_custom(
+            error.name().unwrap_or("org.freedesktop.DBus.Error.Failed"),
+            &error.to_string(),
+        )
+        .into());
+    }
+    match error.name() {
+        Some(
+            "org.freedesktop.DBus.Error.UnknownInterface"
+            | "org.freedesktop.DBus.Error.UnknownMethod"
+            | "org.freedesktop.DBus.Error.UnknownObject",
+        ) => Ok(CachedReply::Unsupported),
+        // AT-SPI providers commonly use these for an optional attribute unavailable on one node.
+        Some("org.a11y.atspi.Error.NotImplemented" | "org.a11y.atspi.Error.NotSupported") => {
+            Ok(CachedReply::Unsupported)
+        }
+        _ => anyhow::bail!("cached AT-SPI {kind:?} call failed: {error}"),
     }
 }
 
@@ -2585,7 +2611,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_pipeline_accepts_daemon_errors_but_not_foreign_returns() {
+    fn cached_pipeline_rejects_foreign_errors_and_returns() {
         assert!(cached_reply_matches(
             MessageType::Error,
             Some("org.freedesktop.DBus"),
@@ -2593,12 +2619,12 @@ mod tests {
         ));
         assert!(cached_reply_matches(
             MessageType::Error,
-            Some(":1.0"),
+            Some(":1.42"),
             ":1.42"
         ));
-        assert!(cached_reply_matches(
-            MessageType::MethodReturn,
-            Some(":1.42"),
+        assert!(!cached_reply_matches(
+            MessageType::Error,
+            Some(":1.99"),
             ":1.42"
         ));
         assert!(!cached_reply_matches(
@@ -2606,6 +2632,29 @@ mod tests {
             Some(":1.99"),
             ":1.42"
         ));
+    }
+
+    #[test]
+    fn cached_pipeline_only_hides_optional_provider_errors() {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        for name in [
+            "org.freedesktop.DBus.Error.UnknownMethod",
+            "org.a11y.atspi.Error.NotImplemented",
+        ] {
+            let error = dbus::Error::new_custom(name, "optional field unavailable");
+            assert!(matches!(
+                classify_cached_error(&error, CachedCallKind::RoleName, deadline).unwrap(),
+                CachedReply::Unsupported
+            ));
+        }
+        for name in [
+            "org.freedesktop.DBus.Error.LimitsExceeded",
+            "org.freedesktop.DBus.Error.Disconnected",
+            "org.freedesktop.DBus.Error.ServiceUnknown",
+        ] {
+            let error = dbus::Error::new_custom(name, "required route failed");
+            assert!(classify_cached_error(&error, CachedCallKind::Attributes, deadline).is_err());
+        }
     }
 
     #[test]
