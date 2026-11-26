@@ -86,7 +86,9 @@ null, not omitted. Node order is window order followed by pre-order traversal.
 Error codes are `permission-missing`, `accessibility-disabled`, `target-not-found`,
 `no-accessibility-tree`, `limit-reached`, and `timeout`. `limit-reached` must include the valid
 pre-order partial snapshot; `timeout` may include one. Other errors omit or set `partialSnapshot`
-to null. A structured error is still a valid protocol response and the helper exits zero. Invalid
+to null. Callers must preserve an unrecognised future error code as a structured failure rather
+than treating it as success. A structured error is still a valid protocol response and the helper
+exits zero. Invalid
 requests, corrupt output, and helper crashes use a non-zero exit and are daemon/helper integration
 failures rather than target errors.
 

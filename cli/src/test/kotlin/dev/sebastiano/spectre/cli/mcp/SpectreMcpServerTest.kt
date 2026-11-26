@@ -4,6 +4,8 @@ import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.ProgressRangeDto
 import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.cli.SpectreBuildMetadata
+import dev.sebastiano.spectre.cli.daemon.AccessibilityError
+import dev.sebastiano.spectre.cli.daemon.AccessibilityErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
@@ -43,6 +45,25 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 class SpectreMcpServerTest {
+    @Test
+    fun `accessibility structured failures are never MCP success`() = runBlocking {
+        val server = SpectreMcpServer.create {
+            DaemonResponse.AccessibilityErrorResult(
+                AccessibilityError(
+                    AccessibilityErrorCode.Unknown,
+                    "reader is busy",
+                    rawCode = "reader-busy",
+                )
+            )
+        }
+
+        val result = invokeTool(server, "accessibility_tree", buildJsonObject { put("pid", 42) })
+
+        assertTrue(result.isError == true, "structured helper failure must set isError: $result")
+        val body = Json.parseToJsonElement((result.content.single() as TextContent).text).jsonObject
+        assertEquals("reader-busy", body.getValue("rawCode").jsonPrimitive.content)
+    }
+
     @Test
     fun `normalizes recording output paths before sending them to the daemon`() {
         val outputPath = "captures/../captures/session.mp4"

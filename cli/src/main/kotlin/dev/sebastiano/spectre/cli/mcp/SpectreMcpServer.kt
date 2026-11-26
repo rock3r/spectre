@@ -698,7 +698,7 @@ private fun registerAccessibilityTool(
             is DaemonResponse.AccessibilityErrorResult ->
                 CallToolResult(
                     listOf(TextContent(MCP_JSON.encodeToString(response.error))),
-                    isError = response.error.partialSnapshot == null,
+                    isError = true,
                 )
             is DaemonResponse.Error ->
                 CallToolResult(listOf(TextContent(response.message)), isError = true)
