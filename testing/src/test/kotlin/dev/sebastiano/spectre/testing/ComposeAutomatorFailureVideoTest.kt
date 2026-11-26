@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.testing
 import dev.sebastiano.spectre.core.ComposeAutomator
 import dev.sebastiano.spectre.core.RobotDriver
 import dev.sebastiano.spectre.recording.RecordingHandle
+import java.awt.Rectangle
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
@@ -20,6 +21,51 @@ import org.opentest4j.TestAbortedException
  * [ComposeAutomatorRule] entry points with a fake [FailureVideoStarter] (I/O boundary only).
  */
 class ComposeAutomatorFailureVideoTest {
+
+    @Test
+    fun `rule preserves configured region through invocation copy`(@TempDir temp: Path) {
+        val scopes = mutableListOf<FailureVideoScope>()
+        val starter = scopeRecordingStarter(scopes)
+        val rule =
+            ComposeAutomatorRule(
+                failureArtifacts = FailureArtifactsConfig(enabled = false, reportsRoot = temp),
+                failureVideo =
+                    FailureVideoConfig(policy = FailureVideoPolicy.Always, reportsRoot = temp)
+                        .withRegion(Rectangle(1, 2, 30, 40)),
+                videoStarter = starter,
+                factory = { ComposeAutomator.inProcess(robotDriver = RobotDriver.headless()) },
+            )
+        rule
+            .apply(
+                object : Statement() {
+                    override fun evaluate() = Unit
+                },
+                Description.createTestDescription(VideoSample::class.java, "passes"),
+            )
+            .evaluate()
+        assertEquals(
+            listOf<FailureVideoScope>(FailureVideoScope.Region(Rectangle(1, 2, 30, 40))),
+            scopes,
+        )
+    }
+
+    @Test
+    fun `extension preserves configured display through invocation copy`(@TempDir temp: Path) {
+        val scopes = mutableListOf<FailureVideoScope>()
+        val extension =
+            ComposeAutomatorExtension(
+                failureArtifacts = FailureArtifactsConfig(enabled = false, reportsRoot = temp),
+                failureVideo =
+                    FailureVideoConfig(policy = FailureVideoPolicy.Always, reportsRoot = temp)
+                        .withDisplay(3),
+                videoStarter = scopeRecordingStarter(scopes),
+                factory = { ComposeAutomator.inProcess(robotDriver = RobotDriver.headless()) },
+            )
+        val context = RecordingExtensionContext(null, VideoSample::class.java, "passes")
+        extension.beforeEach(context)
+        extension.afterEach(context)
+        assertEquals(listOf<FailureVideoScope>(FailureVideoScope.Display(3)), scopes)
+    }
 
     @Test
     fun `extension default Off never starts recorder`(@TempDir temp: Path) {
@@ -221,6 +267,21 @@ class ComposeAutomatorFailureVideoTest {
             }
         }
     }
+
+    private fun scopeRecordingStarter(scopes: MutableList<FailureVideoScope>): FailureVideoStarter =
+        object : FailureVideoStarter {
+            override fun start(output: Path, automator: ComposeAutomator): RecordingHandle? =
+                error("scope-aware overload must be used")
+
+            override fun start(
+                output: Path,
+                automator: ComposeAutomator,
+                scope: FailureVideoScope,
+            ): RecordingHandle {
+                scopes += scope
+                return fakeStarter(output)
+            }
+        }
 
     private fun requireActiveVideo(temp: Path): Path {
         val found =

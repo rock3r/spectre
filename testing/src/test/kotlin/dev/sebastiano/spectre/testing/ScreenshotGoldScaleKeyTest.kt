@@ -8,6 +8,7 @@ import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.SwingUtilities
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -257,20 +258,49 @@ class ScreenshotGoldScaleKeyTest {
     }
 
     @Test
-    fun `scale key falls back when matching surfaces disagree on density`() {
+    fun `scale key fails when matching surfaces disagree on density`() {
         val image = BufferedImage(200, 100, BufferedImage.TYPE_INT_ARGB)
-        val key =
+        val error =
+            assertFailsWith<IllegalStateException> {
+                currentScaleKey(
+                    image = image,
+                    surfaces =
+                        listOf(
+                            CaptureSurfaceScale(200, 100, 2.0, 2.0),
+                            CaptureSurfaceScale(200, 100, 1.25, 1.25),
+                        ),
+                    fallbackScaleX = 1.0,
+                    fallbackScaleY = 1.0,
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("determine screenshot scale"))
+    }
+
+    @Test
+    fun `comparison keeps display fallback when no surfaces are visible`() {
+        assertEquals(
+            "scale-1.5x1.25",
             currentScaleKey(
-                image = image,
-                surfaces =
-                    listOf(
-                        CaptureSurfaceScale(200, 100, 2.0, 2.0),
-                        CaptureSurfaceScale(200, 100, 1.25, 1.25),
-                    ),
-                fallbackScaleX = 1.0,
-                fallbackScaleY = 1.0,
-            )
-        assertEquals("scale-1x1", key)
+                surfaces = emptyList(),
+                fallbackScaleX = 1.5,
+                fallbackScaleY = 1.25,
+                requireUnambiguousEvidence = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `automatic update rejects absent scale evidence`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                currentScaleKey(
+                    surfaces = emptyList(),
+                    fallbackScaleX = 2.0,
+                    fallbackScaleY = 2.0,
+                    requireUnambiguousEvidence = true,
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("Pass scaleKey explicitly"))
     }
 
     @Test
