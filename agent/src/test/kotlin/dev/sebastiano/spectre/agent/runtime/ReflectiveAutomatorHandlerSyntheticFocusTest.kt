@@ -78,13 +78,22 @@ class ReflectiveAutomatorHandlerSyntheticFocusTest {
     @Test
     fun `real OS pressKey still requires OS keyboard focus`() {
         val fake = InputModeAutomator(realOsInput = true, focusedNode = false)
-        val handler = ReflectiveAutomatorHandler(fake, isTargetJvmFocused = { false })
+        var focusInspections = 0
+        val handler =
+            ReflectiveAutomatorHandler(
+                fake,
+                isTargetJvmFocused = {
+                    focusInspections++
+                    false
+                },
+            )
 
         val response = handler.handle(AgentRequest.PressKey(keyCode = 10))
 
         check(response is AgentResponse.Error) { "expected an Error response, got $response" }
         assertEquals(AgentErrorCategory.InputRejected.wireName, response.category)
         assertEquals(emptyList(), fake.pressedKeys)
+        assertEquals(1, focusInspections, "pressKey refusal must not attempt a focus handoff")
     }
 }
 

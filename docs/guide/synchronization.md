@@ -237,6 +237,15 @@ automator.waitForVisualIdle(
 )
 ```
 
+Native window capture is required by default. Missing GStreamer, a missing platform runtime
+helper, disabled platform capture, and non-interactive hosted Windows fail immediately with
+remediation instead of substituting an occlusion-sensitive desktop crop. If that different
+mechanism is deliberately acceptable, opt in explicitly:
+
+```kotlin
+automator.waitForVisualIdle(allowScreenRegionFallback = true)
+```
+
 Hashes each tracked Compose surface independently and waits for `stableFrames`
 consecutive identical hashes per surface.
 
@@ -254,8 +263,8 @@ Sampling follows these rules:
   capture a window without a title. There, every sample that includes such a popup is
   unusable and the wait times out; see
   [Still window screenshots](recording.md#still-window-screenshots). On Linux, the helper needs
-  `gst-launch-1.0`. If GStreamer is missing, Spectre uses `java.awt.Robot` region
-  capture. It also uses region capture when no recording backend is present.
+  `gst-launch-1.0`. Missing GStreamer or a missing platform helper fails unless the caller enabled
+  `allowScreenRegionFallback`.
   A capture often takes tens or hundreds of milliseconds per surface.
   First helper startup, Wayland, large displays, and software VMs can take longer.
   The default `16.milliseconds` targets 60 Hz. Capture cost can reduce the actual poll rate.

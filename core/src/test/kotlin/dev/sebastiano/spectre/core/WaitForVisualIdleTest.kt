@@ -14,6 +14,30 @@ import kotlinx.coroutines.withTimeout
 class WaitForVisualIdleTest {
 
     @Test
+    fun `empty headless automator preserves the no-surface exception before capture policy`() =
+        runTest {
+            val automator =
+                ComposeAutomator.inProcess(
+                    robotDriver = RobotDriver.headless(),
+                    discoverWindows = false,
+                )
+
+            val error =
+                assertFailsWith<IdleTimeoutException> {
+                    automator.waitForVisualIdle(
+                        timeout = 200.milliseconds,
+                        stableFrames = 1,
+                        pollInterval = 1.milliseconds,
+                    )
+                }
+
+            assertTrue(
+                error.message.orEmpty().contains("no Compose surface available"),
+                error.message,
+            )
+        }
+
+    @Test
     fun `visual idle cancellation interrupts a cold capture wait`() = runTest {
         assertFailsWith<TimeoutCancellationException> {
             withTimeout(100.milliseconds) {

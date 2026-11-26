@@ -94,7 +94,10 @@ class WaitDeadlineDiagnosticsTest {
         withAttached(automator) { attached ->
             val failure =
                 assertFailsWithAgentTimeout("waitForVisualIdle") {
-                    attached.waitForVisualIdle(timeoutMs = WAIT_MS)
+                    attached.waitForVisualIdle(
+                        timeoutMs = WAIT_MS,
+                        allowScreenRegionFallback = true,
+                    )
                 }
             assertDiagnosticSurvived(failure, diagnostic)
         }

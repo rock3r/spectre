@@ -374,14 +374,14 @@ X11/Xvfb native stills read visible framebuffer pixels; keep the target frontmos
 usable pair across one-shot native still latency.
 
 `waitForVisualIdle()` samples **window-scoped** pixels for tracked Compose surfaces when
-`spectre-recording` is present **and the platform helper can actually run** (same native still
-path as `screenshot(windowIndex)`). Class presence is not enough: on Linux the helper needs
-`gst-launch-1.0` (with `ximagesrc`, `videoconvert`, and `pngenc` for X11/Xvfb stills). If
-recording is on the classpath and GStreamer is missing, Spectre falls back to Robot region
-capture of each surface rectangle so samples remain usable. Keep the
-target frontmost and unobscured in that fallback mode (Linux X11 region and some embedded
-cases still need visibility). For native window stills on Linux, install GStreamer and
-include `spectre-recording` with the platform helper on the test runtime classpath.
+native capture is available. Native capture is required by default: install GStreamer and the
+matching `spectre-recording-<os>` runtime helper, and use an interactive Windows desktop. The call
+fails immediately when a prerequisite probe fails. Only opt into occlusion-sensitive Robot crops
+with `waitForVisualIdle(allowScreenRegionFallback = true)`.
+
+Class presence is not enough: on Linux the helper needs `gst-launch-1.0` with `ximagesrc`,
+`videoconvert`, and `pngenc` for X11/Xvfb stills. Include `spectre-recording` with the platform
+helper on the test runtime classpath.
 
 On Windows, Spectre keeps one capture helper open per window while it takes stills of that
 window. It closes the helper after 2 s without a still. A visual-idle sample of a warm window
@@ -640,17 +640,24 @@ needs and throws on first use if either is denied:
   `pressKey(...)`, etc. and asks `System Events` (via `osascript`) for the active
   process. A "not allowed assistive access" denial throws with an actionable
   message naming the wrapping app to grant; an inconclusive probe (no `osascript`,
-  AppleEvents/Automation refusal, etc.) prints a one-shot stderr warning and
-  proceeds.
+  AppleEvents/Automation refusal, etc.) fails with an inconclusive diagnostic.
 - **Screen Recording** — required for `Robot.createScreenCapture` to return real
   pixels. Without it the call silently returns an all-black image. A locked
   screen can produce the same symptom, so the probe first checks whether macOS
   reports the console session as locked; if so, unlock the screen and retry. If
   the session is unlocked, the probe captures a small region near the screen
-  origin (which on macOS overlaps the menu bar) and treats an all-black result as
-  denial. False positives are rare; if the screen really is fully
-  black at the origin, switch to `RobotDriver.headless()` for tests or grant
-  Screen Recording to silence the probe.
+  origin (which on macOS overlaps the menu bar). An all-black result is
+  inconclusive rather than proof of denial because legitimate pixels can be
+  black too. A cached Robot grant is rechecked after an unexpectedly black Robot
+  capture, while a conclusively granted and unlocked state preserves naturally
+  black content.
+
+Native window stills use the separately signed ScreenCaptureKit helper. Its
+Screen Recording grant belongs to the helper app, not the target JVM or the app
+that launched that JVM. Spectre therefore never asks for or probes the JVM's
+Robot Screen Recording permission to validate a successful helper image,
+including a naturally black window. Helper permission diagnostics come from the
+helper's own preflight/capture result; lock status remains independent.
 
 Open System Settings → Privacy & Security. Grant Accessibility or Screen &
 System Audio Recording to the app that launched the JVM. It may be IntelliJ,

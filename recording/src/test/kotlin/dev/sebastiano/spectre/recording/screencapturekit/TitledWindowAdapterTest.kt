@@ -1,9 +1,11 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
+import dev.sebastiano.spectre.recording.stabilizeMappedAwtFrames
 import java.awt.Dialog
 import java.awt.EventQueue
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
+import java.awt.Rectangle
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import org.junit.jupiter.api.Assumptions.assumeFalse
@@ -106,17 +108,18 @@ internal fun withSharedSckFrames(test: (Frame, Frame) -> Unit) {
     lateinit var left: Frame
     lateinit var right: Frame
     EventQueue.invokeAndWait {
-        fun visible(x: Int) =
+        fun visible(bounds: Rectangle) =
             Frame("direct SCK shared title").apply {
                 addPropertyChangeListener("title") { titleChanges.incrementAndGet() }
                 isUndecorated = true
-                setBounds(x, 20, 300, 200)
+                this.bounds = bounds
                 isVisible = true
             }
-        left = visible(10)
-        right = visible(410)
+        left = visible(SCK_LEFT_FRAME)
+        right = visible(SCK_RIGHT_FRAME)
     }
     try {
+        stabilizeMappedAwtFrames(left to SCK_LEFT_FRAME, right to SCK_RIGHT_FRAME)
         test(left, right)
         assertEquals(0, titleChanges.get(), "capture changed an AWT title")
     } finally {
@@ -126,3 +129,6 @@ internal fun withSharedSckFrames(test: (Frame, Frame) -> Unit) {
         }
     }
 }
+
+internal val SCK_LEFT_FRAME: Rectangle = Rectangle(40, 80, 300, 200)
+internal val SCK_RIGHT_FRAME: Rectangle = Rectangle(410, 80, 300, 200)

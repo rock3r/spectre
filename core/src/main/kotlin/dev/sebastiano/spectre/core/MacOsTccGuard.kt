@@ -1,7 +1,21 @@
 package dev.sebastiano.spectre.core
 
 import java.awt.Rectangle
+import java.awt.image.BufferedImage
 import java.util.concurrent.TimeUnit
+
+/** Machine-readable reason why Spectre refused a macOS TCC-gated operation. */
+public enum class MacOsTccDiagnostic {
+    Denied,
+    Locked,
+    Inconclusive,
+}
+
+/** Loud failure when a macOS permission probe cannot establish that an operation is safe. */
+public class MacOsTccDiagnosticException(
+    public val diagnostic: MacOsTccDiagnostic,
+    message: String,
+) : IllegalStateException(message)
 
 /**
  * Coarse macOS TCC permission status, mirrored from
@@ -30,8 +44,7 @@ internal enum class TccStatus {
  * - **Denied** — throws [IllegalStateException] with an actionable remediation message that names
  *   the missing TCC entry, the parent-process attribution rule, and the relaunch-after-grant
  *   requirement. The exception is the loud signal the silent-no-op shape was missing.
- * - **Unknown** — emits a one-shot stderr warning so the consumer knows the probe was inconclusive
- *   (couldn't run osascript, etc.) but proceeds; we don't block when we don't know.
+ * - **Unknown** — throws a typed inconclusive diagnostic rather than proceeding unsafely.
  * - **Granted** / **NotApplicable** — silent pass-through.
  *
  * Probe results are cached after the first call: the osascript Accessibility query takes a few
@@ -44,7 +57,6 @@ internal enum class TccStatus {
 internal open class MacOsTccGuard(
     private val accessibilityProbe: () -> TccStatus,
     private val screenRecordingProbe: () -> TccStatus,
-    private val warn: (String) -> Unit = { System.err.println(it) },
 ) {
 
     @Volatile private var accessibilityStatus: TccStatus? = null
@@ -71,6 +83,15 @@ internal open class MacOsTccGuard(
         )
     }
 
+    /** Re-probes this Robot owner's cached grant when its production capture returns black. */
+    open fun validateCapture(image: BufferedImage) {
+        // The noop guard represents a backend with no macOS Robot TCC identity. Avoid scanning the
+        // image there (and on every non-macOS driver) before doing any pixel work.
+        if (screenRecordingStatus == TccStatus.NotApplicable || !image.isAllBlack()) return
+        screenRecordingStatus = null
+        requireScreenRecording()
+    }
+
     private inline fun applyStatus(
         cached: TccStatus?,
         probe: () -> TccStatus,
@@ -79,18 +100,26 @@ internal open class MacOsTccGuard(
         lockedMessage: String? = null,
         unknownWarning: String,
     ) {
-        val firstCheck = cached == null
         val status =
             cached
                 ?: probe().also {
                     // A locked screen is transient; do not memoise it as a permanent capture
                     // denial for long-lived Gradle daemons or IDE-hosted test JVMs.
-                    if (it != TccStatus.Locked) store(it)
+                    if (it != TccStatus.Locked && it != TccStatus.Unknown) store(it)
                 }
         when (status) {
-            TccStatus.Denied -> error(deniedMessage)
-            TccStatus.Locked -> error(lockedMessage ?: deniedMessage)
-            TccStatus.Unknown -> if (firstCheck) warn(unknownWarning)
+            TccStatus.Denied ->
+                throw MacOsTccDiagnosticException(MacOsTccDiagnostic.Denied, deniedMessage)
+            TccStatus.Locked ->
+                throw MacOsTccDiagnosticException(
+                    MacOsTccDiagnostic.Locked,
+                    lockedMessage ?: deniedMessage,
+                )
+            TccStatus.Unknown ->
+                throw MacOsTccDiagnosticException(
+                    MacOsTccDiagnostic.Inconclusive,
+                    unknownWarning,
+                )
             TccStatus.Granted,
             TccStatus.NotApplicable -> Unit
         }
@@ -103,7 +132,6 @@ internal open class MacOsTccGuard(
             MacOsTccGuard(
                 accessibilityProbe = { TccStatus.NotApplicable },
                 screenRecordingProbe = { TccStatus.NotApplicable },
-                warn = {},
             )
     }
 }
@@ -134,11 +162,8 @@ internal fun osascriptAccessibilityProbe(): TccStatus {
 /**
  * Probes Screen Recording TCC by capturing a small region near the screen origin (which on macOS
  * overlaps the menu bar, virtually never fully black) via the supplied [screenCapture] adapter. If
- * every pixel has zero RGB the capture pipeline is silently returning a black image, which on macOS
- * means the wrapping process lacks Screen Recording TCC.
- *
- * False-positive risk: a user whose screen is genuinely all-black across the entire 32×32 origin
- * region. In practice the macOS menu bar always provides UI variation here.
+ * every pixel has zero RGB the result is inconclusive: denial, a locked session, and legitimate
+ * black content are indistinguishable from pixels alone.
  */
 internal fun robotScreenRecordingProbe(screenCapture: ScreenCaptureAdapter): TccStatus {
     val image = runCatching {
@@ -152,12 +177,16 @@ internal fun robotScreenRecordingProbe(screenCapture: ScreenCaptureAdapter): Tcc
         // the probe can't say anything useful in that case.
         return TccStatus.Unknown
     }
-    for (y in 0 until image.height) {
-        for (x in 0 until image.width) {
-            if ((image.getRGB(x, y) and RGB_MASK) != 0) return TccStatus.Granted
+    return if (image.isAllBlack()) TccStatus.Unknown else TccStatus.Granted
+}
+
+private fun BufferedImage.isAllBlack(): Boolean {
+    for (y in 0 until height) {
+        for (x in 0 until width) {
+            if ((getRGB(x, y) and RGB_MASK) != 0) return false
         }
     }
-    return TccStatus.Denied
+    return true
 }
 
 internal fun macOsScreenRecordingProbe(screenCapture: ScreenCaptureAdapter): TccStatus {
@@ -236,8 +265,7 @@ private const val OSASCRIPT_TIMEOUT_SECONDS: Long = 3
 private const val IOREG_TIMEOUT_SECONDS: Long = 3
 private const val PROBE_SIZE_PX: Int = 32
 // Mask out the alpha channel from BufferedImage.TYPE_INT_ARGB pixels so probe checks see the
-// 24-bit RGB tuple. A TCC-denied capture returns RGB=0 across every pixel; alpha may not be 0
-// depending on the capture pipeline.
+// 24-bit RGB tuple. A blocked capture can return RGB=0 across every pixel; alpha may not be 0.
 private const val RGB_MASK: Int = 0x00FFFFFF
 
 private const val PARENT_PROCESS_GUIDANCE: String =
@@ -276,6 +304,7 @@ internal const val SCREEN_RECORDING_LOCKED_MESSAGE: String =
 
 internal const val SCREEN_RECORDING_UNKNOWN_WARNING: String =
     "Spectre RobotDriver: could not determine macOS Screen Recording TCC permission state " +
-        "(probe capture was inconclusive). Subsequent screenshots may return all-black images " +
-        "if the wrapping app has not been granted System Settings → Privacy & Security → " +
+        "(probe capture was inconclusive, so capture was refused without prompting). An all-black " +
+        "frame can mean a locked session, a missing grant, or legitimate black content. Unlock " +
+        "the session and verify System Settings → Privacy & Security → " +
         "Screen & System Audio Recording. $PARENT_PROCESS_GUIDANCE"

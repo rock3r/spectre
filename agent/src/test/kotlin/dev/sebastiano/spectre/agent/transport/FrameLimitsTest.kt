@@ -85,14 +85,13 @@ class FrameLimitsTest {
     }
 
     @Test
-    fun `an environment budget below the minimum falls back to the default`() {
-        assertEquals(
-            DEFAULT_MAX_FRAME_BYTES,
-            FrameLimits.resolveBudget { name -> if (name == FrameLimits.ENV_VAR) "1" else null },
-        )
-        assertNull(
+    fun `an environment budget below the minimum fails loudly`() {
+        assertFailsWith<IllegalArgumentException> {
+            FrameLimits.resolveBudget { name -> if (name == FrameLimits.ENV_VAR) "1" else null }
+        }
+        assertFailsWith<IllegalArgumentException> {
             FrameLimits.resolveRequest { name -> if (name == FrameLimits.ENV_VAR) "1" else null }
-        )
+        }
     }
 
     @Test
@@ -142,11 +141,11 @@ class FrameLimitsTest {
             },
         )
         assertNull(FrameLimits.resolveRequest { null })
-        assertNull(
+        assertFailsWith<IllegalArgumentException> {
             FrameLimits.resolveRequest { name ->
                 if (name == FrameLimits.ENV_VAR) "banana" else null
             }
-        )
+        }
     }
 
     @Test
@@ -172,20 +171,18 @@ class FrameLimitsTest {
     }
 
     @Test
-    fun `unparseable environment override falls back to the default`() {
-        assertEquals(
-            DEFAULT_MAX_FRAME_BYTES,
+    fun `unparseable environment override fails loudly`() {
+        assertFailsWith<IllegalArgumentException> {
             FrameLimits.resolveBudget { name ->
                 if (name == FrameLimits.ENV_VAR) "banana" else null
-            },
-        )
+            }
+        }
     }
 
     @Test
-    fun `environment override is clamped to the read ceiling`() {
-        assertEquals(
-            MAX_FRAME_BYTES_CEILING,
-            FrameLimits.resolveBudget { name -> if (name == FrameLimits.ENV_VAR) "1G" else null },
-        )
+    fun `environment override above the read ceiling fails loudly`() {
+        assertFailsWith<IllegalArgumentException> {
+            FrameLimits.resolveBudget { name -> if (name == FrameLimits.ENV_VAR) "1G" else null }
+        }
     }
 }
