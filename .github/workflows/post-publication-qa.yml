@@ -3,7 +3,9 @@ name: Scratch hosted post-publication QA
 on:
   push:
     branches: [release-0.10/gnome-hosted-smoke]
-    paths: [.github/post-publication-qa/**, .github/workflows/post-publication-qa.yml]
+    paths:
+      - .github/post-publication-qa/**
+      - .github/workflows/post-publication-qa.yml
 
 permissions:
   contents: read
@@ -14,28 +16,38 @@ concurrency:
 
 jobs:
   gate:
-    if: startsWith(github.event.head_commit.message, 'Probe published Spectre')
+    if: startsWith(github.event.head_commit.message, 'Probe published Spectre') || startsWith(github.event.head_commit.message, 'Correct post-publication QA')
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.control.outputs.version }}
     steps:
       - uses: actions/checkout@v6
-        with: {persist-credentials: false}
+        with: {persist-credentials: false, fetch-depth: 2}
       - id: control
         shell: bash
+        env:
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/release-0.10/gnome-hosted-smoke
+          changed=$(git diff-tree --no-commit-id --name-only -r HEAD)
+          if grep -qx '.github/post-publication-qa/control.env' <<<"$changed"; then
+            [[ "$HEAD_COMMIT_MESSAGE" == Probe\ published\ Spectre* ]]
+          else
+            [[ "$HEAD_COMMIT_MESSAGE" == Correct\ post-publication\ QA* ]]
+            ! grep -qvE '^\.github/(post-publication-qa/|workflows/post-publication-qa\.yml$)' <<<"$changed"
+          fi
           source .github/post-publication-qa/control.env
           [[ "$VERSION" == 0.9.0 || "$VERSION" == 0.10.0 ]]
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           python3 .github/post-publication-qa/verify_release.py --control .github/post-publication-qa/control.env --output release-identity.json
       - uses: actions/upload-artifact@v6
+        if: always()
         with:
           name: public-release-identity
           path: release-identity.json
-          if-no-files-found: error
+          if-no-files-found: warn
 
   native:
     needs: gate
@@ -43,29 +55,76 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: x64
-            runner: ubuntu-24.04
-            asset: spectre-linuxX64.zip
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            asset: spectre-linuxArm64.zip
+          - {arch: x64, runner: ubuntu-24.04, asset: spectre-linuxX64.zip}
+          - {arch: arm64, runner: ubuntu-24.04-arm, asset: spectre-linuxArm64.zip}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
         with: {persist-credentials: false}
-      - name: Download, authenticate, and run the native public archive
+      - name: Authenticate and probe the public native archive
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p evidence
-          python3 .github/post-publication-qa/verify_release.py --control .github/post-publication-qa/control.env --asset '${{ matrix.asset }}' --output evidence/release-and-asset.json
-          python3 .github/post-publication-qa/verify_native_archive.py --version '${{ needs.gate.outputs.version }}' --arch '${{ matrix.arch }}' --archive 'evidence/${{ matrix.asset }}' --evidence evidence/native --golden .github/post-publication-qa/accessibility-snapshot-0.10.0.json
-          sha256sum 'evidence/${{ matrix.asset }}' > evidence/archive.sha256
+          mkdir -p "$RUNNER_TEMP/download" evidence/native
+          trap 'status=$?; printf "%s\n" "$status" > evidence/status.txt; exit "$status"' EXIT
+          python3 .github/post-publication-qa/verify_release.py --control .github/post-publication-qa/control.env --asset '${{ matrix.asset }}' --output "$RUNNER_TEMP/download/release-and-asset.json"
+          cp "$RUNNER_TEMP/download/release-and-asset.json" evidence/
+          python3 .github/post-publication-qa/verify_native_archive.py --version '${{ needs.gate.outputs.version }}' --arch '${{ matrix.arch }}' --archive "$RUNNER_TEMP/download/${{ matrix.asset }}" --evidence evidence/native
       - uses: actions/upload-artifact@v6
+        if: always()
         with:
           name: native-${{ matrix.arch }}-${{ needs.gate.outputs.version }}
           path: evidence
-          if-no-files-found: error
+          if-no-files-found: warn
+
+  accessibility-acceptance:
+    needs: gate
+    if: needs.gate.outputs.version == '0.10.0'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with: {persist-credentials: false}
+      - name: Install fixture runtime before isolated acceptance session
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb dbus-x11 at-spi2-core python3-gi gir1.2-gtk-3.0
+      - name: Run shipped CLI against an independent visible GTK application
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/download" evidence
+          trap 'status=$?; printf "%s\n" "$status" > evidence/status.txt; exit "$status"' EXIT
+          python3 .github/post-publication-qa/verify_release.py --control .github/post-publication-qa/control.env --asset spectre-linuxX64.zip --output "$RUNNER_TEMP/download/release.json"
+          python3 - "$RUNNER_TEMP/download/spectre-linuxX64.zip" "$RUNNER_TEMP/cli" <<'PY'
+          import pathlib,sys
+          sys.path.insert(0,'.github/post-publication-qa')
+          from verify_native_archive import extract_zip_preserving_unix
+          extract_zip_preserving_unix(sys.argv[1],pathlib.Path(sys.argv[2]))
+          PY
+          spectre=$(find "$RUNNER_TEMP/cli" -type f -name spectre -perm -u+x -print -quit)
+          test -f "$spectre"
+          cat > "$RUNNER_TEMP/fixture.py" <<'PY'
+          import gi,os,pathlib
+          gi.require_version('Gtk','3.0'); from gi.repository import Gtk
+          window=Gtk.Window(title='Spectre QA Window'); window.set_default_size(420,180)
+          window.add(Gtk.Button(label='Spectre QA Button')); window.connect('destroy',Gtk.main_quit)
+          window.show_all(); pathlib.Path(os.environ['FIXTURE_PID_FILE']).write_text(str(os.getpid())); Gtk.main()
+          PY
+          export FIXTURE_PID_FILE="$RUNNER_TEMP/fixture.pid"
+          dbus-run-session -- xvfb-run -a bash -euo pipefail -c '
+            export NO_AT_BRIDGE=0 GTK_MODULES=gail:atk-bridge
+            gsettings set org.gnome.desktop.interface toolkit-accessibility true
+            python3 "$1" & fixture=$!
+            trap "kill $fixture 2>/dev/null || true" EXIT
+            for i in {1..100}; do test -s "$2" && break; sleep .1; done
+            pid=$(cat "$2"); test "$pid" = "$fixture"
+            "$3" a11y tree --pid "$pid" > "$4"
+            python3 "$5" --snapshot "$4" --pid "$pid"
+          ' _ "$RUNNER_TEMP/fixture.py" "$FIXTURE_PID_FILE" "$spectre" "$PWD/evidence/accessibility-fixture.json" "$PWD/.github/post-publication-qa/verify_accessibility.py"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: accessibility-fixture-${{ needs.gate.outputs.version }}
+          path: evidence
+          if-no-files-found: warn
 
   external-consumer:
     needs: gate
@@ -74,15 +133,16 @@ jobs:
       - uses: actions/checkout@v6
         with: {persist-credentials: false}
       - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: ''
-      - name: Consume every exact public module from Central in a fresh external project
+        with: {distribution: temurin, java-version: '21', cache: ''}
+      - name: Verify Central coordinates and consume the public recording API
         shell: bash
-        run: .github/post-publication-qa/verify_consumer.sh '${{ needs.gate.outputs.version }}' "$RUNNER_TEMP/consumer-evidence"
+        run: |
+          mkdir -p "$RUNNER_TEMP/consumer-evidence"
+          trap 'status=$?; printf "%s\n" "$status" > "$RUNNER_TEMP/consumer-evidence/status.txt"; exit "$status"' EXIT
+          .github/post-publication-qa/verify_consumer.sh '${{ needs.gate.outputs.version }}' "$RUNNER_TEMP/consumer-evidence"
       - uses: actions/upload-artifact@v6
+        if: always()
         with:
           name: central-consumer-${{ needs.gate.outputs.version }}
           path: ${{ runner.temp }}/consumer-evidence
-          if-no-files-found: error
+          if-no-files-found: warn

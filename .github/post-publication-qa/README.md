@@ -1,26 +1,37 @@
 # Scratch hosted post-publication QA
 
-This directory is an isolated, verification-only probe of artifacts already public on GitHub and
-Maven Central. It neither checks out nor builds the release source, and the workflow has only
-read-only repository permission. The checked-in control intentionally remains at `0.9.0`; updating
-it to the public `0.10.0` version and its **peeled** 40-character tag SHA is the acceptance hold.
+This is temporary, scratch-branch-only QA for already public artifacts. It never builds release
+source and has read-only repository permission. `control.env` remains deliberately held at
+`0.9.0`; `0.10.0` must not be selected until that exact version is specifically requested and its
+public, peeled tag SHA is known.
 
-Automatic execution is deliberately narrow: a push to the scratch `work` branch must change only
-the control path selected by the workflow and its head commit must start with
-`Probe published Spectre`. `workflow_dispatch` is intentionally absent.
+A control promotion uses the `Probe published Spectre` commit prefix. Corrections to these QA
+files for the same public tag use `Correct post-publication QA`; the workflow rejects product-file
+changes in that case. There is intentionally no manual-dispatch entry point.
 
-`verify_release.py` rejects drafts, non-exact versions, tag/SHA disagreement, absent API digests,
-and download/digest disagreement. `verify_native_archive.py` runs the published CLI and inspects
-the release jar's genuine packaged ELF helper. The 0.9 control verifies its real recording helper
-but does not claim the 0.10 accessibility snapshot surface. For 0.10 the helper's public
-`accessibility-snapshot` response is captured as visible version-specific evidence and checked
-against `accessibility-snapshot-0.10.0.json`.
+## What is proved
 
-`verify_consumer.sh` creates a new project outside the checkout, uses a new empty Maven local
-repository, pins Central to `https://repo.maven.apache.org/maven2`, resolves the eleven declared
-0.10 modules (the documented published subset for 0.9), checks POM/JAR/Gradle-module identity, and
-runs a Java consumer against the public recording API. Repository build files are reference only.
+* GitHub release identity, peeled tag SHA, asset API SHA-256, and downloaded SHA-256 must agree.
+* Both Linux archives run only on the exactly matching `platform.machine()`. Extraction preserves
+  stored Unix modes and symlinks; the CLI must be a real executable file and print exactly
+  `spectre <version>`. JAR inspection reads only candidate helper headers before streaming the one
+  matching ELF out. The historical 0.9 helper receives a finite genuine recording-protocol probe,
+  and makes no accessibility claim.
+* Every one of the eleven Spectre GAVs is downloaded from a fresh Maven Central location as its
+  exact JAR, POM, and Gradle module, nontransitively. Separately, a clean Maven/JDK 21 project with
+  a pinned compiler plugin consumes the genuine `spectre-recording` graph and calls the stable
+  public Java ABI `new RecordingOptions().getFrameRate()/getCaptureCursor()`. `HostPlatform` is
+  intentionally not used because it is Kotlin `internal` in the authentic 0.9 source. The public
+  no-argument options API is checked from the selected public artifact, so the same check applies
+  after a future 0.10 promotion. A Central-only graph failure remains an explicit failing log;
+  Google is never silently added and an unavailable Google-only Compose native dependency is not
+  mislabeled as a missing Spectre coordinate.
+* Only when the control is `0.10.0`, the **shipped** `spectre a11y tree --pid` targets a separate,
+  visible GTK window inside a private D-Bus/AT-SPI/Xvfb session with accessibility enabled. The
+  fixture has unique window and button markers. Acceptance requires a real schema version 2
+  `os-accessibility` snapshot, matching fixture process/window/button data, and a valid button
+  parent link. The invalid historical `{pid:1}` shape probe is not used.
 
-Evidence is split into per-architecture native archives and an external-consumer archive. It
-contains commands, outputs, SHA-256 values, and module identities, never tokens or environment
-dumps.
+Uploads run even after failures but contain only compact identity, command/status/error text, and
+fixture JSON. Public archives, unpacked runtimes, temporary Maven repositories, and private bus
+state stay under the runner temporary directory and are never uploaded.
