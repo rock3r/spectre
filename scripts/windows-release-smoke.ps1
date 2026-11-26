@@ -82,7 +82,10 @@ $script:RequiredScenarioIds = @(
     "input-coord-revoke",
     "input-coord-forced-recovery",
     "input-coord-junit-pertest",
-    "input-coord-headed-robot"
+    "input-coord-headed-robot",
+    "a11y-accesskit-macos",
+    "a11y-accesskit-windows",
+    "a11y-accesskit-linux"
 )
 $ErrorActionPreference = "Stop"
 # Avoid StrictMode edge cases with dynamic PSCustomObject / native interop on WinPS 5.1.
@@ -144,7 +147,9 @@ function Invoke-Native {
         [Parameter(Mandatory = $true)][string[]] $Arguments,
         [Parameter(Mandatory = $true)][string] $WorkingDirectory,
         [ValidateRange(1, 86400)][int] $TimeoutSeconds = 900,
-        [string] $LogName = "smoke"
+        [string] $LogName = "smoke",
+        [int[]] $AllowedExitCodes = @(0),
+        [switch] $PassThru
     )
     if (-not (Test-Path -LiteralPath $FilePath)) {
         throw "Executable not found: $FilePath"
@@ -191,8 +196,15 @@ function Invoke-Native {
     Write-LogFile -Path $stdout
     Write-LogFile -Path $stderr
     $code = [int]$p.ExitCode
-    if ($code -ne 0) {
+    if ($AllowedExitCodes -notcontains $code) {
         throw ("{0} exited with code {1} (logs: {2} ; {3})" -f $FilePath, $code, $stdout, $stderr)
+    }
+    if ($PassThru) {
+        return [PSCustomObject]@{
+            exitCode = $code
+            stdout = $stdoutTask.Result
+            stderr = $stderrTask.Result
+        }
     }
 }
 
@@ -831,6 +843,8 @@ try {
     if (-not $PreflightOnly) {
     # Live JUnit is Unix-primary in release-smoke.py; on Windows record explicit N/A unless expanded.
     [void]$results.Add((New-StepResult -Id "junit-live" -Name "Live JUnit failure artifacts/video and atomic capture" -Result "n/a" -Reason "Windows entrypoint prioritizes agent/WGC/CLI; run sample-desktop validationTest on macOS/Linux baseline"))
+    [void]$results.Add((New-StepResult -Id "a11y-accesskit-macos" -Name "AccessKit accessibility snapshot (macOS)" -Result "n/a" -Reason "requires a native macOS desktop"))
+    [void]$results.Add((New-StepResult -Id "a11y-accesskit-linux" -Name "AccessKit accessibility snapshot (Linux)" -Result "n/a" -Reason "requires a native Linux desktop"))
 
     $pointerSkip = Get-PointerMoveSkipReason -RepoRoot $repoRoot
     if ($pointerSkip) {
@@ -1117,6 +1131,88 @@ try {
         [void]$results.Add((New-StepResult -Id "cli-user-flow" -Name "Packaged CLI user flow" -Result "n/a" -Reason $reason))
         [void]$results.Add((New-StepResult -Id "mcp-sdk-flow" -Name "Packaged MCP attach/op/detach lifecycle + strict stdio" -Result "n/a" -Reason $reason))
     }
+
+    $a11yStep = Invoke-Step -Id "a11y-accesskit-windows" -Name "AccessKit accessibility snapshot (Windows)" -Action {
+        $spectre = Get-PackagedSpectre -RepoRoot $repoRoot
+        if (-not $spectre) { throw "packaged spectre.exe missing; cannot invoke the real accessibility helper" }
+        $manifest = Join-Path $repoRoot "fixtures\accesskit\Cargo.toml"
+        if (-not (Test-Path -LiteralPath $manifest)) { throw ("AccessKit fixture manifest missing: {0}" -f $manifest) }
+        $cargo = Get-Command -Name "cargo.exe" -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        $cargoPath = if ($cargo.Source) { $cargo.Source } else { $cargo.Path }
+        Invoke-Native -FilePath $cargoPath -WorkingDirectory $repoRoot -TimeoutSeconds 600 -LogName "a11y-accesskit-build" -Arguments @(
+            "build", "--locked", "--manifest-path", $manifest
+        )
+        $fixture = Join-Path $repoRoot "fixtures\accesskit\target\debug\spectre-accesskit-fixture.exe"
+        $fixtureLog = Join-Path $repoRoot "build\smoke\a11y-accesskit-fixture.log"
+        $process = Start-Process -FilePath $fixture -WorkingDirectory $repoRoot -RedirectStandardOutput $fixtureLog -RedirectStandardError ($fixtureLog + ".err") -PassThru
+        try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(30)
+            do {
+                Start-Sleep -Milliseconds 200
+                if ($process.HasExited) { throw "AccessKit fixture exited before reporting ready" }
+                $ready = if (Test-Path -LiteralPath $fixtureLog) { Get-Content -Raw -LiteralPath $fixtureLog } else { "" }
+            } until ($ready -match "SPECTRE_ACCESSKIT_FIXTURE_READY" -or [DateTime]::UtcNow -ge $deadline)
+            if ($ready -notmatch "SPECTRE_ACCESSKIT_FIXTURE_READY") { throw "AccessKit fixture did not report ready within 30s" }
+            $pidResult = Invoke-Native -FilePath $spectre -WorkingDirectory $repoRoot -TimeoutSeconds $CliLaunchTimeoutSeconds -LogName "a11y-accesskit-pid" -PassThru -Arguments @(
+                "a11y", "tree", "--pid", [string]$process.Id
+            )
+            $snapshot = $pidResult.stdout | ConvertFrom-Json
+            if ($snapshot.schemaVersion -ne 2) { throw "accessibility snapshot must use schemaVersion 2" }
+            if ($snapshot.source -ne "os-accessibility") { throw "accessibility snapshot source must be os-accessibility" }
+            $targets = @($snapshot.windows | Where-Object { $_.title -eq "Spectre AccessKit Fixture" -and $_.boundsSpace -in @("screen", "window") })
+            if ($targets.Count -ne 1) { throw "PID snapshot must uniquely identify the titled fixture window" }
+            $targetKey = $targets[0].key
+            if ([string]::IsNullOrWhiteSpace($targetKey)) { throw "fixture window must have a key" }
+            $keys = @($snapshot.nodes | ForEach-Object { $_.key })
+            if (@($keys | Where-Object { $_ -eq $targetKey -or $_ -like ($targetKey + "/*") }).Count -eq 0) {
+                throw "UIA nodes must belong to the selected fixture window"
+            }
+            $fixtureNode = @($snapshot.nodes | Where-Object { $_.id -eq "fixture-window" })
+            if ($fixtureNode.Count -ne 1) { throw "snapshot must contain one fixture-window node" }
+            if ($fixtureNode[0].key -notlike ($targetKey + "/*")) { throw "fixture-window must belong to the selected native window" }
+            $expectedControls = @(
+                @{ id = "primary-button"; name = "Save changes"; role = "Button"; value = $null; state = $null },
+                @{ id = "newsletter"; name = "Receive updates"; role = "CheckBox"; value = "on"; state = "checked" },
+                @{ id = "account-name"; name = "Account name"; role = "Edit"; value = "Ada Lovelace"; state = $null },
+                @{ id = "disabled-button"; name = "Unavailable action"; role = "Button"; value = $null; state = "disabled" }
+            )
+            foreach ($expected in $expectedControls) {
+                $matches = @($snapshot.nodes | Where-Object { $_.id -eq $expected.id })
+                if ($matches.Count -ne 1) { throw ("snapshot must contain one {0} node" -f $expected.id) }
+                $node = $matches[0]
+                if ($node.parentKey -ne $fixtureNode[0].key) { throw ("{0} must be a child of fixture-window" -f $expected.id) }
+                if ($node.name -ne $expected.name -or $node.platformRole -ne $expected.role -or $node.value -ne $expected.value) {
+                    throw ("{0} must preserve stable name, role, and value" -f $expected.id)
+                }
+                if ($expected.state -and $expected.state -notin @($node.states)) {
+                    throw ("{0} must preserve state {1}" -f $expected.id, $expected.state)
+                }
+            }
+
+            $titleResult = Invoke-Native -FilePath $spectre -WorkingDirectory $repoRoot -TimeoutSeconds $CliLaunchTimeoutSeconds -LogName "a11y-accesskit-title" -PassThru -Arguments @(
+                "a11y", "tree", "--window", "Spectre AccessKit Fixture"
+            )
+            $titleSnapshot = $titleResult.stdout | ConvertFrom-Json
+            $titleTargets = @($titleSnapshot.windows | Where-Object { $_.title -eq "Spectre AccessKit Fixture" })
+            if ($titleTargets.Count -ne 1) { throw "title lookup must uniquely select the fixture window" }
+
+            $limitResult = Invoke-Native -FilePath $spectre -WorkingDirectory $repoRoot -TimeoutSeconds $CliLaunchTimeoutSeconds -LogName "a11y-accesskit-limit" -PassThru -AllowedExitCodes @(5) -Arguments @(
+                "a11y", "tree", "--pid", [string]$process.Id, "--maximum-node-count", "2"
+            )
+            if ($limitResult.exitCode -ne 5) { throw "two-node budget must use CLI error exit 5" }
+            $expectedError = "Spectre daemon error: LimitReached: maximumNodeCount 2 reached"
+            $limitLines = @($limitResult.stderr -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            if ($limitLines.Count -eq 0 -or $limitLines[0] -ne $expectedError) { throw ("unexpected node-budget stderr: {0}" -f $limitResult.stderr) }
+            $partial = $limitResult.stdout | ConvertFrom-Json
+            if ($partial.schemaVersion -ne 2 -or @($partial.nodes).Count -ne 2) {
+                throw "node-budget stdout must be a schemaVersion 2 partial snapshot with two nodes"
+            }
+        }
+        finally {
+            if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+        }
+    }
+    [void]$results.Add($a11yStep)
 
     [void]$results.Add((New-StepResult -Id "portal-token-warmup" -Name "Capture persistent ScreenCast restore token" -Result "n/a" -Reason "Windows does not use xdg-desktop-portal ScreenCast restore tokens"))
 

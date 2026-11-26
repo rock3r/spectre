@@ -17,6 +17,9 @@ public enum class AutomatorTransport {
 
     /** [dev.sebastiano.spectre.agent.AttachedAutomator] over the agent wire. */
     Agent,
+
+    /** Packaged command-line client. */
+    Cli,
 }
 
 /**
@@ -38,6 +41,9 @@ public enum class PlatformPrerequisite {
 
     /** Linux Wayland session (portal / compositor-dependent). */
     LinuxWayland,
+
+    /** Interactive Linux desktop using the session accessibility bus. */
+    LinuxDesktop,
 
     /** Interactive Windows desktop. */
     WindowsDesktop,
@@ -77,6 +83,8 @@ public enum class AutomatorOperation {
     ClearAndTypeText,
     /** Still of one node's on-screen bounds. */
     NodeScreenshot,
+    /** Native OS accessibility tree exposed without JVM attach. */
+    AccessibilityTree,
 }
 
 /**

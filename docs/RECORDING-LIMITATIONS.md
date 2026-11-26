@@ -267,11 +267,14 @@ X11, macOS, and Windows keep their input and capture paths.
   The smoke runner validated real-pixel MP4 capture on Ubuntu 22.04/GNOME 42,
   Ubuntu 24.04/GNOME 46, and Ubuntu 26.04/GNOME 50 with Mutter.
   Runs on 2026-05-02 and 2026-05-03 checked the 24.04 and 26.04 paths.
-  The public Ubuntu 24.04/GNOME 46 screenshot run confirmed that a red client pixel and window
-  decorations were captured while the target was fully covered, without substituting a monitor
-  crop or changing keyboard focus. A static three-second movie was genuinely generated, but the
-  compositor supplied only one frame; a separate fix is in progress, so that run does not prove
-  three-second window-video duration. The 24.04 cursor run confirmed that
+  The [public Ubuntu 24.04/GNOME 46 run](https://github.com/rock3r/spectre/actions/runs/45737657330/job/139634678395)
+  at tree `d889d474eee688cbf3da4a141b3407777a313af8`, using the packaged GStreamer
+  1.24.2, confirmed that static, fully occluded target windows keep recording for the requested
+  duration without exposing the foreground window. Its three-second 480×320 H.264 recording had
+  91 frames over 3.033333 seconds at 30 fps; sampled start, middle, and end frames retained the
+  target's red pixels and no blue foreground pixels, and a fresh green target was also captured
+  correctly. The native `pipewiresrc` `keepalive-time` property, expressed in milliseconds,
+  maintains cadence when the target's contents do not change. The 24.04 cursor run confirmed that
   `cursor_mode=Embedded` includes the system pointer when `RecordingOptions.captureCursor=true`.
   The 26.04 run confirmed window-sized output, visible window decorations, and isolation from
   other apps.

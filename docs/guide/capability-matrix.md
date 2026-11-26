@@ -30,6 +30,23 @@ is the human-readable view of that source of truth.
 Platform rows are **prerequisites**, not just OS names: headless JVMs, Linux Xvfb,
 Wayland sessions, and interactive desktops behave differently for Robot and Compose.
 
+## Native accessibility source
+
+The CLI accessibility source is a separate, non-attach path that reads what a screen reader
+receives. Its cells are explicit in `CapabilityMatrix` rather than being inferred from the Compose
+transport rows:
+
+| Platform | State | Evidence status |
+| --- | --- | --- |
+| macOS desktop (AX) | **Not yet CI-executed** | Packaged standalone PID/title and attached stdio MCP evidence exists; hosted-runner TCC execution does not. |
+| Windows desktop (UIA) | **Not yet CI-executed** | Packaged standalone PID/title and attached stdio MCP evidence exists; all public fixture assertions passed after installing a same-architecture Microsoft-signed Windows App Runtime 1.8.5 (the hosted CBS package alone was insufficient). The Compose sample exposes only eight chrome nodes to UIA. |
+| Linux desktop (AT-SPI) | **Not yet CI-executed** | Cloud packaged AccessKit PID/title and separately verified public MCP evidence exists. Native GNOME 46 confirmed 14 AccessKit nodes and canonical raw roles; GTK Zenity exposed 16 nodes, and an Xvfb Java ATK-wrapper sample exposed 31 OS nodes versus 22 Compose nodes. These are measured provider results, not a CI promotion. |
+
+Release smoke invokes the packaged `spectre a11y tree` command against the real native helper and
+the released `fixtures/accesskit/` fixture from the same checkout. A future green smoke result does not silently promote a
+cell to Supported: Supported still requires resolvable, fail-closed CI evidence. See
+[Accessibility tree](accessibility.md) for permissions, Wayland bounds, and platform gaps.
+
 Shared desktop input has an additional cooperative boundary. In-process `Required`, in-process
 JUnit `PerTest`, CLI, and injected-agent input participate in the per-user desktop coordinator.
 Synthetic pointer/keyboard and headless query work do not; synthetic clipboard use does. Current

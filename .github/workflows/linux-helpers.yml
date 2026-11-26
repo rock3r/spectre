@@ -85,12 +85,9 @@ jobs:
       - name: Test AT-SPI snapshot against AccessKit fixture under Xvfb
         if: matrix.arch == 'x86_64'
         env:
-          FIXTURE_CHECKOUT: ${{ runner.temp }}/spectre-accesskit-fixture
+          FIXTURE_CHECKOUT: ${{ github.workspace }}
         run: |
-          git clone --filter=blob:none --no-checkout https://github.com/rock3r/spectre.git "$FIXTURE_CHECKOUT"
-          git -C "$FIXTURE_CHECKOUT" fetch --depth=1 origin 96cd6cb20e44d5d26a4cfb93d8a3f8e1b6375aa8
-          git -C "$FIXTURE_CHECKOUT" checkout --detach FETCH_HEAD
-          cargo build --locked --manifest-path "$FIXTURE_CHECKOUT/fixtures/accesskit/Cargo.toml"
+          cargo build --locked --manifest-path fixtures/accesskit/Cargo.toml
           cargo build --locked --manifest-path recording/native/linux/Cargo.toml
           cd recording/native/linux
           dbus-run-session -- xvfb-run -a tests/accessibility_xvfb.sh

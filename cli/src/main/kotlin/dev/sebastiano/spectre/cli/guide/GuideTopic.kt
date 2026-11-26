@@ -13,6 +13,7 @@ internal val GUIDE_TOPICS: List<GuideTopic> =
         GuideTopic("traps", "Mistakes that cost agents and developers time, and how to avoid them"),
         GuideTopic("agent", "Attach to a running JVM, with or without spectre-core in the target"),
         GuideTopic("capture", "Atomic capture: window PNG plus capture.json, jq recipes, cleanup"),
+        GuideTopic("accessibility", "Native screen-reader trees without JVM attach"),
         GuideTopic("hot-reload", "Compose Hot Reload settle waits and node-key invalidation"),
         GuideTopic("troubleshooting", "Symptoms, causes, and fixes per platform"),
         GuideTopic("installation", "Maven coordinates and modules"),
