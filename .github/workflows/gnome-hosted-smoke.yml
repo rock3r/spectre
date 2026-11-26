@@ -6,7 +6,7 @@ on:
       candidate_sha:
         description: Full SHA of the original release-candidate base checkout
         required: false
-        default: d38754b614d0a0561c9921d95abe5cb4fb0a5f96
+        default: 51cf4ee24572c14fe48da0fb15be1b3d9aaea9b6
   push:
     branches: [release-0.10/gnome-hosted-smoke]
     paths-ignore:
@@ -34,21 +34,16 @@ jobs:
       - name: Check out the release candidate
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.candidate_sha || 'd38754b614d0a0561c9921d95abe5cb4fb0a5f96' }}
+          ref: ${{ inputs.candidate_sha || '51cf4ee24572c14fe48da0fb15be1b3d9aaea9b6' }}
           persist-credentials: false
           path: candidate
 
       - name: Verify the immutable public GNOME candidate
         working-directory: candidate
         run: |
-          test "$(git rev-parse HEAD)" = d38754b614d0a0561c9921d95abe5cb4fb0a5f96
-          test "$(git write-tree)" = 173d9f56978389110520e7a2b2ba61b6827c455c
-          test -z "$(git status --porcelain)"
-          patch="$GITHUB_WORKSPACE/smoke-tooling/.github/smoke-overlays/04-gnome-static-keepalive.patch"
-          printf '%s  %s\n' 47b045dbb8686dd4c5876f8313729c4991dd81a066481868a77ca34f96f0149b "$patch" | sha256sum -c -
-          git apply --index "$patch"
-          git diff --cached --check
+          test "$(git rev-parse HEAD)" = 51cf4ee24572c14fe48da0fb15be1b3d9aaea9b6
           test "$(git write-tree)" = d889d474eee688cbf3da4a141b3407777a313af8
+          test -z "$(git status --porcelain)"
 
       - name: Set up JDK 25
         uses: actions/setup-java@v5
@@ -66,7 +61,7 @@ jobs:
           ATSPI_REPO: unused
           FIXTURE_CHECKOUT: unused
           SMOKE_MODE: cli-recording-live
-          CANDIDATE_SHA: ${{ inputs.candidate_sha || 'd38754b614d0a0561c9921d95abe5cb4fb0a5f96' }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || '51cf4ee24572c14fe48da0fb15be1b3d9aaea9b6' }}
           SMOKE_ARTIFACTS: ${{ runner.temp }}/gnome-cli-recording-live
           SMOKE_REPO: ${{ github.workspace }}/candidate
           SMOKE_SESSION_SCRIPT: ${{ github.workspace }}/smoke-tooling/.github/scripts/gnome-hosted-smoke-session.sh
@@ -104,7 +99,7 @@ jobs:
       - name: Check out the release candidate
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.candidate_sha || 'd38754b614d0a0561c9921d95abe5cb4fb0a5f96' }}
+          ref: ${{ inputs.candidate_sha || '51cf4ee24572c14fe48da0fb15be1b3d9aaea9b6' }}
           persist-credentials: false
           path: candidate
 
@@ -137,14 +132,9 @@ jobs:
         if: matrix.mode == 'capture' || matrix.mode == 'public-window-crop'
         working-directory: candidate
         run: |
-          test "$(git rev-parse HEAD)" = d38754b614d0a0561c9921d95abe5cb4fb0a5f96
-          test "$(git write-tree)" = 173d9f56978389110520e7a2b2ba61b6827c455c
-          test -z "$(git status --porcelain)"
-          patch="$GITHUB_WORKSPACE/smoke-tooling/.github/smoke-overlays/04-gnome-static-keepalive.patch"
-          printf '%s  %s\n' 47b045dbb8686dd4c5876f8313729c4991dd81a066481868a77ca34f96f0149b "$patch" | sha256sum -c -
-          git apply --index "$patch"
-          git diff --cached --check
+          test "$(git rev-parse HEAD)" = 51cf4ee24572c14fe48da0fb15be1b3d9aaea9b6
           test "$(git write-tree)" = d889d474eee688cbf3da4a141b3407777a313af8
+          test -z "$(git status --porcelain)"
 
       - name: Apply standalone caller-owned window identity candidate
         if: matrix.mode == 'identity'
@@ -172,7 +162,7 @@ jobs:
           ATSPI_REPO: ${{ github.workspace }}/atspi-reader
           FIXTURE_CHECKOUT: ${{ github.workspace }}/fixture
           SMOKE_MODE: ${{ matrix.mode }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha || 'd38754b614d0a0561c9921d95abe5cb4fb0a5f96' }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || '51cf4ee24572c14fe48da0fb15be1b3d9aaea9b6' }}
           SMOKE_ARTIFACTS: ${{ runner.temp }}/gnome-hosted-smoke
           SMOKE_REPO: ${{ github.workspace }}/candidate
           SMOKE_SESSION_SCRIPT: ${{ github.workspace }}/smoke-tooling/.github/scripts/gnome-hosted-smoke-session.sh

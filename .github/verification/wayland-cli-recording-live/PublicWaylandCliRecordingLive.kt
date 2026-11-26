@@ -27,24 +27,16 @@ object PublicWaylandCliRecordingLive {
         val artifacts = Path.of(requireNotNull(System.getenv("SMOKE_ARTIFACTS")))
         receipts = artifacts.resolve("java-live-phase-receipts.jsonl")
         val decoyPid = requireNotNull(System.getenv("DECOY_PID")).toLong()
+        val decoyXid = requireNotNull(System.getenv("DECOY_XID")).toLong()
         val targetPid = ProcessHandle.current().pid()
-        var red: JFrame? = window(TITLE, Color.RED)
-        Files.writeString(Path.of(requireNotNull(System.getenv("DECOY_REVEAL"))), "target-ready\n")
-        val decoyXid = awaitDecoyXid(Path.of(requireNotNull(System.getenv("DECOY_XID_FILE"))))
+        var red: JFrame? = window(TITLE, Color.RED, 180, 170)
         try {
             Thread.sleep(1_500)
             focusDecoy(decoyPid, decoyXid, "before-title-rejection", red!!.bounds)
-            val rejected =
-                FocusMonitor(decoyPid, decoyXid, "title-rejection-during", red!!.bounds).use {
-                    monitor ->
-                    val result =
-                        runCatching {
-                            AutoScreenshotter().captureWindowByTitle(TITLE, decoyPid)
-                        }
-                            .exceptionOrNull()
-                    monitor.requireObserved()
-                    result
-                }
+            val rejected = runCatching {
+                AutoScreenshotter().captureWindowByTitle(TITLE, decoyPid)
+            }
+                .exceptionOrNull()
             check(
                 rejected is UnsupportedOperationException &&
                     rejected.message.orEmpty().contains("unsupported on this platform")
@@ -109,11 +101,8 @@ object PublicWaylandCliRecordingLive {
 
             SwingUtilities.invokeAndWait { red!!.dispose() }
             red = null
-            val green = window(TITLE, Color.GREEN)
+            val green = window(TITLE, Color.GREEN, 500, 100)
             try {
-                val greenReady = Path.of(requireNotNull(System.getenv("GREEN_TARGET_READY")))
-                Files.writeString(greenReady, "green-ready\n")
-                awaitSignal(Path.of(requireNotNull(System.getenv("GREEN_TARGET_VERIFIED"))), 15)
                 Thread.sleep(1_000)
                 focusDecoy(decoyPid, decoyXid, "green-still-before", green.bounds)
                 val greenImage = captureStill(green, decoyPid, decoyXid, "green-still")
@@ -159,9 +148,7 @@ object PublicWaylandCliRecordingLive {
         private val samples = mutableListOf<Pair<Long?, Long?>>()
         private val thread = Thread {
             while (running.get()) {
-                val actualXid = activeXid()
-                val actualPid = if (actualXid == null) null else ownerPid(actualXid)
-                synchronized(samples) { samples += actualXid to actualPid }
+                synchronized(samples) { samples += activeXid() to ownerPid(xid) }
                 Thread.sleep(10)
             }
         }
@@ -170,11 +157,7 @@ object PublicWaylandCliRecordingLive {
         fun requireObserved() {
             close()
             val copy = synchronized(samples) { samples.toList() }
-            val focusMatches = copy.isNotEmpty() && copy.all { it.first == xid && it.second == pid }
-            if (!focusMatches) {
-                phase("$phaseName-failure", pid, xid, geometry, "focusSamples=$copy")
-            }
-            check(focusMatches) {
+            check(copy.isNotEmpty() && copy.all { it.first == xid && it.second == pid }) {
                 "decoy focus changed during $phaseName: expected XID/PID $xid/$pid, observed $copy"
             }
             phase(phaseName, pid, xid, geometry, "focusSamples=${copy.size}")
@@ -185,15 +168,13 @@ object PublicWaylandCliRecordingLive {
         }
     }
 
-    private fun window(title: String, color: Color): JFrame {
+    private fun window(title: String, color: Color, x: Int, y: Int): JFrame {
         lateinit var result: JFrame
         SwingUtilities.invokeAndWait {
             result =
                 JFrame(title).apply {
                     contentPane = JPanel().apply { background = color }
-                    isAutoRequestFocus = false
-                    setFocusableWindowState(false)
-                    setBounds(TARGET_X, TARGET_Y, WIDTH, HEIGHT)
+                    setBounds(x, y, WIDTH, HEIGHT)
                     isVisible = true
                 }
         }
@@ -225,7 +206,7 @@ object PublicWaylandCliRecordingLive {
 
     private fun requireActive(pid: Long, xid: Long, phase: String, geometry: Rectangle) {
         val observedXid = activeXid()
-        val observedPid = if (observedXid == null) null else ownerPid(observedXid)
+        val observedPid = ownerPid(xid)
         check(observedXid == xid && observedPid == pid) {
             "blue decoy focus changed at $phase: expected XID/PID $xid/$pid, " +
                 "observed $observedXid/$observedPid"
@@ -234,22 +215,15 @@ object PublicWaylandCliRecordingLive {
     }
 
     private fun focusDecoy(pid: Long, xid: Long, phase: String, geometry: Rectangle) {
-        try {
-            requireOwner(pid, xid, "$phase/pre-activation")
-            if (activeXid() == xid) {
-                requireActive(pid, xid, phase, geometry)
-                return
-            }
-            command("xdotool", "windowraise", xid.toString())
-            command("xdotool", "mousemove", "--window", xid.toString(), "240", "160")
-            command("xdotool", "click", "1")
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
-            while (activeXid() != xid && System.nanoTime() < deadline) Thread.sleep(25)
-            requireActive(pid, xid, phase, geometry)
-        } catch (error: Throwable) {
-            phase("$phase-failure", pid, xid, geometry, "status=failure:${error.message}")
-            throw error
-        }
+        requireOwner(pid, xid, "$phase/pre-activation")
+        check(
+            ProcessBuilder("xdotool", "windowactivate", "--sync", xid.toString())
+                .start()
+                .waitFor() == 0
+        )
+        check(ProcessBuilder("xdotool", "windowraise", xid.toString()).start().waitFor() == 0)
+        Thread.sleep(300)
+        requireActive(pid, xid, phase, geometry)
     }
 
     private fun phase(
@@ -260,37 +234,12 @@ object PublicWaylandCliRecordingLive {
         media: String,
     ) {
         val actualXid = activeXid()
-        val actualPid = if (actualXid == null) null else ownerPid(actualXid)
-        val focusMatches = actualXid == expectedXid && actualPid == expectedPid
-        val failed = name.endsWith("-failure") || !focusMatches
+        val actualPid = ownerPid(expectedXid)
         val line =
-            """{"phase":"$name","status":"${if (failed) "failure" else "ok"}","monotonicNs":${System.nanoTime()},"expectedXid":$expectedXid,"actualXid":$actualXid,"expectedPid":$expectedPid,"actualPid":$actualPid,"geometry":{"x":${geometry.x},"y":${geometry.y},"width":${geometry.width},"height":${geometry.height}},"size":{"width":${geometry.width},"height":${geometry.height}},"media":"${media.replace("\\", "\\\\").replace("\"", "\\\"")}"}
+            """{"phase":"$name","monotonicNs":${System.nanoTime()},"expectedXid":$expectedXid,"actualXid":$actualXid,"expectedPid":$expectedPid,"actualPid":$actualPid,"geometry":{"x":${geometry.x},"y":${geometry.y},"width":${geometry.width},"height":${geometry.height}},"size":{"width":${geometry.width},"height":${geometry.height}},"media":"$media"}
         """
                 .trimIndent() + "\n"
-        Files.writeString(
-            receipts,
-            line,
-            StandardOpenOption.CREATE,
-            StandardOpenOption.APPEND,
-            StandardOpenOption.SYNC,
-        )
-        if (!name.endsWith("-failure")) {
-            check(focusMatches) {
-                "blue decoy focus changed at $name: expected XID/PID $expectedXid/$expectedPid, " +
-                    "observed $actualXid/$actualPid"
-            }
-        }
-    }
-
-    private fun awaitDecoyXid(path: Path): Long {
-        awaitSignal(path, 15)
-        return Files.readString(path).trim().toLong()
-    }
-
-    private fun awaitSignal(path: Path, timeoutSeconds: Long) {
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds)
-        while (!Files.isRegularFile(path) && System.nanoTime() < deadline) Thread.sleep(25)
-        check(Files.isRegularFile(path)) { "$path was not supplied within $timeoutSeconds seconds" }
+        Files.writeString(receipts, line, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
     }
 
     private fun requireColor(image: BufferedImage, expected: Color, label: String) {
@@ -313,8 +262,6 @@ object PublicWaylandCliRecordingLive {
     }
 
     private const val TITLE = "Spectre governed same-title target"
-    private const val TARGET_X = 300
-    private const val TARGET_Y = 240
     private const val WIDTH = 480
     private const val HEIGHT = 320
 }

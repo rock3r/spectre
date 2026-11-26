@@ -109,12 +109,13 @@ if [[ "$SMOKE_MODE" == portal || "$SMOKE_MODE" == capture || "$SMOKE_MODE" == ge
 fi
 
 if [[ "$SMOKE_MODE" == cli-recording-live ]]; then
+  export GDK_BACKEND=x11
   gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
     --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled '<true>'
   timeout 15s gdbus wait --session --activate org.freedesktop.portal.Desktop
   timeout 15s gdbus wait --session --activate org.freedesktop.impl.portal.desktop.gnome
   cd "$SMOKE_REPO"
-  ./gradlew --no-daemon :cli:shadowDistZip --console=plain \
+  ./gradlew --no-daemon -PVERSION_NAME=0.10.0 :cli:shadowDistZip --console=plain \
     2>&1 | tee "$SMOKE_ARTIFACTS/build-cli-release-zip.log"
   cli_zip="$(find cli/build/distributions -maxdepth 1 -type f -name 'spectre-cli-*-linux-*.zip' -print -quit)"
   [[ -f "$cli_zip" ]] || { echo "shadowDistZip did not produce the Linux release ZIP" >&2; exit 1; }
