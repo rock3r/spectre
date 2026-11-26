@@ -729,6 +729,20 @@ coordinator cannot be repaired, see
 The sample IntelliJ plugin module configures its sandbox JDK via the IntelliJ Platform
 Gradle plugin; the IDE's bundled JBR supplies that path.
 
+## Native accessibility in JVM applications on Windows
+
+Windows UI Automation (UIA) does not necessarily expose the application content of a JVM UI.
+In a live check of Spectre's Compose Desktop sample, the UIA control view contained eight
+window/chrome nodes (a `Window`, `Pane`, `TitleBar`, `MenuBar`, `MenuItem`, and system `Button`
+nodes), but it did not contain the content `Counter` or `Popup` controls. Spectre could still read
+the Compose semantics for those controls when attached to the sample process; that is a different
+source from native UIA.
+
+This is an observed result for that sample, not a claim about every Java application or JVM UI
+toolkit. The same UIA reader exposed application content in the AccessKit-based test application
+and in the stock Windows Character Map application. If a JVM application's native snapshot stops
+at window chrome, use Spectre's attached Compose semantics when the application supports it.
+
 ## Further help
 
 - Read [Architecture](../ARCHITECTURE.md) for the module-level invariants.

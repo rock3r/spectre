@@ -328,6 +328,9 @@ class SyntheticModalAndWindowOrderTest {
 
             runOffTestThread { runBlocking { driver.click(cx, cy) } }
             waitUntil("modal dialog showing") { dialog.get()?.isShowing == true }
+            val modal = checkNotNull(dialog.get())
+            windows += modal
+            stabilizeWindowLocation(modal, DIALOG_X, FRAME_Y)
 
             val (dx, dy) = centerOnScreen(dialogTarget)
             runOffTestThread { runBlocking { driver.click(dx, dy) } }
@@ -338,7 +341,6 @@ class SyntheticModalAndWindowOrderTest {
             )
         } finally {
             disposeAll()
-            dialog.get()?.let { modal -> SwingUtilities.invokeLater { modal.dispose() } }
         }
     }
 
@@ -373,9 +375,9 @@ class SyntheticModalAndWindowOrderTest {
 
             runOffTestThread { runBlocking { driver.pressKey(KeyEvent.VK_ENTER) } }
             waitUntil("modal dialog showing") { dialog.get()?.isShowing == true }
+            windows += checkNotNull(dialog.get())
         } finally {
             disposeAll()
-            dialog.get()?.let { modal -> SwingUtilities.invokeLater { modal.dispose() } }
         }
     }
 
@@ -511,6 +513,7 @@ class SyntheticModalAndWindowOrderTest {
         }
         windows += frame
         waitUntil("frame showing") { content.isShowing }
+        stabilizeWindowLocation(frame, x, FRAME_Y)
         return frame
     }
 
@@ -533,6 +536,7 @@ class SyntheticModalAndWindowOrderTest {
         }
         windows += tool
         waitUntil("tool window showing") { content.isShowing }
+        stabilizeWindowLocation(tool, x, FRAME_Y)
         return tool
     }
 
@@ -553,6 +557,7 @@ class SyntheticModalAndWindowOrderTest {
         // setVisible(true) on a modal dialog blocks in a nested loop, so it must be posted.
         SwingUtilities.invokeLater { modal.isVisible = true }
         waitUntil("modal dialog showing") { content.isShowing }
+        stabilizeWindowLocation(modal, x, FRAME_Y)
         return modal
     }
 
@@ -596,17 +601,23 @@ class SyntheticModalAndWindowOrderTest {
 
     private fun focusOnEdt(frame: JFrame, target: JPanel) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(CALL_TIMEOUT_SECONDS)
-        while (System.nanoTime() < deadline && frame.focusOwner !== target) {
+        var consecutiveFocusedReads = 0
+        while (System.nanoTime() < deadline && consecutiveFocusedReads < 2) {
             SwingUtilities.invokeAndWait {
                 frame.toFront()
                 frame.requestFocus()
                 target.requestFocus()
             }
             drainEdt()
-            if (frame.focusOwner !== target) Thread.sleep(POLL_INTERVAL_MS)
+            if (onEdt { frame.focusOwner === target }) consecutiveFocusedReads++
+            else consecutiveFocusedReads = 0
+            if (consecutiveFocusedReads < 2) Thread.sleep(POLL_INTERVAL_MS)
         }
-        check(frame.focusOwner === target) {
-            "the headed environment did not grant the enabled, showing key listener AWT focus"
+        check(onEdt { frame.focusOwner === target }) {
+            "the headed environment did not grant the enabled, showing key listener AWT focus; " +
+                "frame focused=${frame.isFocused}, active=${frame.isActive}, " +
+                "focusOwner=${frame.focusOwner}, target showing=${target.isShowing}, " +
+                "enabled=${target.isEnabled}, focusable=${target.isFocusable}"
         }
     }
 
@@ -617,6 +628,25 @@ class SyntheticModalAndWindowOrderTest {
             center = (origin.x + target.width / 2) to (origin.y + target.height / 2)
         }
         return center
+    }
+
+    private fun stabilizeWindowLocation(window: Window, x: Int, y: Int) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(CALL_TIMEOUT_SECONDS)
+        var consecutiveMatches = 0
+        while (System.nanoTime() < deadline && consecutiveMatches < 2) {
+            SwingUtilities.invokeAndWait { window.setLocation(x, y) }
+            drainEdt()
+            if (onEdt { window.locationOnScreen.x == x && window.locationOnScreen.y == y }) {
+                consecutiveMatches++
+            } else {
+                consecutiveMatches = 0
+            }
+            if (consecutiveMatches < 2) Thread.sleep(POLL_INTERVAL_MS)
+        }
+        check(consecutiveMatches == 2) {
+            "window manager did not settle the fixture at ($x,$y); " +
+                "actual=${onEdt { window.locationOnScreen }} bounds=${onEdt { window.bounds }}"
+        }
     }
 
     private fun <T> onEdt(block: () -> T): T {
@@ -665,6 +695,7 @@ class SyntheticModalAndWindowOrderTest {
             }
         }
         windows.clear()
+        drainEdt()
     }
 
     private class RecordingPanel : JPanel() {

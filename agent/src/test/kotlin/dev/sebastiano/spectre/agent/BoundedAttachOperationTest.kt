@@ -4,6 +4,8 @@ package dev.sebastiano.spectre.agent
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
@@ -12,6 +14,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class BoundedAttachOperationTest {
@@ -43,47 +46,66 @@ class BoundedAttachOperationTest {
     @Test
     fun `timeout reaps helper without killing target`() {
         val target = ProcessBuilder(command("sleep", "10000")).start()
-        val marker = fresh("timeout")
+        val helper = AtomicReference<Process>()
         try {
-            assertFailsWith<SpectreAttachException> {
-                BoundedAttachOperation.run(command("block", marker.toString()), 2_000, { true })
-            }
-            val pid = awaitPid(marker)
-            assertFalse(ProcessHandle.of(pid).isPresent)
+            val error =
+                assertFailsWith<SpectreAttachException> {
+                    BoundedAttachOperation.run(
+                        command("block"),
+                        2_000,
+                        { true },
+                        startProcess = { command ->
+                            ProcessBuilder(command).start().also(helper::set)
+                        },
+                    )
+                }
+            assertTrue(error.message.orEmpty().contains("did not complete within 2000ms"))
+            val ownedHelper = checkNotNull(helper.get())
+            assertNotEquals(target.pid(), ownedHelper.pid())
+            assertFalse(ownedHelper.isAlive)
             assertTrue(target.isAlive, "cleanup must not kill the target")
         } finally {
             target.destroyForcibly()
-            Files.deleteIfExists(marker)
         }
     }
 
     @Test
     fun `interrupt is structured restored and leaves no reader thread`() {
-        val marker = fresh("interrupt")
+        val helper = AtomicReference<Process>()
+        val helperStarted = CountDownLatch(1)
         val thrown = AtomicReference<Throwable>()
         val restored = AtomicBoolean()
         val worker = thread {
             try {
-                BoundedAttachOperation.run(command("block", marker.toString()), 30_000, { true })
+                BoundedAttachOperation.run(
+                    command("block"),
+                    30_000,
+                    { true },
+                    startProcess = { command ->
+                        ProcessBuilder(command).start().also {
+                            helper.set(it)
+                            helperStarted.countDown()
+                        }
+                    },
+                )
             } catch (error: Throwable) {
                 thrown.set(error)
                 restored.set(Thread.currentThread().isInterrupted)
             }
         }
-        val pid = awaitPid(marker)
+        assertTrue(helperStarted.await(10, TimeUnit.SECONDS), "helper did not start")
         worker.interrupt()
         worker.join(10_000)
         assertFalse(worker.isAlive)
         val error = assertIs<SpectreAttachException>(thrown.get())
         assertIs<InterruptedException>(error.cause)
         assertTrue(restored.get())
-        assertFalse(ProcessHandle.of(pid).isPresent)
+        assertFalse(checkNotNull(helper.get()).isAlive)
         assertFalse(
             Thread.getAllStackTraces().keys.any {
                 !it.isDaemon && it.name.startsWith("spectre-attach-helper-")
             }
         )
-        Files.deleteIfExists(marker)
     }
 
     private fun run(mode: String, value: String) =
@@ -91,18 +113,6 @@ class BoundedAttachOperationTest {
 
     private fun fresh(label: String): Path =
         Files.createTempFile("spectre-$label-", ".marker").also(Files::deleteIfExists)
-
-    private fun awaitPid(marker: Path): Long {
-        repeat(200) {
-            if (Files.exists(marker)) {
-                Files.readString(marker).trim().toLongOrNull()?.let { pid ->
-                    return pid
-                }
-            }
-            Thread.sleep(25)
-        }
-        error("helper did not publish pid")
-    }
 
     private fun command(vararg args: String) =
         listOf(
@@ -125,7 +135,6 @@ object BoundedAttachOperationFixture {
                 kotlin.system.exitProcess(7)
             }
             "block" -> {
-                Files.writeString(Path.of(args[1]), ProcessHandle.current().pid().toString())
                 Thread.sleep(60_000)
             }
             "sleep" -> Thread.sleep(args[1].toLong())

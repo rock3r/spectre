@@ -63,17 +63,28 @@ internal object WindowsAttachHelper {
         if (response == "OK") return null
         val fields = response.split('\t')
         if (fields.size != RESPONSE_FIELD_COUNT || fields[0] != "ERROR") {
-            return SpectreAttachExceptionImpl(
-                "Invalid Windows attach helper response: $result",
-                null,
-            )
+            return invalidResponse(result)
         }
-        val cause =
-            decode(fields[2]).takeIf(String::isNotEmpty)?.let {
-                RuntimeException("$it: ${decode(fields[3])}")
-            }
-        return SpectreAttachExceptionImpl(decode(fields[1]), cause)
+        return try {
+            val causeType = decode(fields[2])
+            val causeDetail = decode(fields[3])
+            val cause =
+                when (causeType) {
+                    "AttachNotSupportedException" ->
+                        RemoteAttachFailure(RemoteAttachFailureKind.AttachNotSupported, causeDetail)
+                    "AgentLoadException" ->
+                        RemoteAttachFailure(RemoteAttachFailureKind.AgentLoad, causeDetail)
+                    "" -> null
+                    else -> RuntimeException("$causeType: $causeDetail")
+                }
+            SpectreAttachExceptionImpl(decode(fields[1]), cause)
+        } catch (_: IllegalArgumentException) {
+            invalidResponse(result)
+        }
     }
+
+    private fun invalidResponse(result: String) =
+        SpectreAttachExceptionImpl("Invalid Windows attach helper response: $result", null)
 
     private fun encode(value: String) =
         encoder.encodeToString(value.toByteArray(StandardCharsets.UTF_8))

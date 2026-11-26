@@ -25,6 +25,10 @@ internal static class Program
     private static async Task<int> Main(string[] args)
     {
         EnsurePerMonitorDpiAwareness();
+        if (args is ["accessibility-snapshot"])
+        {
+            return AccessibilitySnapshotProtocol.Run(new WindowsUiaTreeReader());
+        }
         Options options;
         try
         {
