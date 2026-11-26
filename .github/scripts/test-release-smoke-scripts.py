@@ -1249,7 +1249,7 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
             unittest.mock.patch.object(self.rs.subprocess, "Popen", side_effect=RuntimeError("fixture command captured")) as popen,
         ):
             with self.assertRaisesRegex(RuntimeError, "fixture command captured"):
-                self.rs._accesskit_cli_smoke(Path("/tmp/spectre"))
+                self.rs._accesskit_cli_smoke(Path("/tmp/spectre"), "0.5.0")
         self.assertEqual(["xvfb-run", "-a"], popen.call_args.args[0][:2])
 
     def test_accesskit_private_daemon_environment_is_owner_only_and_short(self):
@@ -1282,19 +1282,61 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
         expected_parent = "/tmp" if os.name == "posix" else None
         self.assertEqual(expected_parent, mkdtemp.call_args.kwargs["dir"])
 
-    def test_linux_accessibility_state_is_restored_after_failure(self):
-        changes = []
-        with unittest.mock.patch.object(self.rs, "_linux_accessibility_enabled", return_value=False), unittest.mock.patch.object(self.rs, "_set_linux_accessibility_enabled", side_effect=lambda enabled, env: changes.append((enabled, env))):
-            with self.assertRaisesRegex(RuntimeError, "fixture failed"):
-                with self.rs._linux_accessibility_for_smoke({"BUS": "private"}):
-                    raise RuntimeError("fixture failed")
-        self.assertEqual([(True, {"BUS": "private"}), (False, {"BUS": "private"})], changes)
+    def test_linux_accessibility_restore_check_accepts_disabled_private_bus(self):
+        environment = {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/private"}
+        with unittest.mock.patch.object(
+            self.rs, "_linux_accessibility_enabled", return_value=False
+        ) as enabled:
+            self.rs._assert_linux_accessibility_disabled(environment, "packaged CLI")
+        enabled.assert_called_once_with(environment)
 
-    def test_linux_accessibility_already_enabled_is_not_changed(self):
-        with unittest.mock.patch.object(self.rs, "_linux_accessibility_enabled", return_value=True), unittest.mock.patch.object(self.rs, "_set_linux_accessibility_enabled") as setter:
-            with self.rs._linux_accessibility_for_smoke({}):
-                pass
-        setter.assert_not_called()
+    def test_linux_accessibility_restore_check_rejects_enabled_private_bus(self):
+        with unittest.mock.patch.object(
+            self.rs, "_linux_accessibility_enabled", return_value=True
+        ):
+            with self.assertRaisesRegex(
+                AssertionError,
+                "packaged MCP did not restore org.a11y.Status.IsEnabled=false",
+            ):
+                self.rs._assert_linux_accessibility_disabled({}, "packaged MCP")
+
+    def test_accesskit_success_detail_only_claims_linux_consent_on_linux(self):
+        linux = self.rs._accesskit_success_detail("Linux")
+        self.assertIn("Linux default refusal", linux)
+        self.assertIn("CLI/MCP opt-in notes", linux)
+        for system in ("Darwin", "Windows"):
+            with self.subTest(system=system):
+                detail = self.rs._accesskit_success_detail(system)
+                self.assertNotIn("Linux", detail)
+                self.assertNotIn("MCP opt-in", detail)
+
+    def test_private_linux_dbus_isolates_settings_and_at_spi_for_activations(self):
+        process = unittest.mock.Mock(stdout=unittest.mock.Mock())
+        inherited = {
+            "DISPLAY": ":9",
+            "WAYLAND_DISPLAY": "wayland-7",
+            "XDG_RUNTIME_DIR": "/run/user/123",
+            "AT_SPI_BUS_ADDRESS": "unix:path=/operator/a11y",
+        }
+        with (
+            unittest.mock.patch.dict(self.rs.os.environ, inherited, clear=True),
+            unittest.mock.patch.object(self.rs.subprocess, "Popen", return_value=process) as popen,
+            unittest.mock.patch.object(
+                self.rs, "_read_process_line", return_value="unix:path=/private/session\n"
+            ),
+            unittest.mock.patch.object(self.rs, "_terminate_owned_process") as terminate,
+        ):
+            with self.rs._private_linux_dbus(True) as environment:
+                self.assertEqual("unix:path=/private/session", environment["DBUS_SESSION_BUS_ADDRESS"])
+                self.assertEqual("memory", environment["GSETTINGS_BACKEND"])
+
+        daemon_environment = popen.call_args.kwargs["env"]
+        self.assertNotIn("AT_SPI_BUS_ADDRESS", daemon_environment)
+        self.assertEqual("memory", daemon_environment["GSETTINGS_BACKEND"])
+        self.assertEqual(":9", daemon_environment["DISPLAY"])
+        self.assertEqual("wayland-7", daemon_environment["WAYLAND_DISPLAY"])
+        self.assertEqual("/run/user/123", daemon_environment["XDG_RUNTIME_DIR"])
+        terminate.assert_called_once_with(process)
 
     def test_accesskit_ready_wait_is_bounded_for_partial_line(self):
         process = subprocess.Popen([sys.executable, "-c", "import sys,time;sys.stdout.write('partial');sys.stdout.flush();time.sleep(5)"], stdout=subprocess.PIPE, text=True, start_new_session=True)
@@ -1397,7 +1439,7 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
             unittest.mock.patch.object(self.rs.subprocess, "run", side_effect=lambda command, **kwargs: order.append(command) or unittest.mock.Mock(returncode=0, stdout="", stderr="")),
         ):
             with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
-                self.rs._accesskit_cli_smoke(Path("/tmp/spectre"))
+                self.rs._accesskit_cli_smoke(Path("/tmp/spectre"), "0.5.0")
         self.assertIn([str(Path("/tmp/spectre")), "daemon", "kill"], order)
 
     def test_maven_local_version_is_release_shaped_smoke_coord(self):
