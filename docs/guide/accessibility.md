@@ -16,7 +16,7 @@ The MCP `accessibility_tree` tool accepts the same `pid` or `window` target. Bot
 return a schema-version-2 native snapshot with wire value `source: "os-accessibility"`. For an attached session, `spectre capture <session> --source accessibility` and MCP `capture` with
 `source: "accessibility"` write the native tree beside the screenshot; `compose` is the default.
 Add `--allow-accessibility-enable` to either CLI operation, or
-`allowAccessibilityEnable: true` to either MCP tool, only when temporary Linux session enablement
+`allow_accessibility_enable: true` to either MCP tool, only when temporary Linux session enablement
 is acceptable. The opt-in defaults to `false`; without it a disabled session returns the typed
 `accessibility-disabled` error and its accessibility state is not changed.
 
@@ -61,7 +61,7 @@ spectre a11y tree --pid 12345 | jq '.nodes[] | select(.id == "account-name") | {
 | --- | --- | --- |
 | macOS | The signed **Spectre Capture Helper.app** needs Accessibility permission in System Settings. A denial is reported as an error, not an empty tree; the helper never opens the prompt implicitly. | Global screen points. |
 | Windows | UI Automation normally needs no prompt. The framework-dependent helper requires the .NET 8 Desktop Runtime and a same-architecture public Windows App Runtime 1.8 installation; the CBS system package alone is insufficient. Integrity boundaries still apply: a normal process cannot inspect an elevated application. | Global screen pixels. |
-| Linux | With explicit `--allow-accessibility-enable` / `allowAccessibilityEnable: true`, Spectre may temporarily set the session `org.a11y.Status.IsEnabled` value while it reads, then restores the previous value. Without that opt-in it returns `accessibility-disabled`. The CLI prints a one-line notice when it enables the session; MCP includes the same notice in its result. This is necessary because AccessKit applications register with AT-SPI only while session accessibility is enabled. | Screen coordinates on X11. On GNOME Wayland, AccessKit bounds are **window-relative** and the output labels them as such. They must not be used as screen coordinates for input or crops. |
+| Linux | With explicit `--allow-accessibility-enable` / `allow_accessibility_enable: true`, Spectre may temporarily set the session `org.a11y.Status.IsEnabled` value while it reads, then restores the previous value. Without that opt-in it returns `accessibility-disabled`. The CLI prints a one-line notice when it enables the session; MCP includes the same notice in its result. This is necessary because AccessKit applications register with AT-SPI only while session accessibility is enabled. | Screen coordinates on X11. On GNOME Wayland, AccessKit bounds are **window-relative** and the output labels them as such. They must not be used as screen coordinates for input or crops. |
 
 Do not hide or discard the Linux enablement notice: it explains a session-wide accessibility state
 change and whether restoration succeeded.

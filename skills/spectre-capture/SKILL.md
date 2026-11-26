@@ -21,7 +21,7 @@ native screenshot. That native document has `source: "os-accessibility"`, `windo
 `name`/`bounds`, and `notes`; do not apply the Compose recipes below to it. The standalone
 `spectre a11y tree` and MCP `accessibility_tree` operations return the same native snapshot shape.
 On Linux, add `--allow-accessibility-enable` to accessibility-sourced CLI capture, or
-`allowAccessibilityEnable: true` to MCP capture, only when temporary AT-SPI enablement is
+`allow_accessibility_enable: true` to MCP capture, only when temporary AT-SPI enablement is
 acceptable. It defaults to false and is invalid for the Compose source.
 
 Always branch on `schemaVersion` before reading. Version 1 Compose captures remain readable with
