@@ -62,6 +62,8 @@ def complete_picker_present(pid: int) -> bool:
 
 
 def main() -> int:
+    shell_version = subprocess.check_output(["gnome-shell", "--version"], text=True).strip()
+    require_remember = not shell_version.startswith("GNOME Shell 42.")
     backend = portal.backend_pid(portal.dbus.SessionBus())
     log_path = ARTIFACTS / "release-smoke-console.log"
     grants: list[dict[str, object]] = []
@@ -84,7 +86,7 @@ def main() -> int:
                 # substantive and deliberately propagates instead of being swallowed.
                 selected = portal.accept_dialog(
                     backend, ARTIFACTS / f"consent-{ordinal}-atspi-tree.json",
-                    approve_remember=True,
+                    approve_remember=require_remember,
                 )
                 grants.append({
                     "ordinal": ordinal,

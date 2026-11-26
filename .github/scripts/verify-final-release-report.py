@@ -34,6 +34,7 @@ def main() -> int:
     parser.add_argument("--sha", required=True)
     parser.add_argument("--console", type=Path, required=True)
     parser.add_argument("--consent-summary", type=Path, required=True)
+    parser.add_argument("--gnome-profile", choices=("gnome-42", "gnome-46"), default="gnome-46")
     args = parser.parse_args()
     sys.path.insert(0, str(args.repo / "scripts"))
     from smoke_lib import REQUIRED_SCENARIO_IDS, validate_report  # noqa: PLC0415
@@ -85,11 +86,13 @@ def main() -> int:
         for grant in grants:
             observed = datetime.fromisoformat(grant["observedAt"])
             accepted = datetime.fromisoformat(grant["acceptedAt"])
+            remember_matches_backend = (grant["rememberApproved"] is True if args.gnome_profile == "gnome-46"
+                                        else grant.get("rememberAvailable") is False and grant["rememberApproved"] is False)
             if not (previous <= observed <= accepted <= finished
-                    and grant["profile"] == "gnome-46"
+                    and grant["profile"] == args.gnome_profile
                     and grant["remoteInteractionApproved"] is True
-                    and grant["rememberApproved"] is True):
-                raise ValueError(f"grant is not genuine GNOME 46 GUI proof: {grant!r}")
+                    and remember_matches_backend):
+                raise ValueError(f"grant is not genuine {args.gnome_profile} GUI proof: {grant!r}")
             previous = accepted
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         errors.append(f"invalid genuine GUI grant proof: {error}")
