@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.core
 
 import java.awt.AWTEvent
+import java.awt.Component
 import java.awt.EventQueue
 import java.awt.Toolkit
 import java.awt.event.AWTEventListener
@@ -33,20 +34,19 @@ internal enum class DispatchedInput(internal val awtEventId: Int) {
  * An AWT event listener is the best available oracle: it sits below Compose, below hit-testing and
  * below focus, so it separates "no event ever arrived" from every downstream reason input might not
  * change anything. Be precise about what it proves, though — it fires during *dispatch on the EDT*,
- * so it attests that a matching event was dispatched in this JVM, not that this particular dispatch
- * was the cause. Two consequences follow, and both are handled deliberately: an event that is
- * queued but not dispatched (a busy or blocked EDT) must not be reported as a discarded one, which
- * is what [Observation.awaitQueueDrain] exists for; and an unrelated matching event can satisfy the
- * wait, which fails open to the old silent behaviour rather than inventing a failure.
- *
- * Observation is best-effort by contract. [observe] returns `null` when it cannot watch — the
- * caller then dispatches unverified rather than failing, because being unable to check is not
- * evidence of a problem.
+ * so it attests that a matching event reached the requested component hierarchy. A queued event on
+ * a blocked EDT cannot prove delivery; [Observation.awaitQueueDrain] distinguishes that case.
+ * Failure to attach or obtain a verdict is a refusal, not permission to claim delivery.
  */
 internal interface InputDeliveryWitness {
 
     /** Begins watching for [input], or returns `null` when watching is not possible. */
-    fun observe(input: DispatchedInput): Observation?
+    fun observe(
+        input: DispatchedInput,
+        target: Component?,
+        screenX: Int? = null,
+        screenY: Int? = null,
+    ): Observation?
 
     /** An active watch. Must be closed; closing detaches the listener. */
     interface Observation : AutoCloseable {
@@ -77,24 +77,40 @@ internal interface InputDeliveryWitness {
  */
 internal object AwtInputDeliveryWitness : InputDeliveryWitness {
 
-    override fun observe(input: DispatchedInput): InputDeliveryWitness.Observation? {
-        if (!inputDeliveryVerifiable(input = input)) return null
-        return attachListener(input)
+    override fun observe(
+        input: DispatchedInput,
+        target: Component?,
+        screenX: Int?,
+        screenY: Int?,
+    ): InputDeliveryWitness.Observation? {
+        if (!inputDeliveryVerifiable()) return null
+        return attachListener(input, target, screenX, screenY)
     }
 
     /**
      * Attaches the Toolkit listener without consulting [inputDeliveryVerifiable].
      *
-     * Production dispatch still goes through [observe], which applies the OS/verb gate. Tests that
-     * need the oracle's dispatched-vs-never-dispatched verdict on a host where the gate would
-     * decline (macOS; X11 wheel) call this directly so they exercise the shipped listener rather
-     * than a reimplementation.
+     * Production dispatch still goes through [observe], which applies the OS gate. Tests call this
+     * directly when they need the oracle's dispatched-vs-never-dispatched verdict independently of
+     * that gate.
      */
-    internal fun attachListener(input: DispatchedInput): InputDeliveryWitness.Observation? {
+    internal fun attachListener(
+        input: DispatchedInput,
+        target: Component? = null,
+        screenX: Int? = null,
+        screenY: Int? = null,
+    ): InputDeliveryWitness.Observation? {
         val toolkit = runCatching { Toolkit.getDefaultToolkit() }.getOrNull() ?: return null
         val delivered = CountDownLatch(1)
         val listener = AWTEventListener { event ->
-            if (event is MouseEvent && event.id == input.awtEventId) delivered.countDown()
+            val mouseEvent = event as? MouseEvent ?: return@AWTEventListener
+            if (
+                mouseEvent.matches(input) &&
+                    mouseEvent.matchesTarget(target) &&
+                    mouseEvent.matchesScreenPoint(screenX, screenY)
+            ) {
+                delivered.countDown()
+            }
         }
         // Wheel events need their own mask; subscribing to both keeps one code path for all verbs.
         val mask = AWTEvent.MOUSE_EVENT_MASK or AWTEvent.MOUSE_WHEEL_EVENT_MASK
@@ -121,29 +137,51 @@ internal object AwtInputDeliveryWitness : InputDeliveryWitness {
     }
 }
 
+private fun MouseEvent.matches(input: DispatchedInput): Boolean =
+    id == input.awtEventId && (input != DispatchedInput.Press || button == MouseEvent.BUTTON1)
+
+private fun MouseEvent.matchesTarget(target: Component?): Boolean =
+    target == null || (target.isShowing && component.sharesHierarchyWith(target))
+
+private fun Component.sharesHierarchyWith(target: Component): Boolean =
+    isWithin(target) || target.isWithin(this)
+
+private fun Component.isWithin(target: Component): Boolean {
+    var current: Component? = this
+    while (current != null) {
+        if (current === target) return true
+        current = current.parent
+    }
+    return false
+}
+
+private fun MouseEvent.matchesScreenPoint(expectedX: Int?, expectedY: Int?): Boolean {
+    if (expectedX == null || expectedY == null) return true
+    return kotlin.math.abs(xOnScreen - expectedX) <= INPUT_POINT_TOLERANCE_PX &&
+        kotlin.math.abs(yOnScreen - expectedY) <= INPUT_POINT_TOLERANCE_PX
+}
+
+// AWT/Robot coordinates are logical screen units. A small allowance covers platform rounding at
+// fractional display scales without accepting an unrelated press elsewhere in the same host.
+private const val INPUT_POINT_TOLERANCE_PX = 2
+
 /**
- * Whether "no AWT event arrived" is sound evidence that input was discarded, on this platform and
- * for this verb.
+ * Whether "no AWT event arrived" is sound evidence that input was discarded on this platform.
  *
  * Windows: every mouse verb. #460 is the measured case (SendInput discarded off the input desktop).
- * X11: **click/press only** (#470) — a real-OS click aimed at this JVM that produces no matching
- * press is a delivery miss, not a Compose miss. macOS stays off because AppKit consumes the click
- * that activates an inactive application without delivering it, so a perfectly healthy first click
- * legitimately produces no event; `AgentAttachIntegrationTest` retries exactly that, and treating
- * the swallowed activation click as a failure would break the retry it depends on. X11 wheel stays
- * off because the wheel is button 4/5 presses, so a wheel oracle is unsound (including a zero-notch
- * scroll, which emits nothing at all).
+ * X11 exposes real Robot wheel input as `MOUSE_WHEEL` after the JDK maps native button 4/5 events.
+ * macOS presses and wheels use the same targeted witness. AppKit may consume an activation click;
+ * that is correctly a refusal because the requested component did not receive it. Zero-notch scroll
+ * remains an explicit no-op.
  *
  * Declining to observe reuses the existing "cannot testify" path.
  */
 internal fun inputDeliveryVerifiable(
-    osName: String = System.getProperty("os.name").orEmpty(),
-    input: DispatchedInput = DispatchedInput.Press,
+    osName: String = System.getProperty("os.name").orEmpty()
 ): Boolean {
     if (osName.startsWith("Windows", ignoreCase = true)) return true
-    if (osName.contains("mac", ignoreCase = true)) return false
-    val linux = osName.contains("linux", ignoreCase = true)
-    return linux && input == DispatchedInput.Press
+    if (osName.contains("mac", ignoreCase = true)) return true
+    return osName.contains("linux", ignoreCase = true)
 }
 
 /**
@@ -155,7 +193,7 @@ internal fun inputDeliveryVerifiable(
 @InternalSpectreApi
 public fun clickPressDeliveryVerifiable(
     osName: String = System.getProperty("os.name").orEmpty()
-): Boolean = inputDeliveryVerifiable(osName, DispatchedInput.Press)
+): Boolean = inputDeliveryVerifiable(osName)
 
 /**
  * [RobotDriver.click], plus verification that the OS actually delivered the press to this JVM.
@@ -177,16 +215,31 @@ public suspend fun RobotDriver.clickVerified(screenX: Int, screenY: Int) {
     verifyingDelivery("click", screenX, screenY, DispatchedInput.Press) { click(screenX, screenY) }
 }
 
+internal suspend fun RobotDriver.clickVerified(screenX: Int, screenY: Int, target: Component) {
+    verifyingDelivery("click", screenX, screenY, DispatchedInput.Press, target = target) {
+        click(screenX, screenY)
+    }
+}
+
 /** [RobotDriver.doubleClick] with the delivery verification described on [clickVerified]. */
-internal suspend fun RobotDriver.doubleClickVerified(screenX: Int, screenY: Int) {
-    verifyingDelivery("doubleClick", screenX, screenY, DispatchedInput.Press) {
+internal suspend fun RobotDriver.doubleClickVerified(
+    screenX: Int,
+    screenY: Int,
+    target: Component,
+) {
+    verifyingDelivery("doubleClick", screenX, screenY, DispatchedInput.Press, target = target) {
         doubleClick(screenX, screenY)
     }
 }
 
 /** [RobotDriver.longClick] with the delivery verification described on [clickVerified]. */
-internal suspend fun RobotDriver.longClickVerified(screenX: Int, screenY: Int, holdFor: Duration) {
-    verifyingDelivery("longClick", screenX, screenY, DispatchedInput.Press) {
+internal suspend fun RobotDriver.longClickVerified(
+    screenX: Int,
+    screenY: Int,
+    holdFor: Duration,
+    target: Component,
+) {
+    verifyingDelivery("longClick", screenX, screenY, DispatchedInput.Press, target = target) {
         longClick(screenX, screenY, holdFor)
     }
 }
@@ -205,8 +258,9 @@ internal suspend fun RobotDriver.swipeVerified(
     endY: Int,
     steps: Int,
     duration: Duration,
+    target: Component,
 ) {
-    verifyingDelivery("swipe", startX, startY, DispatchedInput.Press) {
+    verifyingDelivery("swipe", startX, startY, DispatchedInput.Press, target = target) {
         swipe(startX, startY, endX, endY, steps, duration)
     }
 }
@@ -217,7 +271,12 @@ internal suspend fun RobotDriver.swipeVerified(
  * Watches for a wheel event rather than a press: scrolling never presses a button, so a press
  * oracle would report every scroll as undelivered.
  */
-internal suspend fun RobotDriver.scrollWheelVerified(screenX: Int, screenY: Int, wheelClicks: Int) {
+internal suspend fun RobotDriver.scrollWheelVerified(
+    screenX: Int,
+    screenY: Int,
+    wheelClicks: Int,
+    target: Component,
+) {
     if (wheelClicks == 0) {
         // A zero-notch scroll is a legitimate no-op that emits no wheel event on any backend -- on
         // X11 the wheel is button 4/5 presses, so zero notches dispatches nothing at all. Waiting
@@ -225,7 +284,7 @@ internal suspend fun RobotDriver.scrollWheelVerified(screenX: Int, screenY: Int,
         scrollWheel(screenX, screenY, wheelClicks)
         return
     }
-    verifyingDelivery("scrollWheel", screenX, screenY, DispatchedInput.Wheel) {
+    verifyingDelivery("scrollWheel", screenX, screenY, DispatchedInput.Wheel, target = target) {
         scrollWheel(screenX, screenY, wheelClicks)
     }
 }
@@ -233,16 +292,15 @@ internal suspend fun RobotDriver.scrollWheelVerified(screenX: Int, screenY: Int,
 /**
  * Runs [dispatch] while watching for the event it should produce, and fails loudly if none arrives.
  *
- * Verification is **skipped rather than failed** whenever it could not mean anything: backends that
- * do not drive real OS input (synthetic, headless, test fakes) never produce an AWT event for a
- * dispatch, and a witness that cannot attach cannot testify either way. Being unable to check is
- * not evidence of a problem.
+ * Synthetic backends bypass this witness because they do not produce AWT input. Real input fails
+ * closed when the listener cannot attach, delivery times out, or the EDT cannot drain.
  */
 private suspend fun RobotDriver.verifyingDelivery(
     operation: String,
     screenX: Int,
     screenY: Int,
     input: DispatchedInput,
+    target: Component? = null,
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
     dispatch: suspend () -> Unit,
 ) {
@@ -250,10 +308,9 @@ private suspend fun RobotDriver.verifyingDelivery(
         dispatch()
         return
     }
-    val observation = deliveryWitness.observe(input)
+    val observation = deliveryWitness.observe(input, target, screenX, screenY)
     if (observation == null) {
-        dispatch()
-        return
+        error("Cannot verify that Spectre delivered $operation to the intended target.")
     }
     observation.use {
         dispatch()
@@ -263,7 +320,11 @@ private suspend fun RobotDriver.verifyingDelivery(
         if (runInterruptible(dispatcher) { it.awaitDelivery(INPUT_DELIVERY_TIMEOUT_MS) }) return
         // Nothing dispatched. Before accusing the OS, establish that this JVM was actually
         // dispatching at all — see Observation.awaitQueueDrain.
-        if (!runInterruptible(dispatcher) { it.awaitQueueDrain(EDT_DRAIN_TIMEOUT_MS) }) return
+        if (!runInterruptible(dispatcher) { it.awaitQueueDrain(EDT_DRAIN_TIMEOUT_MS) }) {
+            error(
+                "Cannot verify that Spectre delivered $operation: the AWT event queue did not drain."
+            )
+        }
         // The queue drained past our event's slot, so a merely-late event would already have
         // landed. Re-check before failing.
         if (runInterruptible(dispatcher) { it.awaitDelivery(0) }) return

@@ -359,8 +359,8 @@ fn dispatch(
             },
         },
         Command::PointerMove { x, y } => with_session(state, |s| {
-            let (ox, oy) = s.stream.position;
-            s.notify_pointer_motion_absolute((x - ox) as f64, (y - oy) as f64)?;
+            let (x, y) = pointer_position_in_stream((x, y), s.stream.position, s.stream.size)?;
+            s.notify_pointer_motion_absolute(x, y)?;
             Ok(Event::InputAck)
         }),
         Command::PointerButton { button, pressed } => with_state(state, |s| {
@@ -412,6 +412,42 @@ fn dispatch(
             },
         },
     }
+}
+
+/// Map an AWT desktop point to the selected portal stream's absolute pointer space.
+///
+/// The ScreenCast `position` and `size` properties are defined in compositor coordinates; they
+/// are explicitly not PipeWire pixel dimensions. RemoteDesktop absolute pointer motion consumes
+/// that same logical coordinate space. Consequently the correct HiDPI conversion is translation
+/// by the selected stream's logical origin, not scaling from its captured buffer resolution.
+/// Keeping each stream's own origin and extent also handles negative layouts and monitors with
+/// different scale factors without assuming a single global desktop scale.
+fn pointer_position_in_stream(
+    point: (i32, i32),
+    stream_position: (i32, i32),
+    stream_size: (u32, u32),
+) -> Result<(f64, f64)> {
+    let (width, height) = stream_size;
+    if width == 0 || height == 0 {
+        anyhow::bail!("portal stream has empty logical extent {width}x{height}");
+    }
+
+    // Widen before subtracting: opposite signed i32 extrema do not fit in i32. Besides avoiding
+    // wrapping, this lets us reject points that cannot be represented inside the granted extent.
+    let x = i64::from(point.0) - i64::from(stream_position.0);
+    let y = i64::from(point.1) - i64::from(stream_position.1);
+    if x < 0 || y < 0 || x >= i64::from(width) || y >= i64::from(height) {
+        anyhow::bail!(
+            "pointer ({}, {}) is outside portal stream at ({}, {}) with logical size {}x{}",
+            point.0,
+            point.1,
+            stream_position.0,
+            stream_position.1,
+            width,
+            height
+        );
+    }
+    Ok((x as f64, y as f64))
 }
 
 fn with_session(
@@ -508,7 +544,9 @@ fn run_recording_start(
         start.region,
         stream.position,
         stream.size,
-        start.screen_size.and_then(crate::stream_region::screen_size_to_region),
+        start
+            .screen_size
+            .and_then(crate::stream_region::screen_size_to_region),
     )?;
     let argv = crate::gst::build_pipewire_argv(
         stream.node_id,
@@ -699,8 +737,8 @@ fn write_event(writer: &mut UnixStream, event: Event) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_held_input, disconnect_cleanup, portal_failure_exit_code, recording_owner_should_reap,
-        ClientInputHold, HeldInput, CONSENT_NOT_GRANTED_EXIT,
+        apply_held_input, disconnect_cleanup, pointer_position_in_stream, portal_failure_exit_code,
+        recording_owner_should_reap, ClientInputHold, HeldInput, CONSENT_NOT_GRANTED_EXIT,
     };
     use crate::portal::response_timeout_error;
     use std::collections::{BTreeSet, HashMap};
@@ -735,15 +773,62 @@ mod tests {
     }
 
     #[test]
+    fn pointer_position_translates_negative_monitor_origin_in_logical_coordinates() {
+        assert_eq!(
+            pointer_position_in_stream((-1919, 100), (-1920, 0), (1920, 1080)).unwrap(),
+            (1.0, 100.0)
+        );
+    }
+
+    #[test]
+    fn pointer_position_keeps_portal_logical_coordinates_on_hidpi_monitors() {
+        // ScreenCast `position` and `size`, and RemoteDesktop absolute motion, all use the
+        // compositor's logical space. A 3840x2160 buffer displayed as 1920x1080 therefore does
+        // not justify multiplying these coordinates by two.
+        assert_eq!(
+            pointer_position_in_stream((2879, 1079), (1920, 0), (960, 1080)).unwrap(),
+            (959.0, 1079.0)
+        );
+    }
+
+    #[test]
+    fn pointer_position_uses_selected_stream_bounds_with_differently_scaled_monitors() {
+        assert_eq!(
+            pointer_position_in_stream((1920, -900), (1920, -1080), (1280, 1080)).unwrap(),
+            (0.0, 180.0)
+        );
+    }
+
+    #[test]
+    fn pointer_position_rejects_points_outside_the_selected_stream() {
+        for point in [(99, 200), (100, 199), (300, 200), (100, 400)] {
+            let error = pointer_position_in_stream(point, (100, 200), (200, 200)).unwrap_err();
+            assert!(format!("{error:#}").contains("outside portal stream"));
+        }
+    }
+
+    #[test]
+    fn pointer_position_rejects_empty_or_unrepresentable_stream_extents() {
+        assert!(pointer_position_in_stream((0, 0), (0, 0), (0, 1)).is_err());
+        assert!(pointer_position_in_stream((i32::MAX, 0), (i32::MIN, 0), (u32::MAX, 1)).is_err());
+    }
+
+    #[test]
     fn consent_failures_exit_with_the_consent_status() {
         let err = response_timeout_error(Duration::from_secs(60), "/request/path");
-        assert_eq!(portal_failure_exit_code(&err), Some(CONSENT_NOT_GRANTED_EXIT));
+        assert_eq!(
+            portal_failure_exit_code(&err),
+            Some(CONSENT_NOT_GRANTED_EXIT)
+        );
         assert_eq!(CONSENT_NOT_GRANTED_EXIT, 77);
     }
 
     #[test]
     fn other_portal_failures_keep_the_generic_error_exit() {
-        assert_eq!(portal_failure_exit_code(&anyhow::anyhow!("opening session bus")), None);
+        assert_eq!(
+            portal_failure_exit_code(&anyhow::anyhow!("opening session bus")),
+            None
+        );
     }
 
     #[test]
@@ -756,19 +841,9 @@ mod tests {
     #[test]
     fn disconnect_releases_that_clients_held_button_and_modifier() {
         let mut holds = HashMap::new();
-        apply_held_input(
-            &mut holds,
-            3,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
+        apply_held_input(&mut holds, 3, HeldInput::PointerButton(0x110), true);
         apply_held_input(&mut holds, 3, HeldInput::Key(0xffe3), true);
-        apply_held_input(
-            &mut holds,
-            9,
-            HeldInput::PointerButton(0x111),
-            true,
-        );
+        apply_held_input(&mut holds, 9, HeldInput::PointerButton(0x111), true);
 
         let cleanup = disconnect_cleanup(None, 3, &mut holds);
         assert!(!cleanup.reap_recording);
@@ -780,8 +855,7 @@ mod tests {
             }
         );
         assert_eq!(
-            cleanup.portal_releases,
-            cleanup.held_input,
+            cleanup.portal_releases, cleanup.held_input,
             "sole owner must notify the portal on disconnect"
         );
         assert_eq!(
@@ -795,19 +869,9 @@ mod tests {
     #[test]
     fn disconnect_does_not_release_input_still_held_by_another_client() {
         let mut holds = HashMap::new();
-        apply_held_input(
-            &mut holds,
-            3,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
+        apply_held_input(&mut holds, 3, HeldInput::PointerButton(0x110), true);
         apply_held_input(&mut holds, 3, HeldInput::Key(0xffe3), true);
-        apply_held_input(
-            &mut holds,
-            9,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
+        apply_held_input(&mut holds, 9, HeldInput::PointerButton(0x110), true);
         apply_held_input(&mut holds, 9, HeldInput::Key(0xffe1), true);
 
         let cleanup = disconnect_cleanup(None, 3, &mut holds);
@@ -829,18 +893,8 @@ mod tests {
     #[test]
     fn matching_release_leaves_nothing_to_unwind_on_disconnect() {
         let mut holds = HashMap::new();
-        apply_held_input(
-            &mut holds,
-            4,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
-        apply_held_input(
-            &mut holds,
-            4,
-            HeldInput::PointerButton(0x110),
-            false,
-        );
+        apply_held_input(&mut holds, 4, HeldInput::PointerButton(0x110), true);
+        apply_held_input(&mut holds, 4, HeldInput::PointerButton(0x110), false);
         apply_held_input(&mut holds, 4, HeldInput::Key(0xffe3), true);
         apply_held_input(&mut holds, 4, HeldInput::Key(0xffe3), false);
 

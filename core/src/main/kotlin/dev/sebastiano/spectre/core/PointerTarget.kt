@@ -1,3 +1,5 @@
+@file:OptIn(InternalSpectreApi::class)
+
 package dev.sebastiano.spectre.core
 
 import androidx.compose.ui.geometry.Rect
@@ -14,9 +16,26 @@ import java.awt.Point
  * describe the same layout pass.
  */
 internal fun pointerTargetOnScreen(node: AutomatorNode, action: String): Point {
-    val (bounds, center) = readOnEdt { node.boundsInWindow to node.centerOnScreen }
+    val (bounds, center) =
+        readOnEdt {
+            checkPointerSurfaceShowing(node.trackedWindow, action, node.toString())
+            node.boundsInWindow to node.centerOnScreen
+        }
     checkPointerTargetBounds(bounds, action, node.toString())
     return center
+}
+
+/** Snapshot geometry remains readable off-screen, but input must have a showing recipient. */
+internal fun checkPointerSurfaceShowing(
+    trackedWindow: TrackedWindow,
+    action: String,
+    nodeDescription: String,
+) {
+    val intendedRecipient = trackedWindow.composePanel ?: trackedWindow.window
+    check(intendedRecipient.isShowing) {
+        "Cannot $action $nodeDescription: its intended Compose surface is not showing, so pointer " +
+            "input cannot be delivered. Show the window and embedded panel before sending input."
+    }
 }
 
 /**

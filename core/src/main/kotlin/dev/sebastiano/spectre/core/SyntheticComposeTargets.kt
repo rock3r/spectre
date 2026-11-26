@@ -18,14 +18,13 @@ import javax.swing.SwingUtilities
 // get synthetic keys, and the Skiko canvas that should take AWT focus on a synthetic press.
 
 /**
- * The Compose surface that should get keys when AWT has no focus owner and nothing is under the
- * pointer: the surface whose semantics tree holds the focused node (an owned popup included), or
- * else the first Compose host in the highest-priority window.
+ * The Compose surface that should get keys when AWT has no focus owner: the showing surface whose
+ * semantics tree holds the focused node (an owned popup included). An arbitrary Compose host is not
+ * a safe fallback because it may be hidden or may not contain the user's intended key recipient.
  */
 internal fun findComposeKeyEventTarget(windows: List<Window>): Component? {
     val candidates = windows.asReversed()
     return candidates.firstNotNullOfOrNull(::findFocusedComposeSurface)
-        ?: candidates.firstNotNullOfOrNull { window -> findComposeHostIn(window) }
 }
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -35,7 +34,7 @@ private fun findFocusedComposeSurface(window: Window): Component? {
         return findComposeHostIn(window) ?: window
     }
     findComposePanels(window)
-        .firstOrNull { it.semanticsOwners.hasFocusedNode() }
+        .firstOrNull { it.isShowing && it.semanticsOwners.hasFocusedNode() }
         ?.let {
             return it
         }
@@ -110,19 +109,23 @@ internal fun Component.focusComposeCanvasOnPress() {
  * property we actually care about and keeps plain-Swing fixtures working too.
  */
 internal fun Component.findKeyListenerSelfOrDescendant(): Component? {
-    if (keyListeners.isNotEmpty()) return this
+    if (canReceiveKeyInput() && keyListeners.isNotEmpty()) return this
     return findKeyListenerDescendant()
 }
 
 private fun Component.findKeyListenerDescendant(): Component? {
     if (this !is Container) return null
     for (child in components) {
-        if (child.keyListeners.isNotEmpty()) return child
+        if (!child.isShowing) continue
+        if (child.canReceiveKeyInput() && child.keyListeners.isNotEmpty()) return child
         val nested = child.findKeyListenerDescendant()
         if (nested != null) return nested
     }
     return null
 }
+
+internal fun Component.canReceiveKeyInput(): Boolean =
+    isShowing && isEnabled && !isBlockedByModalDialog()
 
 private val COMPOSE_PANEL_CLASS_NAMES: Set<String> =
     setOf("androidx.compose.ui.awt.ComposePanel", "androidx.compose.ui.awt.ComposeWindowPanel")

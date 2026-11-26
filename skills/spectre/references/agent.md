@@ -51,6 +51,12 @@ Do **not** add `spectre-agent` or `spectre-agent-runtime` to the target app unle
    starts the UDS server inside `SpectreAgent.agentmain(...)` (preferring preinstalled `ComposeAutomator` or falling
    back to `META-INF/spectre/inject-runtime.jar`), and returns an `AttachedAutomator` IPC client.
 
+Read `AttachedAutomator.sessionInfo` after attach. It reports the negotiated synthetic driver,
+input lease policy, target core provenance/version, and caller-visible warnings (including
+coordinator startup and AWT peer/native-handle limitations). `coreVersion == null` specifically
+means the core has no manifest version; an older agent that cannot negotiate diagnostics reports
+unresolved fields and an explicit warning instead.
+
 When a shaded launcher, module path, or wrapper script hides `spectre-agent-runtime-*.jar` from `java.class.path`, pass
 it explicitly via `AttachOptions` or system property on the attacher JVM:
 

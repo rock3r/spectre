@@ -1,0 +1,13 @@
+[package]
+name = "spectre-accesskit-fixture"
+version = "0.10.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+accesskit = "=0.25.0"
+accesskit_winit = "=0.34.0"
+winit = "=0.30.12"
+
+[dev-dependencies]
+serde_json = "1.0"

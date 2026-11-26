@@ -1,3 +1,4 @@
+import Darwin
 import SpectreScreenCaptureCore
 
 @main
@@ -7,6 +8,9 @@ enum SpectreScreenCapture {
     /// `DispatchGroup.wait()` parking for normal modes).
     static func main() async {
         let argv = CommandLine.arguments
+        if argv.dropFirst() == ["accessibility-snapshot"] {
+            exit(AccessibilitySnapshotCommand.run())
+        }
         if isGuidePermissionsInvocation(argv) {
             let binary = argv.first ?? "spectre-screencapture"
             let reapproval = argv.contains("--reapproval")

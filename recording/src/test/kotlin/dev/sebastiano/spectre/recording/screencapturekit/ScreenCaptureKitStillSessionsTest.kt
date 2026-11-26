@@ -40,8 +40,8 @@ class ScreenCaptureKitStillSessionsTest {
                 stills.captureWindow(window.asTitledWindow(), ProcessHandle.current().pid())
             }
             assertEquals(2, factory.started.size)
-            assertContainsSequence(factory.started[0], listOf("--frame", "10,20,300,200"))
-            assertContainsSequence(factory.started[1], listOf("--frame", "410,20,300,200"))
+            assertContainsSequence(factory.started[0], listOf("--frame", "40,80,300,200"))
+            assertContainsSequence(factory.started[1], listOf("--frame", "410,80,300,200"))
         }
     }
 

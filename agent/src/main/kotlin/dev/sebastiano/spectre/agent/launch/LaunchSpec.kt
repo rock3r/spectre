@@ -15,7 +15,7 @@ import java.nio.file.Path
  * @property workingDirectory optional cwd for the process; null keeps the attacher's cwd.
  * @property environment extra environment entries merged over the current process env.
  * @property extraJvmArgs JVM flags inserted after the `java` binary for direct JVM launches (after
- *   any automatic `-XX:+EnableDynamicAgentLoading` injection). Ignored for non-JVM command lines.
+ *   any automatic `-XX:+EnableDynamicAgentLoading` injection). A non-JVM command is rejected.
  * @property captureDirectory directory for stdout/stderr capture files; created if missing. When
  *   null, a fresh temp directory is allocated under `java.io.tmpdir`.
  * @property stageTimeouts per-stage readiness budgets.
@@ -26,8 +26,8 @@ import java.nio.file.Path
  *   client process (excluding the Gradle daemon) is considered.
  * @property injectDynamicAgentLoading when true (default), direct `java` launches get
  *   `-XX:+EnableDynamicAgentLoading` injected unless the flag is already present.
- * @property requireSpectreCoreOnClasspath when true, direct JVM launches whose command line exposes
- *   a classpath are rejected early if no `spectre-core` jar entry is found.
+ * @property requireSpectreCoreOnClasspath when true, requires a direct JVM command with an explicit
+ *   classpath, and rejects it early if no `spectre-core` jar entry is found.
  */
 @ExperimentalSpectreAgentApi
 public data class LaunchSpec(
