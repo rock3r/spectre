@@ -1,0 +1,1564 @@
+//! Native AT-SPI2 accessibility snapshot reader.
+//!
+//! This deliberately talks to AT-SPI over D-Bus rather than shelling out to the Python fixture
+//! probe.  The session status is guarded so a setting enabled by this invocation is restored on
+//! every return path, including timeout and D-Bus errors.
+
+use anyhow::{Context, Result};
+use dbus::arg::{RefArg, Variant};
+use dbus::blocking::{Connection, Proxy, SyncConnection};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+const CALL_TIMEOUT: Duration = Duration::from_millis(750);
+// Keep cleanup inside the JVM client's 250 ms post-deadline grace period.
+const STATUS_RESTORE_TIMEOUT: Duration = Duration::from_millis(100);
+// AT-SPI has no registration-complete signal after IsEnabled changes.
+const REGISTRY_SETTLE_TIME: Duration = Duration::from_millis(300);
+const REGISTRY_POLL_TIME: Duration = Duration::from_millis(20);
+const ATSPI_ROOT: &str = "/org/a11y/atspi/accessible/root";
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Request {
+    target: Target,
+    maximum_depth: usize,
+    maximum_node_count: usize,
+    timeout_ms: u64,
+    #[serde(default)]
+    allow_accessibility_enable: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+enum Target {
+    ProcessId {
+        value: u32,
+    },
+    WindowId {
+        value: String,
+    },
+    WindowTitle {
+        value: String,
+        #[serde(default, rename = "processId")]
+        process_id: Option<u32>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Rect {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Window {
+    key: String,
+    title: Option<String>,
+    bounds: Rect,
+    bounds_space: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Node {
+    key: String,
+    parent_key: Option<String>,
+    id: Option<String>,
+    platform_role: Option<String>,
+    role: Option<String>,
+    name: Option<String>,
+    states: Vec<String>,
+    value: Option<String>,
+    bounds: Option<Rect>,
+    on_screen: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Snapshot {
+    schema_version: u8,
+    source: &'static str,
+    captured_at: String,
+    windows: Vec<Window>,
+    nodes: Vec<Node>,
+    notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct Response {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snapshot: Option<Snapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<Error>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Error {
+    code: &'static str,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    partial_snapshot: Option<Snapshot>,
+}
+
+#[derive(Clone, Debug)]
+struct Address {
+    bus: String,
+    path: dbus::Path<'static>,
+}
+
+pub fn serve() -> Result<()> {
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input)?;
+    let request: Request =
+        serde_json::from_str(&input).context("invalid accessibility snapshot request")?;
+    validate(&request)?;
+    let response = capture(request);
+    serde_json::to_writer(std::io::stdout().lock(), &response)?;
+    std::io::stdout().write_all(b"\n")?;
+    Ok(())
+}
+
+fn validate(r: &Request) -> Result<()> {
+    if r.maximum_depth == 0 || r.maximum_node_count == 0 || r.timeout_ms == 0 {
+        anyhow::bail!("maximumDepth, maximumNodeCount and timeoutMs must be positive")
+    }
+    match &r.target {
+        Target::ProcessId { value: 0 } => anyhow::bail!("process-id must be positive"),
+        Target::ProcessId { value } if *value > i32::MAX as u32 => {
+            anyhow::bail!("process-id must be in the Linux PID range 1..=2147483647")
+        }
+        Target::WindowId { value } if value.is_empty() => {
+            anyhow::bail!("window-id must not be empty")
+        }
+        Target::WindowTitle { value, .. } if value.is_empty() => {
+            anyhow::bail!("window-title must not be empty")
+        }
+        Target::WindowTitle {
+            process_id: Some(pid),
+            ..
+        } if *pid == 0 || *pid > i32::MAX as u32 => {
+            anyhow::bail!("window-title processId must be in the Linux PID range 1..=2147483647")
+        }
+        _ => Ok(()),
+    }
+}
+
+fn capture(request: Request) -> Response {
+    match capture_inner(&request) {
+        Ok(snapshot) => Response {
+            ok: true,
+            snapshot: Some(snapshot),
+            error: None,
+        },
+        Err((code, message, partial)) => Response {
+            ok: false,
+            snapshot: None,
+            error: Some(Error {
+                code,
+                message,
+                partial_snapshot: partial,
+            }),
+        },
+    }
+}
+
+type CaptureError = (&'static str, String, Option<Snapshot>);
+
+fn capture_inner(request: &Request) -> std::result::Result<Snapshot, CaptureError> {
+    let deadline = Instant::now() + Duration::from_millis(request.timeout_ms);
+    let session = Connection::new_session().map_err(|e| timed_err(deadline, e))?;
+    let status = session.with_proxy("org.a11y.Bus", "/org/a11y/bus", remaining(deadline));
+    let enabled: bool = get_property(&status, "org.a11y.Status", "IsEnabled")
+        .map_err(|e| timed_err(deadline, e))?;
+    if !enabled && !request.allow_accessibility_enable {
+        return Err((
+            "accessibility-disabled",
+            "the session accessibility service is disabled".into(),
+            None,
+        ));
+    }
+
+    let changed = !enabled;
+    if changed {
+        set_property(&status, "org.a11y.Status", "IsEnabled", true)
+            .map_err(|e| timed_err(deadline, e))?;
+    }
+    let result = capture_with_status(request, deadline, &status, changed);
+    if changed {
+        let restore_status =
+            session.with_proxy("org.a11y.Bus", "/org/a11y/bus", STATUS_RESTORE_TIMEOUT);
+        let set_restored =
+            set_property(&restore_status, "org.a11y.Status", "IsEnabled", false).is_ok();
+        let restored: Result<bool> = get_property(&restore_status, "org.a11y.Status", "IsEnabled");
+        if let Err(restore_error) =
+            restore_result(set_restored, restored.map_err(|error| error.to_string()))
+        {
+            let outcome = match &result {
+                Ok(_) => "snapshot succeeded".to_string(),
+                Err((code, message, _)) => format!("snapshot failed with {code}: {message}"),
+            };
+            return Err((
+                "restore-failed",
+                format!(
+                    "failed to restore org.a11y.Status.IsEnabled after {outcome}: {restore_error}"
+                ),
+                result.ok(),
+            ));
+        }
+    }
+    result
+}
+
+fn capture_with_status(
+    request: &Request,
+    deadline: Instant,
+    status: &Proxy<&Connection>,
+    changed: bool,
+) -> std::result::Result<Snapshot, CaptureError> {
+    let (address,): (String,) = status
+        .method_call("org.a11y.Bus", "GetAddress", ())
+        .map_err(|e| timed_err(deadline, e))?;
+    check_deadline(deadline, None)?;
+    let bus = Arc::new(SyncConnection::new_address(&address).map_err(|e| timed_err(deadline, e))?);
+    let window_address = find_window(&bus, request, deadline, changed)?;
+    let bounds_space = if std::env::var("XDG_SESSION_TYPE")
+        .map(|v| v.eq_ignore_ascii_case("wayland"))
+        .unwrap_or(false)
+    {
+        "window"
+    } else {
+        "screen"
+    };
+    let mut snapshot = Snapshot {
+        schema_version: 2,
+        source: "os-accessibility",
+        captured_at: now(),
+        windows: Vec::new(),
+        nodes: Vec::new(),
+        notes: if changed {
+            vec!["enabled Linux accessibility for this snapshot; restored the previous setting afterwards".into()]
+        } else {
+            Vec::new()
+        },
+    };
+    let root_data =
+        read_node(&bus, &window_address, deadline).map_err(|e| timed_err(deadline, e))?;
+    let window_bounds = root_data.bounds.clone().ok_or_else(|| {
+        err(
+            "no-accessibility-tree",
+            "the target window did not provide required AT-SPI Component extents",
+        )
+    })?;
+    snapshot.windows.push(Window {
+        key: "w0".into(),
+        title: root_data.name.clone(),
+        bounds: window_bounds.clone(),
+        bounds_space,
+    });
+    let root_key = format!("w0/{}", segment(root_data.id.as_deref(), 0, false));
+    walk(
+        &bus,
+        root_data,
+        root_key,
+        None,
+        0,
+        request,
+        deadline,
+        &window_bounds,
+        &mut snapshot,
+    )?;
+    Ok(snapshot)
+}
+
+#[derive(Clone)]
+struct NodeData {
+    id: Option<String>,
+    raw_role: Option<u32>,
+    platform_role: Option<String>,
+    name: Option<String>,
+    states: Vec<String>,
+    value: Option<String>,
+    bounds: Option<Rect>,
+    children: Vec<Address>,
+}
+
+fn find_window(
+    bus: &SyncConnection,
+    request: &Request,
+    deadline: Instant,
+    status_changed: bool,
+) -> std::result::Result<Address, CaptureError> {
+    if let Target::WindowId { value } = &request.target {
+        return parse_window_id(value).ok_or_else(|| {
+            (
+                "target-not-found",
+                "Linux window-id must be an AT-SPI unique bus name and object path separated by | (for example :1.42|/org/a11y/atspi/accessible/7)".into(),
+                None,
+            )
+        });
+    }
+    let root = Address {
+        bus: "org.a11y.atspi.Registry".into(),
+        path: ATSPI_ROOT.into(),
+    };
+    let settle_unscoped_title = status_changed
+        && matches!(
+            request.target,
+            Target::WindowTitle {
+                process_id: None,
+                ..
+            }
+        );
+    let owner_scoped = matches!(
+        request.target,
+        Target::WindowTitle {
+            process_id: Some(_),
+            ..
+        }
+    );
+    let mut unique_title_seen: Option<(Address, Instant)> = None;
+    let mut completed_authoritative_traversal = false;
+    loop {
+        if !should_start_registry_round(
+            Instant::now(),
+            deadline,
+            owner_scoped,
+            completed_authoritative_traversal,
+        ) {
+            break;
+        }
+        let apps = children(bus, &root, deadline).map_err(|e| timed_err(deadline, e))?;
+        let mut title_matches = Vec::new();
+        let mut traversal_authoritative = true;
+        for app in apps {
+            if Instant::now() >= deadline {
+                return Err(find_window_expired(request));
+            }
+            let app_pid = connection_pid(bus, &app.bus, deadline)?;
+            let matches_process = match request.target {
+                Target::ProcessId { value } => app_pid == Some(value),
+                Target::WindowTitle { process_id, .. } => {
+                    process_id.map_or(true, |pid| app_pid == Some(pid))
+                }
+                Target::WindowId { .. } => unreachable!(),
+            };
+            if !matches_process {
+                continue;
+            }
+            let windows = match children(bus, &app, deadline) {
+                Ok(windows) => windows,
+                Err(error) if is_transient_registration_error(&error) => {
+                    traversal_authoritative = false;
+                    continue;
+                }
+                Err(error) => return Err(timed_err(deadline, error)),
+            };
+            for window in windows {
+                match &request.target {
+                    Target::ProcessId { .. } => return Ok(window),
+                    Target::WindowTitle { value, .. } => {
+                        let p =
+                            bus.with_proxy(&window.bus, window.path.clone(), remaining(deadline));
+                        if find_window_title(&p, deadline)?.as_deref() == Some(value) {
+                            title_matches.push(window);
+                        }
+                    }
+                    Target::WindowId { .. } => unreachable!(),
+                }
+            }
+        }
+        completed_authoritative_traversal |= traversal_authoritative;
+        if let Target::WindowTitle { value, .. } = &request.target {
+            match unscoped_title_decision(
+                title_matches,
+                settle_unscoped_title,
+                unique_title_seen,
+                Instant::now(),
+            ) {
+                TitleDecision::Accept(window) => return Ok(window),
+                TitleDecision::Ambiguous(count) => {
+                    return Err((
+                        "target-not-found",
+                        format!(
+                            "window title {value:?} is ambiguous across {count} AT-SPI window roots owned by the requested process"
+                        ),
+                        None,
+                    ));
+                }
+                TitleDecision::Retry(seen) => unique_title_seen = seen,
+            }
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(REGISTRY_POLL_TIME.min(remaining(deadline)));
+    }
+    Err(find_window_expired(request))
+}
+
+enum TitleDecision {
+    Accept(Address),
+    Ambiguous(usize),
+    Retry(Option<(Address, Instant)>),
+}
+
+fn unscoped_title_decision(
+    mut matches: Vec<Address>,
+    settle: bool,
+    previous: Option<(Address, Instant)>,
+    now: Instant,
+) -> TitleDecision {
+    match matches.len() {
+        count if count > 1 => TitleDecision::Ambiguous(count),
+        1 if !settle => TitleDecision::Accept(matches.remove(0)),
+        1 => {
+            let candidate = matches.remove(0);
+            match previous {
+                Some((previous_candidate, seen))
+                    if previous_candidate.bus == candidate.bus
+                        && previous_candidate.path == candidate.path
+                        && now.saturating_duration_since(seen) >= REGISTRY_SETTLE_TIME =>
+                {
+                    TitleDecision::Accept(candidate)
+                }
+                Some((previous_candidate, seen))
+                    if previous_candidate.bus == candidate.bus
+                        && previous_candidate.path == candidate.path =>
+                {
+                    TitleDecision::Retry(Some((candidate, seen)))
+                }
+                _ => TitleDecision::Retry(Some((candidate, now))),
+            }
+        }
+        _ => TitleDecision::Retry(None),
+    }
+}
+
+fn should_start_registry_round(
+    now: Instant,
+    deadline: Instant,
+    owner_scoped: bool,
+    completed_authoritative_traversal: bool,
+) -> bool {
+    if now >= deadline {
+        return false;
+    }
+    !owner_scoped
+        || !completed_authoritative_traversal
+        || deadline.saturating_duration_since(now) > REGISTRY_POLL_TIME
+}
+
+fn is_transient_registration_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<dbus::Error>()
+        .and_then(dbus::Error::name)
+        .is_some_and(|name| name == "org.freedesktop.DBus.Error.UnknownInterface")
+}
+
+fn restore_result(
+    set_succeeded: bool,
+    readback: std::result::Result<bool, String>,
+) -> std::result::Result<(), String> {
+    match readback {
+        Ok(false) => Ok(()),
+        Ok(true) => Err("IsEnabled remained true after the restore attempt".into()),
+        Err(error) if set_succeeded => Err(format!("could not confirm restored state: {error}")),
+        Err(error) => Err(format!(
+            "restore call and state confirmation failed: {error}"
+        )),
+    }
+}
+
+fn find_window_expired(request: &Request) -> CaptureError {
+    let description = match &request.target {
+        Target::ProcessId { value } => format!("process {value}"),
+        Target::WindowTitle {
+            value,
+            process_id: Some(pid),
+        } => format!("window title {value:?} owned by process {pid}"),
+        Target::WindowTitle {
+            value,
+            process_id: None,
+        } => format!("window title {value:?}"),
+        Target::WindowId { .. } => unreachable!(),
+    };
+    let code = match request.target {
+        Target::WindowTitle {
+            process_id: Some(_),
+            ..
+        } => "target-not-found",
+        _ => "timeout",
+    };
+    (
+        code,
+        format!("timed out waiting for {description} to register with AT-SPI"),
+        None,
+    )
+}
+
+fn connection_pid(
+    bus: &SyncConnection,
+    name: &str,
+    deadline: Instant,
+) -> std::result::Result<Option<u32>, CaptureError> {
+    let daemon = bus.with_proxy(
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        remaining(deadline),
+    );
+    match daemon.method_call::<(u32,), _, _, _>(
+        "org.freedesktop.DBus",
+        "GetConnectionUnixProcessID",
+        (name.to_string(),),
+    ) {
+        Ok(value) => Ok(Some(value.0)),
+        Err(error) => optional_find_read(deadline, error),
+    }
+}
+
+fn find_window_title(
+    proxy: &Proxy<&SyncConnection>,
+    deadline: Instant,
+) -> std::result::Result<Option<String>, CaptureError> {
+    match proxy.method_call::<(Variant<String>,), _, _, _>(
+        "org.freedesktop.DBus.Properties",
+        "Get",
+        ("org.a11y.atspi.Accessible", "Name"),
+    ) {
+        Ok(value) => Ok(Some(value.0 .0)),
+        Err(error) => optional_find_read(deadline, error),
+    }
+}
+
+fn optional_find_read<T>(
+    deadline: Instant,
+    error: dbus::Error,
+) -> std::result::Result<Option<T>, CaptureError> {
+    let classified = timed_err(deadline, error);
+    if classified.0 == "timeout" {
+        Err(classified)
+    } else {
+        // Providers can disappear between registry enumeration and an individual read.
+        Ok(None)
+    }
+}
+
+fn parse_window_id(id: &str) -> Option<Address> {
+    let (bus, path) = id.split_once('|')?;
+    if !bus.starts_with(':') || !path.starts_with('/') || bus.contains('|') {
+        return None;
+    }
+    Some(Address {
+        bus: bus.to_string(),
+        path: dbus::Path::new(path.to_string()).ok()?.into_static(),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk(
+    bus: &Arc<SyncConnection>,
+    data: NodeData,
+    key: String,
+    parent: Option<String>,
+    depth: usize,
+    request: &Request,
+    deadline: Instant,
+    window: &Rect,
+    snapshot: &mut Snapshot,
+) -> std::result::Result<(), CaptureError> {
+    check_deadline(deadline, Some(snapshot))?;
+    if snapshot.nodes.len() >= request.maximum_node_count {
+        return Err((
+            "limit-reached",
+            format!("maximumNodeCount {} reached", request.maximum_node_count),
+            Some(std::mem::replace(snapshot, empty_snapshot())),
+        ));
+    }
+    let on_screen = data
+        .bounds
+        .as_ref()
+        .map(|bounds| intersects(bounds, window));
+    snapshot.nodes.push(Node {
+        key: key.clone(),
+        parent_key: parent,
+        id: data.id.clone(),
+        platform_role: data.platform_role,
+        role: data.raw_role.and_then(normalize_raw_role),
+        name: data.name,
+        states: data.states,
+        value: data.value,
+        on_screen,
+        bounds: data.bounds,
+    });
+    if depth >= request.maximum_depth && !data.children.is_empty() {
+        return Err((
+            "limit-reached",
+            format!("maximumDepth {} reached", request.maximum_depth),
+            Some(std::mem::replace(snapshot, empty_snapshot())),
+        ));
+    }
+
+    let prefetch_count = child_prefetch_count(
+        snapshot.nodes.len(),
+        request.maximum_node_count,
+        data.children.len(),
+    );
+    if prefetch_count == 0 && !data.children.is_empty() {
+        return node_limit_error(request.maximum_node_count, snapshot);
+    }
+    let children_truncated = prefetch_count < data.children.len();
+
+    // Fetch siblings in bounded parallel batches. Joining in input order keeps key assignment and
+    // the final traversal deterministic while avoiding a serial GetRole/GetState/GetInterfaces
+    // property farm. Eight workers also bounds outstanding D-Bus calls and memory.
+    let mut child_data = Vec::new();
+    for batch in data.children[..prefetch_count].chunks(8) {
+        check_deadline(deadline, Some(snapshot))?;
+        let results = std::thread::scope(|scope| {
+            let handles: Vec<_> = batch
+                .iter()
+                .cloned()
+                .map(|child| {
+                    let bus = Arc::clone(bus);
+                    scope.spawn(move || {
+                        let result = read_node(&bus, &child, deadline);
+                        (child, result)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        for (child_address, result) in results {
+            let child_data_result = match result {
+                Ok(data) => data,
+                Err(error) => {
+                    return Err(structural_read_error(error, deadline, snapshot));
+                }
+            };
+            child_data.push((child_address, child_data_result));
+        }
+    }
+    let mut ids = HashMap::new();
+    for (_, child) in &child_data {
+        if let Some(id) = &child.id {
+            *ids.entry(id.clone()).or_insert(0usize) += 1;
+        }
+    }
+    for (index, (_child, child_node)) in child_data.into_iter().enumerate() {
+        let duplicate = child_node
+            .id
+            .as_ref()
+            .map(|id| ids[id] > 1)
+            .unwrap_or(false);
+        let child_key = format!(
+            "{}/{}",
+            key,
+            child_segment(
+                child_node.id.as_deref(),
+                index,
+                duplicate,
+                children_truncated
+            )
+        );
+        walk(
+            bus,
+            child_node,
+            child_key,
+            Some(key.clone()),
+            depth + 1,
+            request,
+            deadline,
+            window,
+            snapshot,
+        )?;
+    }
+    if children_truncated {
+        return node_limit_error(request.maximum_node_count, snapshot);
+    }
+    Ok(())
+}
+
+fn child_prefetch_count(current: usize, maximum: usize, child_count: usize) -> usize {
+    maximum.saturating_sub(current).min(child_count)
+}
+
+fn child_segment(id: Option<&str>, index: usize, duplicate: bool, truncated: bool) -> String {
+    // An unread sibling may repeat an apparently unique id. Positional keys make a partial
+    // snapshot agree with a complete traversal in that case.
+    segment(id, index, duplicate || truncated)
+}
+
+fn node_limit_error(
+    maximum_node_count: usize,
+    snapshot: &mut Snapshot,
+) -> std::result::Result<(), CaptureError> {
+    Err((
+        "limit-reached",
+        format!("maximumNodeCount {maximum_node_count} reached"),
+        Some(std::mem::replace(snapshot, empty_snapshot())),
+    ))
+}
+
+fn structural_read_error(
+    error: impl std::fmt::Display,
+    deadline: Instant,
+    snapshot: &mut Snapshot,
+) -> CaptureError {
+    let (code, message) = if Instant::now() >= deadline {
+        ("timeout", "accessibility snapshot timed out".to_string())
+    } else {
+        (
+            "no-accessibility-tree",
+            format!("failed to read an AT-SPI child: {error}"),
+        )
+    };
+    (
+        code,
+        message,
+        Some(std::mem::replace(snapshot, empty_snapshot())),
+    )
+}
+
+fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Result<NodeData> {
+    if Instant::now() >= deadline {
+        anyhow::bail!("deadline exceeded")
+    }
+    let (name, attributes, role, children_result, state_words, interfaces, bounds) =
+        std::thread::scope(|scope| {
+            let name = scope.spawn(|| {
+                let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
+                property_string_sync(&p, "org.a11y.atspi.Accessible", "Name")
+            });
+            let attributes = scope.spawn(|| {
+                let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
+                p.method_call::<(HashMap<String, String>,), _, _, _>(
+                    "org.a11y.atspi.Accessible",
+                    "GetAttributes",
+                    (),
+                )
+                .ok()
+                .map(|v| v.0)
+                .unwrap_or_default()
+            });
+            let role = scope.spawn(|| {
+                let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
+                let raw = p
+                    .method_call::<(u32,), _, _, _>("org.a11y.atspi.Accessible", "GetRole", ())
+                    .ok()
+                    .map(|value| value.0);
+                let native_name = p
+                    .method_call::<(String,), _, _, _>(
+                        "org.a11y.atspi.Accessible",
+                        "GetRoleName",
+                        (),
+                    )
+                    .ok()
+                    .map(|value| value.0);
+                (raw, native_name)
+            });
+            let children_result = scope.spawn(|| children(bus, a, deadline));
+            let state_words = scope.spawn(|| {
+                let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
+                p.method_call::<(Vec<u32>,), _, _, _>("org.a11y.atspi.Accessible", "GetState", ())
+                    .ok()
+                    .map(|v| v.0)
+            });
+            let interfaces = scope.spawn(|| {
+                let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
+                p.method_call::<(Vec<String>,), _, _, _>(
+                    "org.a11y.atspi.Accessible",
+                    "GetInterfaces",
+                    (),
+                )
+                .ok()
+                .map(|v| v.0)
+                .unwrap_or_default()
+            });
+            let bounds = scope.spawn(|| {
+                let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
+                p.method_call::<((i32, i32, i32, i32),), _, _, _>(
+                    "org.a11y.atspi.Component",
+                    "GetExtents",
+                    (0u32,),
+                )
+                .ok()
+                .map(|v| Rect {
+                    x: v.0 .0,
+                    y: v.0 .1,
+                    width: v.0 .2,
+                    height: v.0 .3,
+                })
+            });
+            (
+                name.join().unwrap(),
+                attributes.join().unwrap(),
+                role.join().unwrap(),
+                children_result.join().unwrap(),
+                state_words.join().unwrap(),
+                interfaces.join().unwrap(),
+                bounds.join().unwrap(),
+            )
+        });
+    check_deadline(deadline, None).map_err(|(_, message, _)| anyhow::anyhow!(message))?;
+    let id = attributes
+        .get("id")
+        .or_else(|| attributes.get("accessible_id"))
+        .cloned()
+        .filter(|v| !v.is_empty());
+    let states = state_words
+        .as_deref()
+        .map(decode_states)
+        .unwrap_or_default();
+    let value = if interfaces
+        .iter()
+        .any(|interface| interface.ends_with(".Text"))
+    {
+        let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
+        p.method_call::<(String,), _, _, _>("org.a11y.atspi.Text", "GetText", (0i32, -1i32))
+            .ok()
+            .map(|v| v.0)
+            .filter(|v| !v.is_empty())
+    } else {
+        None
+    };
+    Ok(NodeData {
+        id,
+        raw_role: role.0,
+        platform_role: role
+            .1
+            .or_else(|| role.0.and_then(role_name).map(str::to_owned)),
+        name,
+        states,
+        value,
+        bounds,
+        children: children_result.context("AT-SPI GetChildren failed")?,
+    })
+}
+
+fn children(bus: &SyncConnection, a: &Address, deadline: Instant) -> Result<Vec<Address>> {
+    let timeout = remaining(deadline);
+    if timeout.is_zero() {
+        anyhow::bail!("deadline exceeded before AT-SPI GetChildren")
+    }
+    let p = bus.with_proxy(&a.bus, a.path.clone(), timeout);
+    let (items,): (Vec<(String, dbus::Path<'static>)>,) =
+        p.method_call("org.a11y.atspi.Accessible", "GetChildren", ())?;
+    Ok(items
+        .into_iter()
+        .filter(|(bus, path)| !bus.is_empty() && path.to_string() != "/")
+        .map(|(bus, path)| Address { bus, path })
+        .collect())
+}
+
+fn get_property<T: for<'b> dbus::arg::Get<'b> + 'static>(
+    p: &Proxy<&Connection>,
+    interface: &str,
+    name: &str,
+) -> Result<T> {
+    let (v,): (Variant<T>,) =
+        p.method_call("org.freedesktop.DBus.Properties", "Get", (interface, name))?;
+    Ok(v.0)
+}
+fn set_property<T: RefArg + dbus::arg::Arg + dbus::arg::Append + 'static>(
+    p: &Proxy<&Connection>,
+    interface: &str,
+    name: &str,
+    value: T,
+) -> Result<()> {
+    let _: () = p.method_call(
+        "org.freedesktop.DBus.Properties",
+        "Set",
+        (interface, name, Variant(value)),
+    )?;
+    Ok(())
+}
+fn property_string_sync(p: &Proxy<&SyncConnection>, interface: &str, name: &str) -> Option<String> {
+    let (value,): (Variant<String>,) = p
+        .method_call("org.freedesktop.DBus.Properties", "Get", (interface, name))
+        .ok()?;
+    Some(value.0)
+}
+fn remaining(deadline: Instant) -> Duration {
+    deadline
+        .saturating_duration_since(Instant::now())
+        .min(CALL_TIMEOUT)
+}
+fn timed_err(deadline: Instant, error: impl Into<anyhow::Error>) -> CaptureError {
+    let error = error.into();
+    // libdbus uses millisecond timeouts and can report expiration before the Rust deadline.
+    let dbus_timeout = matches!(
+        error
+            .downcast_ref::<dbus::Error>()
+            .and_then(dbus::Error::name),
+        Some(
+            "org.freedesktop.DBus.Error.NoReply"
+                | "org.freedesktop.DBus.Error.Timeout"
+                | "org.freedesktop.DBus.Error.TimedOut"
+        )
+    );
+    if dbus_timeout || Instant::now() >= deadline {
+        ("timeout", "accessibility snapshot timed out".into(), None)
+    } else {
+        err("no-accessibility-tree", error)
+    }
+}
+fn err(code: &'static str, e: impl std::fmt::Display) -> CaptureError {
+    (code, e.to_string(), None)
+}
+fn check_deadline(
+    deadline: Instant,
+    partial: Option<&mut Snapshot>,
+) -> std::result::Result<(), CaptureError> {
+    if Instant::now() < deadline {
+        Ok(())
+    } else {
+        Err((
+            "timeout",
+            "accessibility snapshot timed out".into(),
+            partial.map(|s| std::mem::replace(s, empty_snapshot())),
+        ))
+    }
+}
+fn empty_snapshot() -> Snapshot {
+    Snapshot {
+        schema_version: 2,
+        source: "os-accessibility",
+        captured_at: now(),
+        windows: vec![],
+        nodes: vec![],
+        notes: vec![],
+    }
+}
+fn now() -> String {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".into())
+}
+fn segment(id: Option<&str>, index: usize, duplicate: bool) -> String {
+    if duplicate || id.is_none() {
+        index.to_string()
+    } else {
+        {
+            let escaped = id.unwrap().replace('~', "~0").replace('/', "~1");
+            if escaped.chars().all(|c| c.is_ascii_digit()) {
+                format!("~2{escaped}")
+            } else {
+                escaped
+            }
+        }
+    }
+}
+// Values are in the exact order of AtspiRole in atspi-constants.h. Keep the raw-role
+// normalization independent of GetRoleName: the latter is the authoritative native platformRole,
+// while this table supplies a stable schema role and covers every protocol value we support.
+const ATSPI_ROLE_NAMES: &[&str] = &[
+    "invalid",
+    "accelerator label",
+    "alert",
+    "animation",
+    "arrow",
+    "calendar",
+    "canvas",
+    "check box",
+    "check menu item",
+    "color chooser",
+    "column header",
+    "combo box",
+    "date editor",
+    "desktop icon",
+    "desktop frame",
+    "dial",
+    "dialog",
+    "directory pane",
+    "drawing area",
+    "file chooser",
+    "filler",
+    "focus traversable",
+    "font chooser",
+    "frame",
+    "glass pane",
+    "html container",
+    "icon",
+    "image",
+    "internal frame",
+    "label",
+    "layered pane",
+    "list",
+    "list item",
+    "menu",
+    "menu bar",
+    "menu item",
+    "option pane",
+    "page tab",
+    "page tab list",
+    "panel",
+    "password text",
+    "popup menu",
+    "progress bar",
+    "button",
+    "radio button",
+    "radio menu item",
+    "root pane",
+    "row header",
+    "scroll bar",
+    "scroll pane",
+    "separator",
+    "slider",
+    "spin button",
+    "split pane",
+    "status bar",
+    "table",
+    "table cell",
+    "table column header",
+    "table row header",
+    "tearoff menu item",
+    "terminal",
+    "text",
+    "toggle button",
+    "tool bar",
+    "tool tip",
+    "tree",
+    "tree table",
+    "unknown",
+    "viewport",
+    "window",
+    "extended",
+    "header",
+    "footer",
+    "paragraph",
+    "ruler",
+    "application",
+    "autocomplete",
+    "editbar",
+    "embedded",
+    "entry",
+    "chart",
+    "caption",
+    "document frame",
+    "heading",
+    "page",
+    "section",
+    "redundant object",
+    "form",
+    "link",
+    "input method window",
+    "table row",
+    "tree item",
+    "document spreadsheet",
+    "document presentation",
+    "document text",
+    "document web",
+    "document email",
+    "comment",
+    "list box",
+    "grouping",
+    "image map",
+    "notification",
+    "info bar",
+    "level bar",
+    "title bar",
+    "block quote",
+    "audio",
+    "video",
+    "definition",
+    "article",
+    "landmark",
+    "log",
+    "marquee",
+    "math",
+    "rating",
+    "timer",
+    "static",
+    "math fraction",
+    "math root",
+    "subscript",
+    "superscript",
+    "description list",
+    "description term",
+    "description value",
+    "footnote",
+    "content deletion",
+    "content insertion",
+    "mark",
+    "suggestion",
+    "push button menu",
+    "switch",
+];
+
+fn role_name(role: u32) -> Option<&'static str> {
+    ATSPI_ROLE_NAMES.get(role as usize).copied()
+}
+
+fn normalize_raw_role(role: u32) -> Option<String> {
+    role_name(role).map(|name| {
+        match name {
+            "push button menu" => "button-menu",
+            "check box" => "checkbox",
+            "frame" => "window",
+            other => other,
+        }
+        .replace(' ', "-")
+    })
+}
+fn intersects(a: &Rect, b: &Rect) -> bool {
+    a.width > 0
+        && a.height > 0
+        && a.x < b.x + b.width
+        && a.x + a.width > b.x
+        && a.y < b.y + b.height
+        && a.y + a.height > b.y
+}
+fn decode_states(words: &[u32]) -> Vec<String> {
+    const NAMES: &[(usize, &str)] = &[
+        (1, "active"),
+        (2, "armed"),
+        (3, "busy"),
+        (4, "checked"),
+        (5, "collapsed"),
+        (6, "defunct"),
+        (7, "editable"),
+        (8, "enabled"),
+        (9, "expandable"),
+        (10, "expanded"),
+        (11, "focusable"),
+        (12, "focused"),
+        (13, "has-tooltip"),
+        (14, "horizontal"),
+        (15, "iconified"),
+        (16, "modal"),
+        (17, "multi-line"),
+        (18, "multiselectable"),
+        (19, "opaque"),
+        (20, "pressed"),
+        (21, "resizable"),
+        (22, "selectable"),
+        (23, "selected"),
+        (24, "sensitive"),
+        (25, "showing"),
+        (26, "single-line"),
+        (27, "stale"),
+        (28, "transient"),
+        (29, "vertical"),
+        (30, "visible"),
+        (31, "manages-descendants"),
+        (32, "indeterminate"),
+        (33, "required"),
+        (34, "truncated"),
+        (35, "animated"),
+        (36, "invalid-entry"),
+        (37, "supports-autocompletion"),
+        (38, "selectable-text"),
+        (39, "is-default"),
+        (40, "visited"),
+        (41, "checkable"),
+        (42, "has-popup"),
+        (43, "read-only"),
+        (44, "default"),
+    ];
+    let mut states: Vec<String> = NAMES
+        .iter()
+        .filter(|(bit, _)| {
+            words
+                .get(bit / 32)
+                .map(|word| word & (1 << (bit % 32)) != 0)
+                .unwrap_or(false)
+        })
+        .map(|(_, name)| (*name).into())
+        .collect();
+    // Some GTK providers expose SENSITIVE without ENABLED. Action support is independent.
+    if !words.is_empty()
+        && !states
+            .iter()
+            .any(|state| state == "enabled" || state == "sensitive")
+    {
+        states.push("disabled".into());
+    }
+    states
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn atspi_roles_cover_protocol_constants_without_aliasing_distinct_widgets() {
+        let cases = [
+            (7, "check box", "checkbox"),
+            (37, "page tab", "page-tab"),
+            (38, "page tab list", "page-tab-list"),
+            (39, "panel", "panel"),
+            (43, "button", "button"),
+            (60, "terminal", "terminal"),
+            (61, "text", "text"),
+            (67, "unknown", "unknown"),
+            (79, "entry", "entry"),
+            (129, "push button menu", "button-menu"),
+        ];
+        for (raw, platform, normalized) in cases {
+            assert_eq!(role_name(raw), Some(platform), "raw role {raw}");
+            assert_eq!(normalize_raw_role(raw), Some(normalized.to_string()));
+        }
+        assert_eq!(role_name(10_000), None);
+        assert_eq!(normalize_raw_role(10_000), None);
+    }
+
+    #[test]
+    fn atspi_state_words_use_the_protocol_bit_offsets() {
+        let words = [(1 << 23) | (1 << 24) | (1 << 25) | (1 << 30), 1 << 1];
+        assert_eq!(
+            decode_states(&words),
+            ["selected", "sensitive", "showing", "visible", "required"]
+        );
+    }
+    #[test]
+    fn sensitive_buttons_preserve_the_provider_state_words() {
+        // GNOME GTK button and AccessKit Save changes, respectively.
+        assert_eq!(
+            decode_states(&[1124075520, 0]),
+            ["focusable", "sensitive", "showing", "visible"]
+        );
+        assert_eq!(
+            decode_states(&[1124075776, 0]),
+            ["enabled", "focusable", "sensitive", "showing", "visible"]
+        );
+        assert!(decode_states(&[]).is_empty());
+        assert_eq!(decode_states(&[0, 0]), ["disabled"]);
+    }
+
+    #[test]
+    fn newly_enabled_unscoped_title_waits_for_a_stable_registry() {
+        let candidate = Address {
+            bus: ":1.7".into(),
+            path: "/window/1".into(),
+        };
+        let first_seen = Instant::now();
+        assert!(
+            matches!(unscoped_title_decision(vec![candidate.clone()], true, Some((candidate.clone(), first_seen)), first_seen + REGISTRY_SETTLE_TIME / 2), TitleDecision::Retry(Some((_, seen))) if seen == first_seen)
+        );
+        assert!(matches!(
+            unscoped_title_decision(
+                vec![candidate.clone()],
+                true,
+                Some((candidate, first_seen)),
+                first_seen + REGISTRY_SETTLE_TIME
+            ),
+            TitleDecision::Accept(_)
+        ));
+    }
+
+    #[test]
+    fn late_second_unscoped_title_is_rejected_during_settling() {
+        let matches = vec![
+            Address {
+                bus: ":1.7".into(),
+                path: "/window/1".into(),
+            },
+            Address {
+                bus: ":1.8".into(),
+                path: "/window/1".into(),
+            },
+        ];
+        assert!(matches!(
+            unscoped_title_decision(matches, true, None, Instant::now()),
+            TitleDecision::Ambiguous(2)
+        ));
+    }
+
+    #[test]
+    fn completed_owner_scan_does_not_begin_a_dbus_round_at_the_deadline_edge() {
+        let now = Instant::now();
+        let deadline = now + REGISTRY_POLL_TIME;
+        assert!(!should_start_registry_round(now, deadline, true, true));
+        assert!(should_start_registry_round(now, deadline, true, false));
+        assert!(should_start_registry_round(now, deadline, false, true));
+    }
+
+    #[test]
+    fn restore_requires_confirmed_readback() {
+        assert_eq!(restore_result(true, Ok(false)), Ok(()));
+        assert_eq!(restore_result(false, Ok(false)), Ok(()));
+        assert!(restore_result(false, Ok(true)).is_err());
+        assert!(restore_result(true, Err("read failed".into())).is_err());
+    }
+
+    #[test]
+    fn unknown_interface_is_transient_only_during_registration() {
+        let unknown = anyhow::Error::new(dbus::Error::new_custom(
+            "org.freedesktop.DBus.Error.UnknownInterface",
+            "not registered yet",
+        ));
+        let denied = anyhow::Error::new(dbus::Error::new_custom(
+            "org.freedesktop.DBus.Error.AccessDenied",
+            "denied",
+        ));
+        assert!(is_transient_registration_error(&unknown));
+        assert!(!is_transient_registration_error(&denied));
+    }
+
+    #[test]
+    fn dbus_error_classification_before_deadline() {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        for name in [
+            "org.freedesktop.DBus.Error.NoReply",
+            "org.freedesktop.DBus.Error.Timeout",
+            "org.freedesktop.DBus.Error.TimedOut",
+        ] {
+            let cause = dbus::Error::new_custom(name, "Did not receive a reply.");
+            let error = anyhow::Error::new(cause).context("reading accessibility status");
+            assert_eq!(timed_err(deadline, error).0, "timeout", "{name}");
+        }
+        let error = dbus::Error::new_custom(
+            "org.freedesktop.DBus.Error.AccessDenied",
+            "Did not receive a reply.",
+        );
+        assert_eq!(timed_err(deadline, error).0, "no-accessibility-tree");
+    }
+
+    fn request() -> Request {
+        serde_json::from_str(r#"{"target":{"type":"process-id","value":1},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#).unwrap()
+    }
+    #[test]
+    fn request_defaults_to_no_enable() {
+        assert!(!request().allow_accessibility_enable);
+    }
+    #[test]
+    fn rejects_zero_limits() {
+        let mut r = request();
+        r.maximum_node_count = 0;
+        assert!(validate(&r).is_err());
+    }
+    #[test]
+    fn rejects_process_target_outside_linux_pid_range() {
+        let request: Request = serde_json::from_str(
+            r#"{"target":{"type":"process-id","value":2147483648},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#,
+        )
+        .unwrap();
+        assert!(validate(&request).is_err());
+    }
+    #[test]
+    fn keys_escape_and_fall_back_for_duplicates() {
+        assert_eq!(segment(Some("a/b~c"), 0, false), "a~1b~0c");
+        assert_eq!(segment(Some("same"), 2, true), "2");
+        assert_eq!(segment(None, 3, false), "3");
+        assert_eq!(segment(Some("123"), 4, false), "~2123");
+    }
+    #[test]
+    fn tiny_budget_bounds_prefetch_and_keeps_repeated_sibling_key_stable() {
+        assert_eq!(child_prefetch_count(1, 1, 10), 0);
+        assert_eq!(child_prefetch_count(1, 3, 10), 2);
+        assert_eq!(child_prefetch_count(3, 3, 10), 0);
+
+        // A truncated sibling list cannot prove that an id is unique. Use the positional form
+        // that a complete traversal also uses when a later sibling repeats the id.
+        assert_eq!(child_segment(Some("repeated"), 0, false, true), "0");
+        assert_eq!(child_segment(Some("repeated"), 0, true, false), "0");
+    }
+    #[test]
+    fn native_window_id_requires_unique_name_and_object_path() {
+        let address = parse_window_id(":1.42|/org/a11y/atspi/accessible/7").unwrap();
+        assert_eq!(address.bus, ":1.42");
+        assert_eq!(address.path.to_string(), "/org/a11y/atspi/accessible/7");
+        assert!(parse_window_id("org.example.App|/window/7").is_none());
+        assert!(parse_window_id(":1.42|not-a-path").is_none());
+    }
+    #[test]
+    fn window_title_target_deserializes() {
+        let request: Request = serde_json::from_str(
+            r#"{"target":{"type":"window-title","value":"Preferences"},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            request.target,
+            Target::WindowTitle {
+                ref value,
+                process_id: None
+            } if value == "Preferences"
+        ));
+    }
+    #[test]
+    fn window_title_target_preserves_optional_process_owner() {
+        let request: Request = serde_json::from_str(
+            r#"{"target":{"type":"window-title","value":"Preferences","processId":4242},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            request.target,
+            Target::WindowTitle {
+                ref value,
+                process_id: Some(4242)
+            } if value == "Preferences"
+        ));
+    }
+
+    #[test]
+    fn owner_scoped_title_expiration_is_target_not_found() {
+        let request: Request = serde_json::from_str(
+            r#"{"target":{"type":"window-title","value":"Preferences","processId":4242},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#,
+        )
+        .unwrap();
+
+        let error = find_window_expired(&request);
+
+        assert_eq!(error.0, "target-not-found");
+        assert!(error.1.contains("owned by process 4242"));
+    }
+
+    #[test]
+    fn unscoped_window_search_expiration_remains_timeout() {
+        let request: Request = serde_json::from_str(
+            r#"{"target":{"type":"window-title","value":"Preferences"},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#,
+        )
+        .unwrap();
+
+        assert_eq!(find_window_expired(&request).0, "timeout");
+    }
+
+    #[test]
+    fn unresponsive_find_window_dbus_read_remains_timeout() {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let error = dbus::Error::new_custom(
+            "org.freedesktop.DBus.Error.NoReply",
+            "Did not receive a reply.",
+        );
+
+        let result = optional_find_read::<u32>(deadline, error);
+
+        assert_eq!(result.unwrap_err().0, "timeout");
+    }
+
+    #[test]
+    fn rejects_window_title_process_owner_outside_pid_range() {
+        let request: Request = serde_json::from_str(
+            r#"{"target":{"type":"window-title","value":"Preferences","processId":2147483648},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#,
+        )
+        .unwrap();
+        assert!(validate(&request).is_err());
+    }
+    #[test]
+    fn failed_optional_reads_serialize_as_unknown() {
+        let node = Node {
+            key: "w0/0".into(),
+            parent_key: None,
+            id: None,
+            platform_role: None,
+            role: None,
+            name: None,
+            states: vec![],
+            value: None,
+            bounds: None,
+            on_screen: None,
+        };
+        let json = serde_json::to_value(node).unwrap();
+        assert!(json["bounds"].is_null());
+        assert!(json["onScreen"].is_null());
+        assert!(!json["states"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|state| state == "disabled"));
+    }
+
+    #[test]
+    fn structural_failure_keeps_the_available_partial_snapshot() {
+        let mut snapshot = empty_snapshot();
+        snapshot.nodes.push(Node {
+            key: "w0/root".into(),
+            parent_key: None,
+            id: None,
+            platform_role: None,
+            role: None,
+            name: Some("available".into()),
+            states: vec![],
+            value: None,
+            bounds: None,
+            on_screen: None,
+        });
+
+        let (code, message, partial) = structural_read_error(
+            "org.example.StructuralFailure",
+            Instant::now() + Duration::from_secs(1),
+            &mut snapshot,
+        );
+
+        assert_eq!(code, "no-accessibility-tree");
+        assert!(message.contains("StructuralFailure"));
+        assert_eq!(partial.unwrap().nodes.len(), 1);
+        assert!(snapshot.nodes.is_empty());
+    }
+
+    #[test]
+    fn stalled_structural_read_is_a_typed_timeout_with_partial_data() {
+        let mut snapshot = empty_snapshot();
+        snapshot.nodes.push(Node {
+            key: "w0/root".into(),
+            parent_key: None,
+            id: None,
+            platform_role: None,
+            role: None,
+            name: None,
+            states: vec![],
+            value: None,
+            bounds: None,
+            on_screen: None,
+        });
+
+        let (code, _, partial) =
+            structural_read_error("deadline exceeded", Instant::now(), &mut snapshot);
+
+        assert_eq!(code, "timeout");
+        assert_eq!(partial.unwrap().nodes.len(), 1);
+    }
+
+    #[test]
+    fn on_screen_is_geometry_not_showing_state() {
+        let w = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+        };
+        assert!(intersects(
+            &Rect {
+                x: 9,
+                y: 9,
+                width: 2,
+                height: 2
+            },
+            &w
+        ));
+        assert!(!intersects(
+            &Rect {
+                x: 10,
+                y: 0,
+                width: 2,
+                height: 2
+            },
+            &w
+        ));
+    }
+    #[test]
+    fn wayland_contract_uses_window_space() {
+        std::env::set_var("XDG_SESSION_TYPE", "wayland");
+        assert_eq!(
+            if std::env::var("XDG_SESSION_TYPE").unwrap() == "wayland" {
+                "window"
+            } else {
+                "screen"
+            },
+            "window"
+        );
+        std::env::remove_var("XDG_SESSION_TYPE");
+    }
+}
