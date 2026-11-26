@@ -16,6 +16,7 @@ jobs:
     if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && (github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'Verify public disabled accessibility'))
     runs-on: ubuntu-24.04
     env:
+      COMPLETE_STOCK: ${{ endsWith(github.event.head_commit.message, 'full consent case') }}
       ATTACHED_CHECK: ${{ endsWith(github.event.head_commit.message, 'attached and standalone') }}
       REUSE_STOCK_ZIP: ${{ startsWith(github.event.head_commit.message, 'Verify public disabled accessibility stock replay') }}
     timeout-minutes: 60
@@ -69,7 +70,16 @@ jobs:
           set -euo pipefail
           original=028401bd37b7576b05196537aaeaf69ef8346575
           git fetch --quiet --no-tags --depth=1 origin "$original"
-          if [[ "$PUBLIC_SHA" == "$original" ]]; then
+          if [[ "$PUBLIC_SHA" == "$original" && "$COMPLETE_STOCK" == true ]]; then
+            qa="$GITHUB_WORKSPACE/scratch/.github/qa-packaged-disabled-atspi"
+            base64 --decode "$qa/complete-stock-0284.diff.b64" > "$RUNNER_TEMP/full-qa.patch"
+            echo "7c16ec067fe5adea7337c63f2c878da579d164166a8ec022e919da75c3f2eed1  $RUNNER_TEMP/full-qa.patch" | sha256sum --check --strict
+            git apply --index "$RUNNER_TEMP/full-qa.patch"
+            tree=$(git write-tree)
+            test "$tree" = ff831b117d6f66a005935416c77b25235dbe44ac
+            printf '%s\n' "$tree" >"$RUNNER_TEMP/qa-packaged-disabled-atspi/stock-result-tree.txt"
+            git diff --cached --name-only "$original" >"$RUNNER_TEMP/qa-packaged-disabled-atspi/replay-source-changes.txt"
+          elif [[ "$PUBLIC_SHA" == "$original" ]]; then
             patch="$RUNNER_TEMP/verified-stock-1053.diff"
             base64 --decode "$GITHUB_WORKSPACE/scratch/.github/qa-packaged-disabled-atspi/stock-1053.diff.b64" > "$patch"
             echo "bdc5b16cbbd3666ef2727f8139743a47cec4669eb9a846735c4c46872a7944d3  $patch" | sha256sum --check --strict
@@ -172,12 +182,34 @@ jobs:
         run: |
           set -euo pipefail
           unset DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS SPECTRE_DAEMON_SOCKET_DIR SPECTRE_ACCESSIBILITY_HELPER SPECTRE_ACCESSIBILITY_HELPER_PATH SPECTRE_ACCESSIBILITY_SOCKET
-          PYTHONPATH="$PWD/scripts" python3 - <<'PYTHON' 2>&1 | tee "$RUNNER_TEMP/qa-packaged-disabled-atspi/stock-accesskit-release-cell.log"
+          qa="$GITHUB_WORKSPACE/scratch/.github/qa-packaged-disabled-atspi"
+          export PYTHONPATH="$qa/observer:$PWD/scripts" QA_RESPONSE_LOG="$RUNNER_TEMP/qa-packaged-disabled-atspi/complete-stock-responses.jsonl"
+          if [[ "$COMPLETE_STOCK" == true ]]; then
+            test -f /usr/share/java/java-atk-wrapper.jar
+            dpkg -L libatk-wrapper-java-jni | grep libatk-wrapper.so | tee "$RUNNER_TEMP/qa-packaged-disabled-atspi/atk-provider.txt"
+            launcher=(xvfb-run -a -s '-screen 0 1280x720x24 -nolisten tcp')
+          else
+            launcher=()
+          fi
+          "${launcher[@]}" python3 - <<'PYTHON' 2>&1 | tee "$RUNNER_TEMP/qa-packaged-disabled-atspi/stock-accesskit-release-cell.log"
           import json, os, runpy, time
           from pathlib import Path
           script = Path('scripts/release-smoke.py').resolve()
+          source = runpy.run_path(str(script))
+          if os.environ.get('COMPLETE_STOCK') == 'true':
+              import stat
+              with source['_private_linux_dbus'](True) as probe, source['_private_daemon_environment']() as private:
+                  address = probe['DBUS_SESSION_BUS_ADDRESS']
+                  kind, endpoint = address.split(',',1)[0].split('=',1)
+                  path = Path(endpoint)
+                  parent = path.parent.stat()
+                  sock = Path(private['SPECTRE_DAEMON_SOCKET_DIR']).stat()
+                  print(json.dumps(dict(busType=kind, endpoint=endpoint, currentUid=os.getuid(),
+                      endpointPathExists=path.exists(), busParentUid=parent.st_uid,
+                      busParentMode=oct(stat.S_IMODE(parent.st_mode)), spectreSocketDirUid=sock.st_uid,
+                      spectreSocketDirMode=oct(stat.S_IMODE(sock.st_mode)))), flush=True)
           started = time.monotonic()
-          result = runpy.run_path(str(script))['_accesskit_cli_smoke'](Path(os.environ['PACKAGED_CLI']), os.environ['VERSION_NAME'])
+          result = source['_accesskit_cli_smoke'](Path(os.environ['PACKAGED_CLI']), os.environ['VERSION_NAME'])
           print(json.dumps({'result':'pass','detail':result,'wallSeconds':round(time.monotonic()-started,3)}))
           PYTHON
       - name: Verify the standalone MCP on the real Rust AccessKit fixture
@@ -201,7 +233,7 @@ jobs:
           export PYTHONPATH="$qa/observer" QA_RESPONSE_LOG="$out/attached-responses.jsonl"
           xvfb-run -a -s '-screen 0 1280x720x24 -nolisten tcp' python3 "$qa/independent-legs.py" attached 2>&1 | tee "$out/attached.log"
       - name: Require exactly one executed JUnit test and retain full failure output
-        if: always() && env.ATTACHED_CHECK == 'true' && env.PACKAGED_CLI != ''
+        if: always() && (env.ATTACHED_CHECK == 'true' || env.COMPLETE_STOCK == 'true') && env.PACKAGED_CLI != ''
         working-directory: product
         run: |
           set -euo pipefail
