@@ -45,6 +45,69 @@ import kotlinx.serialization.json.put
 
 class SpectreMcpServerTest {
     @Test
+    fun `find_text accepts JSON booleans and defaults exact only when absent`() = runBlocking {
+        for ((arguments, expected) in
+            listOf(
+                buildJsonObject {
+                    put("session_id", "session-1")
+                    put("text", "needle")
+                    put("exact", true)
+                } to true,
+                buildJsonObject {
+                    put("session_id", "session-1")
+                    put("text", "needle")
+                    put("exact", false)
+                } to false,
+                buildJsonObject {
+                    put("session_id", "session-1")
+                    put("text", "needle")
+                } to true,
+            )) {
+            var forwarded: DaemonRequest? = null
+            val server = SpectreMcpServer.create {
+                forwarded = it
+                DaemonResponse.Nodes("session-1", emptyList())
+            }
+            val result = invokeTool(server, "find_text", arguments)
+            assertTrue(result.isError != true, result.toString())
+            assertEquals(DaemonRequest.FindByText("session-1", "needle", expected), forwarded)
+        }
+    }
+
+    @Test
+    fun `MCP rejects wrong primitive kinds and unknown names before forwarding`() = runBlocking {
+        val cases =
+            listOf(
+                "find_text" to
+                    buildJsonObject {
+                        put("session_id", "session-1")
+                        put("text", "needle")
+                        put("exact", "false")
+                    },
+                "find" to
+                    buildJsonObject {
+                        put("session_id", "session-1")
+                        put("test_tag", 7)
+                    },
+                "windows" to
+                    buildJsonObject {
+                        put("session_id", "session-1")
+                        put("unknown", true)
+                    },
+            )
+        cases.forEach { (tool, arguments) ->
+            var forwarded = false
+            val server = SpectreMcpServer.create {
+                forwarded = true
+                error("invalid input reached daemon")
+            }
+            val result = invokeTool(server, tool, arguments)
+            assertTrue(result.isError == true, "$tool accepted $arguments")
+            assertTrue(!forwarded, "$tool forwarded $arguments")
+        }
+    }
+
+    @Test
     fun `normalizes recording output paths before sending them to the daemon`() {
         val outputPath = "captures/../captures/session.mp4"
 

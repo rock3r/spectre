@@ -179,6 +179,10 @@ automator.waitForIdle()
 automator.waitForVisualIdle()
 ```
 
+Visual idle requires native window capture (including the OS helper and Linux GStreamer) and
+fails immediately when those prerequisites are missing. Use
+`allowScreenRegionFallback = true` only when occlusion-sensitive desktop crops are acceptable.
+
 Typical post-interaction pattern:
 
 ```kotlin

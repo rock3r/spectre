@@ -24,7 +24,6 @@ import kotlinx.io.buffered
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /** MCP stdio facade over the local Spectre session daemon. */
@@ -72,7 +71,8 @@ public object SpectreMcpServer {
         server.addTool(
             name = "list_processes",
             description = "List JVM processes that expose a Spectre agent and can be attached.",
-        ) {
+        ) { call ->
+            call.validateKnownArguments()
             val response = request(DaemonRequest.ListJvmProcesses(ProcessHandle.current().pid()))
             response.asResult { daemonResponse -> daemonResponse is DaemonResponse.JvmProcesses }
         }
@@ -149,16 +149,7 @@ public object SpectreMcpServer {
                     required = listOf("session_id", "text"),
                 ),
         ) { call ->
-            val exactParam = call.optionalString("exact")
-            val exact =
-                if (exactParam == null) {
-                    true
-                } else {
-                    exactParam.toBooleanStrictOrNull()
-                        ?: throw IllegalArgumentException(
-                            "MCP tool argument 'exact' must be true or false"
-                        )
-                }
+            val exact = call.optionalBoolean("exact") ?: true
             val text = call.requiredString("text")
             // Empty text is valid (#202 empty EditableText); whitespace-only is not.
             require(text.isEmpty() || text.isNotBlank()) {
@@ -421,30 +412,9 @@ public object SpectreMcpServer {
         request: (DaemonRequest) -> DaemonResponse,
     ): CallToolResult {
         val sessionId = call.requiredSessionId()
-        val windowIndexArg = call.arguments?.get("window_index")?.jsonPrimitive?.content
-        val windowIndex =
-            if (windowIndexArg == null) {
-                0
-            } else {
-                windowIndexArg.toIntOrNull()
-                    ?: return CallToolResult(
-                        listOf(
-                            TextContent(
-                                "MCP tool argument 'window_index' must be an integer, got '$windowIndexArg'."
-                            )
-                        ),
-                        isError = true,
-                    )
-            }
-        val outDir =
-            call.arguments
-                ?.get("out_dir")
-                ?.jsonPrimitive
-                ?.content
-                ?.let(::normalizeRecordingOutputPath)
-        val includeImage =
-            call.arguments?.get("include_image")?.jsonPrimitive?.content?.toBooleanStrictOrNull()
-                ?: false
+        val windowIndex = call.optionalInt("window_index") ?: 0
+        val outDir = call.optionalString("out_dir")?.let(::normalizeRecordingOutputPath)
+        val includeImage = call.optionalBoolean("include_image") ?: false
         return when (
             val response =
                 request(
@@ -505,37 +475,12 @@ public object SpectreMcpServer {
                     required = listOf("session_id"),
                 ),
         ) { call ->
-            val outputRaw =
-                call.arguments?.get("output_path")?.jsonPrimitive?.content?.takeIf {
-                    it.isNotBlank()
-                }
-            val windowIndexArg = call.arguments?.get("window_index")?.jsonPrimitive?.content
-            val windowIndex =
-                if (windowIndexArg == null) {
-                    null
-                } else {
-                    windowIndexArg.toIntOrNull()
-                        ?: return@addTool CallToolResult(
-                            listOf(
-                                TextContent(
-                                    "MCP tool argument 'window_index' must be an integer, " +
-                                        "got '$windowIndexArg'."
-                                )
-                            ),
-                            isError = true,
-                        )
-                }
-            val fullscreenRaw = call.arguments?.get("fullscreen")?.jsonPrimitive?.content
-            val fullscreen =
-                parseOptionalBooleanArg(fullscreenRaw)
-                    ?: return@addTool CallToolResult(
-                        listOf(
-                            TextContent(
-                                "MCP tool argument 'fullscreen' must be a boolean, got '$fullscreenRaw'."
-                            )
-                        ),
-                        isError = true,
-                    )
+            val outputRaw = call.optionalString("output_path")
+            require(outputRaw == null || outputRaw.isNotBlank()) {
+                "MCP tool argument 'output_path' must not be blank"
+            }
+            val windowIndex = call.optionalInt("window_index")
+            val fullscreen = call.optionalBoolean("fullscreen") ?: false
             if (fullscreen && windowIndex != null) {
                 return@addTool CallToolResult(
                     listOf(
@@ -593,36 +538,105 @@ public object SpectreMcpServer {
     private fun CallToolRequest.callString(name: String): String =
         // Empty string is a valid payload for some args (e.g. find_text exact "" for empty
         // EditableText — #202). Presence is required; non-blank session_id uses requiredSessionId.
-        arguments?.get(name)?.jsonPrimitive?.content
-            ?: throw IllegalArgumentException("MCP tool requires a non-empty '$name' argument")
+        (arguments.also { validateKnownArguments() }?.get(name)
+                as? kotlinx.serialization.json.JsonPrimitive)
+            ?.takeIf { it.isString }
+            ?.content
+            ?: throw IllegalArgumentException("MCP tool argument '$name' must be a string")
 
     private fun CallToolRequest.requiredString(name: String): String = callString(name)
 
     private fun CallToolRequest.optionalString(name: String): String? {
+        validateKnownArguments()
         val element = arguments?.get(name) ?: return null
-        if (element is kotlinx.serialization.json.JsonNull) return null
-        return element.jsonPrimitive.content
+        val primitive = element as? kotlinx.serialization.json.JsonPrimitive
+        require(primitive != null && primitive.isString) {
+            "MCP tool argument '$name' must be a string"
+        }
+        return primitive.content
     }
 
     private fun CallToolRequest.requiredInt(name: String): Int =
-        requiredString(name).toIntOrNull()
+        integerContent(name)?.toIntOrNull()
             ?: throw IllegalArgumentException("MCP tool argument '$name' must be an integer")
 
     private fun CallToolRequest.optionalInt(name: String): Int? {
-        val element = arguments?.get(name) ?: return null
-        if (element is kotlinx.serialization.json.JsonNull) return null
-        return element.jsonPrimitive.content.toIntOrNull()
+        if (arguments?.containsKey(name) != true) return null
+        return integerContent(name)?.toIntOrNull()
+            ?: throw IllegalArgumentException("MCP tool argument '$name' must be an integer")
     }
 
     private fun CallToolRequest.optionalLong(name: String): Long? {
-        val element = arguments?.get(name) ?: return null
-        if (element is kotlinx.serialization.json.JsonNull) return null
-        return element.jsonPrimitive.content.toLongOrNull()
+        if (arguments?.containsKey(name) != true) return null
+        return integerContent(name)?.toLongOrNull()
+            ?: throw IllegalArgumentException("MCP tool argument '$name' must be an integer")
     }
 
     private fun CallToolRequest.requiredLong(name: String): Long =
-        requiredString(name).toLongOrNull()
+        integerContent(name)?.toLongOrNull()
             ?: throw IllegalArgumentException("MCP tool argument '$name' must be an integer")
+
+    private fun CallToolRequest.integerContent(name: String): String? {
+        validateKnownArguments()
+        val primitive = arguments?.get(name) as? kotlinx.serialization.json.JsonPrimitive
+        return primitive?.takeUnless { it.isString }?.content
+    }
+
+    private fun CallToolRequest.optionalBoolean(name: String): Boolean? {
+        validateKnownArguments()
+        val element = arguments?.get(name) ?: return null
+        val primitive = element as? kotlinx.serialization.json.JsonPrimitive
+        require(primitive != null && !primitive.isString) {
+            "MCP tool argument '$name' must be true or false"
+        }
+        return primitive.content.toBooleanStrictOrNull()
+            ?: throw IllegalArgumentException("MCP tool argument '$name' must be true or false")
+    }
+}
+
+private val MCP_ARGUMENT_NAMES: Map<String, Set<String>> =
+    mapOf(
+        "list_processes" to emptySet(),
+        "attach" to setOf("pid"),
+        "detach" to setOf("session_id"),
+        "windows" to setOf("session_id"),
+        "tree" to setOf("session_id"),
+        "find" to setOf("session_id", "test_tag"),
+        "find_text" to setOf("session_id", "text", "exact"),
+        "wait_for_node" to setOf("session_id", "tag", "text", "timeout_ms"),
+        "wait_until_gone" to setOf("session_id", "tag", "text", "timeout_ms"),
+        "wait_for_visual_idle" to setOf("session_id", "timeout_ms"),
+        "wait_for_reload_settled" to setOf("session_id", "timeout_ms"),
+        "click" to setOf("session_id", "node_key"),
+        "double_click" to setOf("session_id", "node_key"),
+        "long_click" to setOf("session_id", "node_key", "hold_for_ms"),
+        "swipe" to
+            setOf(
+                "session_id",
+                "from_node_key",
+                "to_node_key",
+                "start_x",
+                "start_y",
+                "end_x",
+                "end_y",
+                "steps",
+                "duration_ms",
+            ),
+        "scroll_wheel" to setOf("session_id", "node_key", "wheel_clicks"),
+        "press_key" to setOf("session_id", "key_code", "modifiers"),
+        "focus_window" to setOf("session_id", "window_index"),
+        "type_text" to setOf("session_id", "text"),
+        "screenshot" to setOf("session_id", "window_index", "surface_id", "fullscreen"),
+        "capture" to setOf("session_id", "window_index", "out_dir", "include_image"),
+        "record_start" to setOf("session_id", "output_path", "window_index", "fullscreen"),
+        "record_stop" to setOf("session_id"),
+        "record_status" to setOf("session_id"),
+    )
+
+private fun CallToolRequest.validateKnownArguments() {
+    val allowed = MCP_ARGUMENT_NAMES[name] ?: return
+    val unknown = arguments?.keys?.firstOrNull { it !in allowed } ?: return
+    throw IllegalArgumentException("MCP tool '$name' does not accept argument '$unknown'")
 }
 
 private val MCP_JSON: Json = Json { encodeDefaults = true }
@@ -663,6 +677,7 @@ internal fun DaemonResponse.screenshotResult(): CallToolResult =
 
 /** Non-blank JSON string session_id; rejects empty/whitespace and non-string tokens. */
 private fun CallToolRequest.requiredSessionId(): String {
+    validateKnownArguments()
     val element =
         arguments?.get("session_id")
             ?: throw IllegalArgumentException("MCP tool requires a non-empty 'session_id' argument")
@@ -687,8 +702,12 @@ private fun registerFocusWindowTool(server: Server, request: (DaemonRequest) -> 
                 "Only real OS input needs it before press_key or type_text.",
         inputSchema = ToolSchema(properties = properties, required = listOf("session_id")),
     ) { call ->
-        val windowIndex =
-            call.arguments?.get("window_index")?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+        call.validateKnownArguments()
+        val windowIndexElement = call.arguments?.get("window_index")
+        val windowIndex = parseOptionalIntegerArg(windowIndexElement) ?: 0
+        require(windowIndexElement == null || parseOptionalIntegerArg(windowIndexElement) != null) {
+            "MCP tool argument 'window_index' must be an integer"
+        }
         request(DaemonRequest.FocusWindow(call.requiredSessionId(), windowIndex)).asResult {
             it is DaemonResponse.Completed
         }
@@ -730,33 +749,33 @@ private fun handleScreenshotTool(
                 isError = true,
             )
         }
-    val windowIndexArg = call.arguments?.get("window_index")?.jsonPrimitive?.content
+    call.validateKnownArguments()
+    val windowIndexElement = call.arguments?.get("window_index")
     val windowIndex =
-        if (windowIndexArg == null) {
-            null
-        } else {
-            windowIndexArg.toIntOrNull()
+        if (windowIndexElement == null) null
+        else
+            parseOptionalIntegerArg(windowIndexElement)
                 ?: return CallToolResult(
                     content =
-                        listOf(
-                            TextContent(
-                                "MCP tool argument 'window_index' must be an integer, got '$windowIndexArg'."
-                            )
-                        ),
+                        listOf(TextContent("MCP tool argument 'window_index' must be an integer.")),
                     isError = true,
                 )
-        }
-    val surfaceId = call.arguments?.get("surface_id")?.jsonPrimitive?.content
-    val fullscreenRaw = call.arguments?.get("fullscreen")?.jsonPrimitive?.content
+    val surfaceElement = call.arguments?.get("surface_id")
+    val surfaceId =
+        (surfaceElement as? kotlinx.serialization.json.JsonPrimitive)
+            ?.takeIf { it.isString }
+            ?.content
+    if (surfaceElement != null && surfaceId == null) {
+        return CallToolResult(
+            content = listOf(TextContent("MCP tool argument 'surface_id' must be a string.")),
+            isError = true,
+        )
+    }
+    val fullscreenElement = call.arguments?.get("fullscreen")
     val fullscreen =
-        parseOptionalBooleanArg(fullscreenRaw)
+        parseOptionalBooleanArg(fullscreenElement)
             ?: return CallToolResult(
-                content =
-                    listOf(
-                        TextContent(
-                            "MCP tool argument 'fullscreen' must be a boolean, got '$fullscreenRaw'."
-                        )
-                    ),
+                content = listOf(TextContent("MCP tool argument 'fullscreen' must be a boolean.")),
                 isError = true,
             )
     if (fullscreen && (windowIndex != null || surfaceId != null)) {
@@ -781,15 +800,16 @@ private fun handleScreenshotTool(
         .screenshotResult()
 }
 
-/** Returns false when [raw] is null; null when present but not a recognized boolean token. */
-private fun parseOptionalBooleanArg(raw: String?): Boolean? =
-    when (raw) {
-        null -> false
-        "true",
-        "True",
-        "1" -> true
-        "false",
-        "False",
-        "0" -> false
-        else -> null
-    }
+/** Returns false when absent; null when present but not a JSON boolean. */
+private fun parseOptionalBooleanArg(element: kotlinx.serialization.json.JsonElement?): Boolean? {
+    if (element == null) return false
+    val primitive = element as? kotlinx.serialization.json.JsonPrimitive ?: return null
+    if (primitive.isString) return null
+    return primitive.content.toBooleanStrictOrNull()
+}
+
+private fun parseOptionalIntegerArg(element: kotlinx.serialization.json.JsonElement?): Int? {
+    val primitive = element as? kotlinx.serialization.json.JsonPrimitive ?: return null
+    if (primitive.isString) return null
+    return primitive.content.toIntOrNull()
+}

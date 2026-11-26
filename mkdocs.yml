@@ -121,3 +121,4 @@ nav:
       - Release smoke: RELEASE-SMOKE.md
       - Security notes: SECURITY.md
       - Stability policy: STABILITY.md
+      - Spectre 0.10.0 notes: RELEASE-NOTES-0.10.0.md

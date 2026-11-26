@@ -324,6 +324,7 @@ internal sealed interface AgentRequest {
         val timeoutMs: Long? = null,
         val stableFrames: Int? = null,
         val pollIntervalMs: Long? = null,
+        val allowScreenRegionFallback: Boolean = false,
     ) : AgentRequest
 
     /**

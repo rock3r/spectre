@@ -2,12 +2,16 @@
 
 package dev.sebastiano.spectre.agent.transport
 
+import dev.sebastiano.spectre.agent.SpectreAgentException
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.channels.Channels
 import java.nio.channels.SocketChannel
 import java.nio.file.Path
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.io.path.deleteIfExists
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -26,12 +30,12 @@ import org.junit.jupiter.api.condition.OS
 class ProtocolCompatTest {
 
     @Test
-    fun `the byte-string payload encoding has its own protocol revision`() {
+    fun `wire representation and visual capture policy have distinct protocol revisions`() {
         // AttachOptions.agentJarPath and the runtime-jar system property let a caller pair this
-        // library with a runtime built on either side of the @ByteString change. Both would
-        // otherwise advertise the same version, pass the exact-match handshake, and only fail when
-        // a screenshot came back in the encoding the peer does not speak.
-        assertEquals(3, ProtocolVersion.CURRENT, "bump this when the wire representation changes")
+        // library with a runtime built on either side of the @ByteString or visual-capture-policy
+        // changes. Those pairings would otherwise advertise the same version and pass the
+        // exact-match handshake, then fail late or silently capture a Robot screen region.
+        assertEquals(4, ProtocolVersion.CURRENT, "bump this when wire behavior changes")
     }
 
     private val udsPath: Path =
@@ -93,11 +97,75 @@ class ProtocolCompatTest {
     }
 
     @Test
-    fun `Hello with mismatched protocol version returns protocolMismatch`() {
+    fun `current client rejects a v3 runtime before sending a visual request`() {
+        val visualRequestReceived = AtomicBoolean(false)
+        val runtimeFinished = CountDownLatch(1)
+        val server =
+            java.nio.channels.ServerSocketChannel.open(StandardProtocolFamily.UNIX).apply {
+                bind(UnixDomainSocketAddress.of(udsPath))
+            }
+        val runtime = Thread {
+            try {
+                server.accept().use { channel ->
+                    val input = Channels.newInputStream(channel)
+                    val output = Channels.newOutputStream(channel)
+                    val helloBytes = Framing.readFrame(input) ?: error("no Hello")
+                    val hello = assertIs<AgentRequest.Hello>(WireCodec.decodeRequest(helloBytes))
+                    assertEquals(ProtocolVersion.CURRENT, hello.protocolVersion)
+                    Framing.writeFrame(
+                        output,
+                        WireCodec.encode(AgentResponse.HelloAck(protocolVersion = 3)),
+                    )
+                    visualRequestReceived.set(Framing.readFrame(input) != null)
+                }
+            } finally {
+                runtimeFinished.countDown()
+            }
+        }
+            .apply { start() }
+
+        val error = kotlin.test.assertFailsWith<SpectreAgentException> { IpcClient(udsPath) }
+        assertEquals(AgentErrorCategory.ProtocolMismatch, error.category)
+        assertTrue(
+            runtimeFinished.await(5, TimeUnit.SECONDS),
+            "v3 runtime did not observe disconnect",
+        )
+        assertTrue(
+            !visualRequestReceived.get(),
+            "client sent an operation after the rejected handshake",
+        )
+        server.close()
+        runtime.join()
+    }
+
+    @Test
+    fun `v3 client is rejected by current runtime`() {
+
         IpcServer(udsPath, stubHandler()).use {
             awaitSocket(udsPath)
             // Open a raw socket and send Hello without using IpcClient's init handshake so we
             // control the advertised version.
+            SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
+                channel.connect(UnixDomainSocketAddress.of(udsPath))
+                val input = Channels.newInputStream(channel)
+                val output = Channels.newOutputStream(channel)
+                Framing.writeFrame(
+                    output,
+                    WireCodec.encode(AgentRequest.Hello(protocolVersion = 3)),
+                )
+                val bytes = Framing.readFrame(input) ?: error("no response")
+                val resp = WireCodec.decodeResponse(bytes)
+                val err = assertIs<AgentResponse.Error>(resp)
+                assertEquals(AgentErrorCategory.ProtocolMismatch.wireName, err.category)
+                assertTrue(err.message.contains("mismatch", ignoreCase = true))
+            }
+        }
+    }
+
+    @Test
+    fun `Hello with arbitrary mismatched protocol version returns protocolMismatch`() {
+        IpcServer(udsPath, stubHandler()).use {
+            awaitSocket(udsPath)
             SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
                 channel.connect(UnixDomainSocketAddress.of(udsPath))
                 val input = Channels.newInputStream(channel)
@@ -109,8 +177,7 @@ class ProtocolCompatTest {
                     ),
                 )
                 val bytes = Framing.readFrame(input) ?: error("no response")
-                val resp = WireCodec.decodeResponse(bytes)
-                val err = assertIs<AgentResponse.Error>(resp)
+                val err = assertIs<AgentResponse.Error>(WireCodec.decodeResponse(bytes))
                 assertEquals(AgentErrorCategory.ProtocolMismatch.wireName, err.category)
                 assertTrue(err.message.contains("mismatch", ignoreCase = true))
             }
