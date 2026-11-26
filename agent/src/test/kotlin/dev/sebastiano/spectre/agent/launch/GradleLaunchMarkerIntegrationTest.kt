@@ -8,6 +8,8 @@ import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.writeText
 import kotlin.test.Test
@@ -28,6 +30,8 @@ import org.junit.jupiter.api.io.TempDir
 class GradleLaunchMarkerIntegrationTest {
     @TempDir lateinit var directory: Path
     private val reusableFixtures = mutableListOf<Path>()
+    private val ownedProcesses = ConcurrentHashMap<Path, MutableSet<ProcessHandle>>()
+    private val processTrackers = ConcurrentHashMap<Path, MutableSet<CompletableFuture<Void>>>()
 
     @AfterEach
     fun stopFixtureDaemons() {
@@ -36,7 +40,8 @@ class GradleLaunchMarkerIntegrationTest {
                 Executable {
                     val daemon = buildJvm(fixture)
                     runGradle(fixture, "--stop")
-                    daemon?.onExit()?.get(15, TimeUnit.SECONDS)
+                    daemon?.onExit()?.get(OWNED_PROCESS_EXIT_TIMEOUT.seconds, TimeUnit.SECONDS)
+                    awaitOwnedProcesses(fixture)
                 }
             }
         )
@@ -169,26 +174,46 @@ class GradleLaunchMarkerIntegrationTest {
         )
     }
 
-    private fun startBuild(fixture: Path, command: List<String>, log: Path): Process =
-        ProcessBuilder(command)
-            .directory(fixture.toFile())
-            .apply {
-                // Host launch options can override the fixture budget or dump unrelated arguments.
-                listOf(
-                        "JAVA_OPTS",
-                        "GRADLE_OPTS",
-                        "JAVA_TOOL_OPTIONS",
-                        "_JAVA_OPTIONS",
-                        "JDK_JAVA_OPTIONS",
-                    )
-                    .forEach(environment()::remove)
-                environment()["GRADLE_USER_HOME"] =
-                    fixture.resolveSibling("${fixture.fileName}-home").toString()
-                environment()["JAVA_HOME"] = System.getProperty("java.home")
-            }
-            .redirectErrorStream(true)
-            .redirectOutput(log.toFile())
-            .start()
+    private fun startBuild(fixture: Path, command: List<String>, log: Path): Process {
+        val process =
+            ProcessBuilder(command)
+                .directory(fixture.toFile())
+                .apply {
+                    // Host launch options can override the fixture budget or dump unrelated
+                    // arguments.
+                    listOf(
+                            "JAVA_OPTS",
+                            "GRADLE_OPTS",
+                            "JAVA_TOOL_OPTIONS",
+                            "_JAVA_OPTIONS",
+                            "JDK_JAVA_OPTIONS",
+                        )
+                        .forEach(environment()::remove)
+                    environment()["GRADLE_USER_HOME"] =
+                        fixture.resolveSibling("${fixture.fileName}-home").toString()
+                    environment()["JAVA_HOME"] = System.getProperty("java.home")
+                }
+                .redirectErrorStream(true)
+                .redirectOutput(log.toFile())
+                .start()
+        trackOwnedProcesses(fixture, process)
+        return process
+    }
+
+    private fun trackOwnedProcesses(fixture: Path, process: Process) {
+        val seen = ownedProcesses.computeIfAbsent(fixture) { ConcurrentHashMap.newKeySet() }
+        seen.add(process.toHandle())
+        val tracker = CompletableFuture.runAsync {
+            do {
+                process.descendants().forEach(seen::add)
+                if (process.isAlive) Thread.sleep(PROCESS_TRACKING_INTERVAL_MS)
+            } while (process.isAlive)
+            // Include children visible at the instant the wrapper exits. In particular, gradle.bat
+            // starts a native Gradle client below cmd.exe on Windows.
+            process.descendants().forEach(seen::add)
+        }
+        processTrackers.computeIfAbsent(fixture) { ConcurrentHashMap.newKeySet() }.add(tracker)
+    }
 
     private fun runGradle(fixture: Path, vararg args: String) {
         val log = fixture.resolve(if ("--stop" in args) "stop.log" else "warmup.log")
@@ -202,6 +227,8 @@ class GradleLaunchMarkerIntegrationTest {
             }
         } finally {
             if (process.isAlive) ProcessTreeTeardown.destroyTree(process.toHandle())
+            val daemonPid = buildJvm(fixture)?.pid()?.takeIf { fixture in reusableFixtures }
+            awaitOwnedProcesses(fixture, setOfNotNull(daemonPid))
         }
     }
 
@@ -304,7 +331,31 @@ class GradleLaunchMarkerIntegrationTest {
             ProcessTreeTeardown.destroyTree(launch.process.toHandle())
         }
         // Windows keeps cache files locked until the single-use build JVM exits.
-        singleUseDaemon?.onExit()?.get(15, TimeUnit.SECONDS)
+        singleUseDaemon?.onExit()?.get(OWNED_PROCESS_EXIT_TIMEOUT.seconds, TimeUnit.SECONDS)
+        val reusableDaemonPid = buildJvm(launch.capture)?.pid()?.takeIf { singleUseDaemon == null }
+        awaitOwnedProcesses(launch.capture, setOfNotNull(reusableDaemonPid))
+    }
+
+    private fun awaitOwnedProcesses(fixture: Path, excludedPids: Set<Long> = emptySet()) {
+        val deadline = Instant.now().plus(OWNED_PROCESS_EXIT_TIMEOUT)
+        processTrackers[fixture].orEmpty().forEach { tracker ->
+            val remainingMillis = Duration.between(Instant.now(), deadline).toMillis()
+            check(remainingMillis > 0) { "Timed out tracking owned Gradle processes for $fixture" }
+            tracker.get(remainingMillis, TimeUnit.MILLISECONDS)
+        }
+        var alive: List<ProcessHandle>
+        do {
+            alive =
+                ownedProcesses[fixture].orEmpty().filter { it.pid() !in excludedPids && it.isAlive }
+            if (alive.isEmpty()) return
+            Thread.sleep(PROCESS_TRACKING_INTERVAL_MS)
+        } while (Instant.now().isBefore(deadline))
+        error(
+            "Owned Gradle fixture processes did not exit for $fixture: " +
+                alive.joinToString {
+                    "pid=${it.pid()} command=${it.info().command().orElse("<unknown>")}"
+                }
+        )
     }
 
     private data class Launch(
@@ -319,5 +370,7 @@ class GradleLaunchMarkerIntegrationTest {
     private companion object {
         val FIXTURE_READY_TIMEOUT: Duration = Duration.ofSeconds(90)
         val MARKER_DISCOVERY_TIMEOUT: Duration = Duration.ofSeconds(15)
+        val OWNED_PROCESS_EXIT_TIMEOUT: Duration = Duration.ofSeconds(60)
+        const val PROCESS_TRACKING_INTERVAL_MS: Long = 25
     }
 }
