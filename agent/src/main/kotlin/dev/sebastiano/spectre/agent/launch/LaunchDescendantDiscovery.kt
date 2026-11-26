@@ -53,13 +53,7 @@ public object LaunchDescendantDiscovery {
          * the boundary per poll would silently fail open exactly when the gate matters most.
          */
         clientStart: Instant? = processStartInstant(clientPid),
-    ): Long? =
-        selectAppJvm(
-            clientPid = clientPid,
-            nameFilter = nameFilter,
-            clientStart = clientStart,
-            onDiagnostics = AppJvmDiscoveryDiagnostics.sinkFromEnvironment(),
-        )
+    ): Long? = discoverOwnedAppJvm(clientPid, nameFilter, clientStart, launchMarker = null)
 
     /**
      * [discoverAppJvm] with its process facts injectable, so the selection rules can be tested
@@ -76,6 +70,7 @@ public object LaunchDescendantDiscovery {
         descendantsOf: (Long) -> Set<Long> = ::descendantPidsOf,
         parentOf: (Long) -> Long? = ::parentPid,
         startInstantOf: (Long) -> Instant? = ::processStartInstant,
+        ownsLaunch: (Long) -> Boolean = { true },
         nativeFallback: (Long, Set<Long>, String?) -> Long? = { client, daemons, filter ->
             discoverByNativeTree(
                 clientPid = client,
@@ -84,6 +79,7 @@ public object LaunchDescendantDiscovery {
                 clientStart = clientStart,
                 startInstantOf = startInstantOf,
                 testExecutorPids = GradleTestExecutors.pidsIn(listed),
+                ownsLaunch = ownsLaunch,
             )
         },
         onDiagnostics: AppJvmDiscoveryDiagnosticSink = AppJvmDiscoveryDiagnosticSink.NoOp,
@@ -100,6 +96,7 @@ public object LaunchDescendantDiscovery {
                 descendantsOf = descendantsOf,
                 parentOf = parentOf,
                 startInstantOf = startOf,
+                ownsLaunch = ownsLaunch,
                 nativeFallback = nativeFallback,
             )
         if (diagnosticsOn) {
@@ -125,6 +122,7 @@ public object LaunchDescendantDiscovery {
         descendantsOf: (Long) -> Set<Long>,
         parentOf: (Long) -> Long?,
         startInstantOf: (Long) -> Instant?,
+        ownsLaunch: (Long) -> Boolean,
         nativeFallback: (Long, Set<Long>, String?) -> Long?,
     ): Long? {
         if (listed.isEmpty()) {
@@ -146,7 +144,8 @@ public object LaunchDescendantDiscovery {
                 // A test in a parallel test task started this one, not our launch (#603, #614).
                 parentOf(info.pid) !in testExecutorPids
         }
-        if (nonDaemon.isEmpty()) {
+        val ownedNonDaemon = nonDaemon.filter { ownsLaunch(it.pid) }
+        if (ownedNonDaemon.isEmpty()) {
             // Every Attach-visible JVM is a daemon or predates the launch. That does not mean
             // the target is absent: VirtualMachine.list() lags, and -XX:-UsePerfData hides a
             // JVM entirely. The native walk is the fallback, so do not skip it (#446).
@@ -155,27 +154,25 @@ public object LaunchDescendantDiscovery {
         }
 
         val clientDescendants = descendantsOf(clientPid)
-        val childOfDaemon = nonDaemon.filter { info ->
+        val childOfDaemon = ownedNonDaemon.filter { info ->
             val parent = parentOf(info.pid) ?: return@filter false
             parent in daemonPids
         }
 
         if (!nameFilter.isNullOrBlank()) {
-            val nameMatched = nonDaemon.filter {
+            val nameMatched = ownedNonDaemon.filter {
                 it.displayName.contains(nameFilter, ignoreCase = true)
             }
             // Prefer client descendants over arbitrary daemon children so concurrent Gradle
             // apps with the same main class are not stolen from another launch.
             nameMatched
-                .filter { it.pid in clientDescendants }
-                .maxByOrNull { it.pid }
+                .singleOrNull { it.pid in clientDescendants }
                 ?.pid
                 ?.let {
                     return it
                 }
             nameMatched
-                .filter { it.pid in childOfDaemon.map(JvmProcessInfo::pid).toSet() }
-                .maxByOrNull { it.pid }
+                .singleOrNull { it.pid in childOfDaemon.map(JvmProcessInfo::pid).toSet() }
                 ?.pid
                 ?.let {
                     return it
@@ -193,7 +190,7 @@ public object LaunchDescendantDiscovery {
         }
 
         // No name filter: only client descendants (never unfiltered daemon children).
-        return nonDaemon.filter { it.pid in clientDescendants }.maxByOrNull { it.pid }?.pid
+        return ownedNonDaemon.singleOrNull { it.pid in clientDescendants }?.pid
             // No unfiltered daemon walk without nameFilter.
             ?: nativeFallback(clientPid, emptySet(), null)
     }
@@ -283,6 +280,7 @@ public object LaunchDescendantDiscovery {
         clientStart: Instant?,
         startInstantOf: (Long) -> Instant?,
         testExecutorPids: Set<Long>,
+        ownsLaunch: (Long) -> Boolean,
     ): Long? {
         val roots = buildList {
             add(clientPid)
@@ -304,17 +302,18 @@ public object LaunchDescendantDiscovery {
                 .filter { pid -> parentPid(pid) !in testExecutorPids }
                 .filter { pid -> looksLikeJavaProcess(pid) }
                 .filter { pid -> !commandLineLooksLikeGradleDaemon(pid) }
+                .filter(ownsLaunch)
                 .toList()
         val named = javaDescendants.filter { pid ->
             nameFilter.isNullOrBlank() || commandLineContains(pid, nameFilter)
         }
-        return pickNativeTreeJvm(nameFilter, named, javaDescendants)
+        return pickNativeTreeJvm(nameFilter, named, javaDescendants, ownsLaunch)
     }
 
     private fun commandLineLooksLikeGradleDaemon(pid: Long): Boolean {
         val handle = ProcessHandle.of(pid).orElse(null) ?: return false
         val cmd = handle.info().command().orElse("")
-        val args = handle.info().arguments().orElse(emptyArray()).joinToString(" ")
+        val args = processArguments(handle).joinToString(" ")
         return isGradleDaemonDisplayName("$cmd $args")
     }
 
@@ -326,10 +325,10 @@ public object LaunchDescendantDiscovery {
         return base.equals("java", ignoreCase = true) || base.equals("java.exe", ignoreCase = true)
     }
 
-    private fun commandLineContains(pid: Long, needle: String): Boolean {
+    internal fun commandLineContains(pid: Long, needle: String): Boolean {
         val handle = ProcessHandle.of(pid).orElse(null) ?: return false
         val cmd = handle.info().command().orElse("")
-        val args = handle.info().arguments().orElse(emptyArray()).joinToString(" ")
+        val args = processArguments(handle).joinToString(" ")
         return cmd.contains(needle, ignoreCase = true) || args.contains(needle, ignoreCase = true)
     }
 
@@ -368,8 +367,28 @@ public object LaunchDescendantDiscovery {
         ProcessHandle.of(pid).flatMap { it.parent() }.map { it.pid() }.orElse(null)
 }
 
+@OptIn(ExperimentalSpectreAgentApi::class)
+internal fun discoverOwnedAppJvm(
+    clientPid: Long,
+    nameFilter: String?,
+    clientStart: Instant?,
+    launchMarker: String?,
+): Long? =
+    LaunchDescendantDiscovery.selectAppJvm(
+        clientPid = clientPid,
+        nameFilter = nameFilter,
+        clientStart = clientStart,
+        ownsLaunch =
+            launchMarker?.let { marker -> { pid -> hasLaunchMarker(pid, marker) } } ?: { true },
+        onDiagnostics = AppJvmDiscoveryDiagnostics.sinkFromEnvironment(),
+    )
+
 /**
  * Pick among native-tree java descendants after command-line name filtering.
+ *
+ * Roots may overlap (for example, a no-daemon Gradle client and its single-use daemon), so process
+ * identity is deduplicated before uniqueness is checked. Distinct matching processes remain
+ * ambiguous and fail closed.
  *
  * When [nameFilter] is set, only [namedMatches] count. A unique unnamed `java` may be a Gradle
  * worker whose argv is hidden — uniqueness is not identity proof.
@@ -378,5 +397,9 @@ internal fun pickNativeTreeJvm(
     nameFilter: String?,
     namedMatches: Collection<Long>,
     javaDescendants: Collection<Long>,
+    ownsLaunch: (Long) -> Boolean = { true },
 ): Long? =
-    namedMatches.maxOrNull() ?: javaDescendants.singleOrNull().takeIf { nameFilter.isNullOrBlank() }
+    namedMatches.distinct().filter(ownsLaunch).singleOrNull()
+        ?: javaDescendants.distinct().filter(ownsLaunch).singleOrNull().takeIf {
+            nameFilter.isNullOrBlank()
+        }

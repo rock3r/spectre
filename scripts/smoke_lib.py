@@ -224,6 +224,44 @@ def detect_display_mode(system: str | None = None) -> str:
     return f"unknown:{system}"
 
 
+LINUX_SEAT_VARIABLES = (
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "XDG_RUNTIME_DIR",
+    "XDG_SESSION_TYPE",
+    "SPECTRE_CAPTURE_BACKEND",
+)
+
+
+def configure_linux_display_mode(
+    mode: str,
+    environ: MutableMapping[str, str] | None = None,
+    *,
+    discover: Callable[[Mapping[str, str]], dict[str, str]] | None = None,
+    verify: Callable[[Mapping[str, str]], bool] | None = None,
+) -> str:
+    """Apply an explicit Linux display choice before preflight and seat detection."""
+    target = os.environ if environ is None else environ
+    if mode == "xvfb":
+        for key in LINUX_SEAT_VARIABLES:
+            target.pop(key, None)
+        return mode
+    if mode == "seat":
+        found = (discover or discover_linux_seat_env)(target)
+        target.update(found)
+        if not (verify or is_linux_graphical_login_seat)(target):
+            raise RuntimeError(
+                "--display-mode seat requires a genuine graphical login seat "
+                "(Wayland or X11), but none was verified"
+            )
+        return mode
+    if mode != "auto":
+        raise ValueError(f"unsupported Linux display mode: {mode}")
+    return mode
+
+
 def _which(name: str) -> str | None:
     path = os.environ.get("PATH", "")
     for directory in path.split(os.pathsep):
@@ -2031,11 +2069,32 @@ def linux_wayland_helper_path(root: Path) -> Path | None:
     return None
 
 
-def prepare_linux_portal_token_env(root: Path, out_dir: Path) -> dict[str, str]:
+def wayland_restore_token_dir(
+    out_dir: Path,
+    environ: Mapping[str, str] | None = None,
+    *,
+    caller_cwd: Path | None = None,
+) -> Path:
+    source = os.environ if environ is None else environ
+    inherited = source.get("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR", "").strip()
+    if not inherited:
+        return Path(out_dir) / "wayland-restore-tokens"
+    token_dir = Path(inherited).expanduser()
+    if token_dir.is_absolute():
+        # Keep operator-provided spelling (notably macOS /var versus /private/var).
+        return token_dir
+    return Path(os.path.abspath((caller_cwd or Path.cwd()) / token_dir))
+
+
+def prepare_linux_portal_token_env(
+    root: Path, out_dir: Path, environ: Mapping[str, str] | None = None
+) -> dict[str, str]:
     """Pin a restore-token dir, and a private copy of the helper when one is already staged."""
-    token_dir = Path(out_dir) / "wayland-restore-tokens"
+    token_dir = wayland_restore_token_dir(out_dir, environ)
+    token_dir_existed = token_dir.exists()
     token_dir.mkdir(parents=True, exist_ok=True)
-    token_dir.chmod(0o700)
+    if not token_dir_existed:
+        token_dir.chmod(0o700)
     session_dir = Path(out_dir) / "wayland-session"
     session_dir.mkdir(parents=True, exist_ok=True)
     session_dir.chmod(0o700)
@@ -2258,6 +2317,79 @@ def _seat_x_display(
     if len(sockets) == 1:
         return f":{next(iter(sockets))}"
     return None
+
+
+def is_linux_graphical_login_seat(
+    environ: Mapping[str, str],
+    *,
+    uid: int | None = None,
+    x11_socket_dir: Path = Path("/tmp/.X11-unix"),
+    proc_root: Path = Path("/proc"),
+    authorize_x11: Callable[[Mapping[str, str]], bool] | None = None,
+    process_uid: Callable[[Path], int] | None = None,
+) -> bool:
+    """Prove that display handles belong to an accessible logged-in Wayland or Xorg seat."""
+    runtime = environ.get("XDG_RUNTIME_DIR", "").strip()
+    wayland = environ.get("WAYLAND_DISPLAY", "").strip()
+    if runtime and wayland and (Path(runtime) / wayland).exists():
+        return True
+
+    display = environ.get("DISPLAY", "").strip()
+    match = re.fullmatch(r":(\d+)(?:\.\d+)?", display)
+    if match is None or not (Path(x11_socket_dir) / f"X{int(match.group(1))}").exists():
+        return False
+    if uid is None:
+        getuid = getattr(os, "getuid", None)
+        if getuid is None:
+            return False
+        uid = int(getuid())
+    try:
+        entries = list(Path(proc_root).iterdir())
+    except OSError:
+        return False
+    expected_display = f":{int(match.group(1))}"
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            # Xorg may retain root privileges on a genuine login seat. Other users' Xorg
+            # processes remain unrelated even if they happen to use the same display number.
+            owner = (process_uid or (lambda path: path.stat().st_uid))(entry)
+            if owner not in {0, uid}:
+                continue
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        argv = [part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part]
+        if not argv or Path(argv[0]).name not in {"X", "Xorg"}:
+            continue
+        if any(_normalize_local_x_display(arg) == expected_display for arg in argv):
+            return (authorize_x11 or _can_access_x11_display)(environ)
+    return False
+
+
+def _normalize_local_x_display(value: str) -> str | None:
+    match = re.fullmatch(r":(\d+)(?:\.\d+)?", value)
+    return f":{int(match.group(1))}" if match else None
+
+
+def _can_access_x11_display(environ: Mapping[str, str]) -> bool:
+    """Ask the installed X11 tooling to complete authentication; do not add a dependency."""
+    executable = shutil.which("xdpyinfo", path=environ.get("PATH"))
+    if executable is None:
+        return False
+    try:
+        completed = subprocess.run(
+            [executable, "-display", environ["DISPLAY"]],
+            env=dict(environ),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+    except (KeyError, OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
 
 
 def discover_linux_seat_env(

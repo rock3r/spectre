@@ -100,9 +100,9 @@ class WaylandOsRobotAdapterTest {
     }
 
     @Test
-    fun `Wayland adapters request a select-all line fallback`() {
-        assertTrue(MissingWaylandHelperAdapter.needsSelectAllLineFallback)
-        assertTrue(seatSocketRobotAdapterForTests().needsSelectAllLineFallback)
+    fun `Wayland adapters refuse destructive clear when select all is unreliable`() {
+        assertTrue(!MissingWaylandHelperAdapter.supportsReliableSelectAll)
+        assertTrue(!seatSocketRobotAdapterForTests().supportsReliableSelectAll)
     }
 
     @Test

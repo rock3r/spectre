@@ -11,6 +11,7 @@ public object CaptureJson {
     public fun encode(document: CaptureDocument): String = buildString {
         appendLine("{")
         appendLine("""  "schemaVersion": ${document.schemaVersion},""")
+        appendLine("""  "source": ${jsonString(document.source.wireName)},""")
         appendLine("""  "capturedAt": ${jsonString(document.capturedAt)},""")
         appendLine("""  "window": {""")
         appendWindowBody(document.window, indent = "    ")
@@ -35,6 +36,7 @@ public object CaptureJson {
         appendLine("""$indent"boundsScreen": {""")
         appendRectBody(window.boundsScreen, indent = "$indent  ")
         appendLine("""$indent},""")
+        appendLine("""$indent"boundsSpace": ${jsonString(window.boundsSpace.wireName)},""")
         appendLine("""$indent"densityScaleX": ${formatDouble(window.densityScaleX)},""")
         appendLine("""$indent"densityScaleY": ${formatDouble(window.densityScaleY)},""")
         appendLine("""$indent"imageWidth": ${window.imageWidth},""")
@@ -49,6 +51,8 @@ public object CaptureJson {
         appendLine("""$indent{""")
         val inner = "$indent  "
         appendLine("""$inner"key": ${jsonString(node.key)},""")
+        appendLine("""$inner"parentKey": ${jsonStringOrNull(node.parentKey)},""")
+        appendLine("""$inner"id": ${jsonStringOrNull(node.id)},""")
         appendLine("""$inner"testTag": ${jsonStringOrNull(node.testTag)},""")
         appendLine("""$inner"text": ${jsonStringOrNull(node.text)},""")
         appendLine("""$inner"texts": [""")
@@ -60,6 +64,14 @@ public object CaptureJson {
         appendLine("""$inner"editableText": ${jsonStringOrNull(node.editableText)},""")
         appendLine("""$inner"contentDescription": ${jsonStringOrNull(node.contentDescription)},""")
         appendLine("""$inner"role": ${jsonStringOrNull(node.role)},""")
+        appendLine("""$inner"platformRole": ${jsonStringOrNull(node.platformRole)},""")
+        appendLine("""$inner"states": [""")
+        node.states.forEachIndexed { index, value ->
+            val line = """$inner  ${jsonString(value)}"""
+            if (index < node.states.lastIndex) appendLine("$line,") else appendLine(line)
+        }
+        appendLine("""$inner],""")
+        appendLine("""$inner"value": ${jsonStringOrNull(node.value)},""")
         appendLine("""$inner"enabled": ${node.enabled},""")
         appendLine("""$inner"clickable": ${node.clickable},""")
         appendLine("""$inner"focused": ${node.focused},""")
@@ -69,7 +81,8 @@ public object CaptureJson {
         appendLine("""$inner},""")
         appendLine("""$inner"boundsScreen": {""")
         appendRectBody(node.boundsScreen, indent = "$inner  ")
-        appendLine("""$inner}""")
+        appendLine("""$inner},""")
+        appendLine("""$inner"onScreen": ${node.onScreen}""")
         if (trailingComma) appendLine("""$indent},""") else appendLine("""$indent}""")
     }
 

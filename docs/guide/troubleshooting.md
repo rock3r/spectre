@@ -213,6 +213,14 @@ using it.
 
 `typeText` sends key press and release events without using the clipboard.
 It supports ASCII letters, digits, space, newline, and common US keyboard punctuation.
+For real OS input, text containing letters fails before dispatch if Caps Lock cannot be read;
+digits and punctuation do not require that check, and synthetic input has deterministic case.
+`clearAndTypeText` performs the same validation before deleting the existing value.
+It also refuses before dispatching any key when the backend cannot guarantee a reliable
+select-all chord. This currently applies to the Wayland portal and seat-socket helpers, whose
+separate key messages may drop Ctrl before A; the existing field contents remain untouched. Use an
+explicit field-state API where available, or select and edit through a backend that preserves
+modifier state. Other Wayland input operations remain available.
 For Unicode or large text, `pasteText` writes to the clipboard. It sends
 <kbd>Cmd</kbd>+<kbd>V</kbd> on macOS or <kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere.
 It waits for the paste, then restores the previous clipboard content.
@@ -241,8 +249,10 @@ Check these possible failures:
   Spectre polls the clipboard until it reads back the requested text before
   dispatching <kbd>Cmd</kbd>+<kbd>V</kbd>. If the environment has a clipboard
   manager or another process actively rewriting the clipboard, the poll can time
-  out and the paste lands stale. Disable clipboard managers in the test
-  environment.
+  out and Spectre throws before dispatching the paste shortcut. Disable clipboard managers in the
+  test environment. Clipboard save, read, and restore errors are also reported; when the paste
+  already failed, a restore error is attached as a suppressed exception so the primary failure is
+  preserved.
 - **`RobotDriver.headless()` throws on `typeText` and `pasteText`.** Every input,
   clipboard, and screenshot call throws `UnsupportedOperationException`.
   See [Driving input](interactions.md#real-vs-synthetic-input). For input, use
@@ -649,17 +659,24 @@ needs and throws on first use if either is denied:
   `pressKey(...)`, etc. and asks `System Events` (via `osascript`) for the active
   process. A "not allowed assistive access" denial throws with an actionable
   message naming the wrapping app to grant; an inconclusive probe (no `osascript`,
-  AppleEvents/Automation refusal, etc.) prints a one-shot stderr warning and
-  proceeds.
+  AppleEvents/Automation refusal, etc.) fails with an inconclusive diagnostic.
 - **Screen Recording** — required for `Robot.createScreenCapture` to return real
   pixels. Without it the call silently returns an all-black image. A locked
   screen can produce the same symptom, so the probe first checks whether macOS
   reports the console session as locked; if so, unlock the screen and retry. If
   the session is unlocked, the probe captures a small region near the screen
-  origin (which on macOS overlaps the menu bar) and treats an all-black result as
-  denial. False positives are rare; if the screen really is fully
-  black at the origin, switch to `RobotDriver.headless()` for tests or grant
-  Screen Recording to silence the probe.
+  origin (which on macOS overlaps the menu bar). An all-black result is
+  inconclusive rather than proof of denial because legitimate pixels can be
+  black too. A cached Robot grant is rechecked after an unexpectedly black Robot
+  capture, while a conclusively granted and unlocked state preserves naturally
+  black content.
+
+Native window stills use the separately signed ScreenCaptureKit helper. Its
+Screen Recording grant belongs to the helper app, not the target JVM or the app
+that launched that JVM. Spectre therefore never asks for or probes the JVM's
+Robot Screen Recording permission to validate a successful helper image,
+including a naturally black window. Helper permission diagnostics come from the
+helper's own preflight/capture result; lock status remains independent.
 
 Open System Settings → Privacy & Security. Grant Accessibility or Screen &
 System Audio Recording to the app that launched the JVM. It may be IntelliJ,

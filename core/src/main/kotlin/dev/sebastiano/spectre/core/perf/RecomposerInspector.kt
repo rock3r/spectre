@@ -12,11 +12,10 @@ import java.awt.Window
  * Resolves the [Recomposer] that drives a Compose Desktop surface.
  *
  * The traversal mirrors `OverlayLayerInspector`: walk the private CMP host chain by field name, so
- * a renamed internal field degrades gracefully (returns `null`) instead of crashing the rest of the
- * automator. Same multi-version policy as overlays (#322): single pinned-Compose chain,
- * degrade-to-empty/null — no adapter matrix for 1.0
- * (`docs/spikes/209-injection/overlay-adapter-policy.md`). CMP 1.12 moved the live [Recomposer]
- * onto `ComposeSceneMediator.frameRecomposer`; the chain is:
+ * a renamed internal field fails closed with the detected Compose version instead of silently
+ * disabling monitoring. Same multi-version policy as overlays (#322): one pinned-Compose chain,
+ * with no adapter matrix for 1.0 (`docs/spikes/209-injection/overlay-adapter-policy.md`). CMP 1.12
+ * moved the live [Recomposer] onto `ComposeSceneMediator.frameRecomposer`; the chain is:
  * ```
  * ComposeWindow / ComposeDialog .composePanel  (ComposeWindowPanel)
  *   ._composeContainer         (ComposeContainer)
@@ -43,13 +42,14 @@ public object RecomposerInspector {
 
     /**
      * Returns the [Recomposer] for [trackedWindow]'s main surface, or `null` for surfaces this MVP
-     * does not yet resolve (overlay popups) or hosts that don't match the expected internal shape.
+     * does not yet resolve (overlay popups) and valid hosts whose fields are not initialized yet.
+     * Missing required fields fail closed instead of looking temporarily unresolved.
      */
     @OptIn(ExperimentalComposeUiApi::class)
     public fun findRecomposer(trackedWindow: TrackedWindow): Recomposer? {
         // Overlay popups currently report through `overlaySemanticsOwners`; their recomposers live
         // on the layer's own mediator, which we don't yet traverse. Returning null is the explicit
-        // "not yet supported" signal — RecompositionMonitor skips those surfaces.
+        // "not yet supported" signal — RecompositionMonitor marks those surfaces unresolved.
         if (trackedWindow.overlaySemanticsOwners != null) return null
 
         // Prefer the embedded ComposePanel when present (covers both ComposeWindow's internal panel
@@ -74,25 +74,40 @@ public object RecomposerInspector {
      */
     internal fun findRecomposerInHostChain(host: Any?): Recomposer? {
         if (host == null) return null
-        val composePanel = readField(host, COMPOSE_PANEL_FIELD) ?: return null
+        val composePanel = readRequiredField(host, COMPOSE_PANEL_FIELD) ?: return null
         return findRecomposerInHostChainBelowComposeContainer(composePanel)
     }
 
     private fun findRecomposerInHostChainBelowComposeContainer(panelHost: Any): Recomposer? {
-        val composeContainer = readField(panelHost, COMPOSE_CONTAINER_FIELD) ?: return null
-        val mediator = readField(composeContainer, MEDIATOR_FIELD) ?: return null
+        val composeContainer = readRequiredField(panelHost, COMPOSE_CONTAINER_FIELD) ?: return null
+        val mediator = readRequiredField(composeContainer, MEDIATOR_FIELD) ?: return null
         // CMP 1.12 stores the live Recomposer on FrameRecomposer. The field is private; the
         // getter is public and is the fallback when a host only exposes the accessor.
         val frameRecomposer =
-            readField(mediator, FRAME_RECOMPOSER_FIELD)
+            readOptionalField(mediator, FRAME_RECOMPOSER_FIELD)
                 ?: invokeGetter(mediator, FRAME_RECOMPOSER_GETTER)
                 ?: return null
         if (frameRecomposer is Recomposer) return frameRecomposer
         val recomposer =
-            readField(frameRecomposer, RECOMPOSER_FIELD)
+            readOptionalField(frameRecomposer, RECOMPOSER_FIELD)
                 ?: invokeGetter(frameRecomposer, COMPOSITION_CONTEXT_GETTER)
-        return recomposer as? Recomposer
+        return when (recomposer) {
+            null -> null
+            is Recomposer -> recomposer
+            else -> incomplete(RECOMPOSER_FIELD, frameRecomposer)
+        }
     }
+
+    private fun incomplete(fieldName: String, target: Any): Nothing =
+        error(
+            "Incomplete Compose inspection: expected '$fieldName' on ${target.javaClass.name} " +
+                "for Compose ${composeVersion(target)}"
+        )
+
+    private fun composeVersion(target: Any): String =
+        target.javaClass.`package`?.implementationVersion
+            ?: Recomposer::class.java.`package`?.implementationVersion
+            ?: "unknown version"
 
     private fun invokeGetter(target: Any, methodName: String): Any? {
         var cls: Class<*>? = target.javaClass
@@ -110,7 +125,7 @@ public object RecomposerInspector {
         return null
     }
 
-    private fun readField(target: Any, fieldName: String): Any? {
+    private fun readRequiredField(target: Any, fieldName: String): Any? {
         var cls: Class<*>? = target.javaClass
         while (cls != null) {
             try {
@@ -119,8 +134,33 @@ public object RecomposerInspector {
                 return field.get(target)
             } catch (_: NoSuchFieldException) {
                 cls = cls.superclass
-            } catch (_: ReflectiveOperationException) {
-                return null
+            } catch (cause: ReflectiveOperationException) {
+                throw IllegalStateException(
+                    "Incomplete Compose inspection: could not read '$fieldName' on " +
+                        "${target.javaClass.name} for Compose ${composeVersion(target)}",
+                    cause,
+                )
+            }
+        }
+        incomplete(fieldName, target)
+    }
+
+    /** Optional only because older compatible hosts expose the corresponding public getter. */
+    private fun readOptionalField(target: Any, fieldName: String): Any? {
+        var cls: Class<*>? = target.javaClass
+        while (cls != null) {
+            try {
+                val field = cls.getDeclaredField(fieldName)
+                field.isAccessible = true
+                return field.get(target)
+            } catch (_: NoSuchFieldException) {
+                cls = cls.superclass
+            } catch (cause: ReflectiveOperationException) {
+                throw IllegalStateException(
+                    "Incomplete Compose inspection: could not read '$fieldName' on " +
+                        "${target.javaClass.name} for Compose ${composeVersion(target)}",
+                    cause,
+                )
             }
         }
         return null
