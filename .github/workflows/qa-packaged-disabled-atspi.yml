@@ -64,8 +64,9 @@ jobs:
           zip=$(find cli/build/construo/distributions/linuxX64 -maxdepth 1 -type f -name '*.zip' -print -quit)
           test -n "$zip"
           unzip -q "$zip" -d "$RUNNER_TEMP/public-package"
-          cli=$(find "$RUNNER_TEMP/public-package" -type f -name spectre -perm -111 -print -quit)
-          test -n "$cli"
+          find "$RUNNER_TEMP/public-package" -type f -name spectre -printf '%m %p\n' | tee "$RUNNER_TEMP/qa-packaged-disabled-atspi/launcher-modes.txt"
+          cli=$(find "$RUNNER_TEMP/public-package" -type f -name spectre -perm -u+x -print -quit)
+          test -n "$cli" && test -x "$cli"
           case "$cli" in "$RUNNER_TEMP/public-package"/*) ;; *) exit 1;; esac
           python3 - "$zip" "$RUNNER_TEMP/qa-packaged-disabled-atspi/archive-identity.json" <<'PY'
           import io, json, struct, sys, zipfile
