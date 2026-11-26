@@ -73,6 +73,16 @@ def assert_three_node_partial(response):
     assert captured[2]["parentKey"] == captured[1]["key"], captured
 
 
+def count_prefetch_observation(response, allow_native_failure=False):
+    if not response["ok"] and response["error"]["code"] == "no-accessibility-tree":
+        assert allow_native_failure, response
+        assert response["error"]["message"] == (
+            "failed to read an AT-SPI child: AT-SPI role reads failed"), response
+        return "native-role-read-failure"
+    assert_three_node_partial(response)
+    return "typed-three-node-partial"
+
+
 def canonical_snapshot(response):
     assert response["ok"], response
     captured = nodes(response)
@@ -186,12 +196,18 @@ def main():
             assert LATE in paths and GRANDCHILD in paths, paths
         elif args.expect == "count-prefetch":
             # Public fe9 reads the late sibling before descending into the first subtree.
-            assert LATE in paths, paths
+            late_calls = [call for call in own if call["path"] == LATE]
+            assert late_calls, own
             if ready["lateMode"] == "error":
                 assert not response["ok"] and response["error"]["code"] == "no-accessibility-tree", response
+                assert any(call["outcome"] == "org.a11y.atspi.Error.NotAvailable"
+                           for call in late_calls), late_calls
+                result["countPrefetchObservation"] = "native-late-sibling-failure"
             else:
-                assert_three_node_partial(response)
+                result["countPrefetchObservation"] = count_prefetch_observation(
+                    response, allow_native_failure=ready["lateMode"] == "slow")
                 if ready["lateMode"] == "slow":
+                    assert any(call["outcome"] == "return" for call in late_calls), late_calls
                     assert result["elapsedMs"] >= 600, result["elapsedMs"]
         else:
             assert_three_node_partial(response)
