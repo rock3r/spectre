@@ -1,160 +1,171 @@
 [CmdletBinding()]
 param(
-    [ValidateRange(12, 20)]
-    [int] $Iterations = 16,
-    [Parameter(Mandatory = $true)]
-    [string] $OutputDirectory,
-    [int] $IterationTimeoutSeconds = 180
+    [ValidateSet("FullCheck", "RepeatClass")]
+    [string] $Mode,
+    [ValidateRange(1, 3)] [int] $Iterations = 3,
+    [Parameter(Mandatory = $true)] [string] $OutputDirectory,
+    [ValidateRange(300, 2100)] [int] $CommandTimeoutSeconds = 1800
 )
 
 $ErrorActionPreference = "Stop"
-$testPattern = "*AccessibilityHelperClientTest*"
-$resultDirectory = Join-Path $PWD "cli/build/test-results/test"
+$className = "GradleLaunchMarkerIntegrationTest"
+$testPattern = "*$className"
+$resultDirectory = Join-Path $PWD "agent/build/test-results/test"
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 
-function Get-JavaProcesses {
-    @(Get-CimInstance Win32_Process | Where-Object {
-        $_.Name -in @("java.exe", "javaw.exe")
-    } | Select-Object ProcessId, ParentProcessId, CreationDate, Name, CommandLine)
+function Get-ProcessTable {
+    @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CreationDate, Name, CommandLine)
 }
-
-function Get-OwnedDescendants([int] $RootPid) {
-    $all = @(Get-CimInstance Win32_Process)
+function Get-Descendants([int] $RootPid) {
+    $all = @(Get-ProcessTable)
     $owned = [Collections.Generic.HashSet[int]]::new()
     [void] $owned.Add($RootPid)
     do {
         $changed = $false
-        foreach ($process in $all) {
-            if ($owned.Contains([int] $process.ParentProcessId) -and
-                $owned.Add([int] $process.ProcessId)) {
-                $changed = $true
-            }
+        foreach ($item in $all) {
+            if ($owned.Contains([int] $item.ParentProcessId) -and $owned.Add([int] $item.ProcessId)) { $changed = $true }
         }
     } while ($changed)
     @($all | Where-Object { $owned.Contains([int] $_.ProcessId) })
 }
-
-function Stop-OwnedProcessTree([int] $RootPid) {
-    # The watchdog may terminate only descendants of the Start-Process PID created below.
-    # Deepest/highest PIDs first is best effort; no global process cleanup is permitted.
-    $owned = @(Get-OwnedDescendants $RootPid | Sort-Object ProcessId -Descending)
-    foreach ($process in $owned) {
-        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+function Get-FixtureDirectories {
+    # JUnit @TempDir uses junit* roots. Restrict observation to this test's exact fixture names.
+    $fixtureNames = @("overlap-a", "overlap-b", "no-daemon", "no-daemon-no-perfdata")
+    foreach ($root in @(Get-ChildItem $env:TEMP -Directory -Filter "junit*" -ErrorAction SilentlyContinue)) {
+        foreach ($name in $fixtureNames) {
+            $fixture = Join-Path $root.FullName $name
+            if (Test-Path $fixture -PathType Container) { Get-Item $fixture }
+            $home = Join-Path $root.FullName "$name-home"
+            if (Test-Path $home -PathType Container) { Get-Item $home }
+        }
     }
-    $owned
 }
-
-$runs = @()
-for ($iteration = 1; $iteration -le $Iterations; $iteration++) {
-    $runDirectory = Join-Path $output ("iteration-{0:D2}" -f $iteration)
-    New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $resultDirectory
-
-    $stdout = Join-Path $runDirectory "gradle.stdout.txt"
-    $stderr = Join-Path $runDirectory "gradle.stderr.txt"
-    $arguments = @(
-        ":cli:test",
-        "--tests", $testPattern,
-        # Re-execute the test task itself without needlessly recompiling every dependency.
-        "--rerun",
-        "--no-build-cache",
-        "--no-daemon",
-        "--max-workers=4",
-        "--stacktrace"
-    )
-    $before = @(Get-JavaProcesses)
-    $started = Get-Date
-    $process = Start-Process -FilePath (Join-Path $PWD "gradlew.bat") `
-        -ArgumentList $arguments -RedirectStandardOutput $stdout -RedirectStandardError $stderr `
-        -PassThru -NoNewWindow
-    $remainingSamples = [Collections.Generic.List[object]]::new()
-    $timedOut = $false
-    while (-not $process.HasExited) {
-        $remainingMs = [Math]::Max(0, $IterationTimeoutSeconds * 1000 -
-            [int] ((Get-Date) - $started).TotalMilliseconds)
-        $remainingSamples.Add([ordered]@{
-            observedAt = (Get-Date).ToUniversalTime().ToString("o")
-            remainingMs = $remainingMs
-            rootPid = $process.Id
-            rootAlive = -not $process.HasExited
-            processes = @(Get-OwnedDescendants $process.Id | Select-Object `
-                ProcessId, ParentProcessId, CreationDate, Name, CommandLine)
-        })
-        if ($remainingMs -eq 0) {
-            $timedOut = $true
-            $terminated = @(Stop-OwnedProcessTree $process.Id)
-            break
+function Copy-FixtureEvidence([string] $Destination) {
+    New-Item -ItemType Directory -Force $Destination | Out-Null
+    $manifest = [Collections.Generic.List[object]]::new()
+    foreach ($fixture in @(Get-FixtureDirectories)) {
+        $rootName = Split-Path $fixture.Parent.FullName -Leaf
+        $copy = Join-Path $Destination "$rootName-$($fixture.Name)"
+        New-Item -ItemType Directory -Force $copy | Out-Null
+        foreach ($name in @("gradle.log", "stop.log", "warmup.log", "build.pid", "fixture.ready", "fixture.release")) {
+            $source = Join-Path $fixture.FullName $name
+            if (Test-Path $source -PathType Leaf) { Copy-Item $source (Join-Path $copy $name) -Force -ErrorAction SilentlyContinue }
         }
-        Start-Sleep -Milliseconds 500
-        $process.Refresh()
+        foreach ($file in @(Get-ChildItem $fixture.FullName -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 2000)) {
+            $manifest.Add([ordered]@{ path = $file.FullName; length = $file.Length; updated = $file.LastWriteTimeUtc })
+        }
     }
-    $process.WaitForExit()
-    $finished = Get-Date
-
-    $xmlFiles = @()
+    $manifest | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 (Join-Path $Destination "fixture-files.json")
+}
+function Copy-TestXml([string] $Destination) {
+    New-Item -ItemType Directory -Force $Destination | Out-Null
     if (Test-Path $resultDirectory) {
-        foreach ($xml in Get-ChildItem $resultDirectory -Filter "TEST-*.xml") {
-            $destination = Join-Path $runDirectory $xml.Name
-            Copy-Item $xml.FullName $destination
-            $xmlFiles += $destination
+        Get-ChildItem $resultDirectory -File -Filter "*$className*.xml" | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $Destination $_.Name) -Force
         }
     }
-    $messages = @()
-    $suppressed = @()
-    foreach ($xmlPath in $xmlFiles) {
-        [xml] $document = Get-Content -Raw $xmlPath
-        foreach ($case in @($document.testsuite.testcase)) {
-            foreach ($failure in @($case.failure) + @($case.error)) {
-                if ($null -ne $failure) {
-                    $messages += [string] $failure.message
-                    $body = [string] $failure.InnerText
-                    $suppressed += @($body -split "`r?`n" | Where-Object { $_ -match "Suppressed:" })
-                }
+}
+function Get-FixtureOwnedProcesses {
+    $pids = [Collections.Generic.HashSet[int]]::new()
+    foreach ($fixture in @(Get-FixtureDirectories)) {
+        foreach ($name in @("build.pid", "fixture.ready")) {
+            $path = Join-Path $fixture.FullName $name
+            if (Test-Path $path -PathType Leaf) {
+                $first = @(Get-Content $path -ErrorAction SilentlyContinue)[0]
+                $pidValue = 0
+                if ([int]::TryParse($first, [ref] $pidValue)) { [void] $pids.Add($pidValue) }
             }
         }
     }
+    $snapshot = @()
+    foreach ($pidValue in $pids) { $snapshot += @(Get-Descendants $pidValue) }
+    @($snapshot | Sort-Object ProcessId -Unique)
+}
+function Stop-OwnedProcessTree([int] $RootPid) {
+    @(Get-Descendants $RootPid | Sort-Object ProcessId -Descending) | ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+function Invoke-DiagnosticGradle([string] $Receipt, [string[]] $Tasks) {
+    New-Item -ItemType Directory -Force $Receipt | Out-Null
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $resultDirectory
+    $stdout = Join-Path $Receipt "gradle.stdout.txt"
+    $stderr = Join-Path $Receipt "gradle.stderr.txt"
+    $arguments = @($Tasks) + @("--init-script", (Join-Path $output "test-logging.init.gradle"))
+    $started = Get-Date
+    $process = Start-Process -FilePath (Join-Path $PWD "gradlew.bat") -ArgumentList $arguments `
+        -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -NoNewWindow
+    $samples = [Collections.Generic.List[object]]::new()
+    $timedOut = $false
+    while (-not $process.HasExited) {
+        Copy-FixtureEvidence (Join-Path $Receipt "fixtures-live")
+        $samples.Add([ordered]@{
+            observedAt = (Get-Date).ToUniversalTime().ToString("o")
+            gradle = @(Get-Descendants $process.Id)
+            fixtures = @(Get-FixtureOwnedProcesses)
+        })
+        if (((Get-Date) - $started).TotalSeconds -ge $CommandTimeoutSeconds) {
+            $timedOut = $true
+            Stop-OwnedProcessTree $process.Id
+            break
+        }
+        Start-Sleep -Seconds 5
+        $process.Refresh()
+    }
+    $process.WaitForExit()
+    Copy-FixtureEvidence (Join-Path $Receipt "fixtures-final")
+    Copy-TestXml (Join-Path $Receipt "junit")
     $exitCode = if ($timedOut) { 124 } else { $process.ExitCode }
+    if ($exitCode -ne 0) {
+        @(Get-FixtureOwnedProcesses) | ConvertTo-Json -Depth 6 |
+            Set-Content -Encoding utf8 (Join-Path $Receipt "failed-owned-fixture-processes.json")
+    }
+    $xml = @(Get-ChildItem (Join-Path $Receipt "junit") -Filter "TEST-*.xml" -ErrorAction SilentlyContinue)
+    $matchingXml = @($xml | Where-Object { (Get-Content -Raw $_.FullName) -match $className })
     $record = [ordered]@{
-        iteration = $iteration
         startedAt = $started.ToUniversalTime().ToString("o")
-        durationMs = [int] ($finished - $started).TotalMilliseconds
+        durationMs = [int] ((Get-Date) - $started).TotalMilliseconds
         exitCode = $exitCode
         timedOut = $timedOut
-        rootPid = $process.Id
-        rootAliveAfter = -not $process.HasExited
-        lastRemainingTimes = @($remainingSamples | Select-Object -Last 20)
-        processesBefore = $before
-        processesAfter = @(Get-JavaProcesses)
-        xmlFiles = @($xmlFiles | ForEach-Object { Split-Path -Leaf $_ })
-        missingXml = $xmlFiles.Count -eq 0
-        primaryErrorMessages = @($messages | Where-Object { $_ } | Select-Object -Unique)
-        suppressedCauses = @($suppressed | Select-Object -Unique)
+        junitFiles = @($xml.Name)
+        targetTestRan = $matchingXml.Count -gt 0
+        observations = @($samples | Select-Object -Last 30)
     }
-    $record | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 `
-        (Join-Path $runDirectory "diagnostics.json")
-    $runs += $record
+    $record | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $Receipt "receipt.json")
+    $record
 }
 
-$failed = @($runs | Where-Object {
-    $_.exitCode -ne 0 -or $_.missingXml -or $_.primaryErrorMessages.Count -gt 0
-})
-$distinct = @($failed.primaryErrorMessages | Where-Object { $_ } | Sort-Object -Unique)
-$summary = [ordered]@{
-    requestedRuns = $Iterations
-    completedRuns = $runs.Count
-    failedRuns = $failed.Count
-    distinctPrimaryErrorMessages = $distinct
-    runs = $runs
+# Logging-only init script retains full exceptions, suppressed causes, and test streams.
+@'
+allprojects {
+    tasks.withType(Test).configureEach {
+        testLogging {
+            events "failed", "standardOut", "standardError"
+            exceptionFormat "full"
+            showExceptions true
+            showCauses true
+            showStackTraces true
+            showStandardStreams true
+        }
+    }
 }
-$summary | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 (Join-Path $output "summary.json")
+'@ | Set-Content -Encoding utf8 (Join-Path $output "test-logging.init.gradle")
 
-Add-Content $env:GITHUB_STEP_SUMMARY "## AccessibilityHelperClientTest lane results"
-Add-Content $env:GITHUB_STEP_SUMMARY "- Fresh runs: $($runs.Count) / $Iterations"
-Add-Content $env:GITHUB_STEP_SUMMARY "- Failed runs: $($failed.Count)"
-Add-Content $env:GITHUB_STEP_SUMMARY "- Distinct primary errors: $($distinct.Count)"
-foreach ($message in $distinct) {
-    Add-Content $env:GITHUB_STEP_SUMMARY "  - ``$message``"
+$records = @()
+if ($Mode -eq "FullCheck") {
+    $records += Invoke-DiagnosticGradle (Join-Path $output "full-check") @("check")
+} else {
+    for ($iteration = 1; $iteration -le $Iterations; $iteration++) {
+        $receipt = Join-Path $output ("class-run-{0:D2}" -f $iteration)
+        $records += Invoke-DiagnosticGradle $receipt @(
+            ":agent:test", "--tests", $testPattern, "--rerun"
+        )
+    }
 }
-
-if ($runs.Count -ne $Iterations -or $failed.Count -gt 0) { exit 1 }
+$records | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $output "summary.json")
+$bad = @($records | Where-Object { $_.exitCode -ne 0 -or -not $_.targetTestRan })
+Add-Content $env:GITHUB_STEP_SUMMARY "## Gradle launch-marker diagnostics: $Mode"
+Add-Content $env:GITHUB_STEP_SUMMARY "- Completed commands: $($records.Count)"
+Add-Content $env:GITHUB_STEP_SUMMARY "- Failed or missing target XML: $($bad.Count)"
+if ($bad.Count -gt 0) { exit 1 }

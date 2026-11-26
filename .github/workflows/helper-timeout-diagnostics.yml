@@ -1,8 +1,6 @@
-name: QA helper timeout diagnostics
+name: QA Gradle launch marker diagnostics
 
-# Disposable QA workflow. It deliberately runs only on the named ephemeral branch and must
-# never be merged to main. Product code/tests are checked out from the immutable public parent;
-# the diagnostic script is copied aside first, so this workflow cannot alter what is tested.
+# Disposable hosted-Windows QA carrier. Never merge this workflow to a product branch.
 on:
   push:
     branches:
@@ -11,108 +9,122 @@ on:
 permissions:
   contents: read
 
+env:
+  PRODUCT_SHA: fd462c8dd790471a7da58865761ae540af66b3ac
+
 jobs:
-  helper-timeout-diagnostics:
-    name: Windows loaded lane ${{ matrix.lane }}
+  full-check:
+    name: Unfiltered Windows check
     runs-on: windows-latest
-    timeout-minutes: 35
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        lane: [1, 2]
-
+    timeout-minutes: 40
     steps:
-      - name: Check out QA harness only
+      - name: Check out QA carrier
         uses: actions/checkout@v6
-
-      - name: Preserve standalone harness outside checkout
+      - name: Preserve harness outside checkout
         shell: pwsh
-        run: |
-          Copy-Item .github/scripts/helper-timeout-diagnostics.ps1 `
-            "$env:RUNNER_TEMP/helper-timeout-diagnostics.ps1"
-
-      - name: Check out unmodified public parent
+        run: Copy-Item .github/scripts/helper-timeout-diagnostics.ps1 "$env:RUNNER_TEMP/diagnostics.ps1"
+      - name: Check out pinned unmodified product
         uses: actions/checkout@v6
         with:
-          ref: 6ba287814779aaaecd3501edc288bba7f3e31b1f
+          ref: fd462c8dd790471a7da58865761ae540af66b3ac
           clean: true
-
       - name: Prove pinned clean product source
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "6ba287814779aaaecd3501edc288bba7f3e31b1f"
+          test "$(git rev-parse HEAD)" = "$PRODUCT_SHA"
           git diff --exit-code
           test -z "$(git status --porcelain)"
-
       - name: Set up JDK 25
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "25"
-
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "8.0.x"
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
-
-      - name: Capture source and JVM identity
-        shell: pwsh
-        run: |
-          $evidence = "${{ runner.temp }}/evidence-lane-${{ matrix.lane }}"
-          New-Item -ItemType Directory -Force $evidence | Out-Null
-          git show HEAD:cli/src/test/kotlin/dev/sebastiano/spectre/cli/daemon/AccessibilityHelperClientTest.kt |
-            Set-Content "$evidence/AccessibilityHelperClientTest.kt"
-          java -version 2>&1 | Tee-Object "$evidence/java-version.txt"
-          ./gradlew.bat -version | Tee-Object "$evidence/gradle-version.txt"
-          ./gradlew.bat -q javaToolchains | Tee-Object "$evidence/java-toolchains.txt"
-
-      - name: Run comparable loaded full check
-        id: full_check
-        continue-on-error: true
-        shell: pwsh
-        run: ./gradlew.bat check --no-daemon --max-workers=4 --stacktrace
-
-      - name: Repeat fresh real-process helper test
-        id: repeated_test
+      - name: Run ordinary unfiltered check with read-only observer
+        id: diagnostic
         continue-on-error: true
         shell: pwsh
         run: |
-          & "$env:RUNNER_TEMP/helper-timeout-diagnostics.ps1" `
-            -Iterations 16 `
-            -OutputDirectory "${{ runner.temp }}/evidence-lane-${{ matrix.lane }}/repetitions"
-
-      - name: Prove diagnostics did not modify product source
+          & "$env:RUNNER_TEMP/diagnostics.ps1" -Mode FullCheck `
+            -OutputDirectory "$env:RUNNER_TEMP/launch-marker-full" -CommandTimeoutSeconds 2100
+      - name: Prove source remains pinned and clean
         if: always()
         shell: bash
         run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "6ba287814779aaaecd3501edc288bba7f3e31b1f"
+          test "$(git rev-parse HEAD)" = "$PRODUCT_SHA"
           git diff --exit-code
           test -z "$(git status --porcelain)"
-
-      - name: Upload exact diagnostics and JUnit XML
+      - name: Upload bounded full-check receipts
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: helper-timeout-diagnostics-lane-${{ matrix.lane }}
-          path: |
-            ${{ runner.temp }}/evidence-lane-${{ matrix.lane }}/
-            **/build/test-results/**/*.xml
+          name: gradle-launch-marker-full-check
+          path: ${{ runner.temp }}/launch-marker-full/
           if-no-files-found: error
-          retention-days: 14
-
-      - name: Preserve failures after artifact upload
+          retention-days: 7
+      - name: Preserve diagnostic result after upload
         if: always()
         shell: pwsh
+        run: if ("${{ steps.diagnostic.outcome }}" -ne "success") { throw "Full check failed or target XML was absent; inspect receipts" }
+
+  repeated-class:
+    name: Three complete launch-marker class runs
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out QA carrier
+        uses: actions/checkout@v6
+      - name: Preserve harness outside checkout
+        shell: pwsh
+        run: Copy-Item .github/scripts/helper-timeout-diagnostics.ps1 "$env:RUNNER_TEMP/diagnostics.ps1"
+      - name: Check out pinned unmodified product
+        uses: actions/checkout@v6
+        with:
+          ref: fd462c8dd790471a7da58865761ae540af66b3ac
+          clean: true
+      - name: Prove pinned clean product source
+        shell: bash
         run: |
-          if ("${{ steps.full_check.outcome }}" -ne "success") {
-            throw "Pinned full Gradle check failed; see uploaded XML and logs"
-          }
-          if ("${{ steps.repeated_test.outcome }}" -ne "success") {
-            throw "One or more fresh AccessibilityHelperClientTest runs failed; see diagnostics"
-          }
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PRODUCT_SHA"
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+      - name: Run three complete class repetitions
+        id: diagnostic
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP/diagnostics.ps1" -Mode RepeatClass -Iterations 3 `
+            -OutputDirectory "$env:RUNNER_TEMP/launch-marker-repeated" -CommandTimeoutSeconds 600
+      - name: Prove source remains pinned and clean
+        if: always()
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$PRODUCT_SHA"
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
+      - name: Upload bounded repetition receipts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: gradle-launch-marker-three-runs
+          path: ${{ runner.temp }}/launch-marker-repeated/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve diagnostic result after upload
+        if: always()
+        shell: pwsh
+        run: if ("${{ steps.diagnostic.outcome }}" -ne "success") { throw "A class run failed or target XML was absent; inspect receipts" }
