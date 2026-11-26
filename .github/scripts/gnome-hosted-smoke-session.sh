@@ -137,7 +137,7 @@ if [[ "$SMOKE_MODE" == portal || "$SMOKE_MODE" == capture || "$SMOKE_MODE" == ge
   timeout 15s gdbus wait --session --activate org.freedesktop.impl.portal.desktop.gnome
 fi
 
-if [[ "$SMOKE_MODE" == cli-recording-live ]]; then
+if [[ "$SMOKE_MODE" == cli-recording-live || "$SMOKE_MODE" == cli-recording-restart ]]; then
   export GDK_BACKEND=x11
   gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
     --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled '<true>'
@@ -157,6 +157,10 @@ if [[ "$SMOKE_MODE" == cli-recording-live ]]; then
   mkdir -m 0700 "$SPECTRE_WAYLAND_SESSION_DIR" "$SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"
   /usr/bin/python3 "$(dirname "$0")/gnome-cli-recording-live.py" \
     2> >(tee "$SMOKE_ARTIFACTS/cli-recording-live.stderr" >&2)
+  if [[ "$SMOKE_MODE" == cli-recording-restart ]]; then
+    /usr/bin/python3 "$(dirname "$0")/gnome-jammy-post-capture-restart.py" \
+      2> >(tee "$SMOKE_ARTIFACTS/post-restart-diagnostic.stderr" >&2)
+  fi
   exit 0
 fi
 
