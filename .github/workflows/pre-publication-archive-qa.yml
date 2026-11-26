@@ -116,7 +116,6 @@ jobs:
           ARTIFACT_ID: ${{ matrix.arch == 'x64' && needs.gate.outputs.x64_id || needs.gate.outputs.arm64_id }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/candidate"
           gh api "repos/rock3r/spectre/actions/artifacts/$ARTIFACT_ID/zip" > "$RUNNER_TEMP/artifact-$ARTIFACT_ID.zip"
           python3 - "$RUNNER_TEMP/artifact-$ARTIFACT_ID.zip" "$RUNNER_TEMP/candidate" <<'PY'
           import pathlib,sys
@@ -130,7 +129,7 @@ jobs:
           EXPECTED_SHA: ${{ matrix.arch == 'x64' && needs.gate.outputs.x64_sha || needs.gate.outputs.arm64_sha }}
         run: |
           set -euo pipefail
-          mkdir -p evidence/native "$RUNNER_TEMP/unpacked"
+          mkdir -p evidence/native
           trap 'status=$?; printf "%s\n" "$status" > evidence/inspection-status.txt; exit "$status"' EXIT
           mapfile -d '' archives < <(find "$RUNNER_TEMP/candidate" -type f -name '${{ matrix.basename }}' -print0)
           test "${#archives[@]}" -eq 1
