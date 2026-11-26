@@ -13,7 +13,11 @@ changes in that case. There is intentionally no manual-dispatch entry point.
 
 * GitHub release identity, peeled tag SHA, asset API SHA-256, and downloaded SHA-256 must agree.
 * Both Linux archives run only on the exactly matching `platform.machine()`. Extraction preserves
-  stored Unix modes and symlinks; the CLI must be a real executable file and print exactly
+  stored Unix modes and symlinks. Before launching anything, an always-written central-directory
+  diagnostic names the actual launcher, `libjvm.so`, `libjava.so`, and packaged recording helper,
+  including Unix modes, sizes, and ELF `e_machine` values (x64 62, arm64 183). Its status makes an
+  absent JVM distinct from a present wrong-ISA JVM. The CLI must be a real executable file, use its
+  matching bundled JVM despite a poisoned `JAVA_HOME`, and print exactly
   `spectre <version>`, and both its top-level and `record` help must succeed with nonempty output.
   JAR inspection reads only candidate helper headers before streaming the one
   matching ELF out. The historical 0.9 helper receives a finite genuine recording-protocol probe,
@@ -28,12 +32,14 @@ changes in that case. There is intentionally no manual-dispatch entry point.
   Google is never silently added and an unavailable Google-only Compose native dependency is not
   mislabeled as a missing Spectre coordinate.
 * Only when the control is `0.10.0`, on both native x64 and arm64 runners the **shipped**
-  `spectre a11y tree --pid` targets a separate,
-  visible GTK window inside a private D-Bus/AT-SPI/Xvfb session with accessibility enabled. The
-  fixture has unique window and button markers. Acceptance requires a real schema version 2
-  `os-accessibility` snapshot, authentic target PID and window `title`/`platformId`, and the unique
-  button's `role`, `name`, `key`, and valid `parentKey` graph. Each run uses its own private daemon
-  socket and stops the daemon in cleanup. The invalid historical `{pid:1}` shape probe is not used.
+  `spectre a11y tree --pid` is invoked in turn with the independently observed positive PIDs of two
+  simultaneously live GTK processes. Both use the same window title but have different button
+  markers, so each result must contain only the selected process's marker. Acceptance uses the
+  actual schema: version 2, string source `os-accessibility`, window `key`/`title`/`bounds`, and node
+  `key`/`parentKey`, canonical button role/name, and nullable-or-string `id`. No emitted target PID
+  or window `platformId` is invented. Commands, PIDs, readiness, retries, and both snapshots are
+  evidence. Each run uses its own private daemon socket and stops the daemon in cleanup. Family 0.9
+  intentionally has no accessibility claim.
 
 Uploads run even after failures but contain only compact identity, command/status/error text, and
 fixture JSON. Public archives, unpacked runtimes, temporary Maven repositories, and private bus

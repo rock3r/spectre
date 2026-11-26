@@ -120,33 +120,48 @@ jobs:
           from verify_native_archive import extract_zip_preserving_unix
           extract_zip_preserving_unix(sys.argv[1],pathlib.Path(sys.argv[2]))
           PY
-          spectre=$(find "$RUNNER_TEMP/cli" -type f -name spectre -perm -u+x -print -quit)
-          test -f "$spectre"
+          spectre=$(find "$RUNNER_TEMP/cli" -type f -path '*/bin/spectre' -perm -u+x -print -quit)
+          test -x "$spectre"
           cat > "$RUNNER_TEMP/fixture.py" <<'PY'
-          import gi,os,pathlib
+          import gi,os,pathlib,sys
           gi.require_version('Gtk','3.0'); from gi.repository import Gtk
           window=Gtk.Window(title='Spectre QA Window'); window.set_default_size(420,180)
-          window.add(Gtk.Button(label='Spectre QA Button')); window.connect('destroy',Gtk.main_quit)
-          window.show_all(); pathlib.Path(os.environ['FIXTURE_PID_FILE']).write_text(str(os.getpid())); Gtk.main()
+          window.add(Gtk.Button(label=sys.argv[1])); window.connect('destroy',Gtk.main_quit)
+          window.show_all(); pathlib.Path(sys.argv[2]).write_text(str(os.getpid())); Gtk.main()
           PY
-          export FIXTURE_PID_FILE="$RUNNER_TEMP/fixture.pid"
           export SPECTRE_DAEMON_SOCKET_DIR="$RUNNER_TEMP/sp-${{ matrix.arch }}"
           mkdir -m 700 "$SPECTRE_DAEMON_SOCKET_DIR"
           dbus-run-session -- xvfb-run -a bash -euo pipefail -c '
             export NO_AT_BRIDGE=0 GTK_MODULES=gail:atk-bridge
             gsettings set org.gnome.desktop.interface toolkit-accessibility true
-            /usr/bin/python3 "$1" & fixture=$!
+            /usr/bin/python3 "$1" "Spectre PID A Button" "$2/a.pid" & fixture_a=$!
+            /usr/bin/python3 "$1" "Spectre PID B Button" "$2/b.pid" & fixture_b=$!
             finish() {
               "$3" daemon stop >/dev/null 2>&1 || true
-              kill "$fixture" 2>/dev/null || true
-              wait "$fixture" 2>/dev/null || true
+              kill "$fixture_a" "$fixture_b" 2>/dev/null || true
+              wait "$fixture_a" "$fixture_b" 2>/dev/null || true
             }
             trap finish EXIT
-            for i in {1..100}; do test -s "$2" && break; sleep .1; done
-            pid=$(cat "$2"); test "$pid" = "$fixture"
-            "$3" a11y tree --pid "$pid" > "$4"
-            /usr/bin/python3 "$5" --snapshot "$4" --pid "$pid"
-          ' _ "$RUNNER_TEMP/fixture.py" "$FIXTURE_PID_FILE" "$spectre" "$PWD/evidence/accessibility-fixture.json" "$PWD/.github/post-publication-qa/verify_accessibility.py"
+            for i in {1..100}; do test -s "$2/a.pid" && test -s "$2/b.pid" && break; sleep .1; done
+            pid_a=$(cat "$2/a.pid"); pid_b=$(cat "$2/b.pid")
+            test "$pid_a" = "$fixture_a"; test "$pid_b" = "$fixture_b"; test "$pid_a" -gt 0; test "$pid_b" -gt 0
+            printf "fixture A pid=%s ready=true\nfixture B pid=%s ready=true\n" "$pid_a" "$pid_b" > "$4/readiness.txt"
+            cli=$3 evidence=$4 verifier=$5
+            probe() {
+              label=$1 pid=$2 wanted=$3 forbidden=$4 output="$evidence/snapshot-$1.json"
+              printf "+ %q a11y tree --pid %q > %q\n" "$cli" "$pid" "$output" >> "$evidence/commands.txt"
+              for i in {1..100}; do
+                if "$cli" a11y tree --pid "$pid" > "$output" 2>"$evidence/$label.stderr" &&
+                   /usr/bin/python3 "$verifier" --snapshot "$output" --pid "$pid" --title "Spectre QA Window" --button "$wanted" --forbid-button "$forbidden" > "$evidence/verified-$label.json"; then
+                  printf "%s pid=%s works=true attempts=%s\n" "$label" "$pid" "$i" >> "$evidence/readiness.txt"; return
+                fi
+                sleep .1
+              done
+              return 1
+            }
+            probe A "$pid_a" "Spectre PID A Button" "Spectre PID B Button"
+            probe B "$pid_b" "Spectre PID B Button" "Spectre PID A Button"
+          ' _ "$RUNNER_TEMP/fixture.py" "$RUNNER_TEMP" "$spectre" "$PWD/evidence" "$PWD/.github/post-publication-qa/verify_accessibility.py"
       - uses: actions/upload-artifact@v6
         if: always()
         with:

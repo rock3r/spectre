@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
 import argparse,json,pathlib
-p=argparse.ArgumentParser(); p.add_argument("--snapshot",required=True); p.add_argument("--pid",type=int,required=True); a=p.parse_args()
+
+p=argparse.ArgumentParser()
+p.add_argument("--snapshot",required=True)
+p.add_argument("--pid",type=int,required=True,help="positive PID independently observed when invoking the CLI")
+p.add_argument("--title",required=True); p.add_argument("--button",required=True); p.add_argument("--forbid-button",required=True)
+a=p.parse_args()
+if a.pid <= 0: raise SystemExit("invoked target PID must be positive")
 data=json.loads(pathlib.Path(a.snapshot).read_text())
-source=data.get("source")
-source_kind=source if isinstance(source,str) else source.get("kind") if isinstance(source,dict) else None
-if data.get("schemaVersion") != 2 or source_kind != "os-accessibility": raise SystemExit("wrong schemaVersion/source")
-windows=data.get("windows",[]); nodes=data.get("nodes",[])
-target=source.get("target") if isinstance(source,dict) else data.get("target")
-target_pid=target.get("pid") if isinstance(target,dict) else target
-if target_pid != a.pid: raise SystemExit(f"Linux helper target PID mismatch: {target_pid!r} != {a.pid}")
-matches=[x for x in windows if x.get("title")=="Spectre QA Window"]
-if len(matches)!=1 or "platformId" not in matches[0] or matches[0]["platformId"] is None: raise SystemExit("unique authentic fixture window title/platformId absent")
-buttons=[x for x in nodes if x.get("role")=="button" and x.get("name")=="Spectre QA Button"]
-if len(buttons)!=1: raise SystemExit("expected unique fixture role/button name")
-if any("id" in x or "parentId" in x for x in nodes): raise SystemExit("schema v2 must use key/parentKey, not id/parentId")
-keys={x.get("key") for x in nodes}
-if None in keys or len(keys)!=len(nodes): raise SystemExit("node keys must be present and unique")
-if any(x.get("parentKey") is not None and x.get("parentKey") not in keys for x in nodes): raise SystemExit("snapshot contains a dangling parentKey")
-if buttons[0].get("parentKey") not in keys: raise SystemExit("button has no valid parentKey")
+if data.get("schemaVersion") != 2 or data.get("source") != "os-accessibility": raise SystemExit("wrong schemaVersion/source")
+windows=data.get("windows"); nodes=data.get("nodes")
+if not isinstance(windows,list) or not isinstance(nodes,list): raise SystemExit("windows/nodes must be arrays")
+matches=[x for x in windows if x.get("title")==a.title]
+if len(matches)!=1 or not isinstance(matches[0].get("key"),str) or not matches[0]["key"]: raise SystemExit("unique expected window title/key absent")
+if not isinstance(matches[0].get("bounds"),dict): raise SystemExit("expected window bounds absent")
+if any(x.get("name")==a.forbid_button for x in nodes): raise SystemExit("opposite process marker leaked into snapshot")
+buttons=[x for x in nodes if x.get("role")=="button" and x.get("name")==a.button]
+if len(buttons)!=1: raise SystemExit("expected unique canonical button role/name")
+keys=[x.get("key") for x in nodes]
+if any(not isinstance(x,str) or not x for x in keys) or len(set(keys))!=len(keys): raise SystemExit("node keys must be present strings and unique")
+key_set=set(keys)
+if any("parentKey" not in x for x in nodes): raise SystemExit("every node must carry parentKey")
+if any(x["parentKey"] is not None and x["parentKey"] not in key_set for x in nodes): raise SystemExit("snapshot contains a dangling parentKey")
+button=buttons[0]
+if button["parentKey"] not in key_set: raise SystemExit("button has no valid parentKey")
+if "id" not in button: raise SystemExit("actual node id field absent")
+if button["id"] is not None and not isinstance(button["id"],str): raise SystemExit("node id must be null or a string")
+print(json.dumps({"invokedPid":a.pid,"windowKey":matches[0]["key"],"buttonKey":button["key"],"buttonParentKey":button["parentKey"],"buttonId":button["id"]}))
