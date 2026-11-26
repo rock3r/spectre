@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   release-smoke-xvfb:
-    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Diagnose Windows') && !startsWith(github.event.head_commit.message, 'Benchmark AT-SPI')
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Diagnose Windows') && !startsWith(github.event.head_commit.message, 'Benchmark AT-SPI') && !startsWith(github.event.head_commit.message, 'Verify AT-SPI')
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -379,7 +379,7 @@ jobs:
           retention-days: 7
 
   reader-throughput:
-    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && (startsWith(github.event.head_commit.message, 'Benchmark AT-SPI') || startsWith(github.event.head_commit.message, 'Diagnose Windows pipe') || startsWith(github.event.head_commit.message, 'Diagnose Windows isolated'))
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && (startsWith(github.event.head_commit.message, 'Benchmark AT-SPI') || startsWith(github.event.head_commit.message, 'Diagnose Windows pipe') || startsWith(github.event.head_commit.message, 'Diagnose Windows isolated') || startsWith(github.event.head_commit.message, 'Verify AT-SPI'))
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -412,7 +412,7 @@ jobs:
           git -C baseline apply --index "$GITHUB_WORKSPACE/baseline-control/.github/reader-overlays/716-b1-cached-owner.patch"
           test "$(git -C baseline write-tree)" = 93dcbb2ae2302e04ca0a3f316b1a90b669cef7fe
           git -C product apply --index "$GITHUB_WORKSPACE/control/.github/reader-overlays/716-b1-cached-owner.patch"
-          test "$(git -C product write-tree)" = 773be33dd27e34a7178341197bf714ce52a7bd02
+          test "$(git -C product write-tree)" = f27d8f9585dd129f48563a639a58d3fa33baed2b
           mkdir -p "$RUNNER_TEMP/atspi-results"
           git -C product write-tree > "$RUNNER_TEMP/atspi-results/product-tree.txt"
           printf '%s' "$LARGE_FIXTURE" | base64 -d | gzip -dc > "$RUNNER_TEMP/benchmark-fixture.diff"
