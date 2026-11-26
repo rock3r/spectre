@@ -74,4 +74,5 @@ systemd-run \
   --setenv="CANDIDATE_SHA=$CANDIDATE_SHA" \
   --setenv="ATSPI_REPO=$ATSPI_REPO" \
   --setenv="FIXTURE_CHECKOUT=$FIXTURE_CHECKOUT" \
+  --setenv="BASELINE_REPO=${BASELINE_REPO:-}" \
   "$SMOKE_SESSION_SCRIPT" --outside-dbus "$selected_jdk"

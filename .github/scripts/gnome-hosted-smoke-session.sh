@@ -130,11 +130,61 @@ gst-inspect-1.0 pipewiresrc >"$SMOKE_ARTIFACTS/gst-inspect-pipewiresrc.txt"
 # accessibility bus is enabled. Do this before either grant, and wait for both
 # the public broker and GNOME implementation rather than relying on activation
 # races hidden inside the test client.
-if [[ "$SMOKE_MODE" == portal || "$SMOKE_MODE" == capture || "$SMOKE_MODE" == geometry-calibration || "$SMOKE_MODE" == public-window-crop ]]; then
+if [[ "$SMOKE_MODE" == portal || "$SMOKE_MODE" == capture || "$SMOKE_MODE" == geometry-calibration || "$SMOKE_MODE" == public-window-crop || "$SMOKE_MODE" == locate-window-724 ]]; then
   gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
     --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled '<true>'
   timeout 15s gdbus wait --session --activate org.freedesktop.portal.Desktop
   timeout 15s gdbus wait --session --activate org.freedesktop.impl.portal.desktop.gnome
+fi
+
+if [[ "$SMOKE_MODE" == locate-window-724 ]]; then
+  : "${BASELINE_REPO:?}"
+  export GDK_BACKEND=x11
+  build_and_extract_helper() {
+    local checkout=$1 label=$2 destination jarfile
+    (cd "$checkout" && ./gradlew --no-daemon -PVERSION_NAME=0.10.0 :recording-linux:jar --console=plain) \
+      >"$SMOKE_ARTIFACTS/$label-jar-build.log" 2>&1
+    jarfile=$(find "$checkout/recording-linux/build/libs" -maxdepth 1 -type f -name '*.jar' \
+      ! -name '*-sources.jar' ! -name '*-javadoc.jar' -print -quit)
+    [[ -f "$jarfile" ]]
+    destination="$SMOKE_ARTIFACTS/$label-package"
+    mkdir "$destination"
+    (cd "$destination" && "$JAVA_HOME/bin/jar" xf "$jarfile")
+    local helper
+    helper=$(find "$destination/native/linux" -mindepth 2 -maxdepth 2 -type f \
+      -name spectre-wayland-helper -print -quit)
+    [[ -f "$helper" ]]
+    chmod 0755 "$helper"
+    sha256sum "$jarfile" "$checkout/recording/native/linux/src/main.rs" "$helper" \
+      >"$SMOKE_ARTIFACTS/$label-sha256.txt"
+    stat -c '%a %n' "$helper" >"$SMOKE_ARTIFACTS/$label-mode.txt"
+    printf '%s' "$helper"
+  }
+  BASELINE_HELPER=$(build_and_extract_helper "$BASELINE_REPO" baseline)
+  CORRECTED_HELPER=$(build_and_extract_helper "$SMOKE_REPO" corrected)
+  export BASELINE_HELPER CORRECTED_HELPER
+  /usr/bin/python3 "$(dirname "$0")/gnome-locate-window-724.py" \
+    2>&1 | tee "$SMOKE_ARTIFACTS/locate-window-724.log"
+
+  # Restoration is a hard precondition for the ordinary public flow below.
+  gnome-extensions list --enabled | grep -Fx "$extension_uuid"
+  timeout 10s gdbus wait --session dev.sebastiano.Spectre.WindowIdentity
+  cd "$SMOKE_REPO"
+  ./gradlew --no-daemon -PVERSION_NAME=0.10.0 :cli:shadowDistZip --console=plain \
+    2>&1 | tee "$SMOKE_ARTIFACTS/build-cli-release-zip.log"
+  cli_zip=$(find cli/build/distributions -maxdepth 1 -type f \
+    -name 'spectre-cli-*-linux-*.zip' -print -quit)
+  [[ -f "$cli_zip" ]]
+  export SPECTRE_CLI_ZIP="$SMOKE_REPO/$cli_zip"
+  export SPECTRE_CLI_HOME
+  SPECTRE_CLI_HOME=$(mktemp -d "$XDG_RUNTIME_DIR/spectre-724-packaged-cli-XXXXXX")/distribution
+  export SPECTRE_WAYLAND_SESSION_FOREGROUND=0
+  export SPECTRE_WAYLAND_SESSION_DIR="$XDG_RUNTIME_DIR/spectre-724-cli-session"
+  export SPECTRE_WAYLAND_RESTORE_TOKEN_DIR="$XDG_RUNTIME_DIR/spectre-724-cli-tokens"
+  mkdir -m 0700 "$SPECTRE_WAYLAND_SESSION_DIR" "$SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"
+  /usr/bin/python3 "$(dirname "$0")/gnome-cli-recording-live.py" \
+    2> >(tee "$SMOKE_ARTIFACTS/cli-recording-live.stderr" >&2)
+  exit 0
 fi
 
 if [[ "$SMOKE_MODE" == cli-recording-live || "$SMOKE_MODE" == cli-recording-restart || "$SMOKE_MODE" == cli-region-stills ]]; then

@@ -1,0 +1,86 @@
+name: QA 724 GNOME 46 locate_window
+
+on:
+  workflow_dispatch:
+    inputs:
+      corrected_patch_sha256:
+        description: SHA-256 of the replacement main.rs-only overlay (blank uses the checked-in overlay)
+        required: false
+  push:
+    branches: [release-0.10/gnome-hosted-smoke]
+
+permissions:
+  contents: read
+
+jobs:
+  gnome-46-installed-locate-window:
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && (github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'Verify locate_window'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Check out QA tooling
+        uses: actions/checkout@v6
+        with:
+          path: smoke-tooling
+          persist-credentials: false
+
+      - name: Check out immutable public baseline
+        uses: actions/checkout@v6
+        with:
+          ref: e963afeb01991600891e8fb7bed5d0df6d860dbf
+          path: baseline
+          persist-credentials: false
+
+      - name: Check out candidate base
+        uses: actions/checkout@v6
+        with:
+          ref: e963afeb01991600891e8fb7bed5d0df6d860dbf
+          path: candidate
+          persist-credentials: false
+
+      - name: Apply the exact replaceable Rust-only candidate
+        working-directory: candidate
+        env:
+          EXPECTED_OVERLAY_SHA256: ${{ inputs.corrected_patch_sha256 || '0f2bda4a719bcf7c4722cdd0350c65fb5d64047a3b57346d48590f757fd947df' }}
+        run: |
+          overlay="$GITHUB_WORKSPACE/smoke-tooling/.github/locate-window-overlays/724-main-only.patch"
+          printf '%s  %s\n' "$EXPECTED_OVERLAY_SHA256" "$overlay" | sha256sum -c -
+          git apply --index "$overlay"
+          test "$(git diff --cached --name-only)" = recording/native/linux/src/main.rs
+          git diff --cached --check
+          test "$(git write-tree)" = 1a727b978ba049f25a65d917ae64795921a34d9f
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          build-root-directory: candidate
+
+      - name: Run baseline, corrected negative, restored positive, and public crop
+        working-directory: smoke-tooling
+        env:
+          ATSPI_REPO: unused
+          FIXTURE_CHECKOUT: unused
+          SMOKE_MODE: locate-window-724
+          CANDIDATE_SHA: e963afeb01991600891e8fb7bed5d0df6d860dbf
+          BASELINE_REPO: ${{ github.workspace }}/baseline
+          SMOKE_REPO: ${{ github.workspace }}/candidate
+          SMOKE_ARTIFACTS: ${{ runner.temp }}/qa-724-locate-window
+          SMOKE_SESSION_SCRIPT: ${{ github.workspace }}/smoke-tooling/.github/scripts/gnome-hosted-smoke-session.sh
+        run: |
+          export SMOKE_USER="$(id -un)" RUST_BIN="$(dirname "$(command -v cargo)")"
+          sudo --preserve-env=ATSPI_REPO,FIXTURE_CHECKOUT,SMOKE_MODE,SMOKE_USER,RUST_BIN,CANDIDATE_SHA,BASELINE_REPO,JAVA_HOME,SMOKE_ARTIFACTS,SMOKE_REPO,SMOKE_SESSION_SCRIPT .github/scripts/gnome-hosted-smoke.sh
+
+      - name: Upload fail-closed QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-724-gnome46-locate-window-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qa-724-locate-window/
+          if-no-files-found: error
+          retention-days: 7

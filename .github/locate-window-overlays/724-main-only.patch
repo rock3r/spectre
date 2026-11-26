@@ -1,0 +1,34 @@
+diff --git a/recording/native/linux/src/main.rs b/recording/native/linux/src/main.rs
+index 6883d7e..f156ec4 100644
+--- a/recording/native/linux/src/main.rs
++++ b/recording/native/linux/src/main.rs
+@@ -57,10 +57,7 @@ fn main() -> Result<()> {
+         Ok(Command::Start(start)) => recorder::run(start, event_tx.clone()),
+         Ok(Command::Screenshot(screenshot)) => screenshot::run(screenshot, event_tx.clone()),
+         Ok(Command::LocateWindow { owner_pid, frame }) => {
+-            let xid = x11_window::find_window_by_frame(None, frame, Some(owner_pid))?.xid;
+-            let binding_token = mutter_window::locate_window(owner_pid, xid)?;
+-            let _ = event_tx.send(Event::WindowLocated { binding_token });
+-            Ok(())
++            locate_window(owner_pid, frame, &event_tx)
+         }
+         Ok(Command::Stop) => {
+             let _ = event_tx.send(Event::Error {
+@@ -109,6 +106,17 @@ fn main() -> Result<()> {
+     Ok(())
+ }
+ 
++fn locate_window(
++    owner_pid: u32,
++    frame: protocol::Region,
++    event_tx: &mpsc::Sender<Event>,
++) -> Result<()> {
++    let xid = x11_window::find_window_by_frame(None, frame, Some(owner_pid))?.xid;
++    let binding_token = mutter_window::locate_window(owner_pid, xid)?;
++    let _ = event_tx.send(Event::WindowLocated { binding_token });
++    Ok(())
++}
++
+ /// Drain [`Event`]s from `rx` and write each as one newline-terminated JSON line to stdout.
+ /// Stops on channel close (all senders dropped) or on the first stdout write error — typically
+ /// the JVM hanging up.
