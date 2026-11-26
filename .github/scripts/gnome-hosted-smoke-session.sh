@@ -118,8 +118,7 @@ if [[ "$SMOKE_MODE" == cli-recording-live ]]; then
   [[ -f "$cli_zip" ]] || { echo "shadowDistZip did not produce the Linux release ZIP" >&2; exit 1; }
   export SPECTRE_CLI_ZIP="$PWD/$cli_zip"
   export SPECTRE_CLI_HOME
-  SPECTRE_CLI_HOME="$(mktemp -d "$XDG_RUNTIME_DIR/spectre-packaged-cli-XXXXXX")"
-  trap 'rm -rf -- "$SPECTRE_CLI_HOME"' EXIT
+  SPECTRE_CLI_HOME="$(mktemp -d "$XDG_RUNTIME_DIR/spectre-packaged-cli-XXXXXX")/distribution"
   export SPECTRE_WAYLAND_SESSION_FOREGROUND=0
   export SPECTRE_WAYLAND_SESSION_DIR="$XDG_RUNTIME_DIR/spectre-cli-live-session"
   export SPECTRE_WAYLAND_RESTORE_TOKEN_DIR="$XDG_RUNTIME_DIR/spectre-cli-live-tokens"
