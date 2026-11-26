@@ -128,6 +128,37 @@ class DaemonHandshakeTest {
     }
 
     @Test
+    fun `client handshake uses only the response shape required by each operation`() {
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 15),
+            DaemonProtocol.clientHandshakeVersion(DaemonRequest.ListSessions),
+        )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 16),
+            DaemonProtocol.clientHandshakeVersion(DaemonRequest.StopRecording("session-1234")),
+        )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 17),
+            DaemonProtocol.clientHandshakeVersion(
+                DaemonRequest.AccessibilityTree(processId = 1234)
+            ),
+        )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 17),
+            DaemonProtocol.clientHandshakeVersion(
+                DaemonRequest.Capture(
+                    sessionId = "session-1234",
+                    source = DaemonCaptureSource.Accessibility,
+                )
+            ),
+        )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 1),
+            DaemonProtocol.clientHandshakeVersion(DaemonRequest.Shutdown),
+        )
+    }
+
+    @Test
     fun `a handshake below the byte-string floor marks an old client`() {
         // Screenshot pngBytes now go out as a CBOR byte string, which a 1.7-1.11 client decodes as
         // an integer array. Since minimumDaemonVersion floors screenshots at 1.12, anything lower
@@ -328,22 +359,6 @@ class DaemonSessionCommandProtocolTest {
         val decoded = responses.map(::roundTripResponse)
 
         assertEquals(responses, decoded)
-    }
-
-    @Test
-    fun `current client preserves historical handshake floors for supported operations`() {
-        assertEquals(
-            DaemonProtocolVersion(major = 1, minor = 15),
-            DaemonProtocol.clientHandshakeVersion(DaemonRequest.ListSessions),
-        )
-        assertEquals(
-            DaemonProtocolVersion(major = 1, minor = 15),
-            DaemonProtocol.clientHandshakeVersion(DaemonRequest.StopRecording("pid-1")),
-        )
-        assertEquals(
-            DaemonProtocolVersion(major = 1, minor = 17),
-            DaemonProtocol.clientHandshakeVersion(DaemonRequest.AccessibilityTree()),
-        )
     }
 
     private fun roundTripRequest(request: DaemonRequest): DaemonRequest {

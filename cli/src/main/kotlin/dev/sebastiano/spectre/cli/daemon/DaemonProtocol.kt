@@ -102,11 +102,16 @@ public object DaemonProtocol {
      * Negotiates connection-wide configuration and diagnostics for every operation but shutdown.
      */
     internal fun clientHandshakeVersion(request: DaemonRequest): DaemonProtocolVersion =
-        if (request is DaemonRequest.Shutdown) {
-            minimumDaemonVersion(request)
-        } else {
-            val operation = minimumDaemonVersion(request)
-            versionFor(maxOf(operation.minor, DIAGNOSTICS_INTRODUCED_MINOR))
+        when (request) {
+            DaemonRequest.Shutdown -> minimumDaemonVersion(request)
+            is DaemonRequest.StopRecording -> versionFor(RECORDING_RESULTS_INTRODUCED_MINOR)
+            else ->
+                versionFor(
+                    maxOf(
+                        minimumDaemonVersion(request).minor,
+                        DIAGNOSTICS_INTRODUCED_MINOR,
+                    )
+                )
         }
 
     /** Whether this negotiated client can decode operation-level diagnosed envelopes. */
@@ -182,7 +187,9 @@ public object DaemonProtocol {
     private const val FOCUS_WINDOW_INTRODUCED_MINOR: Int = 14
     /** Configuration negotiation and diagnosed operation envelopes (#673). */
     private const val DIAGNOSTICS_INTRODUCED_MINOR: Int = 15
-    /** Accessibility requests and capture source require explicit 1.17 support. */
+    /** Recording finalization results and shutdown recording summaries (#715). */
+    private const val RECORDING_RESULTS_INTRODUCED_MINOR: Int = 16
+    /** Native accessibility snapshots and accessibility-backed captures (#718). */
     private const val ACCESSIBILITY_INTRODUCED_MINOR: Int = 17
 }
 
@@ -218,9 +225,11 @@ public sealed interface DaemonRequest {
         public val clientVersion: DaemonProtocolVersion,
         public val configuration: Map<String, String?> = emptyMap(),
     ) : DaemonRequest {
+        /** Older clients only recognize the original singleton shutdown acknowledgement. */
         public var acceptsShutdownRecordings: Boolean = false
             internal set
 
+        /** Diagnosed envelopes are an additive response shape and require explicit opt-in. */
         public var acceptsDiagnosedResponses: Boolean = false
             internal set
     }
