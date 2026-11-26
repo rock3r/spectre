@@ -1,0 +1,533 @@
+name: QA M9 native release architecture
+
+# Disposable, credential-free verification of the five native 0.10.0 CLI archives. This is
+# deliberately branch-only: it neither publishes nor creates a release, tag, or ref.
+on:
+  push:
+    branches:
+      - qa/m9-native-release-architecture-verified
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  RELEASE_VERSION: 0.10.0
+  BASE_SHA: fd462c8dd790471a7da58865761ae540af66b3ac
+  HELPER_RUN_ID: "45824833697"
+  HELPER_RUN_SHA: aaf54d3f32a36fffb2c68a7dc8020d687826b787
+
+jobs:
+  source:
+    name: Resolve immutable product source
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Check out QA commit with history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Prove the QA commit contains only this workflow
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = qa/m9-native-release-architecture-verified
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          source_sha="$(git rev-parse "$GITHUB_SHA^")"
+          changed="$(git diff --name-only "$GITHUB_SHA^" "$GITHUB_SHA")"
+          test "$changed" = .github/workflows/qa-m9-native-archives.yml
+          git merge-base --is-ancestor "$BASE_SHA" "$source_sha"
+
+          # Reusing baseline helpers is safe only while their actual source subtrees are
+          # byte-identical to fd462c8d. No fallback or cross-built helper is accepted.
+          test "$(git rev-parse "$source_sha:recording/native/windows")" = \
+            "$(git rev-parse "$BASE_SHA:recording/native/windows")"
+          test "$(git rev-parse "$source_sha:recording/native/linux")" = \
+            "$(git rev-parse "$BASE_SHA:recording/native/linux")"
+          test "$(bash .github/scripts/derive-release-version.sh v0.10.0)" = 0.10.0
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "Exact product SOURCE_SHA: $source_sha" >> "$GITHUB_STEP_SUMMARY"
+
+  linux:
+    name: Package Linux (${{ matrix.cpu }})
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cpu: x86_64
+            runner: ubuntu-latest
+            task: packageLinuxX64
+            target: linuxX64
+            helper_artifact: linux-helper-x86_64
+            helper_id: "15119616947"
+            file_arch: x86-64
+          - cpu: aarch64
+            runner: ubuntu-26.04-arm
+            task: packageLinuxArm64
+            target: linuxArm64
+            helper_artifact: linux-helper-aarch64
+            helper_id: "15118882878"
+            file_arch: ARM aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out exact product commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+
+      - name: Record and assert source and native host
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ needs.source.outputs.sha }}"
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = "${{ matrix.cpu }}"
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Download both same-source native Wayland helpers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: linux-helper-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/prebuilt-linux
+          repository: ${{ github.repository }}
+          run-id: ${{ env.HELPER_RUN_ID }}
+          github-token: ${{ github.token }}
+
+      - name: Verify exact helper manifest and architectures
+        shell: bash
+        run: |
+          set -euo pipefail
+          x64="$RUNNER_TEMP/prebuilt-linux/x86_64/spectre-wayland-helper"
+          arm64="$RUNNER_TEMP/prebuilt-linux/aarch64/spectre-wayland-helper"
+          test -f "$x64" && test -f "$arm64"
+          test "$(find "$RUNNER_TEMP/prebuilt-linux" -type f | wc -l | tr -d ' ')" = 2
+          file -b "$x64" | tee "$RUNNER_TEMP/helper-x86_64.txt"
+          file -b "$arm64" | tee "$RUNNER_TEMP/helper-aarch64.txt"
+          grep -F 'x86-64' "$RUNNER_TEMP/helper-x86_64.txt"
+          grep -F 'ARM aarch64' "$RUNNER_TEMP/helper-aarch64.txt"
+          cat "$RUNNER_TEMP/helper-x86_64.txt" "$RUNNER_TEMP/helper-aarch64.txt" \
+            > "$RUNNER_TEMP/helper.txt"
+          sha256sum "$x64" "$arm64" | tee "$RUNNER_TEMP/helper-sha256.txt"
+          chmod 755 "$x64" "$arm64"
+
+      - name: Build native archive and run product native-layout gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew ":cli:${{ matrix.task }}" \
+            -PVERSION_NAME="$RELEASE_VERSION" \
+            -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/prebuilt-linux"
+
+      - name: Verify distributed launchers and write receipt
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          TARGET: ${{ matrix.target }}
+          CPU: ${{ matrix.cpu }}
+          HELPER_ARTIFACT: ${{ matrix.helper_artifact }}
+          HELPER_ID: ${{ matrix.helper_id }}
+        run: |
+          set -euo pipefail
+          archive="$GITHUB_WORKSPACE/cli/build/construo/distributions/$TARGET/spectre-$TARGET.zip"
+          evidence="$RUNNER_TEMP/evidence-$TARGET"
+          extract="$RUNNER_TEMP/extract-$TARGET"
+          mkdir -p "$evidence" "$extract"
+          cp "$archive" "$evidence/$(basename "$archive")"
+          unzip -q "$archive" -d "$extract"
+          root="$extract/spectre-cli-$RELEASE_VERSION"
+          launcher="$root/spectre"
+          java="$root/runtime/bin/java"
+          jspawnhelper="$root/runtime/lib/jspawnhelper"
+          test -x "$launcher"
+          test -f "$java" && test -f "$jspawnhelper"
+          "$launcher" --version | tee "$RUNNER_TEMP/version.txt"
+          test -x "$java" && test -x "$jspawnhelper"
+          "$launcher" --help | tee "$RUNNER_TEMP/help.txt"
+          "$java" -version 2>&1 | tee "$RUNNER_TEMP/java.txt"
+          grep -F "$RELEASE_VERSION" "$RUNNER_TEMP/version.txt"
+          grep -F 'Usage:' "$RUNNER_TEMP/help.txt"
+          file "$launcher" "$java" | tee "$RUNNER_TEMP/launcher-arch.txt"
+          grep -F '${{ matrix.file_arch }}' "$RUNNER_TEMP/launcher-arch.txt"
+          cli_jar="$root/cli-$RELEASE_VERSION-all.jar"
+          test -f "$cli_jar"
+          for resource in \
+            native/linux/x86_64/spectre-wayland-helper \
+            native/linux/aarch64/spectre-wayland-helper; do
+            test "$(/usr/bin/unzip -Z1 "$cli_jar" "$resource" | wc -l | tr -d ' ')" = 1
+            /usr/bin/unzip -p "$cli_jar" "$resource" > "$RUNNER_TEMP/$(basename "$(dirname "$resource")")-spectre-wayland-helper"
+          done
+          cmp "$RUNNER_TEMP/x86_64-spectre-wayland-helper" \
+            "$RUNNER_TEMP/prebuilt-linux/x86_64/spectre-wayland-helper"
+          cmp "$RUNNER_TEMP/aarch64-spectre-wayland-helper" \
+            "$RUNNER_TEMP/prebuilt-linux/aarch64/spectre-wayland-helper"
+          ARCHIVE="$evidence/$(basename "$archive")" RECEIPT="$evidence/receipt.json" \
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, platform
+          archive = pathlib.Path(os.environ["ARCHIVE"])
+          data = archive.read_bytes()
+          read = lambda name: pathlib.Path(os.environ["RUNNER_TEMP"], name).read_text()
+          receipt = {
+              "archive": archive.name, "archive_bytes": len(data),
+              "archive_sha256": hashlib.sha256(data).hexdigest(),
+              "product_sha": os.environ["SOURCE_SHA"], "version": "0.10.0",
+              "target": os.environ["TARGET"], "host_os": platform.system(),
+              "host_cpu": platform.machine(), "helper_run_id": 45824833697,
+              "helper_run_sha": os.environ["HELPER_RUN_SHA"],
+              "helper_artifacts": [
+                  {"name": "linux-helper-x86_64", "id": 15119616947},
+                  {"name": "linux-helper-aarch64", "id": 15118882878},
+              ],
+              "helper_sha256": read("helper-sha256.txt"),
+              "helper_metadata": read("helper.txt"),
+              "launcher_metadata": read("launcher-arch.txt"),
+              "cli_version": read("version.txt"), "cli_help": read("help.txt"),
+              "runtime_java": read("java.txt"), "signed": False,
+          }
+          pathlib.Path(os.environ["RECEIPT"]).write_text(json.dumps(receipt, indent=2) + "\n")
+          PY
+
+      - name: Upload original Linux archive and receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-native-${{ matrix.target }}
+          path: ${{ runner.temp }}/evidence-${{ matrix.target }}/
+          if-no-files-found: error
+          retention-days: 1
+
+  windows:
+    name: Package Windows x64
+    needs: source
+    runs-on: windows-2025
+    steps:
+      - name: Check out exact product commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+
+      - name: Record and assert source and native host
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((git rev-parse HEAD) -ne '${{ needs.source.outputs.sha }}') { throw 'source mismatch' }
+          if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'not x64' }
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Download same-source native Windows helpers
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-helper
+          path: ${{ runner.temp }}/prebuilt-windows
+          repository: ${{ github.repository }}
+          run-id: ${{ env.HELPER_RUN_ID }}
+          github-token: ${{ github.token }}
+
+      - name: Verify exact Windows helper manifest and build archive
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'prebuilt-windows'
+          $expected = @('x64/spectre-window-capture.exe', 'arm64/spectre-window-capture.exe')
+          foreach ($relative in $expected) {
+            if (-not (Test-Path (Join-Path $root $relative) -PathType Leaf)) {
+              throw "missing expected native/windows helper: $relative"
+            }
+          }
+          $directories = (Get-ChildItem $root -Directory | Select-Object -ExpandProperty Name | Sort-Object) -join ','
+          if ($directories -ne 'arm64,x64') {
+            throw 'unexpected Windows helper architecture directory'
+          }
+          $expected | ForEach-Object { Get-FileHash (Join-Path $root $_) -Algorithm SHA256 } |
+            Format-List | Out-File (Join-Path $env:RUNNER_TEMP 'helper.txt')
+          ./gradlew :cli:packageWindowsX64 "-PVERSION_NAME=$env:RELEASE_VERSION" "-PprebuiltWindowsHelpersDir=$root"
+
+      - name: Verify distributed launchers and write receipt
+        shell: pwsh
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $PWD 'cli/build/construo/distributions/windowsX64/spectre-windowsX64.zip'
+          $evidence = Join-Path $env:RUNNER_TEMP 'evidence-windowsX64'
+          $extract = Join-Path $env:RUNNER_TEMP 'extract-windowsX64'
+          New-Item -ItemType Directory -Force $evidence, $extract | Out-Null
+          Copy-Item $archive $evidence
+          Expand-Archive -LiteralPath $archive -DestinationPath $extract
+          $root = Join-Path $extract "spectre-cli-$env:RELEASE_VERSION"
+          $launcher = Join-Path $root 'spectre.exe'
+          $java = Join-Path $root 'runtime/bin/java.exe'
+          $version = & $launcher --version | Out-String
+          if ($LASTEXITCODE) { throw "--version failed: $LASTEXITCODE" }
+          $help = & $launcher --help | Out-String
+          if ($LASTEXITCODE) { throw "--help failed: $LASTEXITCODE" }
+          $runtime = & $java -version 2>&1 | Out-String
+          if ($LASTEXITCODE) { throw "runtime java -version failed: $LASTEXITCODE" }
+          $cliJar = Join-Path $root "cli-$env:RELEASE_VERSION-all.jar"
+          if (-not (Test-Path $cliJar -PathType Leaf)) { throw "missing application jar: $cliJar" }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $jar = [System.IO.Compression.ZipFile]::OpenRead($cliJar)
+          try {
+            foreach ($entryName in @(
+              'native/windows/x64/spectre-window-capture.exe',
+              'native/windows/arm64/spectre-window-capture.exe'
+            )) {
+              $matches = @($jar.Entries | Where-Object { $_.FullName -ceq $entryName })
+              if ($matches.Count -ne 1) {
+                throw "expected exactly one application JAR entry: $entryName"
+              }
+              $embedded = Join-Path $env:RUNNER_TEMP (($entryName -replace '/', '-') + '.embedded')
+              [System.IO.Compression.ZipFileExtensions]::ExtractToFile($matches[0], $embedded, $true)
+              $source = Join-Path (Join-Path $env:RUNNER_TEMP 'prebuilt-windows') `
+                ($entryName -replace '^native/windows/', '')
+              if ((Get-FileHash $embedded -Algorithm SHA256).Hash -ne
+                  (Get-FileHash $source -Algorithm SHA256).Hash) {
+                throw "embedded helper differs from downloaded helper: $entryName"
+              }
+            }
+          } finally {
+            $jar.Dispose()
+          }
+          if ($version -notmatch [regex]::Escape($env:RELEASE_VERSION)) { throw 'wrong version' }
+          if ($help -notmatch 'Usage:') { throw 'missing public CLI usage' }
+          $version | Tee-Object (Join-Path $env:RUNNER_TEMP 'version.txt')
+          $help | Tee-Object (Join-Path $env:RUNNER_TEMP 'help.txt')
+          $runtime | Tee-Object (Join-Path $env:RUNNER_TEMP 'java.txt')
+          $zip = Get-Item (Join-Path $evidence 'spectre-windowsX64.zip')
+          $receipt = [ordered]@{
+            archive = $zip.Name; archive_bytes = $zip.Length
+            archive_sha256 = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            product_sha = $env:SOURCE_SHA; version = $env:RELEASE_VERSION; target = 'windowsX64'
+            host_os = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+            host_cpu = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+            helper_run_id = 45824833697; helper_run_sha = $env:HELPER_RUN_SHA
+            helper_artifact = 'windows-helper'; helper_artifact_id = 15118814355
+            helper_metadata = Get-Content (Join-Path $env:RUNNER_TEMP 'helper.txt') -Raw
+            cli_version = $version; cli_help = $help; runtime_java = $runtime; signed = $false
+          }
+          $receipt | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $evidence 'receipt.json') -Encoding utf8
+
+      - name: Upload original Windows archive and receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-native-windowsX64
+          path: ${{ runner.temp }}/evidence-windowsX64/
+          if-no-files-found: error
+          retention-days: 1
+
+  macos-helper:
+    name: Build universal macOS ScreenCaptureKit helper
+    needs: source
+    runs-on: macos-latest
+    steps:
+      - name: Check out exact product commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+
+      - name: Record and assert source and native host
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ needs.source.outputs.sha }}"
+          test "$(uname -s)" = Darwin
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Build actual universal ScreenCaptureKit helper once
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :recording:assembleScreenCaptureKitHelperUniversal -PuniversalHelper
+          app="$GITHUB_WORKSPACE/recording/build/generated/screenCaptureHelper/native/macos/SpectreCaptureHelper.app"
+          binary="$app/Contents/MacOS/spectre-screencapture"
+          test -x "$binary"
+          lipo -archs "$binary" | tee "$RUNNER_TEMP/helper-archs.txt"
+          grep -qw x86_64 "$RUNNER_TEMP/helper-archs.txt"
+          grep -qw arm64 "$RUNNER_TEMP/helper-archs.txt"
+          tar -czf "$RUNNER_TEMP/SpectreCaptureHelper.app.tar.gz" \
+            -C "$(dirname "$app")" SpectreCaptureHelper.app
+          (cd "$RUNNER_TEMP" && shasum -a 256 SpectreCaptureHelper.app.tar.gz > SpectreCaptureHelper.app.tar.gz.sha256)
+
+      - name: Upload universal helper for both native macOS packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-macos-universal-helper
+          path: |
+            ${{ runner.temp }}/SpectreCaptureHelper.app.tar.gz
+            ${{ runner.temp }}/SpectreCaptureHelper.app.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  macos:
+    name: Package macOS (${{ matrix.cpu }})
+    needs: [source, macos-helper]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cpu: x86_64
+            runner: macos-15-intel
+            task: packageMacosX64
+            target: macosX64
+          - cpu: arm64
+            runner: macos-15
+            task: packageMacosArm64
+            target: macosArm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out exact product commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+
+      - name: Record and assert source and native host
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ needs.source.outputs.sha }}"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = "${{ matrix.cpu }}"
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Download and verify the same universal helper archive
+        uses: actions/download-artifact@v4
+        with:
+          name: qa-macos-universal-helper
+          path: ${{ runner.temp }}/mac-helper-artifact
+
+      - name: Verify helper SHA and extract mode-preserving app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/mac-helper-artifact"
+          shasum -a 256 -c SpectreCaptureHelper.app.tar.gz.sha256
+          mkdir -p "$RUNNER_TEMP/mac-helper"
+          tar -xzf SpectreCaptureHelper.app.tar.gz -C "$RUNNER_TEMP/mac-helper"
+          app="$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app"
+          binary="$app/Contents/MacOS/spectre-screencapture"
+          test -x "$binary"
+          lipo -archs "$binary" | tee "$RUNNER_TEMP/helper.txt"
+          grep -qw x86_64 "$RUNNER_TEMP/helper.txt"
+          grep -qw arm64 "$RUNNER_TEMP/helper.txt"
+          shasum -a 256 "$binary" > "$RUNNER_TEMP/downloaded-helper.sha256"
+
+      - name: Build native archive with the downloaded universal helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew ":cli:${{ matrix.task }}" \
+            -PVERSION_NAME="$RELEASE_VERSION" \
+            -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app"
+
+      - name: Verify distributed launchers, universal helper, and write receipt
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          TARGET: ${{ matrix.target }}
+          CPU: ${{ matrix.cpu }}
+        run: |
+          set -euo pipefail
+          archive="$GITHUB_WORKSPACE/cli/build/construo/distributions/$TARGET/spectre-$TARGET.zip"
+          evidence="$RUNNER_TEMP/evidence-$TARGET"
+          extract="$RUNNER_TEMP/extract-$TARGET"
+          mkdir -p "$evidence" "$extract"
+          cp "$archive" "$evidence/$(basename "$archive")"
+          ditto -x -k "$archive" "$extract"
+          app="$extract/spectre-cli-$RELEASE_VERSION/Spectre.app"
+          launcher="$app/Contents/MacOS/spectre"
+          payload="$app/Contents/MacOS"
+          if test -f "$payload/cli-$RELEASE_VERSION-all.jar" && \
+              test -f "$payload/runtime/bin/java"; then
+            :
+          elif test -f "$app/Contents/Resources/cli-$RELEASE_VERSION-all.jar" && \
+              test -f "$app/Contents/Resources/runtime/bin/java"; then
+            payload="$app/Contents/Resources"
+          else
+            echo "macOS CLI payload is incomplete in both Contents/MacOS and Contents/Resources" >&2
+            exit 1
+          fi
+          java="$payload/runtime/bin/java"
+          cli_jar="$payload/cli-$RELEASE_VERSION-all.jar"
+          helper="$RUNNER_TEMP/embedded-spectre-screencapture"
+          /usr/bin/unzip -p "$cli_jar" \
+            native/macos/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture \
+            > "$helper"
+          test -s "$helper"
+          cmp "$helper" \
+            "$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture"
+          chmod 755 "$launcher" "$java" "$helper"
+          find "$payload/runtime/bin" -type f -exec chmod 755 {} +
+          "$launcher" --version | tee "$RUNNER_TEMP/version.txt"
+          "$launcher" --help | tee "$RUNNER_TEMP/help.txt"
+          "$java" -version 2>&1 | tee "$RUNNER_TEMP/java.txt"
+          grep -F "$RELEASE_VERSION" "$RUNNER_TEMP/version.txt"
+          grep -F 'Usage:' "$RUNNER_TEMP/help.txt"
+          file "$launcher" "$java" "$helper" | tee "$RUNNER_TEMP/arch.txt"
+          lipo -archs "$helper" | tee -a "$RUNNER_TEMP/helper.txt"
+          grep -qw x86_64 "$RUNNER_TEMP/helper.txt"
+          grep -qw arm64 "$RUNNER_TEMP/helper.txt"
+          codesign -dvv "$helper" 2>&1 | tee -a "$RUNNER_TEMP/helper.txt" || true
+          ARCHIVE="$evidence/$(basename "$archive")" RECEIPT="$evidence/receipt.json" \
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, platform
+          archive = pathlib.Path(os.environ["ARCHIVE"])
+          data = archive.read_bytes()
+          read = lambda name: pathlib.Path(os.environ["RUNNER_TEMP"], name).read_text()
+          receipt = {
+              "archive": archive.name, "archive_bytes": len(data),
+              "archive_sha256": hashlib.sha256(data).hexdigest(),
+              "product_sha": os.environ["SOURCE_SHA"], "version": "0.10.0",
+              "target": os.environ["TARGET"], "host_os": platform.platform(),
+              "host_cpu": platform.machine(), "helper_source": "checked-in ScreenCaptureKit Swift source",
+              "helper_build_task": ":recording:assembleScreenCaptureKitHelperUniversal",
+              "helper_sha256": read("downloaded-helper.sha256"),
+              "helper_metadata": read("helper.txt"), "launcher_metadata": read("arch.txt"),
+              "cli_version": read("version.txt"), "cli_help": read("help.txt"),
+              "runtime_java": read("java.txt"), "signed": False,
+              "signature_note": "temporary QA-only archive; unsigned/ad-hoc and not notarized",
+          }
+          pathlib.Path(os.environ["RECEIPT"]).write_text(json.dumps(receipt, indent=2) + "\n")
+          PY
+
+      - name: Upload original macOS archive and receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-native-${{ matrix.target }}
+          path: ${{ runner.temp }}/evidence-${{ matrix.target }}/
+          if-no-files-found: error
+          retention-days: 1
