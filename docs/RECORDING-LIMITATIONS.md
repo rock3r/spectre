@@ -138,8 +138,9 @@ Parallel JVMs connect to its socket, sharing one Robot portal session.
   `SPECTRE_WAYLAND_HELPER`. It runs tests with heavy Robot use under `xvfb-run`, even on a
   seated Wayland display.
 - **Cursor**: the held RemoteDesktop session is opened with the cursor embedded in the
-  stream. `RecordingOptions.captureCursor = false` and screenshot `HIDDEN` requests do not
-  reopen a second session; monitor frames may include the pointer.
+  stream. A monitor recording that requests `RecordingOptions.captureCursor = false` fails
+  instead of silently returning frames with a cursor. Window streams bind the requested cursor
+  mode independently.
 - **Keys**: helper keyboard mapping covers US letters, digits, modifiers, arrows, Enter,
   Tab, Escape, Delete, Space, and common punctuation. Other AWT `VK_*` codes fail closed.
 - **Recovery**: if `$XDG_RUNTIME_DIR/spectre/wayland-session.sock` is stale after a helper
@@ -173,7 +174,9 @@ X11, macOS, and Windows keep their input and capture paths.
   helper. `AutoRecorder.startRegion(...)` fails if the artefact is absent. It also
   fails when `RecordingOptions.codec` or `screenIndex` requests an unsupported
   Windows region option. The deprecated `FfmpegRecorder` remains available for
-  explicit legacy use. Windows Graphics Capture delivers a frame only when the captured
+  explicit legacy use. A Windows build that cannot disable cursor capture fails a no-cursor
+  request instead of silently leaving the cursor enabled. The helper also fails if its first
+  frame does not arrive within 10 seconds. Windows Graphics Capture delivers a frame only when the captured
   content changes. The helper writes a constant-rate video: it repeats the latest frame
   in each `1 / frameRate` slot until a new frame arrives. So the video lasts as long as
   the recording, including idle time.
@@ -230,6 +233,15 @@ X11, macOS, and Windows keep their input and capture paths.
   The helper exists because dbus-java could not decode the Unix file descriptor.
   Rust can pass it to `gst-launch-1.0`; JVM `ProcessBuilder` does not expose the
   required `fcntl(F_SETFD, ...)` control. macOS also uses a separate capture helper.
+
+  Region stills taken by `LinuxNativeScreenshotter.captureRegion()` and the shared Wayland
+  session use that session's compositor-provided `Embedded` cursor stream. Consequently, these
+  ordinary APIs capture the cursor when the compositor supplies it; they do **not** promise a
+  cursor-free image. Their protocol command deliberately omits `cursor_mode`, meaning “use the
+  active session's cursor semantics.” An explicit `Embedded` request is accepted. Explicit
+  `Hidden` and `Metadata` requests fail rather than silently returning pixels with different
+  cursor semantics, because a cursor mode cannot be changed after the portal stream is opened.
+  X11 still capture continues to request a hidden cursor explicitly.
 
   **`WaylandPortalWindowRecorder` needs `xprop` on `PATH` and GTK/Mutter frame extents.**
   Mutter includes invisible shadows in window streams, often 25 px per side for
@@ -367,6 +379,8 @@ Popups and movement follow the monitor-region limits described above.
   Frames then begin reaching the output file. Missing binaries, unsupported codecs,
   permissions, or busy devices make `start(...)` throw.
 - Call `RecordingHandle.stop(...)` to flush and finalise the file.
+  A successful return guarantees that the output is a non-empty regular file. A helper-reported
+  zero size, a missing/empty file, or a helper that had to be killed makes `stop()` throw.
   Exiting the JVM without stop can leave a partial file and an orphaned process.
 
 ## JUnit failure-video policy (#206)

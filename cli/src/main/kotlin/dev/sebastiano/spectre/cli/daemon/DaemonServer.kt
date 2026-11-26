@@ -187,35 +187,13 @@ public constructor(
             client.use { channel ->
                 val input = Channels.newInputStream(channel)
                 val output = Channels.newOutputStream(channel)
-                var handshakeComplete = false
-                var handshakeVersion: DaemonProtocolVersion? = null
+                val handshake = ConnectionHandshake()
                 while (running.get()) {
                     val request = DaemonWireCodec.readRequest(input) ?: return
                     synchronized(activityLock) { lastActivityNanos = System.nanoTime() }
-                    val response =
-                        if (request is DaemonRequest.Hello) {
-                            handleRequest(request, handshakeComplete, handshakeVersion)
-                        } else {
-                            val (operationResponse, warnings) =
-                                RequestDiagnostics.capture(diagnosticSessionId(request)) {
-                                    try {
-                                        handleRequest(request, handshakeComplete, handshakeVersion)
-                                    } catch (exception: Exception) {
-                                        logConnectionFailure(exception)
-                                        DaemonResponse.Error(
-                                            DaemonErrorCode.OperationFailed,
-                                            "${exception.javaClass.simpleName}: " +
-                                                (exception.message ?: "daemon operation failed"),
-                                        )
-                                    }
-                                }
-                            diagnosedResponse(operationResponse, warnings, handshakeVersion)
-                        }
-                    if (request is DaemonRequest.Hello) {
-                        handshakeComplete = response is DaemonResponse.Hello
-                        handshakeVersion = request.clientVersion.takeIf { handshakeComplete }
-                    }
-                    val isShutdown = request is DaemonRequest.Shutdown && handshakeComplete
+                    val response = processRequest(request, handshake)
+                    handshake.record(request, response)
+                    val isShutdown = request is DaemonRequest.Shutdown && handshake.complete
                     if (isShutdown) {
                         // Mark before write: a disconnected client must not leave this process
                         // listening after Shutdown (registry is already closed by handleRequest).
@@ -236,6 +214,29 @@ public constructor(
             // dirs can be unlinked; always run when Shutdown was handled (write may have failed).
             if (shutdownAfterResponse) close()
         }
+    }
+
+    private fun processRequest(
+        request: DaemonRequest,
+        handshake: ConnectionHandshake,
+    ): DaemonResponse {
+        if (request is DaemonRequest.Hello) {
+            return handleRequest(request, handshake.complete, handshake.version)
+        }
+        val (operationResponse, warnings) =
+            RequestDiagnostics.capture(diagnosticSessionId(request)) {
+                try {
+                    handleRequest(request, handshake.complete, handshake.version)
+                } catch (exception: IOException) {
+                    logConnectionFailure(exception)
+                    operationFailure(exception)
+                } catch (exception: IllegalStateException) {
+                    logConnectionFailure(exception)
+                    operationFailure(exception)
+                }
+            }
+        val compatibleResponse = handshake.compatibleResponse(operationResponse)
+        return diagnosedResponse(compatibleResponse, warnings, handshake.acceptsDiagnosedResponses)
     }
 
     private fun handleRequest(
@@ -283,7 +284,7 @@ public constructor(
             else ->
                 if (
                     handshakeComplete &&
-                        (handshakeVersion?.minor ?: 0) < DaemonProtocol.CurrentVersion.minor
+                        handshakeVersion?.let(DaemonProtocol::supportsDiagnosedResponses) != true
                 ) {
                     DaemonResponse.Error(
                         code = DaemonErrorCode.ProtocolError,
@@ -297,11 +298,37 @@ public constructor(
                 }
         }
 
-    private fun protocolHandshakeRequired(): DaemonResponse.Error =
-        DaemonResponse.Error(
-            code = DaemonErrorCode.ProtocolError,
-            message = "send a compatible Hello request before session commands",
-        )
+    private class ConnectionHandshake {
+        var complete: Boolean = false
+            private set
+
+        var version: DaemonProtocolVersion? = null
+            private set
+
+        private var acceptsShutdownRecordings: Boolean = false
+        var acceptsDiagnosedResponses: Boolean = false
+            private set
+
+        fun record(request: DaemonRequest, response: DaemonResponse) {
+            if (request !is DaemonRequest.Hello) return
+            complete = response is DaemonResponse.Hello
+            version = request.clientVersion.takeIf { complete }
+            acceptsShutdownRecordings = complete && request.acceptsShutdownRecordings
+            acceptsDiagnosedResponses =
+                complete &&
+                    (request.acceptsDiagnosedResponses ||
+                        DaemonProtocol.supportsDiagnosedResponses(request.clientVersion))
+        }
+
+        fun compatibleResponse(response: DaemonResponse): DaemonResponse =
+            if (
+                response is DaemonResponse.ShuttingDownWithRecordings && !acceptsShutdownRecordings
+            ) {
+                DaemonResponse.ShuttingDown
+            } else {
+                response
+            }
+    }
 
     private fun logConnectionFailure(exception: Exception) {
         System.err.println(
@@ -447,6 +474,18 @@ public constructor(
     }
 }
 
+private fun protocolHandshakeRequired(): DaemonResponse.Error =
+    DaemonResponse.Error(
+        code = DaemonErrorCode.ProtocolError,
+        message = "send a compatible Hello request before session commands",
+    )
+
+private fun operationFailure(exception: Exception): DaemonResponse.Error =
+    DaemonResponse.Error(
+        DaemonErrorCode.OperationFailed,
+        "${exception.javaClass.simpleName}: " + (exception.message ?: "daemon operation failed"),
+    )
+
 private fun diagnosticSessionId(request: DaemonRequest): String? =
     (request as? DaemonRequest.SessionRequest)?.sessionId
 
@@ -454,11 +493,11 @@ private fun diagnosticSessionId(request: DaemonRequest): String? =
 internal fun diagnosedResponse(
     response: DaemonResponse,
     warnings: List<String>,
-    clientVersion: DaemonProtocolVersion?,
+    acceptsDiagnosedResponses: Boolean,
     maxFrameBytes: Int = FrameLimits.maxFrameBytes,
     encoder: (DaemonResponse) -> ByteArray = DaemonWireCodec::encodeResponse,
 ): DaemonResponse {
-    if (warnings.isEmpty() || (clientVersion?.minor ?: 0) < DaemonProtocol.CurrentVersion.minor) {
+    if (warnings.isEmpty() || !acceptsDiagnosedResponses) {
         return response
     }
 

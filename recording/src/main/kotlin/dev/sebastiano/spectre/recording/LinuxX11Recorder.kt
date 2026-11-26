@@ -52,6 +52,10 @@ internal constructor(
             helperExtractor = helperExtractor,
             sourceTypes = emptyList(),
             startCommandFactory = { region, output, options ->
+                require(options.screenIndex == RecordingOptions.DEFAULT_SCREEN_INDEX) {
+                    "LinuxX11Recorder cannot select an X11 screen by index; " +
+                        "screenIndex=${options.screenIndex} cannot be honored."
+                }
                 Command.Start(
                     backend = CaptureBackend.X11,
                     target = target,
