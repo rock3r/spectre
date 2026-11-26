@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       corrected_patch_sha256:
-        description: SHA-256 of the replacement main.rs-only overlay (blank uses the checked-in overlay)
+        description: SHA-256 of the replacement candidate overlay (blank uses the checked-in overlay)
         required: false
   push:
     branches: [release-0.10/gnome-hosted-smoke]
@@ -38,17 +38,18 @@ jobs:
           path: candidate
           persist-credentials: false
 
-      - name: Apply the exact replaceable Rust-only candidate
+      - name: Apply the exact corrected capture and installed helper candidate
         working-directory: candidate
         env:
-          EXPECTED_OVERLAY_SHA256: ${{ inputs.corrected_patch_sha256 || '0f2bda4a719bcf7c4722cdd0350c65fb5d64047a3b57346d48590f757fd947df' }}
+          EXPECTED_OVERLAY_SHA256: ${{ inputs.corrected_patch_sha256 || '6894422e48eca68d2522ddec5f7caae19c276499378f0bcb644cd16f03b3c87f' }}
         run: |
-          overlay="$GITHUB_WORKSPACE/smoke-tooling/.github/locate-window-overlays/724-main-only.patch"
+          overlay="$GITHUB_WORKSPACE/smoke-tooling/.github/locate-window-overlays/724-final-native-and-kotlin.patch"
           printf '%s  %s\n' "$EXPECTED_OVERLAY_SHA256" "$overlay" | sha256sum -c -
           git apply --index "$overlay"
-          test "$(git diff --cached --name-only)" = recording/native/linux/src/main.rs
           git diff --cached --check
-          test "$(git write-tree)" = 1a727b978ba049f25a65d917ae64795921a34d9f
+          test "$(git rev-parse :recording/native/linux/src/main.rs)" = f156ec43878915d1d736af59f1c5b8f357ad8d9a
+          git diff --cached --check
+          test "$(git write-tree)" = 2df173145f3e5645c94d8b0cff533a921e5608c4
 
       - name: Set up JDK 25
         uses: actions/setup-java@v5

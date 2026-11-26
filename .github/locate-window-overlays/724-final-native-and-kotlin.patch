@@ -1,0 +1,709 @@
+diff --git a/recording/native/linux/src/main.rs b/recording/native/linux/src/main.rs
+index 6883d7e461797a7e25898abb3167fbe3c0eaefad..f156ec43878915d1d736af59f1c5b8f357ad8d9a 100644
+--- a/recording/native/linux/src/main.rs
++++ b/recording/native/linux/src/main.rs
+@@ -35,102 +35,110 @@ use protocol::{Command, Event};
+ use std::env;
+ use std::io::BufRead;
+ use std::sync::mpsc;
+ use std::thread;
+ 
+ fn main() -> Result<()> {
+     if env::args().any(|a| a == "--session") {
+         return session::serve();
+     }
+ 
+     // Set up the writer thread FIRST so any error — including a malformed Start command on
+     // stdin — surfaces as an Event::Error to the JVM instead of an unceremonious exit code
+     // the JVM has to guess at. The protocol's contract is "events over stdout, terminal
+     // event signals end-of-recording"; we honour it even for early-protocol errors.
+     let (event_tx, event_rx) = mpsc::channel::<Event>();
+     let writer_handle = thread::Builder::new()
+         .name("event-writer".into())
+         .spawn(move || writer_loop(event_rx))?;
+ 
+     // Read the Start command. If parsing fails (EOF, malformed JSON, Stop-without-Start),
+     // emit a Protocol error event and exit cleanly via the writer thread.
+     let outcome: Result<()> = match read_first_command() {
+         Ok(Command::Start(start)) => recorder::run(start, event_tx.clone()),
+         Ok(Command::Screenshot(screenshot)) => screenshot::run(screenshot, event_tx.clone()),
+         Ok(Command::LocateWindow { owner_pid, frame }) => {
+-            let xid = x11_window::find_window_by_frame(None, frame, Some(owner_pid))?.xid;
+-            let binding_token = mutter_window::locate_window(owner_pid, xid)?;
+-            let _ = event_tx.send(Event::WindowLocated { binding_token });
+-            Ok(())
++            locate_window(owner_pid, frame, &event_tx)
+         }
+         Ok(Command::Stop) => {
+             let _ = event_tx.send(Event::Error {
+                 kind: "Protocol".into(),
+                 message: "received Stop on stdin before any capture command".into(),
+             });
+             Ok(())
+         }
+         Ok(Command::PointerMove { .. })
+         | Ok(Command::PointerButton { .. })
+         | Ok(Command::Key { .. })
+         | Ok(Command::PointerAxis { .. })
+         | Ok(Command::BindFocusedWindow { .. })
+         | Ok(Command::BindWindow { .. })
+         | Ok(Command::WindowScreenshot { .. })
+         | Ok(Command::StartWindowRecording(_))
+         | Ok(Command::UnbindWindow { .. })
+         | Ok(Command::ActivateWindow { .. }) => {
+             let _ = event_tx.send(Event::Error {
+                 kind: "Protocol".into(),
+                 message:
+                     "input and window-stream commands require spectre-wayland-helper --session"
+                         .into(),
+             });
+             Ok(())
+         }
+         Err(e) => {
+             let _ = event_tx.send(Event::Error {
+                 kind: "Protocol".into(),
+                 message: format!("{e:#}"),
+             });
+             Ok(()) // Error already reported via the event channel — don't double-report.
+         }
+     };
+ 
+     // recorder::run can fail without having reported the error itself (e.g. portal
+     // handshake exception bubbles up). Cover that case too.
+     if let Err(e) = outcome {
+         let _ = event_tx.send(Event::Error {
+             kind: "Helper".into(),
+             message: format!("{e:#}"),
+         });
+     }
+     drop(event_tx); // close the channel so the writer thread exits
+     let _ = writer_handle.join();
+     Ok(())
+ }
+ 
++fn locate_window(
++    owner_pid: u32,
++    frame: protocol::Region,
++    event_tx: &mpsc::Sender<Event>,
++) -> Result<()> {
++    let xid = x11_window::find_window_by_frame(None, frame, Some(owner_pid))?.xid;
++    let binding_token = mutter_window::locate_window(owner_pid, xid)?;
++    let _ = event_tx.send(Event::WindowLocated { binding_token });
++    Ok(())
++}
++
+ /// Drain [`Event`]s from `rx` and write each as one newline-terminated JSON line to stdout.
+ /// Stops on channel close (all senders dropped) or on the first stdout write error — typically
+ /// the JVM hanging up.
+ fn writer_loop(rx: mpsc::Receiver<Event>) {
+     use std::io::Write;
+     let stdout = std::io::stdout();
+     let mut stdout = stdout.lock();
+     while let Ok(event) = rx.recv() {
+         let line = match serde_json::to_string(&event) {
+             Ok(s) => s,
+             Err(e) => {
+                 eprintln!("[helper] failed to serialise event {event:?}: {e}");
+                 continue;
+             }
+         };
+         if let Err(e) = stdout.write_all(line.as_bytes()) {
+             eprintln!("[helper] stdout write failed: {e}");
+             break;
+         }
+         if let Err(e) = stdout.write_all(b"\n") {
+             eprintln!("[helper] stdout newline write failed: {e}");
+             break;
+         }
+         if let Err(e) = stdout.flush() {
+             eprintln!("[helper] stdout flush failed: {e}");
+diff --git a/recording/native/linux/tests/locate_window_failure.rs b/recording/native/linux/tests/locate_window_failure.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..d23f24e0e86961bf16e761991c55a730fbdf9de2
+--- /dev/null
++++ b/recording/native/linux/tests/locate_window_failure.rs
+@@ -0,0 +1,48 @@
++use serde_json::Value;
++use std::io::Write;
++use std::process::{Command, Stdio};
++
++#[test]
++fn stale_pid_emits_one_actionable_terminal_error() {
++    let mut child = Command::new(env!("CARGO_BIN_EXE_spectre-wayland-helper"))
++        .env_remove("DISPLAY")
++        .stdin(Stdio::piped())
++        .stdout(Stdio::piped())
++        .stderr(Stdio::piped())
++        .spawn()
++        .expect("start helper");
++    child
++        .stdin
++        .take()
++        .expect("helper stdin")
++        .write_all(
++            concat!(
++                r#"{"command":"locate_window","owner_pid":4294967295,"#,
++                r#""frame":{"x":1,"y":2,"width":3,"height":4}}"#,
++                "\n",
++            )
++            .as_bytes(),
++        )
++        .expect("send locate_window");
++
++    let output = child.wait_with_output().expect("wait for helper");
++    assert!(
++        output.status.success(),
++        "helper must report typed failures: {output:?}"
++    );
++    let lines: Vec<_> = String::from_utf8(output.stdout)
++        .expect("UTF-8 stdout")
++        .lines()
++        .map(|line| serde_json::from_str::<Value>(line).expect("JSON event"))
++        .collect();
++
++    assert_eq!(1, lines.len(), "exactly one terminal event: {lines:?}");
++    assert_eq!(Some("error"), lines[0]["event"].as_str());
++    assert_eq!(Some("Helper"), lines[0]["kind"].as_str());
++    let message = lines[0]["message"].as_str().expect("error message");
++    assert!(!message.is_empty(), "original cause must not be lost");
++    assert!(
++        message.contains("DISPLAY") || message.contains("X11") || message.contains("display"),
++        "original X11 cause must remain actionable: {message}"
++    );
++}
+diff --git a/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClient.kt b/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClient.kt
+index 7e91ad6836141edb15d7ff5124dbc99c61a20d51..04e060d5f14333fa17107a8ae68ff4a862ba5683 100644
+--- a/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClient.kt
++++ b/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClient.kt
+@@ -15,54 +15,61 @@ import java.nio.file.Path
+ import java.util.concurrent.TimeUnit
+ import javax.imageio.ImageIO
+ import kotlin.io.path.deleteIfExists
+ import kotlinx.serialization.json.Json
+ 
+ private fun locateWindow(
+     identity: MutterWindowIdentity,
+     process: Process,
+     json: Json,
+     timeoutSeconds: Long,
+     destroyTimeoutMs: Long,
+ ): String {
+     var restoreInterrupt = false
+     try {
+         process.outputWriter(StandardCharsets.UTF_8).use { writer ->
+             writer.appendLine(
+                 json.encodeToString(
+                     Command.serializer(),
+                     Command.LocateWindow(identity.ownerPid, identity.frame),
+                 )
+             )
+         }
+         check(process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+             "window identity helper timed out"
+         }
+-        val line = process.inputReader(StandardCharsets.UTF_8).use { it.readLine() }
+-        check(process.exitValue() == 0 && line != null) { "window identity helper failed" }
++        val line =
++            checkNotNull(process.inputReader(StandardCharsets.UTF_8).use { it.readLine() }) {
++                "window identity helper failed (exit ${process.exitValue()})"
++            }
+         return when (val event = json.decodeFromString(Event.serializer(), line)) {
+-            is Event.WindowLocated -> event.bindingToken
++            is Event.WindowLocated -> {
++                check(process.exitValue() == 0) {
++                    "window identity helper failed (exit ${process.exitValue()})"
++                }
++                event.bindingToken
++            }
+             is Event.Error -> throw WaylandHelperErrorException(event.kind, event.message)
+             else -> error("unexpected reply to locate_window: $event")
+         }
+     } catch (error: InterruptedException) {
+         restoreInterrupt = true
+         throw error
+     } finally {
+         closeAndReapIdentityProcess(process, destroyTimeoutMs, restoreInterrupt)
+     }
+ }
+ 
+ private fun closeAndReapIdentityProcess(
+     process: Process,
+     destroyTimeoutMs: Long,
+     restoreInterrupt: Boolean,
+ ) {
+     var interrupted = Thread.interrupted() || restoreInterrupt
+     runCatching { process.outputStream.close() }
+     runCatching { process.inputStream.close() }
+     runCatching { process.errorStream.close() }
+     if (process.isAlive) process.destroy()
+     try {
+         if (!process.waitFor(destroyTimeoutMs, TimeUnit.MILLISECONDS)) {
+             process.destroyForcibly()
+             process.waitFor(destroyTimeoutMs, TimeUnit.MILLISECONDS)
+diff --git a/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreams.kt b/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreams.kt
+index 741db6764122575eab9e2a3f9cfa8e20bf0d6efc..69d7a7b21de193aadfcd5d52af4981da1e023cd7 100644
+--- a/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreams.kt
++++ b/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreams.kt
+@@ -173,74 +173,96 @@ internal interface WaylandWindowStreamSession {
+ 
+     fun bindWindow(
+         key: String,
+         identity: MutterWindowIdentity,
+         cursorMode: CursorMode,
+     ): Pair<Event.WindowBound, BufferedImage>
+ 
+     fun screenshot(key: String): BufferedImage
+ 
+     fun unbind(key: String)
+ 
+     fun startRecording(command: Command.StartWindowRecording, output: Path): RecordingHandle
+ }
+ 
+ internal data class MutterWindowIdentity(
+     val ownerPid: Long,
+     /** X11 client-area geometry used only to resolve the verified XID. */
+     val frame: Region,
+     /** Public AWT Window geometry: includes decorations when the Window does. */
+     val windowSize: Dimension = Dimension(frame.width, frame.height),
+ )
+ 
+ /** Binds by the target's PID and X11 client frame; it never reads or changes keyboard focus. */
+ internal class IdentityWindowStreamBinder<W : Any>(
+     private val session: WaylandWindowStreamSession,
++    private val paintWaitMs: Long = DEFAULT_PAINT_WAIT_MS,
++    private val sleep: (Long) -> Unit = Thread::sleep,
++    private val nanoTime: () -> Long = System::nanoTime,
+     private val identityOf: (W) -> MutterWindowIdentity,
+ ) : WaylandWindowStreamBinder<W> {
+     override fun bind(window: W, key: String, cursor: CursorMode): BoundWindowStream {
+         val expected = identityOf(window)
+-        val (event, frame) = session.bindWindow(key, expected, cursor)
+-        val content =
+-            opaqueContentBounds(frame)
+-                ?: throw WaylandCaptureUnavailableException(
+-                    "Mutter bound window identity ${expected.ownerPid}/${expected.frame}, but " +
+-                        "its first frame was transparent."
+-                )
+-        val awtSize = expected.windowSize
+-        val scale =
+-            matchingScale(content, awtSize, streamScale(frame, event))
+-                ?: throw WaylandCaptureUnavailableException(
+-                    "Mutter returned a stream whose ${content.width}x${content.height} content does not match " +
+-                        "the requested identity ${expected.ownerPid}/${expected.frame}."
+-                )
+-        return BoundWindowStream(
+-            key,
+-            Point(content.x, content.y),
+-            scale,
+-            Dimension(frame.width, frame.height),
+-        )
++        val (event, firstFrame) = session.bindWindow(key, expected, cursor)
++        var succeeded = false
++        try {
++            val deadline = nanoTime() + TimeUnit.MILLISECONDS.toNanos(paintWaitMs)
++            var frame = firstFrame
++            while (true) {
++                val content = opaqueContentBounds(frame)
++                val scale = content?.let {
++                    matchingScale(it, expected.windowSize, streamScale(frame, event))
++                }
++                if (content != null && scale != null) {
++                    succeeded = true
++                    return BoundWindowStream(
++                        key,
++                        Point(content.x, content.y),
++                        scale,
++                        Dimension(frame.width, frame.height),
++                    )
++                }
++                if (nanoTime() >= deadline) {
++                    val recorded =
++                        content?.let { "${it.width}x${it.height} content" } ?: "transparent frames"
++                    throw WaylandCaptureUnavailableException(
++                        "Mutter bound window identity ${expected.ownerPid}/${expected.frame}, but " +
++                            "$recorded did not match its ${expected.windowSize.width}x" +
++                            "${expected.windowSize.height} AWT size."
++                    )
++                }
++                sleep(PAINT_POLL_MS)
++                frame = session.screenshot(key)
++            }
++        } finally {
++            if (!succeeded) runCatching { session.unbind(key) }
++        }
++    }
++
++    private companion object {
++        const val DEFAULT_PAINT_WAIT_MS: Long = 1_000
++        const val PAINT_POLL_MS: Long = 50
+     }
+ }
+ 
+ /**
+  * Binds the window that has keyboard focus. When [window] does not have it, [focus] gives it focus
+  * briefly and gives it back afterwards. The window must show at [window]'s size in the stream;
+  * otherwise another window had focus, and the binding is dropped instead of capturing it. Mutter
+  * can hand over frames before the window is drawn into its stream, so the binder polls frames for
+  * up to [paintWaitMs] before it decides.
+  */
+ internal class FocusWindowStreamBinder<W : Any>(
+     private val session: WaylandWindowStreamSession,
+     private val focus: WindowFocus<W>,
+     private val paintWaitMs: Long = DEFAULT_PAINT_WAIT_MS,
+     private val sleep: (Long) -> Unit = Thread::sleep,
+ ) : WaylandWindowStreamBinder<W> {
+     override fun bind(window: W, key: String, cursor: CursorMode): BoundWindowStream {
+         focus.unbindableReason(window)?.let { throw WaylandWindowCaptureUnsupportedException(it) }
+         val expected = focus.size(window)
+         val handoff = focus.focus(window)
+         try {
+             if (!handoff.confirmed) {
+                 // Mutter records the focused window; matching sizes cannot prove it is this one.
+                 throw WaylandCaptureUnavailableException(
+                     "Spectre could not bind a GNOME Mutter window stream to the window " +
+diff --git a/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClientTest.kt b/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClientTest.kt
+index 07842784875ad99d9d6723cb68dd52fcaa2a315b..453079d27eb45f616b19467797e2e55c508b3af9 100644
+--- a/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClientTest.kt
++++ b/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClientTest.kt
+@@ -23,50 +23,81 @@ class WaylandSessionClientTest {
+         val process = IdentityProcess(interruptWait = false)
+         val client = identityClient(process)
+ 
+         val failure = assertFailsWith<IllegalStateException> { client.locateWindow(IDENTITY) }
+ 
+         assertTrue(failure.message.orEmpty().contains("timed out"))
+         assertTrue(process.destroyed)
+         assertTrue(process.forciblyDestroyed)
+         assertFalse(process.isAlive)
+         assertTrue(process.allStreamsClosed)
+     }
+ 
+     @Test
+     fun `interrupted identity wait preserves interruption while reaping the helper`() {
+         val process = IdentityProcess(interruptWait = true)
+         val client = identityClient(process)
+ 
+         assertFailsWith<InterruptedException> { client.locateWindow(IDENTITY) }
+ 
+         assertTrue(Thread.interrupted(), "the caller's interrupted status must be restored")
+         assertTrue(process.forciblyDestroyed)
+         assertFalse(process.isAlive)
+         assertTrue(process.allStreamsClosed)
+     }
+ 
++    @Test
++    fun `identity helper cannot return a successful token with a nonzero exit`() {
++        val client =
++            identityClient(
++                EventProcess(
++                    """{"event":"window_located","binding_token":"stale-token"}""",
++                    exitCode = 17,
++                )
++            )
++
++        val error = assertFailsWith<IllegalStateException> { client.locateWindow(IDENTITY) }
++
++        assertTrue(error.message.orEmpty().contains("exit 17"), error.message)
++    }
++
++    @Test
++    fun `identity helper error event preserves actionable detail despite a nonzero exit`() {
++        val client =
++            identityClient(
++                EventProcess(
++                    """{"event":"error","kind":"Helper","message":"no matching XID for stale PID"}""",
++                    exitCode = 19,
++                )
++            )
++
++        val error = assertFailsWith<WaylandHelperErrorException> { client.locateWindow(IDENTITY) }
++
++        assertEquals("Helper", error.kind)
++        assertTrue(error.message.orEmpty().contains("no matching XID for stale PID"), error.message)
++    }
++
+     @Test
+     fun `a consent timeout or denial is not prompted again in the same client`() {
+         val factory = RecordingProcessFactory(exitCode = WAYLAND_SESSION_CONSENT_EXIT)
+         val client = client(factory, sessionDirEnv())
+ 
+         val first = assertFailsWith<WaylandConsentNotGrantedException> { client.send(PING) }
+         val second = assertFailsWith<WaylandConsentNotGrantedException> { client.send(PING) }
+ 
+         assertEquals(1, factory.starts, "the second capture must not start a new helper")
+         assertEquals(first.message, second.message)
+         assertSame(first, second.cause)
+         val message = first.message.orEmpty()
+         assertTrue(message.contains("Remember"), message)
+         assertTrue(message.contains("Share"), message)
+         assertTrue(message.contains("new JVM"), message)
+         assertTrue(message.contains("spectre permissions request"), message)
+     }
+ 
+     @Test
+     fun `a helper crash is reported again on the next capture`() {
+         val factory = RecordingProcessFactory(exitCode = 1)
+         val client = client(factory, sessionDirEnv())
+ 
+         repeat(2) {
+             val error = assertFailsWith<IllegalStateException> { client.send(PING) }
+@@ -478,30 +509,50 @@ class WaylandSessionClientTest {
+             helperPath: Path,
+             extraEnvironment: Map<String, String>,
+         ): Process {
+             starts += 1
+             environments += extraEnvironment
+             return ExitedProcess(exitCode)
+         }
+     }
+ 
+     private class ExitedProcess(private val code: Int) : Process() {
+         override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
+ 
+         override fun getInputStream(): InputStream = InputStream.nullInputStream()
+ 
+         override fun getErrorStream(): InputStream = InputStream.nullInputStream()
+ 
+         override fun waitFor(): Int = code
+ 
+         override fun exitValue(): Int = code
+ 
+         override fun isAlive(): Boolean = false
+ 
+         override fun destroy() = Unit
+     }
+ 
++    private class EventProcess(event: String, private val exitCode: Int) : Process() {
++        private val input = ByteArrayInputStream("$event\n".toByteArray())
++
++        override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
++
++        override fun getInputStream(): InputStream = input
++
++        override fun getErrorStream(): InputStream = InputStream.nullInputStream()
++
++        override fun waitFor(): Int = exitCode
++
++        override fun waitFor(timeout: Long, unit: java.util.concurrent.TimeUnit): Boolean = true
++
++        override fun exitValue(): Int = exitCode
++
++        override fun isAlive(): Boolean = false
++
++        override fun destroy() = Unit
++    }
++
+     private companion object {
+         val PING: Command = Command.PointerMove(1, 1)
+         val IDENTITY = MutterWindowIdentity(7720, Region(10, 20, 300, 200))
+     }
+ }
+diff --git a/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreamsTest.kt b/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreamsTest.kt
+index 0e355c5fbd7f2fe19383c084a270a4f91961764e..d752afd52e4d9b00957a37c50eb72b2ae38ffe7a 100644
+--- a/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreamsTest.kt
++++ b/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreamsTest.kt
+@@ -47,55 +47,118 @@ class WaylandWindowStreamsTest {
+             )
+ 
+         val stream =
+             IdentityWindowStreamBinder<String>(session) { identity }
+                 .bind("decorated", "k1", CursorMode.HIDDEN)
+ 
+         assertEquals(1.0, stream.scale)
+     }
+ 
+     @Test
+     fun `identity binder accepts an undecorated frame whose client and outer sizes coincide`() {
+         val session = FakeSession(frameWindow = Rectangle(0, 0, 480, 283))
+         val identity = MutterWindowIdentity(7722, Region(200, 237, 480, 283), Dimension(480, 283))
+ 
+         val stream =
+             IdentityWindowStreamBinder<String>(session) { identity }
+                 .bind("plain", "k1", CursorMode.HIDDEN)
+ 
+         assertEquals(1.0, stream.scale)
+     }
+ 
+     @Test
+     fun `identity binder still refuses a stale or resized window`() {
+         val session = FakeSession(frameWindow = Rectangle(0, 0, 490, 310))
+         val identity = MutterWindowIdentity(7722, Region(200, 237, 480, 283), Dimension(480, 320))
++        var now = 0L
+ 
+         assertFailsWith<WaylandCaptureUnavailableException> {
+-            IdentityWindowStreamBinder<String>(session) { identity }
++            IdentityWindowStreamBinder<String>(
++                    session = session,
++                    paintWaitMs = 100,
++                    sleep = { now += it * 1_000_000 },
++                    nanoTime = { now },
++                    identityOf = { identity },
++                )
+                 .bind("stale", "k1", CursorMode.HIDDEN)
+         }
++        assertEquals(listOf("k1"), session.unbound)
++    }
++
++    @Test
++    fun `identity binder waits for the actual painted frame before calibration`() {
++        val session = FakeSession(Rectangle(25, 25, 400, 300), transparentFrames = 2)
++        val identity = MutterWindowIdentity(42, Region(10, 20, 400, 300))
++
++        val stream =
++            IdentityWindowStreamBinder<String>(session, sleep = {}) { identity }
++                .bind("main", "new-key", CursorMode.HIDDEN)
++
++        assertEquals(Point(25, 25), stream.origin)
++        assertEquals(2, session.screenshots)
++        assertTrue(session.unbound.isEmpty())
++    }
++
++    @Test
++    fun `identity binder times out transparently and releases only its new key`() {
++        val session = FakeSession(Rectangle(0, 0, 400, 300), transparentFrames = 100)
++        var now = 0L
++        val binder =
++            IdentityWindowStreamBinder<String>(
++                session = session,
++                paintWaitMs = 100,
++                sleep = { now += it * 1_000_000 },
++                nanoTime = { now },
++                identityOf = { MutterWindowIdentity(42, Region(10, 20, 400, 300)) },
++            )
++
++        val error =
++            assertFailsWith<WaylandCaptureUnavailableException> {
++                binder.bind("main", "new-key", CursorMode.HIDDEN)
++            }
++
++        assertTrue(error.message.orEmpty().contains("transparent"), error.message)
++        assertEquals(listOf("new-key"), session.unbound)
++    }
++
++    @Test
++    fun `identity binder preserves polling failure when cleanup also fails`() {
++        val session = FakeSession(Rectangle(0, 0, 400, 300), transparentFrames = 1)
++        session.screenshotFailure = IllegalStateException("paint read failed")
++        session.unbindFailure = IllegalStateException("cleanup failed")
++        val binder =
++            IdentityWindowStreamBinder<String>(session, sleep = {}) {
++                MutterWindowIdentity(42, Region(0, 0, 400, 300))
++            }
++
++        val error =
++            assertFailsWith<IllegalStateException> {
++                binder.bind("main", "new-key", CursorMode.HIDDEN)
++            }
++
++        assertEquals("paint read failed", error.message)
++        assertEquals(listOf("new-key"), session.unbound)
+     }
+ 
+     @Test
+     fun `finds the window in a transparent monitor-sized Mutter frame`() {
+         // Seat probe on GNOME 50: a 400x300 window at (25,25) of a 2560x1440 RGBA frame, with a
+         // translucent drop shadow around it.
+         val frame = mutterFrame(window = Rectangle(25, 25, 400, 300), shadow = 6)
+ 
+         assertEquals(Rectangle(25, 25, 400, 300), opaqueContentBounds(frame))
+         assertNull(opaqueContentBounds(BufferedImage(10, 10, BufferedImage.TYPE_INT_ARGB)))
+     }
+ 
+     @Test
+     fun `binds the focused window and keeps where it sits in the stream`() {
+         val session = FakeSession(frameWindow = Rectangle(25, 25, 400, 300))
+         val focus = FakeFocus(size = Dimension(400, 300))
+         val binder = FocusWindowStreamBinder(session, focus)
+ 
+         val stream = binder.bind("main", "k1", CursorMode.HIDDEN)
+ 
+         assertEquals(Point(25, 25), stream.origin)
+         assertEquals(1.0, stream.scale)
+         assertEquals(listOf("main"), focus.focused)
+         assertEquals(1, focus.restored, "focus must go back to the window that had it")
+         assertTrue(session.unbound.isEmpty())
+@@ -463,80 +526,84 @@ class WaylandWindowStreamsTest {
+ 
+         val focused = mutableListOf<String>()
+         var restored = 0
+ 
+         override fun size(window: String): Dimension = size
+ 
+         override fun focus(window: String): FocusHandoff {
+             focused += window
+             return FocusHandoff(confirmed) { restored += 1 }
+         }
+     }
+ 
+     private class FakeSession(
+         private val frameWindow: Rectangle,
+         private val frameSize: Dimension = Dimension(2560, 1440),
+         /** How many frames, from the bind frame on, come before the window is painted. */
+         private var transparentFrames: Int = 0,
+     ) : WaylandWindowStreamSession {
+         var binds = 0
+         val bindCursorModes = mutableListOf<CursorMode>()
+         var screenshots = 0
+         var forgetNextScreenshot = false
+         val unbound = mutableListOf<String>()
+         val recordings = mutableListOf<Command.StartWindowRecording>()
+         var lastIdentity: MutterWindowIdentity? = null
++        var screenshotFailure: RuntimeException? = null
++        var unbindFailure: RuntimeException? = null
+ 
+         override fun bindFocused(
+             key: String,
+             cursorMode: CursorMode,
+         ): Pair<Event.WindowBound, BufferedImage> {
+             binds += 1
+             bindCursorModes += cursorMode
+             return Event.WindowBound(key, nodeId = 61, logicalSize = listOf(2560, 1440)) to frame()
+         }
+ 
+         override fun bindWindow(
+             key: String,
+             identity: MutterWindowIdentity,
+             cursorMode: CursorMode,
+         ): Pair<Event.WindowBound, BufferedImage> {
+             lastIdentity = identity
+             return bindFocused(key, cursorMode)
+         }
+ 
+         override fun screenshot(key: String): BufferedImage {
++            screenshotFailure?.let { throw it }
+             if (forgetNextScreenshot) {
+                 forgetNextScreenshot = false
+                 throw WaylandHelperErrorException(HELPER_ERROR_WINDOW_NOT_BOUND, "no stream")
+             }
+             screenshots += 1
+             return frame()
+         }
+ 
+         override fun unbind(key: String) {
+             unbound += key
++            unbindFailure?.let { throw it }
+         }
+ 
+         override fun startRecording(
+             command: Command.StartWindowRecording,
+             output: Path,
+         ): RecordingHandle {
+             recordings += command
+             return object : RecordingHandle {
+                 override val output: Path = output
+                 override val isStopped: Boolean = false
+ 
+                 override fun stop() = Unit
+             }
+         }
+ 
+         private fun frame(): BufferedImage {
+             if (transparentFrames > 0) {
+                 transparentFrames -= 1
+                 return BufferedImage(frameSize.width, frameSize.height, BufferedImage.TYPE_INT_ARGB)
+             }
+             return mutterFrame(
+                 frameWindow,
+                 shadow = 6,
+                 width = frameSize.width,
+                 height = frameSize.height,
