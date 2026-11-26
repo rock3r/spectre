@@ -5,7 +5,9 @@ import com.vanniktech.maven.publish.MavenPublishBaseExtension
 import com.vanniktech.maven.publish.SourcesJar
 import dev.detekt.gradle.Detekt
 import dev.detekt.gradle.extensions.DetektExtension
+import dev.sebastiano.spectre.build.NativeDesktopTestLease
 import dev.sebastiano.spectre.build.WindowsGraphicsCaptureHelperPackagingContract
+import dev.sebastiano.spectre.build.nativeDesktopTestTaskPaths
 import java.util.jar.JarFile
 import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
@@ -45,6 +47,20 @@ configure<DetektExtension> {
     parallel = true
     basePath.set(rootProject.layout.projectDirectory)
 }
+
+// A graphical login session is one physical resource even though Gradle sees independent
+// projects and worker JVMs. In particular, :core:test, :agent:test, and :cli:test can otherwise
+// run concurrent Compose/AWT fixtures which steal focus and pointer input from one another.
+// Keep the lease path-based and opt-in: headless Test tasks retain normal inter-project
+// parallelism, and max-workers is intentionally untouched. BuildService usage is understood by
+// Gradle's scheduler and is configuration-cache compatible.
+val nativeDesktopTestLease =
+    gradle.sharedServices.registerIfAbsent(
+        "nativeDesktopTestLease",
+        NativeDesktopTestLease::class,
+    ) {
+        maxParallelUsages.set(1)
+    }
 
 // Homebrew/Scoop package-manifest contracts (#283/#284/#400).
 //
@@ -412,6 +428,9 @@ subprojects {
         file("$home/bin/$javaName").absolutePath
     }
     tasks.withType<Test>().configureEach {
+        if (path in nativeDesktopTestTaskPaths) {
+            usesService(nativeDesktopTestLease)
+        }
         if (matrixJavaHome.isPresent) {
             // Test.executable is a Property<String> on modern Gradle; setExecutable keeps
             // older accessors happy too.
