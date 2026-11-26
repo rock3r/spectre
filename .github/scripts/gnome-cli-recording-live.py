@@ -428,6 +428,8 @@ def main() -> None:
         raise RuntimeError("observer did not prove exactly one grant picker and zero later pickers")
     if not helper_alive or marker.is_file() != token_required:
         raise RuntimeError("packaged CLI session did not govern capture through completion")
+    if region_mode and (diagnostic := os.environ.get("SMOKE_GNOME_ATTACHED_DIAGNOSTIC")):
+        subprocess.run([sys.executable, diagnostic], cwd=os.environ['SMOKE_REPO'], env=env, check=True, timeout=400)
 
 
 if __name__ == "__main__":

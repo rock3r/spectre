@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # This verified release carrier uses the unmodified wrapper and settings files.
-test "$(git rev-parse HEAD)" = 7546c790a70abf2d9ab9322ad55a00204daa543a
+expected="$(sed -n 's/^CANDIDATE_SHA=//p' "$GITHUB_WORKSPACE/orchestration/.github/release-smoke-hosted.env")"
+[[ "$expected" =~ ^[0-9a-f]{40}$ ]]
+test "$(git rev-parse HEAD)" = "$expected"
 gradle_cache="${GRADLE_USER_HOME:-$HOME/.gradle}"
 if ! ./gradlew --version; then
   zip_name=gradle-9.7.1-bin.zip
@@ -16,6 +18,12 @@ if ! ./gradlew --version; then
   ./gradlew --version
 fi
 
+# The ordinary project repositories win whenever the runner can reach them.
+if ./gradlew help --no-daemon --info > "$RUNNER_TEMP/prewarm-gradle-ordinary.log" 2>&1; then
+  test -z "$(git status --porcelain --untracked-files=all)"
+  exit 0
+fi
+grep -Ei 'Failed to get resource|HTTP.*[45][0-9][0-9]|Could not |was not found|What went wrong' "$RUNNER_TEMP/prewarm-gradle-ordinary.log" | tail -20 || true
 # Seed only the precise, digest-pinned published components implicated in the previous outage.
 repo="$RUNNER_TEMP/verified-foojay-repository"
 marker='org/gradle/toolchains/foojay-resolver-convention/org.gradle.toolchains.foojay-resolver-convention.gradle.plugin/1.0.0/org.gradle.toolchains.foojay-resolver-convention.gradle.plugin-1.0.0'
@@ -44,6 +52,14 @@ beforeSettings { s ->
             includeVersion 'org.gradle.toolchains', 'foojay-resolver', '1.0.0'
         }
     }
+    // An explicit repository removes Gradle's implicit Plugin Portal for included builds.
+    s.pluginManagement.repositories.gradlePluginPortal()
 }
 GROOVY
+for attempt in 1 2 3; do
+  if ./gradlew help --no-daemon --info > "$RUNNER_TEMP/prewarm-gradle-$attempt.log" 2>&1; then break; fi
+  grep -Ei 'Failed to get resource|HTTP.*[45][0-9][0-9]|Could not |was not found|What went wrong' "$RUNNER_TEMP/prewarm-gradle-$attempt.log" | tail -20 || true
+  if [[ "$attempt" == 3 ]]; then cat "$RUNNER_TEMP/prewarm-gradle-$attempt.log" >&2; exit 1; fi
+  sleep 8
+done
 test -z "$(git status --porcelain --untracked-files=all)"

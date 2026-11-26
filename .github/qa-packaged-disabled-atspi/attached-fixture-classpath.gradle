@@ -1,0 +1,11 @@
+gradle.projectsEvaluated {
+    def cli = gradle.rootProject.findProject(':cli')
+    if (cli == null) return
+    cli.tasks.register('exportHostedAttachFixtureClasspath') {
+        def cp = cli.sourceSets.test.runtimeClasspath
+        dependsOn(cli.tasks.named('testClasses'), cp)
+        doLast {
+            new File(System.getenv('SMOKE_ARTIFACTS'), 'attached-fixture-classpath.txt').text = cp.asPath
+        }
+    }
+}

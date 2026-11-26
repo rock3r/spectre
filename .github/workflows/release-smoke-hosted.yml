@@ -15,12 +15,12 @@ permissions:
 
 jobs:
   release-smoke-xvfb:
-    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Ship final Linux region recovery') && !startsWith(github.event.head_commit.message, 'Diagnose Windows') && !startsWith(github.event.head_commit.message, 'Rehearse Linux release seat') && !startsWith(github.event.head_commit.message, 'Benchmark AT-SPI') && !startsWith(github.event.head_commit.message, 'Verify AT-SPI')
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Ship final Linux verified upstream recovery') && !startsWith(github.event.head_commit.message, 'Ship final Linux region recovery') && !startsWith(github.event.head_commit.message, 'Diagnose Windows') && !startsWith(github.event.head_commit.message, 'Rehearse Linux release seat') && !startsWith(github.event.head_commit.message, 'Benchmark AT-SPI') && !startsWith(github.event.head_commit.message, 'Verify AT-SPI')
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        mode: ${{ startsWith(github.event.head_commit.message, 'Ship final Linux dependency recovery') && fromJSON('["openbox"]') || startsWith(github.event.head_commit.message, 'Rehearse Linux release') && fromJSON('["stock"]') || startsWith(github.event.head_commit.message, 'Preserve Openbox') && fromJSON('["openbox"]') || fromJSON('["stock", "openbox"]') }}
+        mode: ${{ startsWith(github.event.head_commit.message, 'Ship final Linux verified upstream recovery') && fromJSON('["openbox"]') || startsWith(github.event.head_commit.message, 'Ship final Linux dependency recovery') && fromJSON('["openbox"]') || startsWith(github.event.head_commit.message, 'Rehearse Linux release') && fromJSON('["stock"]') || startsWith(github.event.head_commit.message, 'Preserve Openbox') && fromJSON('["openbox"]') || fromJSON('["stock", "openbox"]') }}
     # The committed harness owns an unmodified 7,200-second execution budget. Leave
     # enough time around it for a clean checkout, tool installation, and report upload.
     timeout-minutes: 150
@@ -104,7 +104,7 @@ jobs:
           cache-read-only: true
 
       - name: Prewarm exact public Gradle distribution and verified Foojay plugin dependencies
-        if: startsWith(github.event.head_commit.message, 'Ship final Linux dependency recovery')
+        if: startsWith(github.event.head_commit.message, 'Ship final Linux verified upstream recovery') || startsWith(github.event.head_commit.message, 'Ship final Linux dependency recovery')
         working-directory: candidate
         env:
           GH_TOKEN: ${{ github.token }}
