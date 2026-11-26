@@ -278,26 +278,12 @@ internal class InputOpsReflectiveMapper(
             )
         }
         if (isTargetJvmFocused()) return null
-        nudgeKeyboardFocusOwner()
-        if (isTargetJvmFocused()) return null
         return AgentResponse.Error(
             message =
                 "Refusing pressKey because the target JVM does not currently own OS keyboard " +
                     "focus. Activate the target window before sending real keyboard events.",
             category = AgentErrorCategory.InputRejected.wireName,
         )
-    }
-
-    private fun nudgeKeyboardFocusOwner() {
-        val focusManager = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager()
-        val owner =
-            listOfNotNull(focusManager.focusedWindow, focusManager.activeWindow).firstOrNull {
-                it.isShowing
-            } ?: return
-        runCatching {
-            owner.toFront()
-            owner.requestFocus()
-        }
     }
 
     private fun invokeOnNode(nodeKey: String, opName: String, method: Method?): AgentResponse {
