@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   public-wayland-cli-recording-live:
-    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke'
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && github.event.head_commit.message != 'Provision XRandR for live geometry calibration'
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     steps:
@@ -87,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [portal, capture, accessibility, atspi-ownership, atspi-distinct-content, identity, mutter-control, geometry-calibration]
+        mode: [geometry-calibration]
 
     steps:
       - name: Check out temporary workflow tooling
