@@ -120,7 +120,7 @@ jobs:
           from verify_native_archive import extract_zip_preserving_unix
           extract_zip_preserving_unix(sys.argv[1],pathlib.Path(sys.argv[2]))
           PY
-          spectre=$(find "$RUNNER_TEMP/cli" -type f -path '*/bin/spectre' -perm -u+x -print -quit)
+          spectre=$(find "$RUNNER_TEMP/cli" -maxdepth 2 -type f -name spectre -perm -u+x -print -quit)
           test -x "$spectre"
           cat > "$RUNNER_TEMP/fixture.py" <<'PY'
           import gi,os,pathlib,sys

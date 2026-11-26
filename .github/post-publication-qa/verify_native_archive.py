@@ -47,6 +47,29 @@ def diagnose_archive(archive, root, expected_elf):
     problems=[]; helpers=[]
     with zipfile.ZipFile(archive) as source:
         infos=source.infolist()
+        files={i.filename:i for i in infos if not i.is_dir()}
+        configurations=[i for i in infos if pathlib.PurePosixPath(i.filename).parts[-2:]==("app","spectre.json")]
+        if len(configurations)!=1:
+            raise SystemExit(f"expected exactly one app/spectre.json, found {len(configurations)}")
+        configuration=configurations[0]
+        archive_root=pathlib.PurePosixPath(configuration.filename).parent.parent
+        try:
+            with source.open(configuration) as incoming: app=json.load(incoming)
+        except (json.JSONDecodeError,UnicodeDecodeError) as error:
+            raise SystemExit(f"invalid Roast configuration {configuration.filename}: {error}") from error
+        class_path=app.get("classPath")
+        if not isinstance(class_path,list) or not class_path or not all(isinstance(x,str) for x in class_path):
+            raise SystemExit(f"invalid classPath in {configuration.filename}")
+        class_path_infos=[]
+        for relative in class_path:
+            relative_path=pathlib.PurePosixPath(relative)
+            if relative_path.is_absolute() or ".." in relative_path.parts:
+                raise SystemExit(f"unsafe classPath entry in {configuration.filename}: {relative}")
+            packaged=(archive_root/relative_path).as_posix()
+            if packaged not in files:
+                raise SystemExit(f"absent configured classPath entry: {packaged}")
+            class_path_infos.append(files[packaged])
+        report["roastConfiguration"]={"path":configuration.filename,"root":archive_root.as_posix(),"classPath":[i.filename for i in class_path_infos]}
         def inspect(label, predicate):
             matches=[i for i in infos if not i.is_dir() and predicate(pathlib.PurePosixPath(i.filename))]
             values=[]
@@ -58,21 +81,38 @@ def diagnose_archive(archive, root, expected_elf):
             elif len(values)!=1: problems.append(f"expected exactly one {label}, found {len(values)}")
             elif values[0]["elfMachine"]!=expected_elf: problems.append(f"found {label} with wrong ISA {values[0]['elfMachine']!r}, expected {expected_elf}")
             return matches
-        launchers=inspect("launcher",lambda p:p.name=="spectre" and p.parent.name=="bin")
-        inspect("libjvm.so",lambda p:p.name=="libjvm.so")
-        inspect("libjava.so",lambda p:p.name=="libjava.so")
-        # The helper is packaged by the recording component. Filter by basename before
-        # opening ZIPs so diagnostics do not inflate or scan unrelated bundled libraries.
-        for jar in (i for i in infos if i.filename.endswith(".jar") and "recording" in pathlib.PurePosixPath(i.filename).name.lower()):
+        launchers=inspect("launcher",lambda p:p==archive_root/"spectre")
+        inspect("libjvm.so",lambda p:p==archive_root/"runtime/lib/server/libjvm.so")
+        inspect("libjava.so",lambda p:p==archive_root/"runtime/lib/libjava.so")
+        runtime=[]
+        runtime_root=archive_root/"runtime"
+        for info in infos:
+            path=pathlib.PurePosixPath(info.filename)
+            if info.is_dir() or runtime_root not in path.parents: continue
+            with source.open(info) as entry: machine=elf_machine(entry.read(20))
+            if machine is not None:
+                runtime.append({"path":info.filename,"elfMachine":machine,"size":info.file_size})
+        report["runtimeNativeElfs"]=runtime
+        wrong_runtime=[x for x in runtime if x["elfMachine"]!=expected_elf]
+        if not runtime: problems.append("no ELF files found in configured Roast runtime")
+        if wrong_runtime:
+            problems.append("runtime ELF files with wrong ISA: "+", ".join(f"{x['path']} ({x['elfMachine']})" for x in wrong_runtime))
+        helper_arch="x86_64" if expected_elf==62 else "aarch64"
+        helper_name=f"native/linux/{helper_arch}/spectre-wayland-helper"
+        # Inspect every configured application archive. The helper lives directly in the
+        # CLI fat JAR in historical and current Roast distributions; its JAR filename is
+        # not part of the packaging contract.
+        for jar in class_path_infos:
             with source.open(jar) as incoming, tempfile.NamedTemporaryFile() as copy:
                 shutil.copyfileobj(incoming,copy); copy.flush()
                 try:
                     with zipfile.ZipFile(copy.name) as contents:
                         for info in contents.infolist():
-                            if info.filename.startswith("native/linux/") and "spectre-wayland-helper" in info.filename:
+                            if info.filename==helper_name:
                                 with contents.open(info) as entry: machine=elf_machine(entry.read(20))
                                 helpers.append({"jar":jar.filename,"path":info.filename,"unixMode":oct(stat.S_IMODE(info.external_attr>>16)),"elfMachine":machine,"size":info.file_size})
-                except zipfile.BadZipFile: pass
+                except zipfile.BadZipFile as error:
+                    raise SystemExit(f"configured classPath entry is not a ZIP/JAR: {jar.filename}") from error
         report["recordingHelpers"]=helpers
         matching=[x for x in helpers if x["elfMachine"]==expected_elf]
         if len(matching)!=1: problems.append(f"expected one packaged recording helper for ISA {expected_elf}, found {len(matching)}")
@@ -89,9 +129,9 @@ def main():
     p.add_argument("--archive",required=True); p.add_argument("--evidence",required=True)
     a=p.parse_args(); machine=platform.machine().lower()
     expected_name,expected_elf=MACHINES[a.arch]
-    if machine != expected_name: raise SystemExit(f"runner machine must be exactly {expected_name}, got {machine}")
     root=pathlib.Path(a.evidence); root.mkdir(parents=True,exist_ok=True)
     diagnostic=diagnose_archive(a.archive,root,expected_elf)
+    if machine != expected_name: raise SystemExit(f"runner machine must be exactly {expected_name}, got {machine}")
     with tempfile.TemporaryDirectory() as temporary:
         unpacked=pathlib.Path(temporary)/"archive"; extract_zip_preserving_unix(a.archive,unpacked)
         launcher_path=diagnostic["launcher"][0]["path"]
