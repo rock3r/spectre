@@ -1144,8 +1144,22 @@ try {
         )
         $fixture = Join-Path $repoRoot "fixtures\accesskit\target\debug\spectre-accesskit-fixture.exe"
         $fixtureLog = Join-Path $repoRoot "build\smoke\a11y-accesskit-fixture.log"
-        $process = Start-Process -FilePath $fixture -WorkingDirectory $repoRoot -RedirectStandardOutput $fixtureLog -RedirectStandardError ($fixtureLog + ".err") -PassThru
+        $hadDaemonSocketDir = [Environment]::GetEnvironmentVariables("Process").Contains("SPECTRE_DAEMON_SOCKET_DIR")
+        $previousDaemonSocketDir = [Environment]::GetEnvironmentVariable("SPECTRE_DAEMON_SOCKET_DIR", "Process")
+        $userHome = [Environment]::GetFolderPath("UserProfile")
+        if ([string]::IsNullOrWhiteSpace($userHome)) { throw "Could not resolve the current user's home for the private daemon endpoint" }
+        $daemonSocketDir = Join-Path $userHome ("sp-a11y-{0}" -f ([Guid]::NewGuid().ToString("N")))
+        $daemonSocketDirCreated = $false
+        $process = $null
+        $actionError = $null
+        $cleanupErrors = @()
         try {
+            # A status request does not start a missing daemon. Select the private endpoint and let
+            # the first accessibility request start it if needed.
+            New-Item -ItemType Directory -Path $daemonSocketDir -ErrorAction Stop | Out-Null
+            $daemonSocketDirCreated = $true
+            [Environment]::SetEnvironmentVariable("SPECTRE_DAEMON_SOCKET_DIR", $daemonSocketDir, "Process")
+            $process = Start-Process -FilePath $fixture -WorkingDirectory $repoRoot -RedirectStandardOutput $fixtureLog -RedirectStandardError ($fixtureLog + ".err") -PassThru
             $deadline = [DateTime]::UtcNow.AddSeconds(30)
             do {
                 Start-Sleep -Milliseconds 200
@@ -1208,8 +1222,75 @@ try {
                 throw "node-budget stdout must be a schemaVersion 2 partial snapshot with two nodes"
             }
         }
+        catch {
+            $actionError = $_
+        }
         finally {
-            if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+            if ($process -and -not $process.HasExited) {
+                try { Stop-Process -Id $process.Id -Force -ErrorAction Stop }
+                catch { $cleanupErrors += ("Could not stop the owned AccessKit fixture: {0}" -f $_.Exception.Message) }
+            }
+
+            # A socket below this GUID-only endpoint is proof that one of this cell's CLI calls
+            # launched a daemon, including a PID request that failed after launch.
+            $ownedDaemonSockets = @()
+            $socketInspectionFailed = $false
+            if ($daemonSocketDirCreated -and (Test-Path -LiteralPath $daemonSocketDir)) {
+                try {
+                    $ownedDaemonSockets = @(Get-ChildItem -LiteralPath $daemonSocketDir -Filter "daemon-v*.sock" -File -Recurse -ErrorAction Stop)
+                }
+                catch {
+                    $socketInspectionFailed = $true
+                    $cleanupErrors += ("Could not inspect private AccessKit endpoint {0}: {1}" -f $daemonSocketDir, $_.Exception.Message)
+                }
+            }
+            if ($ownedDaemonSockets.Count -gt 0) {
+                try {
+                    Invoke-Native -FilePath $spectre -WorkingDirectory $repoRoot -TimeoutSeconds $CliLaunchTimeoutSeconds -LogName "a11y-accesskit-daemon-kill" -Arguments @(
+                        "daemon", "kill"
+                    )
+                }
+                catch { $cleanupErrors += ("Could not stop the private AccessKit daemon: {0}" -f $_.Exception.Message) }
+
+                for ($attempt = 0; $attempt -lt 20; $attempt++) {
+                    try {
+                        $ownedDaemonSockets = @(Get-ChildItem -LiteralPath $daemonSocketDir -Filter "daemon-v*.sock" -File -Recurse -ErrorAction Stop)
+                    }
+                    catch {
+                        $socketInspectionFailed = $true
+                        $cleanupErrors += ("Could not verify private AccessKit daemon shutdown: {0}" -f $_.Exception.Message)
+                        break
+                    }
+                    if ($ownedDaemonSockets.Count -eq 0) { break }
+                    Start-Sleep -Milliseconds 100
+                }
+                if ($ownedDaemonSockets.Count -gt 0) {
+                    $cleanupErrors += ("Private AccessKit daemon socket still exists after graceful cleanup: {0}" -f $ownedDaemonSockets[0].FullName)
+                }
+            }
+
+            # Never unlink a live socket directory: leave it for diagnosis and report the leak.
+            if ($daemonSocketDirCreated -and -not $socketInspectionFailed -and $ownedDaemonSockets.Count -eq 0 -and (Test-Path -LiteralPath $daemonSocketDir)) {
+                try { Remove-Item -LiteralPath $daemonSocketDir -Recurse -Force -ErrorAction Stop }
+                catch { $cleanupErrors += ("Could not remove private AccessKit endpoint {0}: {1}" -f $daemonSocketDir, $_.Exception.Message) }
+            }
+
+            try {
+                if ($hadDaemonSocketDir) {
+                    [Environment]::SetEnvironmentVariable("SPECTRE_DAEMON_SOCKET_DIR", $previousDaemonSocketDir, "Process")
+                }
+                else {
+                    [Environment]::SetEnvironmentVariable("SPECTRE_DAEMON_SOCKET_DIR", $null, "Process")
+                }
+            }
+            catch { $cleanupErrors += ("Could not restore SPECTRE_DAEMON_SOCKET_DIR: {0}" -f $_.Exception.Message) }
+        }
+        if ($actionError) {
+            foreach ($cleanupError in $cleanupErrors) { Write-Warning $cleanupError }
+            throw $actionError
+        }
+        if ($cleanupErrors.Count -gt 0) {
+            throw ("AccessKit cleanup failed: {0}" -f ($cleanupErrors -join "; "))
         }
     }
     [void]$results.Add($a11yStep)

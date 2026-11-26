@@ -15,12 +15,18 @@ See docs/RELEASE-SMOKE.md and scripts/smoke_lib.py for scenario IDs.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import platform
-import select
+import queue
+import re
+import shutil
+import signal
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -105,7 +111,258 @@ DEFAULT_OVERALL_TIMEOUT = 7200
 # a11y-accesskit-linux.
 
 
+def _accesskit_fixture_pid(ready_line: str) -> int:
+    match = re.fullmatch(
+        r"SPECTRE_ACCESSKIT_FIXTURE_READY(?:\s+.*)?\s+pid=([1-9]\d*)\s*",
+        ready_line,
+    )
+    if match is None:
+        raise ValueError(
+            f"fixture readiness did not report a valid positive pid: {ready_line!r}"
+        )
+    return int(match.group(1))
+
+
+@contextlib.contextmanager
+def _private_daemon_environment():
+    parent = None if platform.system() == "Windows" else "/tmp"
+    directory = Path(tempfile.mkdtemp(prefix="sp-a11y-", dir=parent))
+    if os.name == "posix":
+        directory.chmod(0o700)
+    try:
+        yield {"SPECTRE_DAEMON_SOCKET_DIR": str(directory)}
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def _read_process_line(process: subprocess.Popen[str], *, timeout: float) -> str:
+    assert process.stdout is not None
+    result: queue.Queue[str | BaseException] = queue.Queue(maxsize=1)
+
+    def read() -> None:
+        try:
+            result.put(process.stdout.readline())
+        except BaseException as error:
+            result.put(error)
+
+    threading.Thread(target=read, daemon=True).start()
+    try:
+        value = result.get(timeout=timeout)
+    except queue.Empty as error:
+        raise TimeoutError(
+            "process did not emit a complete line before the deadline"
+        ) from error
+    if isinstance(value, BaseException):
+        raise value
+    return value
+
+
+def _wait_for_accesskit_ready(
+    process: subprocess.Popen[str], *, timeout: float = 30
+) -> str:
+    deadline = time.monotonic() + timeout
+    last_line = ""
+    while (remaining := deadline - time.monotonic()) > 0:
+        line = _read_process_line(process, timeout=remaining)
+        if not line:
+            raise RuntimeError(f"AccessKit fixture exited before ready: {last_line}")
+        last_line = line.strip()
+        if last_line.startswith("SPECTRE_ACCESSKIT_FIXTURE_READY"):
+            return last_line
+        if process.poll() is not None:
+            raise RuntimeError(f"AccessKit fixture exited before ready: {last_line}")
+    raise TimeoutError("AccessKit fixture did not report ready within 30s")
+
+
+def _process_group_has_live_members(group: int) -> bool:
+    """Return whether an owned process group contains anything except zombies."""
+    proc = Path("/proc")
+    if platform.system() != "Linux" or not proc.is_dir():
+        try:
+            os.killpg(group, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError as error:
+            if platform.system() != "Darwin":
+                raise
+            states = _darwin_process_group_states(group)
+            if states and all(state == "Z" for state in states):
+                return False
+            if not states:
+                # The group can disappear between Darwin's authority check and ps.
+                # Recheck once: only ESRCH proves that the empty snapshot was a race.
+                try:
+                    os.killpg(group, 0)
+                except ProcessLookupError:
+                    return False
+                except PermissionError:
+                    raise error
+                return True
+            raise error
+        if platform.system() != "Darwin":
+            return True
+        states = _darwin_process_group_states(group)
+        return not states or any(state != "Z" for state in states)
+    for stat_path in proc.glob("[0-9]*/stat"):
+        try:
+            stat = stat_path.read_text()
+            comm_end = stat.rfind(")")
+            fields = stat[comm_end + 2 :].split()
+            if int(fields[2]) == group and fields[0] != "Z":
+                return True
+        except (FileNotFoundError, IndexError, PermissionError, ValueError):
+            continue
+    return False
+
+
+def _darwin_process_group_states(group: int) -> list[str]:
+    """Read status only; signalling authority still comes solely from the owned PGID."""
+    completed = subprocess.run(
+        ["ps", "-axo", "pgid=,stat="],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    states = []
+    for line in completed.stdout.splitlines():
+        fields = line.split()
+        if len(fields) >= 2:
+            try:
+                process_group = int(fields[0])
+            except ValueError:
+                continue
+            if process_group == group:
+                states.append(fields[1][0])
+    return states
+
+
+def _wait_for_owned_process_group(
+    process: subprocess.Popen[str], group: int, *, timeout: float
+) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        # poll() is intentional: an unreaped group leader makes Darwin report EPERM
+        # for group existence checks until its parent collects the zombie.
+        process.poll()
+        if not _process_group_has_live_members(group):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.01, remaining))
+
+
+def _terminate_owned_process(process: subprocess.Popen[str]) -> None:
+    """Terminate the narrowly owned process group, even after its leader exits."""
+    primary_exception_active = sys.exc_info()[0] is not None
+    cleanup_error: BaseException | None = None
+    try:
+        if os.name == "posix":
+            group = process.pid
+            try:
+                os.killpg(group, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                if _process_group_has_live_members(group):
+                    raise
+            if not _wait_for_owned_process_group(process, group, timeout=0.5):
+                try:
+                    os.killpg(group, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    if _process_group_has_live_members(group):
+                        raise
+                if not _wait_for_owned_process_group(process, group, timeout=5):
+                    raise TimeoutError(
+                        f"owned process group {group} survived SIGKILL"
+                    )
+        elif process.poll() is None:
+            process.terminate()
+    except BaseException as error:
+        cleanup_error = error
+    try:
+        process.wait(timeout=0.5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            process.wait(timeout=5)
+        except BaseException as error:
+            if cleanup_error is None:
+                cleanup_error = error
+    except BaseException as error:
+        if cleanup_error is None:
+            cleanup_error = error
+    finally:
+        if process.stdout is not None:
+            try:
+                process.stdout.close()
+            except BaseException as error:
+                if cleanup_error is None:
+                    cleanup_error = error
+    if cleanup_error is not None and not primary_exception_active:
+        raise cleanup_error
+
+
+@contextlib.contextmanager
+def _private_linux_dbus(required: bool):
+    if not required:
+        yield {}
+        return
+    process = subprocess.Popen(
+        ["dbus-daemon", "--session", "--nofork", "--print-address=1"],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        address = _read_process_line(process, timeout=10).strip()
+        if not address:
+            raise RuntimeError("private D-Bus daemon emitted no session address")
+        yield {"DBUS_SESSION_BUS_ADDRESS": address}
+    finally:
+        _terminate_owned_process(process)
+
+
+def _linux_accessibility_enabled(env: dict[str, str]) -> bool:
+    completed = subprocess.run(
+        ["gdbus", "call", "--session", "--dest", "org.a11y.Bus", "--object-path", "/org/a11y/bus", "--method", "org.freedesktop.DBus.Properties.Get", "org.a11y.Status", "IsEnabled"],
+        cwd=ROOT, env=env, check=True, capture_output=True, text=True, timeout=30,
+    )
+    match = re.search(r"\b(true|false)\b", completed.stdout, re.IGNORECASE)
+    if match is None:
+        raise RuntimeError(
+            f"could not parse org.a11y.Status.IsEnabled: {completed.stdout!r}"
+        )
+    return match.group(1).lower() == "true"
+
+
+def _set_linux_accessibility_enabled(enabled: bool, env: dict[str, str]) -> None:
+    subprocess.run(
+        ["gdbus", "call", "--session", "--dest", "org.a11y.Bus", "--object-path", "/org/a11y/bus", "--method", "org.freedesktop.DBus.Properties.Set", "org.a11y.Status", "IsEnabled", f"<{str(enabled).lower()}>"],
+        cwd=ROOT, env=env, check=True, capture_output=True, text=True, timeout=30,
+    )
+
+
+@contextlib.contextmanager
+def _linux_accessibility_for_smoke(env: dict[str, str]):
+    original = _linux_accessibility_enabled(env)
+    changed = not original
+    try:
+        if changed:
+            _set_linux_accessibility_enabled(True, env)
+        yield
+    finally:
+        if changed:
+            _set_linux_accessibility_enabled(False, env)
+
+
 def _accesskit_cli_smoke(executable: Path) -> str:
+    system = platform.system()
     manifest = ROOT / "fixtures/accesskit/Cargo.toml"
     if not manifest.is_file():
         raise RuntimeError(f"AccessKit fixture manifest missing: {manifest}")
@@ -116,76 +373,88 @@ def _accesskit_cli_smoke(executable: Path) -> str:
         timeout=600,
     )
     fixture = manifest.parent / "target/debug/spectre-accesskit-fixture"
-    process = subprocess.Popen(
-        [str(fixture)],
-        cwd=ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    try:
-        assert process.stdout is not None
-        ready = ""
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            readable, _, _ = select.select([process.stdout], [], [], 0.25)
-            if readable:
-                ready = process.stdout.readline().strip()
-                if ready.startswith("SPECTRE_ACCESSKIT_FIXTURE_READY"):
-                    break
-            if process.poll() is not None:
-                raise RuntimeError(f"AccessKit fixture exited before ready: {ready}")
-        else:
-            raise TimeoutError("AccessKit fixture did not report ready within 30s")
-
-        system = platform.system()
-
-        def read(*target: str, check: bool = True) -> tuple[subprocess.CompletedProcess[str], dict]:
-            completed = subprocess.run(
-                [str(executable), "a11y", "tree", *target],
+    prefix = xvfb_prefix(system)
+    with _private_daemon_environment() as daemon_environment:
+        with _private_linux_dbus(
+            system == "Linux" and bool(prefix)
+        ) as bus_environment:
+            environment = {**os.environ, **daemon_environment, **bus_environment}
+            process = subprocess.Popen(
+                [*prefix, str(fixture)],
                 cwd=ROOT,
-                check=check,
-                capture_output=True,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
-                timeout=120,
+                start_new_session=os.name == "posix",
             )
-            json_start = completed.stdout.find("{")
-            if json_start < 0:
-                raise AssertionError(f"CLI emitted no JSON snapshot: {completed.stdout!r}")
-            return completed, json.loads(completed.stdout[json_start:])
+            try:
+                ready = _wait_for_accesskit_ready(process)
+                fixture_pid = _accesskit_fixture_pid(ready)
 
-        _, pid_snapshot = read("--pid", str(process.pid))
-        assert_accessibility_snapshot(pid_snapshot, system)
-        _, title_snapshot = read("--window", "Spectre AccessKit Fixture")
-        assert_accessibility_snapshot(title_snapshot, system)
-        limited = subprocess.run(
-            [
-                str(executable),
-                "a11y",
-                "tree",
-                "--pid",
-                str(process.pid),
-                "--maximum-node-count",
-                "2",
-            ],
-            cwd=ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        assert_accessibility_limit_result(limited, maximum_node_count=2)
-        return (
-            "real helper read fixture by pid and title; stable native roles, values, "
-            "ownership, and schemaVersion=2 verified"
-        )
-    finally:
-        process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
+                def read(*target: str) -> dict:
+                    completed = subprocess.run(
+                        [str(executable), "a11y", "tree", *target, "--timeout-ms", "5000"],
+                        cwd=ROOT,
+                        env=environment,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    if completed.returncode != 0:
+                        raise RuntimeError(
+                            "packaged accessibility CLI exited "
+                            f"{completed.returncode}: {completed.stderr.strip()}"
+                        )
+                    json_start = completed.stdout.find("{")
+                    if json_start < 0:
+                        raise AssertionError(
+                            f"CLI emitted no JSON snapshot: {completed.stdout!r}"
+                        )
+                    return json.loads(completed.stdout[json_start:])
+
+                accessibility = (
+                    _linux_accessibility_for_smoke(environment)
+                    if system == "Linux"
+                    else contextlib.nullcontext()
+                )
+                with accessibility:
+                    assert_accessibility_snapshot(
+                        read("--pid", str(fixture_pid)), system
+                    )
+                    assert_accessibility_snapshot(
+                        read("--window", "Spectre AccessKit Fixture"), system
+                    )
+                    limited = subprocess.run(
+                        [str(executable), "a11y", "tree", "--pid", str(fixture_pid),
+                         "--maximum-node-count", "2", "--timeout-ms", "5000"],
+                        cwd=ROOT,
+                        env=environment,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    assert_accessibility_limit_result(limited, maximum_node_count=2)
+                return (
+                    "real packaged CLI read fixture by pid and title; stable native roles, "
+                    "values, ownership, and schemaVersion=2 verified; public MCP transport "
+                    "and error-path evidence is verified separately by mcp-sdk-flow"
+                )
+            finally:
+                try:
+                    _terminate_owned_process(process)
+                finally:
+                    subprocess.run(
+                        [str(executable), "daemon", "kill"],
+                        cwd=ROOT,
+                        env=environment,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
 
 
 def _print_result(item: ScenarioResult) -> None:

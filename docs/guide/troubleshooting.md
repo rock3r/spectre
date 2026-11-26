@@ -374,14 +374,14 @@ X11/Xvfb native stills read visible framebuffer pixels; keep the target frontmos
 usable pair across one-shot native still latency.
 
 `waitForVisualIdle()` samples **window-scoped** pixels for tracked Compose surfaces when
-`spectre-recording` is present **and the platform helper can actually run** (same native still
-path as `screenshot(windowIndex)`). Class presence is not enough: on Linux the helper needs
-`gst-launch-1.0` (with `ximagesrc`, `videoconvert`, and `pngenc` for X11/Xvfb stills). If
-recording is on the classpath and GStreamer is missing, Spectre falls back to Robot region
-capture of each surface rectangle so samples remain usable. Keep the
-target frontmost and unobscured in that fallback mode (Linux X11 region and some embedded
-cases still need visibility). For native window stills on Linux, install GStreamer and
-include `spectre-recording` with the platform helper on the test runtime classpath.
+native capture is available. Native capture is required by default: install GStreamer and the
+matching `spectre-recording-<os>` runtime helper, and use an interactive Windows desktop. The call
+fails immediately when a prerequisite probe fails. Only opt into occlusion-sensitive Robot crops
+with `waitForVisualIdle(allowScreenRegionFallback = true)`.
+
+Class presence is not enough: on Linux the helper needs `gst-launch-1.0` with `ximagesrc`,
+`videoconvert`, and `pngenc` for X11/Xvfb stills. Include `spectre-recording` with the platform
+helper on the test runtime classpath.
 
 On Windows, Spectre keeps one capture helper open per window while it takes stills of that
 window. It closes the helper after 2 s without a still. A visual-idle sample of a warm window

@@ -154,7 +154,9 @@ IntelliJ EDT dispatchers, wrap waits in `withContext(Dispatchers.Default) { ... 
   `allNodes()`, `roots()`); in-process Spectre tree state only.
 - `waitForIdle()` — semantics fingerprint + `AutomatorIdlingResource`s (`registerIdlingResource` /
   `unregisterIdlingResource` in `try/finally`).
-- `waitForVisualIdle(stableFrames = 3)` — consecutive pixel-stable frames; use before screenshots or after animations.
+- `waitForVisualIdle(stableFrames = 3)` — consecutive pixel-stable frames using required native
+  window capture; use before screenshots or after animations. Missing helpers fail immediately.
+  Use `allowScreenRegionFallback = true` only when occlusion-sensitive desktop crops are acceptable.
   Uses native window capture when `:recording` and a runnable helper exist, falls back to `Robot` region capture when
   `:recording` is absent or the helper cannot launch, and fails fast on missing Wayland grants or unsupported Wayland
   `JWindow` popups (`#640`).
@@ -191,7 +193,11 @@ snapshot only: re-read and resolve by `id`, name, role, and bounds after the UI 
 Wayland, heed the output's `window-relative` bounds marker and never use those bounds directly as
 screen input coordinates. Linux may report that Spectre temporarily enabled session
 accessibility; preserve that notice in agent output. AccessKit text-field values can be `null` on
-Linux even when the field is present.
+Linux even when the field is present. Its canonical AT-SPI roles are `frame`, `button`, `check
+box`, and `entry` (normalised as `window`, `button`, `checkbox`, and `entry`); never rewrite
+`entry` as raw `text`, infer a disabled state, or invent a value from another source. On Windows,
+the framework-dependent helper requires the .NET 8 Desktop Runtime and a same-architecture public
+Windows App Runtime 1.8 installation; the CBS system package alone is insufficient.
 
 `spectre attach <pid>` attaches to a same-user JDK 21+ JVM (injecting core automatically when `spectre-core` is absent):
 

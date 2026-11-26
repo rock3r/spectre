@@ -71,7 +71,7 @@ internal class LaunchCommand(private val output: Appendable, private val errorOu
             Thread(
                 {
                     // Ctrl-C / JVM exit: do not rely on finally{} unwinding during halt.
-                    sessionRef.getAndSet(null)?.let { runCatching { it.close() } }
+                    sessionRef.getAndSet(null)?.close()
                 },
                 "spectre-launch-teardown",
             )
@@ -117,7 +117,7 @@ internal class LaunchCommand(private val output: Appendable, private val errorOu
                     }
                 }
             } finally {
-                sessionRef.getAndSet(null)?.let { runCatching { it.close() } }
+                sessionRef.getAndSet(null)?.close()
             }
         } catch (ex: LaunchException) {
             errorOutput.append("Spectre launch error [${ex.stage}]: ${ex.message}")
@@ -132,7 +132,7 @@ internal class LaunchCommand(private val output: Appendable, private val errorOu
             runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
             // If we aborted mid-flight without the inner finally, still close any published
             // session.
-            sessionRef.getAndSet(null)?.let { runCatching { it.close() } }
+            sessionRef.getAndSet(null)?.close()
         }
     }
 

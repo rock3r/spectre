@@ -104,7 +104,10 @@ The services support these operations:
   `com.apple.replayd`.
 - **Synthetic Spectre input** avoids OS-level mouse/keyboard delivery. The JVM
   still needs enough AWT/Compose Desktop access to create and paint the target
-  window. Screenshots and `waitForVisualIdle()` still go through capture paths.
+  window. Screenshots and `waitForVisualIdle()` still go through capture paths. GitHub-hosted
+  Windows has no interactive Windows Graphics Capture desktop, so visual-idle tests must run on an
+  interactive self-hosted runner or explicitly accept desktop cropping with
+  `waitForVisualIdle(allowScreenRegionFallback = true)`.
 
 macOS Screen Recording permission is also required for capture. Grant it to the
 app that launched the JVM (Terminal.app, iTerm2, IntelliJ IDEA, or the runner app),

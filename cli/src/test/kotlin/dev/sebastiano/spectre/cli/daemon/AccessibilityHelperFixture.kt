@@ -13,16 +13,26 @@ object AccessibilityHelperFixture {
         when (args.first()) {
             "sleep" -> TimeUnit.SECONDS.sleep(30)
             "descendant" -> {
-                val child =
-                    ProcessBuilder(
-                            javaExecutable(),
-                            "-cp",
-                            System.getProperty("java.class.path"),
-                            AccessibilityHelperFixture::class.java.name,
-                            "sleep",
-                        )
-                        .start()
-                Files.writeString(Path.of(args[1]), child.pid().toString())
+                ProcessBuilder(
+                        javaExecutable(),
+                        "-cp",
+                        System.getProperty("java.class.path"),
+                        AccessibilityHelperFixture::class.java.name,
+                        "ready",
+                        args[1],
+                    )
+                    .start()
+                System.`in`.readAllBytes()
+                Files.createFile(Path.of(args[1]).resolve("request-received"))
+                TimeUnit.SECONDS.sleep(30)
+            }
+            "ready" -> {
+                val directory = Path.of(args[1])
+                Files.writeString(
+                    directory.resolve("child.pid"),
+                    ProcessHandle.current().pid().toString(),
+                )
+                Files.createFile(directory.resolve("child-ready"))
                 TimeUnit.SECONDS.sleep(30)
             }
             else -> error("Unknown fixture mode ${args.first()}")

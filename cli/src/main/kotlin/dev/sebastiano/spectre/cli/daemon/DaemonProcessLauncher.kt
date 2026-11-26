@@ -32,12 +32,18 @@ public class DaemonProcessLauncher(
     /** Launches the daemon process without inheriting this client's standard streams. */
     @Throws(IOException::class)
     public fun start(): Process {
-        val errorLog = Files.createTempFile("spectre-daemon-startup-", ".log")
+        require(socketPath == socketPath.normalize()) {
+            "Daemon socket path must not contain dot segments"
+        }
+        val protection = DaemonSocketProtection.forPath(socketPath)
+        protection.createMissingParents(socketPath)
+        val errorLog = diagnosticPath(socketPath)
+        protection.prepareDiagnosticLog(errorLog)
         startupErrorLog = errorLog
         return processBuilder()
             .also { restoreBundledRuntimeExecutePermissions() }
-            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-            .redirectError(errorLog.toFile())
+            .redirectOutput(ProcessBuilder.Redirect.appendTo(errorLog.toFile()))
+            .redirectError(ProcessBuilder.Redirect.appendTo(errorLog.toFile()))
             .start()
             .also { daemonProcess = it }
     }
@@ -47,21 +53,14 @@ public class DaemonProcessLauncher(
         startupErrorLog
             ?.takeIf { daemonProcess?.isAlive != true }
             ?.let { errorLog ->
-                runCatching { Files.readString(errorLog).trim().ifEmpty { null } }
+                runCatching {
+                    String(DaemonLog.readLogTail(errorLog), Charsets.UTF_8).trim().ifEmpty { null }
+                }
                     .getOrNull()
-                    .also { Files.deleteIfExists(errorLog) }
             }
 
     /** Removes the startup diagnostic after a confirmed daemon exits. */
-    public fun discardStartupError() {
-        val errorLog = startupErrorLog ?: return
-        val process = daemonProcess
-        if (process?.isAlive == true) {
-            process.onExit().thenRun { Files.deleteIfExists(errorLog) }
-        } else {
-            Files.deleteIfExists(errorLog)
-        }
-    }
+    public fun discardStartupError(): Unit = Unit
 
     /**
      * The builder for the daemon process: the isolated command, started in a new session where the
@@ -72,10 +71,17 @@ public class DaemonProcessLauncher(
      * time — agents initialized twice, an environment collector colliding with the cache-consuming
      * daemon's pinned G1.
      */
-    internal fun processBuilder(): ProcessBuilder =
-        ProcessBuilder(newSessionPrefix() + command()).also {
+    internal fun processBuilder(): ProcessBuilder {
+        val prefix = newSessionPrefix()
+        val daemonCommand = command().toMutableList()
+        daemonCommand.add(
+            1,
+            "-D$PROCESS_GROUP_ISOLATED_PROPERTY=${prefix.isNotEmpty() || isWindows()}",
+        )
+        return ProcessBuilder(prefix + daemonCommand).also {
             sanitizeDaemonEnvironment(it.environment())
         }
+    }
 
     /** Returns the isolated daemon command without starting a process. */
     public fun command(): List<String> = buildList {
@@ -187,7 +193,7 @@ public class DaemonProcessLauncher(
             "dev.sebastiano.spectre.cli.daemon.DaemonMainKt"
 
         /** System properties the daemon reads, and therefore has to be handed. */
-        private val FORWARDED_PROPERTIES: List<String> =
+        internal val FORWARDED_PROPERTIES: List<String> =
             listOf(
                 "dev.sebastiano.spectre.agent.runtimeJar",
                 AttachInputCoordination.PROPERTY,
@@ -202,6 +208,15 @@ public class DaemonProcessLauncher(
                 "user.home",
                 "java.awt.headless",
             )
+
+        internal fun diagnosticPath(socketPath: Path): Path =
+            socketPath.resolveSibling("${socketPath.fileName}.log")
+
+        internal const val PROCESS_GROUP_ISOLATED_PROPERTY: String =
+            "dev.sebastiano.spectre.daemon.processGroupIsolated"
+
+        private fun isWindows(): Boolean =
+            System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
 
         private fun defaultJavaExecutable(): String {
             val executable =

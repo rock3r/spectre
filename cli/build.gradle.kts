@@ -222,6 +222,10 @@ tasks.shadowJar {
                 "-keep class org.jetbrains.compose.reload.orchestration.** { *; }",
                 "-keep class org.jetbrains.compose.reload.core.** { *; }",
                 "-dontwarn org.jetbrains.compose.reload.**",
+                // JNA marshals Win32 handles and dispatches native methods by reflection/JNI.
+                "-keep class com.sun.jna.** { *; }",
+                "-keep class com.github.ajalt.mordant.terminal.terminalinterface.jna.*Lib* { *; }",
+                "-keep interface dev.sebastiano.spectre.agent.launch.WindowsProcessArguments\$NtDll { *; }",
                 // Ktor ServiceLoader entry verified by verifyCliShadowJar.
                 "-keep class * implements io.ktor.server.config.ConfigLoader { *; }",
             )

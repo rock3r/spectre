@@ -19,12 +19,12 @@ import java.awt.Window
  *   `attachLayer` / `detachLayer`) Each `WindowComposeSceneLayer` then exposes a private `mediator:
  *   ComposeSceneMediator?` whose `semanticsOwners` collection is what we want.
  *
- * Tracked as #39. Policy for multi-version support is **degrade-to-empty on a single chain**
- * matching Spectre's pinned Compose Desktop line — no multi-version adapter matrix for 1.0 (see
+ * Tracked as #39. Policy for multi-version support is **fail closed on a single chain** matching
+ * Spectre's pinned Compose Desktop line — no multi-version adapter matrix for 1.0 (see
  * `docs/spikes/209-injection/overlay-adapter-policy.md`, #322). Reflection stays concentrated here
- * so a future Compose rename is adapted in one place: [findOverlayLayerWindows] returns an empty
- * list rather than throwing if any field is missing or renamed, so main-scene automation keeps
- * working while a contributor updates this file (or adds a post-1.0 chain try-order).
+ * so a future Compose rename is adapted in one place. A mismatch throws with the detected Compose
+ * version: returning an empty list would make a missing popup indistinguishable from a complete
+ * tree and could make waits succeed while UI remains on screen.
  */
 internal object OverlayLayerInspector {
 
@@ -35,27 +35,26 @@ internal object OverlayLayerInspector {
      * owners. The accessor is a function rather than a captured collection so callers always
      * observe the live state at read time.
      *
-     * Returns an empty list if Compose's internals don't match the expected shape (e.g. the
-     * `composePanel` / `_composeContainer` / `layers` chain has been renamed) — degrade gracefully
-     * rather than crash the whole automator.
+     * Throws if Compose's internals don't match the expected shape. This deliberately fails closed
+     * rather than returning a tree that silently omits popup surfaces.
      */
     fun findOverlayLayerWindows(composeHostWindow: Window): List<OverlayLayerEntry> {
         if (!composeHostWindow.isComposeHostWindow()) return emptyList()
-        val composePanel = readField(composeHostWindow, "composePanel") ?: return emptyList()
+        val composePanel = requireField(composeHostWindow, "composePanel")
         return findOverlayLayersInHostPanel(composePanel)
     }
 
     /**
      * Reads the main-scene semantics owners of a Compose host window through its private
      * `composePanel` (a `ComposeWindowPanel`). Only for Compose versions where the host has no
-     * public `semanticsOwners` (`ComposeDialog` before Compose Multiplatform 1.12.0). Returns an
-     * empty list when the internals don't match.
+     * public `semanticsOwners` (`ComposeDialog` before Compose Multiplatform 1.12.0). Throws when
+     * the internals do not match.
      */
     @Suppress("UNCHECKED_CAST")
     fun readHostWindowSemanticsOwners(composeHostWindow: Window): Collection<SemanticsOwner> {
-        val composePanel = readField(composeHostWindow, "composePanel") ?: return emptyList()
+        val composePanel = requireField(composeHostWindow, "composePanel")
         return invokeGetter(composePanel, "getSemanticsOwners") as? Collection<SemanticsOwner>
-            ?: emptyList()
+            ?: incomplete("getSemanticsOwners", composePanel)
     }
 
     /**
@@ -71,8 +70,10 @@ internal object OverlayLayerInspector {
      * [ComposeWindow], or an embedded [ComposePanel]. Both declare the same private field.
      */
     private fun findOverlayLayersInHostPanel(hostPanel: Any): List<OverlayLayerEntry> {
-        val composeContainer = readField(hostPanel, "_composeContainer") ?: return emptyList()
-        val layers = readField(composeContainer, "layers") as? List<*> ?: return emptyList()
+        val composeContainer = requireField(hostPanel, "_composeContainer")
+        val layers =
+            requireField(composeContainer, "layers") as? List<*>
+                ?: incomplete("layers (List)", composeContainer)
         return layers.mapNotNull { layer -> layer?.let(::overlayLayerEntryOrNull) }
     }
 
@@ -90,14 +91,28 @@ internal object OverlayLayerInspector {
 
     @Suppress("UNCHECKED_CAST")
     private fun readSemanticsOwners(layer: Any): Collection<SemanticsOwner> {
-        val mediator = readField(layer, "mediator") ?: return emptyList()
+        val mediator = requireField(layer, "mediator")
         // `ComposeSceneMediator.semanticsOwners` is a delegated property — `val semanticsOwners by
         // semanticsOwnerManager::semanticsOwners` — so it has no JVM backing field and reading via
         // `getDeclaredField` returns null. The getter method exists under the conventional name
         // (`getSemanticsOwners`) and works regardless of how the property is implemented.
         val owners = invokeGetter(mediator, "getSemanticsOwners") as? Collection<SemanticsOwner>
-        return owners ?: emptyList()
+        return owners ?: incomplete("getSemanticsOwners", mediator)
     }
+
+    private fun requireField(target: Any, fieldName: String): Any =
+        readField(target, fieldName) ?: incomplete(fieldName, target)
+
+    private fun incomplete(member: String, target: Any): Nothing =
+        error(
+            "Incomplete Compose semantics inspection: expected '$member' on " +
+                "${target.javaClass.name} for Compose ${composeVersion(target)}"
+        )
+
+    private fun composeVersion(target: Any): String =
+        target.javaClass.`package`?.implementationVersion
+            ?: ComposeWindow::class.java.`package`?.implementationVersion
+            ?: "unknown version"
 
     private fun invokeGetter(target: Any, methodName: String): Any? {
         var cls: Class<*>? = target.javaClass
@@ -117,9 +132,8 @@ internal object OverlayLayerInspector {
 
     /**
      * Reflects [fieldName] from [target] (or any superclass), making it accessible. Returns the
-     * field value or `null` if the field is missing, the access fails, or the value is `null`. This
-     * is the only place that swallows `ReflectiveOperationException` — every other reflection call
-     * site in this file goes through here so we degrade uniformly.
+     * field value or `null` if the field is missing, access fails, or the value is `null`. Required
+     * callers turn that result into a versioned incomplete-inspection error.
      */
     private fun readField(target: Any, fieldName: String): Any? {
         var cls: Class<*>? = target.javaClass

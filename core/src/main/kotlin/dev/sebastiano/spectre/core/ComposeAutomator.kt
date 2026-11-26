@@ -26,7 +26,6 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
-import kotlinx.coroutines.runInterruptible
 
 /**
  * Single user-facing entry point for driving live Compose Desktop UIs: tracked-window discovery,
@@ -52,6 +51,11 @@ private constructor(
     public val inputCapabilities: InputCapabilities
         get() = robotDriver.inputCapabilities
 
+    /** Cooperative input policy selected by this automator's driver. */
+    @InternalSpectreApi
+    public val inputLeasePolicy: InputLeasePolicy
+        get() = robotDriver.inputLeasePolicy
+
     /** Holds one reentrant desktop lease across the complete [block]. */
     @ExperimentalSpectreInputCoordinationApi
     public suspend fun <T> withExclusiveInput(
@@ -65,6 +69,10 @@ private constructor(
     internal fun bindInputLease(
         lease: dev.sebastiano.spectre.input.CoordinatedInputLease
     ): AutoCloseable = robotDriver.bindInputLease(lease)
+
+    @InternalSpectreApi
+    public fun bindInputLeaseOptions(options: InputLeaseOptions): AutoCloseable =
+        robotDriver.bindInputLeaseOptions(options)
 
     /**
      * Snapshot of the currently tracked windows. Returns the live `TrackedWindow` collaborator
@@ -672,16 +680,36 @@ private constructor(
         timeout: Duration = DEFAULT_WAIT_TIMEOUT,
         stableFrames: Int = DEFAULT_STABLE_FRAMES,
         pollInterval: Duration = DEFAULT_POLL_INTERVAL,
+    ): Unit = waitForVisualIdle(timeout, stableFrames, pollInterval, false)
+
+    /**
+     * Waits for stable surface pixels. Native, occlusion-safe window capture is required unless
+     * [allowScreenRegionFallback] explicitly permits desktop-region sampling.
+     */
+    public suspend fun waitForVisualIdle(
+        timeout: Duration = DEFAULT_WAIT_TIMEOUT,
+        stableFrames: Int = DEFAULT_STABLE_FRAMES,
+        pollInterval: Duration = DEFAULT_POLL_INTERVAL,
+        allowScreenRegionFallback: Boolean,
     ) {
         rejectEdtCaller("waitForVisualIdle")
         withNativeCaptureWaitScope(javaClass.classLoader, robotDriver.allowsPlatformCapture) { scope
             ->
+            val sampler =
+                VisualIdleFrameSampler(
+                    refreshWindows = ::refreshWindows,
+                    trackedWindows = { windows },
+                    backend = screenCaptureBackend,
+                    runBoundedOnWorker = ::runBoundedOnWorker,
+                )
             waitForVisualIdleInternal(
                 timeout = timeout,
                 stableFrames = stableFrames,
                 pollInterval = pollInterval,
                 frameHash =
-                    BoundedFrameHasher(FRAME_HASH_BUDGET_MS) { sampleFrameHash(it, scope) }::hash,
+                    BoundedFrameHasher(FRAME_HASH_BUDGET_MS) {
+                        sampler.sample(it, scope, allowScreenRegionFallback)
+                    }::hash,
             )
         }
     }
@@ -735,56 +763,6 @@ private constructor(
     private fun computeUiFingerprintUnbounded(): String = readOnEdt {
         refreshWindows()
         uiFingerprint(windows, semanticsReader)
-    }
-
-    private suspend fun sampleFrameHash(
-        budgetMs: Long,
-        captureScope: NativeCaptureWaitScope,
-    ): Int? {
-        // Hash tracked Compose surfaces independently: a virtual-desktop capture would let
-        // unrelated windows, notifications, or the cursor outside the app reset the streak.
-        // Returning null for no surfaces or a budget expiry makes the per-wait hasher produce a
-        // changing value, so an unsampleable UI cannot be reported as visually idle.
-        // Native capture can take seconds on its first use, so BoundedFrameHasher gives the cold
-        // sample the wait's remaining budget. After the first completed sample, this worker is
-        // capped at FRAME_HASH_BUDGET_MS: an unexpectedly hung EDT or capture API still cannot
-        // out-block waitForVisualIdle's overall deadline.
-        //
-        // Prefer window-scoped pixels when the recording native still bridge is present (#355):
-        // one-shot helper startup is paid on the cold sample; steady-state budget is sized for a
-        // warm one-shot still (see FRAME_HASH_BUDGET_MS), not a continuous frame stream.
-        return runInterruptible {
-            runBoundedOnWorker(budgetMs) {
-                refreshWindows()
-                val surfaces = trackedComposeSurfaces()
-                if (surfaces.isEmpty()) {
-                    null
-                } else {
-                    val geometry = readOnEdt {
-                        surfaces.associate { (window, _) ->
-                            window to
-                                (Rectangle(window.window.bounds) to windowInsets(window.window))
-                        }
-                    }
-                    hashTrackedSurfacesForVisualIdle(
-                        surfaces = surfaces,
-                        windowBoundsFor = { geometry.getValue(it).first },
-                        frameInsetsFor = { geometry.getValue(it).second },
-                        backend = screenCaptureBackend,
-                        nativeWindowCaptureAvailable = captureScope.isAvailable(),
-                    )
-                }
-            }
-        }
-    }
-
-    private fun trackedComposeSurfaces(): List<Pair<TrackedWindow, Rectangle>> = readOnEdt {
-        windows.mapNotNull { window ->
-            runCatching { window.composeSurfaceBoundsOnScreen }
-                .getOrNull()
-                ?.takeIf { !it.isEmpty }
-                ?.let { window to it }
-        }
     }
 
     private fun <T> runBoundedOnWorker(budgetMs: Long, block: () -> T): T? {
@@ -856,16 +834,8 @@ private constructor(
         region: Rectangle,
         windowBounds: Rectangle,
         frameInsets: java.awt.Insets,
-    ): BufferedImage {
-        return screenshotTrackedRegionCapture(trackedWindow, region, windowBounds, frameInsets)
-            .image
-    }
-
-    private data class ScreenshotGeometry(
-        val region: Rectangle,
-        val windowBounds: Rectangle,
-        val frameInsets: java.awt.Insets,
-    )
+    ): BufferedImage =
+        screenshotTrackedRegionCapture(trackedWindow, region, windowBounds, frameInsets).image
 
     private fun screenshotTrackedRegionCapture(
         trackedWindow: TrackedWindow,
@@ -1065,3 +1035,9 @@ private fun StringBuilder.appendNodeTree(node: AutomatorNode, depth: Int) {
         appendNodeTree(child, depth + 1)
     }
 }
+
+private data class ScreenshotGeometry(
+    val region: Rectangle,
+    val windowBounds: Rectangle,
+    val frameInsets: java.awt.Insets,
+)
