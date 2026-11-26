@@ -187,6 +187,20 @@ jobs:
           if [[ "$COMPLETE_STOCK" == true ]]; then
             test -f /usr/share/java/java-atk-wrapper.jar
             dpkg -L libatk-wrapper-java-jni | grep libatk-wrapper.so | tee "$RUNNER_TEMP/qa-packaged-disabled-atspi/atk-provider.txt"
+            provider="$(dpkg -L libatk-wrapper-java-jni | grep -E '/libatk-wrapper\.so$')"
+            jni="$(dirname "$provider")"
+            cat >"$RUNNER_TEMP/LoadAtk.java" <<'JAVA'
+          public class LoadAtk {
+              public static void main(String[] args) {
+                  System.out.println("java.library.path=" + System.getProperty("java.library.path"));
+                  System.loadLibrary("atk-wrapper");
+              }
+          }
+          JAVA
+            java --class-path /usr/share/java/java-atk-wrapper.jar "$RUNNER_TEMP/LoadAtk.java" >"$RUNNER_TEMP/qa-packaged-disabled-atspi/raw-atk-loader.txt" 2>&1 || cat "$RUNNER_TEMP/qa-packaged-disabled-atspi/raw-atk-loader.txt"
+            export LD_LIBRARY_PATH="$jni${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            ldd "$provider" | tee "$RUNNER_TEMP/qa-packaged-disabled-atspi/atk-provider-dependencies.txt"
+            java --class-path /usr/share/java/java-atk-wrapper.jar "$RUNNER_TEMP/LoadAtk.java" >"$RUNNER_TEMP/qa-packaged-disabled-atspi/augmented-atk-loader.txt" 2>&1 || cat "$RUNNER_TEMP/qa-packaged-disabled-atspi/augmented-atk-loader.txt"
             launcher=(xvfb-run -a -s '-screen 0 1280x720x24 -nolisten tcp')
           else
             launcher=()
@@ -251,6 +265,37 @@ jobs:
           for failure in cases[0]:
               print(failure.tag, failure.attrib, (failure.text or '')[:7000])
           assert all(suite.get(k) == '0' for k in ['skipped','errors','failures']) and suite.get('tests')=='1'
+          PYTHON
+      - name: Replay the exact Java fixture startup without the added JNI search directory
+        if: always() && env.COMPLETE_STOCK == 'true' && env.PACKAGED_CLI != ''
+        working-directory: product
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/qa-packaged-disabled-atspi"
+          export QA_EVIDENCE="$out"
+          if ! test -e "$out/fixture-command.json"; then
+            echo 'Attached fixture did not reach its MCP launcher; raw JVM loader diagnostics retained.'
+            exit 0
+          fi
+          xvfb-run -a -s '-screen 0 1280x720x24 -nolisten tcp' env PYTHONPATH="$PWD/scripts" python3 - <<'PYTHON'
+          import json,os,runpy,signal,subprocess
+          from pathlib import Path
+          evidence=Path(os.environ['QA_EVIDENCE'])
+          command=json.loads((evidence/'fixture-command.json').read_text())
+          assert command['argv'][-1]=='dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt'
+          source=runpy.run_path(str(Path('scripts/release-smoke.py').resolve()))
+          with source['_private_linux_dbus'](True) as bus, source['_private_daemon_environment']() as private:
+              env={**os.environ,**bus,**private,'SPECTRE_FIXTURE_ATSPI':'true'}
+              with (evidence/'stock-jvm-fixture-start.log').open('w') as output:
+                  app=subprocess.Popen(command['argv'], cwd=command['cwd'], env=env, stdout=output,
+                      stderr=subprocess.STDOUT, start_new_session=True)
+                  try:
+                      print('Unmodified fixture process exit code:',app.wait(timeout=35))
+                  except subprocess.TimeoutExpired:
+                      print('Unmodified fixture process continued after 35 s; retaining its output.')
+                  finally:
+                      source['_terminate_owned_process'](app)
+          print((evidence/'stock-jvm-fixture-start.log').read_text()[-5000:])
           PYTHON
       - name: Upload compact evidence only
         if: always()

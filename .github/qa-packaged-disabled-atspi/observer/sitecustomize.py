@@ -6,6 +6,13 @@ import shutil
 from pathlib import Path
 
 if 'QA_RESPONSE_LOG' in os.environ and (sys.argv[0].endswith('mcp-stdio-smoke.py') or sys.argv[0] == '-'):
+    if '--attach-pid' in sys.argv:
+        pid = sys.argv[sys.argv.index('--attach-pid')+1]
+        target = Path('/proc') / pid
+        output = Path(os.environ['QA_RESPONSE_LOG']).parent
+        command = (target/'cmdline').read_bytes().split(b'\x00')
+        (output/'fixture-command.json').write_text(json.dumps(dict(
+            cwd=os.readlink(target/'cwd'), argv=[os.fsdecode(v) for v in command if v])))
     def observe(frame, event, result):
         if event == 'call' and frame.f_code.co_name == '_check_accessibility_artifacts':
             output = Path(os.environ['QA_RESPONSE_LOG']).parent
