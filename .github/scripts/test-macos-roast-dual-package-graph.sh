@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Fail-closed contract for packaging both macOS Roast targets in one Gradle graph.
+# Fail-closed contract for packaging both macOS Roast targets on native runners.
 #
 # macos-release-artifacts.yml (notarize-macos.yml + tag release.yml) invokes
-#   :cli:packageMacosX64 :cli:packageMacosArm64
-# in a single Gradle invocation. Each package* is finalizedBy
+# a two-row target/task/runner matrix. Each package* is finalizedBy
 # verifyRoastCliNativeLayout*, which reads the target zip. If both package tasks
 # share construo/distributions as destinationDirectory, Gradle 9 reports an
 # implicit-dependency and the CLI seal job dies before signing.
@@ -27,11 +26,15 @@ fail() {
 [[ -f "$init_script" ]] || fail "missing $init_script"
 [[ -x "$wrapper" ]] || fail "missing executable $wrapper"
 
-# The release path must still request both macOS package tasks (one graph is the
-# intended, now-safe invocation once dest dirs are isolated).
-if ! grep -q ':cli:packageMacosX64' "$workflow" || ! grep -q ':cli:packageMacosArm64' "$workflow"; then
-  fail "macos-release-artifacts.yml must request both :cli:packageMacosX64 and :cli:packageMacosArm64"
-fi
+# The release path must map each target to its native runner and Gradle task.
+for mapping in \
+  'target: macosX64' 'task-suffix: MacosX64' 'runner: macos-15-intel' \
+  'target: macosArm64' 'task-suffix: MacosArm64' 'runner: macos-15'
+do
+  grep -Fq "$mapping" "$workflow" || fail "missing native macOS matrix mapping: $mapping"
+done
+grep -Fq '":cli:package${TARGET_TASK_SUFFIX}"' "$workflow" \
+  || fail "macOS matrix must invoke its selected package task"
 
 # Capture dest/finalizer lines even when the init script fails closed.
 inspect_log="$(mktemp)"
@@ -83,6 +86,8 @@ if ! grep -Fq 'spectre-macosX64.zip' "$workflow" || ! grep -Fq 'spectre-macosArm
 fi
 grep -Fq '$RUNNER_TEMP/mac-cli-bundles/spectre-${target}.zip' "$workflow" \
   || fail "workflow must flatten isolated dest zips to \$RUNNER_TEMP/mac-cli-bundles/spectre-\${target}.zip"
+grep -Fq 'pattern: mac-cli-macos*' "$workflow" \
+  || fail "native macOS artifacts must be merged before publication"
 
 # Dest isolation applies to every Roast package*. CI that unzips or uploads those
 # zips must read construo/distributions/<target>/spectre-<target>.zip, not the

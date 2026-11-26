@@ -26,6 +26,20 @@ abstract class VerifyRoastCliNativeLayout : DefaultTask() {
         val keepPrefix =
             CliRoastNativePackagingContract.keepNativePrefixForRoastTarget(roastTargetName.get())
         ZipFile(archive).use { zip ->
+            val nativeEntries =
+                zip.entries().asSequence().filterNot { it.isDirectory }.mapNotNull { entry ->
+                    val header = zip.getInputStream(entry).use { it.readNBytes(MAX_NATIVE_BYTES) }
+                    if (
+                        entry.name.endsWith("/spectre") ||
+                            entry.name.endsWith("/spectre.exe") ||
+                            CliRuntimeArchitectureContract.isNativePayload(entry.name, header)
+                    ) entry.name to header else null
+                }.toMap()
+            val nativeErrors = CliRuntimeArchitectureContract.validate(roastTargetName.get(), nativeEntries)
+            check(nativeErrors.isEmpty()) {
+                "${archive.name} fails target native-binary validation:\n" +
+                    nativeErrors.joinToString("\n") { "  - $it" }
+            }
             val applicationJar = resolveApplicationJarEntry(zip)
             val entryNames =
                 zip.getInputStream(zip.getEntry(applicationJar)).use { input ->
@@ -49,11 +63,36 @@ abstract class VerifyRoastCliNativeLayout : DefaultTask() {
             check(AGENT_RUNTIME_ENTRY in entryNames) {
                 "${archive.name} embedded jar $applicationJar is missing $AGENT_RUNTIME_ENTRY"
             }
+            requiredHelpers(roastTargetName.get()).forEach { suffix ->
+                check(entryNames.any { it.endsWith(suffix) }) {
+                    "${archive.name} embedded jar $applicationJar is missing native helper $suffix"
+                }
+            }
         }
     }
 
     companion object {
         const val AGENT_RUNTIME_ENTRY: String = "spectre/agent-runtime.jar"
+        private const val MAX_NATIVE_BYTES: Int = 8 * 1024 * 1024
+
+        private fun requiredHelpers(targetName: String): List<String> =
+            when {
+                targetName.startsWith("windows") ->
+                    listOf(
+                        "native/windows/x64/spectre-window-capture.exe",
+                        "native/windows/arm64/spectre-window-capture.exe",
+                    )
+                targetName.startsWith("linux") ->
+                    listOf(
+                        "native/linux/x86_64/spectre-wayland-helper",
+                        "native/linux/aarch64/spectre-wayland-helper",
+                    )
+                targetName.startsWith("macos") ->
+                    listOf(
+                        "native/macos/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture"
+                    )
+                else -> error("Unsupported Roast target: $targetName")
+            }
 
         /**
          * Prefer a single `*-all.jar` application payload; fail if zero or multiple candidates
