@@ -182,6 +182,21 @@ Structured text matching uses query parameters on `GET /nodes` and `GET /node`:
 the older `exact` shorthand. Node-targeted screenshots use
 `GET /spectre/screenshot?nodeKey=…`.
 
+When a selector matches multiple nodes, the singular HTTP `GET /node`, CLI
+`wait-for-node`, and MCP `wait_for_node` operations preserve their previously selected
+first-match behavior. Use HTTP `GET /nodes` to inspect every match, use the CLI `find`
+command before waiting, or use MCP `find` / `find_text` and choose a concrete `node_key`
+when ambiguity must be handled explicitly.
+
+### Migrating to 0.10
+
+Whole-desktop capture is now deliberately explicit: use
+`HttpComposeAutomator.screenshot(fullscreen = true)` or request
+`GET /spectre/screenshot?fullscreen=true`. The deprecated no-argument JVM method remains binary
+present but fails without capturing; an unscoped HTTP request is rejected. Query and request
+payloads also reject unknown, duplicate, or incorrectly typed arguments instead of silently
+ignoring them or substituting defaults.
+
 ## Use cases
 
 Use the server module for these situations:

@@ -65,6 +65,8 @@ grep -F -q '.WaitForExit($TimeoutSeconds * 1000)' "$script" || fail "native proc
 grep -F -q 'taskkill.exe /PID $p.Id /T /F' "$script" || fail "timeout does not clean the Windows process tree"
 grep -F -q 'timed out after {1}s' "$script" || fail "timeout diagnostic is missing"
 grep -F -q '"--stop"' "$script" || fail "packaged Gradle-ish launch does not reset attach-tainted daemons"
+invoke_gradle_body="$(awk '/function Invoke-Gradle/{p=1; next} p && /^function /{exit} p' "$script")"
+echo "$invoke_gradle_body" | grep -F -q '"--no-daemon"' || fail "Windows smoke Gradle calls must not leave a daemon holding redirected output open"
 
 # --- Shared schemaVersion report + stable scenario IDs (#398) ---
 grep -F -q 'schemaVersion' "$script" || fail "Windows report missing schemaVersion"

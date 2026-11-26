@@ -20,7 +20,7 @@ Spectre does not guarantee binary compatibility for this API. The
 - `HttpComposeAutomator` supports `windows`,
   `allNodes`, selectors (`findBy*` / `findOneBy*` including structured `TextQuery`), input
   verbs (`click`, `doubleClick`, `longClick`, `swipe`, `scrollWheel`, `pressKey`, `typeText`,
-  `clearAndTypeText`), `tree` / `printTree`, and screenshot (full-frame or node-targeted).
+  `clearAndTypeText`), `tree` / `printTree`, and screenshot (explicit `fullscreen = true` or node-targeted).
 - DTOs in `dev.sebastiano.spectre.server.dto` define the kotlinx-serialization wire contract.
   `DtoSerializationTest` verifies that each DTO survives serialisation and deserialisation.
 
