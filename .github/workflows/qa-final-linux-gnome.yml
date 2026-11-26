@@ -46,7 +46,7 @@ jobs:
       fail-fast: false
       matrix:
         include: >-
-          ${{ startsWith(github.event.head_commit.message, 'Rehearse Linux release seat pair') && fromJSON('[{"os":"ubuntu-22.04","release":"Jammy GNOME 42","cell":"complete-release-seat","mode":"qa-final-release-seat"},{"os":"ubuntu-24.04","release":"Noble GNOME 46","cell":"complete-release-seat","mode":"qa-final-release-seat"}]') || startsWith(github.event.head_commit.message, 'Rehearse Linux release seat Jammy') && fromJSON('[{"os":"ubuntu-22.04","release":"Jammy GNOME 42","cell":"complete-release-seat","mode":"qa-final-release-seat"}]') || needs.control.outputs.phase == 'REHEARSAL' && fromJSON('[{"os":"ubuntu-24.04","release":"Noble GNOME 46","cell":"complete-release-seat","mode":"qa-final-release-seat"}]') || fromJSON('[{"os":"ubuntu-24.04","release":"Noble GNOME 46","cell":"complete-release-seat","mode":"qa-final-release-seat"},{"os":"ubuntu-22.04","release":"Jammy GNOME 42","cell":"complete-release-seat","mode":"qa-final-release-seat"},{"os":"ubuntu-24.04","release":"Noble GNOME 46","cell":"packaged-region-stills","mode":"qa-final-region-stills"},{"os":"ubuntu-22.04","release":"Jammy GNOME 42","cell":"packaged-region-stills","mode":"qa-final-region-stills"},{"os":"ubuntu-24.04","release":"Noble GNOME 46","cell":"packaged-dynamic-occlusion-crop","mode":"cli-recording-live"},{"os":"ubuntu-22.04","release":"Jammy GNOME 42","cell":"packaged-dynamic-occlusion-crop","mode":"cli-recording-live"}]') }}
+          ${{ startsWith(github.event.head_commit.message, 'Ship final Linux dependency recovery') && fromJSON('[{"os":"ubuntu-22.04","release":"Jammy GNOME 42","cell":"packaged-dynamic-occlusion-crop","mode":"cli-recording-live"}]') || startsWith(github.event.head_commit.message, 'Rehearse Linux release seat pair') && fromJSON('[{"os":"ubuntu-22.04","release":"Jammy GNOME 42","cell":"complete-release-seat","mode":"qa-final-release-seat"},{"os":"ubuntu-24.04","release":"Noble GNOME 46","cell":"complete-release-seat","mode":"qa-final-release-seat"}]') || startsWith(github.event.head_commit.message, 'Rehearse Linux release seat Jammy') && fromJSON('[{"os":"ubuntu-22.04","release":"Jammy GNOME 42","cell":"complete-release-seat","mode":"qa-final-release-seat"}]') || needs.control.outputs.phase == 'REHEARSAL' && fromJSON('[{"os":"ubuntu-24.04","release":"Noble GNOME 46","cell":"complete-release-seat","mode":"qa-final-release-seat"}]') || fromJSON('[{"os":"ubuntu-24.04","release":"Noble GNOME 46","cell":"complete-release-seat","mode":"qa-final-release-seat"},{"os":"ubuntu-22.04","release":"Jammy GNOME 42","cell":"complete-release-seat","mode":"qa-final-release-seat"},{"os":"ubuntu-24.04","release":"Noble GNOME 46","cell":"packaged-region-stills","mode":"qa-final-region-stills"},{"os":"ubuntu-22.04","release":"Jammy GNOME 42","cell":"packaged-region-stills","mode":"qa-final-region-stills"},{"os":"ubuntu-24.04","release":"Noble GNOME 46","cell":"packaged-dynamic-occlusion-crop","mode":"cli-recording-live"},{"os":"ubuntu-22.04","release":"Jammy GNOME 42","cell":"packaged-dynamic-occlusion-crop","mode":"cli-recording-live"}]') }}
     steps:
       - name: Check out orchestration without modifying it
         uses: actions/checkout@v6
@@ -91,6 +91,12 @@ jobs:
           build-root-directory: candidate
           cache-read-only: true
       - uses: dtolnay/rust-toolchain@stable
+      - name: Prewarm exact public Gradle distribution and verified Foojay plugin dependencies
+        if: startsWith(github.event.head_commit.message, 'Ship final Linux dependency recovery')
+        working-directory: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash "$GITHUB_WORKSPACE/orchestration/.github/scripts/qa-prepare-gradle-distribution.sh"
       - name: Run the genuine PAM/logind GNOME seat
         working-directory: orchestration
         env:
