@@ -66,6 +66,8 @@ internal constructor(
     private val reconnectDelayMs: Long = DEFAULT_RECONNECT_DELAY_MS,
     // Injected so detekt InjectDispatcher accepts the default (see RobotDriver pattern).
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    // Internal orchestration barrier for integration tests; production construction uses the no-op.
+    private val onLifecycleSubscribedForTesting: () -> Unit = {},
 ) : HotReloadCapability {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val handleRef = AtomicReference<OrchestrationHandle?>(null)
@@ -166,6 +168,7 @@ internal constructor(
         val channel = Channel<ReloadLifecycleEvent>(Channel.BUFFERED)
         lifecycleSubscribers.add(channel)
         channel.invokeOnClose { lifecycleSubscribers.remove(channel) }
+        onLifecycleSubscribedForTesting()
         return channel
     }
 
