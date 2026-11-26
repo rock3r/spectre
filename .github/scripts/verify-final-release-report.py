@@ -80,8 +80,8 @@ def main() -> int:
         grants = consent["grants"]
         if consent["count"] != len(grants) or not grants:
             raise ValueError("no counted grants")
-        started = datetime.fromisoformat(report["startedAt"])
-        finished = datetime.fromisoformat(report["finishedAt"])
+        started = datetime.fromisoformat(report["startedAt"].replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(report["finishedAt"].replace("Z", "+00:00"))
         previous = started
         for grant in grants:
             observed = datetime.fromisoformat(grant["observedAt"])

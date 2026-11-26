@@ -145,6 +145,18 @@ if [[ "$SMOKE_MODE" == qa-final-release-seat ]]; then
       "$DBUS_SESSION_BUS_ADDRESS"
     stat "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
   } >"$SMOKE_ARTIFACTS/seat-session-environment.txt"
+  {
+    for iface in org.freedesktop.portal.RemoteDesktop org.freedesktop.portal.ScreenCast; do
+      printf '%s ' "$iface"
+      gdbus call --session --dest org.freedesktop.portal.Desktop \
+        --object-path /org/freedesktop/portal/desktop \
+        --method org.freedesktop.DBus.Properties.Get "$iface" version
+    done
+    printf '%s ' org.freedesktop.impl.portal.RemoteDesktop
+    gdbus call --session --dest org.freedesktop.impl.portal.desktop.gnome \
+      --object-path /org/freedesktop/portal/desktop \
+      --method org.freedesktop.DBus.Properties.Get org.freedesktop.impl.portal.RemoteDesktop version || true
+  } >"$SMOKE_ARTIFACTS/actual-portal-interface-versions.txt" 2>&1
   gdbus call --session --dest org.gnome.Mutter.DisplayConfig \
     --object-path /org/gnome/Mutter/DisplayConfig \
     --method org.gnome.Mutter.DisplayConfig.GetCurrentState \
