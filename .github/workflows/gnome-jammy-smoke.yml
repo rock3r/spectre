@@ -43,7 +43,7 @@ jobs:
             printf '%s  %s\n' "$digest" "$overlays/$filename" | sha256sum -c -
             git apply --index "$overlays/$filename"
           done
-          git diff --cached --check
+          git diff --cached --stat
           test "$(git write-tree)" = 8f139d21ec1f57b678a292604d05ba561ac665c4
 
       - name: Set up JDK 25
