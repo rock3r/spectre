@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.core
 
+import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -13,7 +14,6 @@ class MacOsTccGuardTest {
             MacOsTccGuard(
                 accessibilityProbe = { TccStatus.Denied },
                 screenRecordingProbe = { TccStatus.Granted },
-                warn = {},
             )
 
         val error = assertFailsWith<IllegalStateException> { guard.requireAccessibility() }
@@ -39,7 +39,6 @@ class MacOsTccGuardTest {
             MacOsTccGuard(
                 accessibilityProbe = { TccStatus.Granted },
                 screenRecordingProbe = { TccStatus.Denied },
-                warn = {},
             )
 
         val error = assertFailsWith<IllegalStateException> { guard.requireScreenRecording() }
@@ -62,7 +61,6 @@ class MacOsTccGuardTest {
             MacOsTccGuard(
                 accessibilityProbe = { TccStatus.Granted },
                 screenRecordingProbe = { TccStatus.Locked },
-                warn = {},
             )
 
         val error = assertFailsWith<IllegalStateException> { guard.requireScreenRecording() }
@@ -78,7 +76,6 @@ class MacOsTccGuardTest {
             MacOsTccGuard(
                 accessibilityProbe = { TccStatus.Granted },
                 screenRecordingProbe = { TccStatus.Granted },
-                warn = {},
             )
 
         guard.requireAccessibility()
@@ -91,7 +88,6 @@ class MacOsTccGuardTest {
             MacOsTccGuard(
                 accessibilityProbe = { TccStatus.Granted },
                 screenRecordingProbe = { TccStatus.Granted },
-                warn = {},
             )
 
         guard.requireScreenRecording()
@@ -108,7 +104,6 @@ class MacOsTccGuardTest {
                     TccStatus.Granted
                 },
                 screenRecordingProbe = { TccStatus.Granted },
-                warn = {},
             )
 
         repeat(5) { guard.requireAccessibility() }
@@ -126,7 +121,6 @@ class MacOsTccGuardTest {
                     probeInvocations++
                     TccStatus.Granted
                 },
-                warn = {},
             )
 
         repeat(5) { guard.requireScreenRecording() }
@@ -144,7 +138,6 @@ class MacOsTccGuardTest {
                     probeInvocations++
                     if (probeInvocations == 1) TccStatus.Locked else TccStatus.Granted
                 },
-                warn = {},
             )
 
         assertFailsWith<IllegalStateException> { guard.requireScreenRecording() }
@@ -154,62 +147,97 @@ class MacOsTccGuardTest {
     }
 
     @Test
-    fun `Unknown accessibility warns once and proceeds`() {
-        val warnings = mutableListOf<String>()
+    fun `Unknown accessibility fails with a typed inconclusive diagnostic`() {
         val guard =
             MacOsTccGuard(
                 accessibilityProbe = { TccStatus.Unknown },
                 screenRecordingProbe = { TccStatus.Granted },
-                warn = { warnings += it },
             )
 
-        repeat(3) { guard.requireAccessibility() }
+        val error = assertFailsWith<MacOsTccDiagnosticException> { guard.requireAccessibility() }
 
-        assertEquals(1, warnings.size, "expected exactly one warning, got: $warnings")
-        val message = warnings.single()
-        assertTrue("Accessibility" in message, "expected Accessibility in warning: $message")
-        assertTrue(
-            "could not" in message || "unknown" in message.lowercase(),
-            "expected probe-unknown phrasing: $message",
-        )
+        assertEquals(MacOsTccDiagnostic.Inconclusive, error.diagnostic)
+        assertTrue("Accessibility" in error.message.orEmpty())
     }
 
     @Test
-    fun `Unknown screen recording warns once and proceeds`() {
-        val warnings = mutableListOf<String>()
+    fun `Unknown screen recording fails with a typed inconclusive diagnostic`() {
         val guard =
             MacOsTccGuard(
                 accessibilityProbe = { TccStatus.Granted },
                 screenRecordingProbe = { TccStatus.Unknown },
-                warn = { warnings += it },
             )
 
-        repeat(3) { guard.requireScreenRecording() }
+        val error = assertFailsWith<MacOsTccDiagnosticException> { guard.requireScreenRecording() }
 
-        assertEquals(1, warnings.size, "expected exactly one warning, got: $warnings")
-        assertTrue(
-            "Screen Recording" in warnings.single() ||
-                "Screen & System Audio Recording" in warnings.single(),
-            "expected Screen Recording in warning: ${warnings.single()}",
-        )
+        assertEquals(MacOsTccDiagnostic.Inconclusive, error.diagnostic)
+        assertTrue("Screen Recording" in error.message.orEmpty())
+    }
+
+    @Test
+    fun `black capture after cached grant detects newly locked console`() {
+        var probeInvocations = 0
+        val guard =
+            MacOsTccGuard(
+                accessibilityProbe = { TccStatus.Granted },
+                screenRecordingProbe = {
+                    probeInvocations++
+                    if (probeInvocations == 1) TccStatus.Granted else TccStatus.Locked
+                },
+            )
+        guard.requireScreenRecording()
+
+        val error =
+            assertFailsWith<MacOsTccDiagnosticException> {
+                guard.validateCapture(BufferedImage(8, 8, BufferedImage.TYPE_INT_ARGB))
+            }
+
+        assertEquals(2, probeInvocations)
+        assertEquals(MacOsTccDiagnostic.Locked, error.diagnostic)
+    }
+
+    @Test
+    fun `black capture is preserved when re-probe conclusively confirms grant`() {
+        var probeInvocations = 0
+        val guard =
+            MacOsTccGuard(
+                accessibilityProbe = { TccStatus.Granted },
+                screenRecordingProbe = {
+                    probeInvocations++
+                    TccStatus.Granted
+                },
+            )
+        guard.requireScreenRecording()
+
+        guard.validateCapture(BufferedImage(8, 8, BufferedImage.TYPE_INT_ARGB))
+
+        assertEquals(2, probeInvocations)
+    }
+
+    @Test
+    fun `noop validation bypasses pixel reads`() {
+        val image =
+            object : BufferedImage(8, 8, TYPE_INT_ARGB) {
+                override fun getRGB(x: Int, y: Int): Int = error("pixels must not be read")
+            }
+        val guard = MacOsTccGuard.noop()
+        guard.requireScreenRecording()
+
+        guard.validateCapture(image)
     }
 
     @Test
     fun `NotApplicable status neither throws nor warns`() {
-        val warnings = mutableListOf<String>()
         val guard =
             MacOsTccGuard(
                 accessibilityProbe = { TccStatus.NotApplicable },
                 screenRecordingProbe = { TccStatus.NotApplicable },
-                warn = { warnings += it },
             )
 
         repeat(3) {
             guard.requireAccessibility()
             guard.requireScreenRecording()
         }
-
-        assertEquals(emptyList(), warnings)
     }
 
     @Test
@@ -220,7 +248,6 @@ class MacOsTccGuardTest {
             MacOsTccGuard(
                 accessibilityProbe = { TccStatus.Denied },
                 screenRecordingProbe = { TccStatus.Granted },
-                warn = {},
             )
 
         guard.requireScreenRecording()
@@ -233,7 +260,6 @@ class MacOsTccGuardTest {
             MacOsTccGuard(
                 accessibilityProbe = { TccStatus.Granted },
                 screenRecordingProbe = { TccStatus.Denied },
-                warn = {},
             )
 
         guard.requireAccessibility()
@@ -246,7 +272,6 @@ class MacOsTccGuardTest {
         // build a guard with the same shape but observable lambdas. If `MacOsTccGuard.noop()`
         // ever started returning something other than NotApplicable (e.g. ran a real probe), the
         // matched-shape guard here would diverge in observable behaviour from the factory one.
-        val warnings = mutableListOf<String>()
         var accessibilityProbed = 0
         var screenRecordingProbed = 0
         val matchingNoopShape =
@@ -259,7 +284,6 @@ class MacOsTccGuardTest {
                     screenRecordingProbed++
                     TccStatus.NotApplicable
                 },
-                warn = { warnings += it },
             )
 
         repeat(10) {
@@ -270,7 +294,6 @@ class MacOsTccGuardTest {
             MacOsTccGuard.noop().requireScreenRecording()
         }
 
-        assertEquals(emptyList(), warnings, "noop-shape guard must never warn")
         assertEquals(
             1,
             accessibilityProbed,
@@ -290,7 +313,6 @@ class MacOsTccGuardTest {
                     TccStatus.Denied
                 },
                 screenRecordingProbe = { TccStatus.Granted },
-                warn = {},
             )
 
         assertFailsWith<IllegalStateException> { guard.requireAccessibility() }
