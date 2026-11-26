@@ -1,5 +1,38 @@
 # CLI
 
+## Daemon configuration, warnings, and diagnostics
+
+The per-user daemon validates JVM settings that affect captures, attachment, and input on every
+connection. If a caller's settings differ from the running daemon, the command fails with the
+differing values and asks you to run `spectre daemon kill` before retrying.
+
+Daemon output is retained in a bounded, owner-only log next to its socket. For a socket at
+`<socket-path>`, the log is `<socket-path>.log` (for example, `daemon.sock.log`). Each socket has its
+own log, so test and override sockets cannot rotate or remove another daemon's diagnostics. The
+daemon polls the log every 250 ms. After it observes a stable size above 4 MiB for a complete poll
+interval, it retains the most recent 64 KiB suffix.
+
+Every warning produced by a normal operation is returned to its CLI or MCP caller. An operation
+returns at most 100 warning entries, and each entry contains at most 4,096 characters. If either
+limit is exceeded, the final entry is a truncation marker with the exact number of warning entries
+and warning characters discarded; replacing the final retained warning with that marker counts as
+a discarded warning. All preceding in-budget warnings are preserved in order and exactly once.
+The operation's normal response, partial failure, or image payload is unaffected.
+
+Diagnostics also share the configured IPC frame budget with the encoded operation response and
+envelope. If the complete diagnosed response does not fit, the daemon retains the longest
+in-order warning prefix whose encoded bytes fit alongside a marker reporting the number of warning
+entries discarded for the frame. This byte measurement includes multibyte text and serialization
+metadata. If an otherwise valid operation response leaves no room for even the envelope and compact
+marker, current clients receive the bare response; recent diagnostics may remain in the bounded
+per-socket log's retained suffix.
+Clients from before diagnosed responses keep their existing bare-response contract.
+
+The truncation marker points to the recent suffix retained in the per-socket log, not a complete
+archive. The log uses in-place truncation so the daemon's stderr remains attached, but independent
+raw stderr writers or appends that race rotation may be lost. Do not rely on this log for complete
+diagnostic history.
+
 ## Inspecting and recovering the desktop input lease
 
 !!! warning "Experimental control surface"

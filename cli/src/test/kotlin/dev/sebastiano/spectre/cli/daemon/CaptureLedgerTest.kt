@@ -7,6 +7,22 @@ import kotlin.test.assertTrue
 
 class CaptureLedgerTest {
     @Test
+    fun `rewrite preserves undecodable ledger lines for recovery`() {
+        val root = Files.createTempDirectory("spectre-ledger")
+        val ledgerFile = root.resolve("ledger.jsonl")
+        val keep = Files.createDirectory(root.resolve("keep"))
+        val drop = Files.createDirectory(root.resolve("drop"))
+        val ledger = CaptureLedger(ledgerFile)
+        ledger.append(CaptureLedgerEntry("s", keep.toString(), 1, 1, false))
+        Files.writeString(ledgerFile, "not-json\n", java.nio.file.StandardOpenOption.APPEND)
+        ledger.append(CaptureLedgerEntry("s", drop.toString(), 2, 2, false))
+
+        ledger.removePaths(setOf(drop.toString()))
+
+        assertTrue(Files.readString(ledgerFile).contains("not-json"))
+    }
+
+    @Test
     fun `append and list drops entries whose directories no longer exist`() {
         val root = Files.createTempDirectory("spectre-ledger")
         val ledgerFile = root.resolve("ledger.jsonl")
