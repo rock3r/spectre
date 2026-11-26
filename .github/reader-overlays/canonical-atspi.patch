@@ -38,7 +38,7 @@ index b8a554d..12c9cc7 100644
  
  ```json
 diff --git a/recording/native/linux/src/accessibility.rs b/recording/native/linux/src/accessibility.rs
-index 1c22b40..4115560 100644
+index 1c22b40..776f8dd 100644
 --- a/recording/native/linux/src/accessibility.rs
 +++ b/recording/native/linux/src/accessibility.rs
 @@ -277,7 +277,8 @@ fn capture_with_status(
@@ -51,7 +51,112 @@ index 1c22b40..4115560 100644
      name: Option<String>,
      states: Vec<String>,
      value: Option<String>,
-@@ -439,8 +440,8 @@ fn walk(
+@@ -310,8 +311,10 @@ fn find_window(
+         let apps = children(bus, &root, deadline).map_err(|e| timed_err(deadline, e))?;
+         let mut title_matches = Vec::new();
+         for app in apps {
+-            check_deadline(deadline, None)?;
+-            let app_pid = connection_pid(bus, &app.bus, deadline);
++            if Instant::now() >= deadline {
++                return Err(find_window_expired(request));
++            }
++            let app_pid = connection_pid(bus, &app.bus, deadline)?;
+             let matches_process = match request.target {
+                 Target::ProcessId { value } => app_pid == Some(value),
+                 Target::WindowTitle { process_id, .. } => {
+@@ -328,9 +331,7 @@ fn find_window(
+                     Target::WindowTitle { value, .. } => {
+                         let p =
+                             bus.with_proxy(&window.bus, window.path.clone(), remaining(deadline));
+-                        if property_string_sync(&p, "org.a11y.atspi.Accessible", "Name").as_deref()
+-                            == Some(value)
+-                        {
++                        if find_window_title(&p, deadline)?.as_deref() == Some(value) {
+                             title_matches.push(window);
+                         }
+                     }
+@@ -358,6 +359,10 @@ fn find_window(
+         }
+         std::thread::sleep(Duration::from_millis(20).min(remaining(deadline)));
+     }
++    Err(find_window_expired(request))
++}
++
++fn find_window_expired(request: &Request) -> CaptureError {
+     let description = match &request.target {
+         Target::ProcessId { value } => format!("process {value}"),
+         Target::WindowTitle {
+@@ -377,27 +382,58 @@ fn find_window(
+         } => "target-not-found",
+         _ => "timeout",
+     };
+-    Err((
++    (
+         code,
+         format!("timed out waiting for {description} to register with AT-SPI"),
+         None,
+-    ))
++    )
+ }
+ 
+-fn connection_pid(bus: &SyncConnection, name: &str, deadline: Instant) -> Option<u32> {
++fn connection_pid(
++    bus: &SyncConnection,
++    name: &str,
++    deadline: Instant,
++) -> std::result::Result<Option<u32>, CaptureError> {
+     let daemon = bus.with_proxy(
+         "org.freedesktop.DBus",
+         "/org/freedesktop/DBus",
+         remaining(deadline),
+     );
+-    daemon
+-        .method_call::<(u32,), _, _, _>(
+-            "org.freedesktop.DBus",
+-            "GetConnectionUnixProcessID",
+-            (name.to_string(),),
+-        )
+-        .ok()
+-        .map(|v| v.0)
++    match daemon.method_call::<(u32,), _, _, _>(
++        "org.freedesktop.DBus",
++        "GetConnectionUnixProcessID",
++        (name.to_string(),),
++    ) {
++        Ok(value) => Ok(Some(value.0)),
++        Err(error) => optional_find_read(deadline, error),
++    }
++}
++
++fn find_window_title(
++    proxy: &Proxy<&SyncConnection>,
++    deadline: Instant,
++) -> std::result::Result<Option<String>, CaptureError> {
++    match proxy.method_call::<(Variant<String>,), _, _, _>(
++        "org.freedesktop.DBus.Properties",
++        "Get",
++        ("org.a11y.atspi.Accessible", "Name"),
++    ) {
++        Ok(value) => Ok(Some(value.0 .0)),
++        Err(error) => optional_find_read(deadline, error),
++    }
++}
++
++fn optional_find_read<T>(
++    deadline: Instant,
++    error: dbus::Error,
++) -> std::result::Result<Option<T>, CaptureError> {
++    let classified = timed_err(deadline, error);
++    if classified.0 == "timeout" {
++        Err(classified)
++    } else {
++        // Providers can disappear between registry enumeration and an individual read.
++        Ok(None)
++    }
+ }
+ 
+ fn parse_window_id(id: &str) -> Option<Address> {
+@@ -439,8 +475,8 @@ fn walk(
          key: key.clone(),
          parent_key: parent,
          id: data.id.clone(),
@@ -62,15 +167,14 @@ index 1c22b40..4115560 100644
          name: data.name,
          states: data.states,
          value: data.value,
-@@ -602,9 +603,19 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
+@@ -602,9 +638,19 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
              });
              let role = scope.spawn(|| {
                  let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
 -                p.method_call::<(u32,), _, _, _>("org.a11y.atspi.Accessible", "GetRole", ())
 +                let raw = p
 +                    .method_call::<(u32,), _, _, _>("org.a11y.atspi.Accessible", "GetRole", ())
-                     .ok()
--                    .map(|v| role_name(v.0).to_string())
++                    .ok()
 +                    .map(|value| value.0);
 +                let native_name = p
 +                    .method_call::<(String,), _, _, _>(
@@ -78,13 +182,14 @@ index 1c22b40..4115560 100644
 +                        "GetRoleName",
 +                        (),
 +                    )
-+                    .ok()
+                     .ok()
+-                    .map(|v| role_name(v.0).to_string())
 +                    .map(|value| value.0);
 +                (raw, native_name)
              });
              let children_result = scope.spawn(|| children(bus, a, deadline));
              let state_words = scope.spawn(|| {
-@@ -655,24 +666,10 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
+@@ -655,24 +701,10 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
          .or_else(|| attributes.get("accessible_id"))
          .cloned()
          .filter(|v| !v.is_empty());
@@ -110,7 +215,7 @@ index 1c22b40..4115560 100644
      let value = if interfaces
          .iter()
          .any(|interface| interface.ends_with(".Text"))
-@@ -687,7 +684,10 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
+@@ -687,7 +719,10 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
      };
      Ok(NodeData {
          id,
@@ -122,7 +227,7 @@ index 1c22b40..4115560 100644
          name,
          states,
          value,
-@@ -809,31 +809,157 @@ fn segment(id: Option<&str>, index: usize, duplicate: bool) -> String {
+@@ -809,31 +844,157 @@ fn segment(id: Option<&str>, index: usize, duplicate: bool) -> String {
          }
      }
  }
@@ -303,7 +408,7 @@ index 1c22b40..4115560 100644
  }
  fn intersects(a: &Rect, b: &Rect) -> bool {
      a.width > 0
-@@ -857,26 +983,108 @@ fn decode_states(words: &[u32]) -> Vec<String> {
+@@ -857,26 +1018,108 @@ fn decode_states(words: &[u32]) -> Vec<String> {
          (10, "expanded"),
          (11, "focusable"),
          (12, "focused"),
@@ -420,18 +525,62 @@ index 1c22b40..4115560 100644
      #[test]
      fn dbus_error_classification_before_deadline() {
          let deadline = Instant::now() + Duration::from_secs(30);
+@@ -972,6 +1215,42 @@ mod tests {
+         ));
+     }
+ 
++    #[test]
++    fn owner_scoped_title_expiration_is_target_not_found() {
++        let request: Request = serde_json::from_str(
++            r#"{"target":{"type":"window-title","value":"Preferences","processId":4242},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#,
++        )
++        .unwrap();
++
++        let error = find_window_expired(&request);
++
++        assert_eq!(error.0, "target-not-found");
++        assert!(error.1.contains("owned by process 4242"));
++    }
++
++    #[test]
++    fn unscoped_window_search_expiration_remains_timeout() {
++        let request: Request = serde_json::from_str(
++            r#"{"target":{"type":"window-title","value":"Preferences"},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#,
++        )
++        .unwrap();
++
++        assert_eq!(find_window_expired(&request).0, "timeout");
++    }
++
++    #[test]
++    fn unresponsive_find_window_dbus_read_remains_timeout() {
++        let deadline = Instant::now() + Duration::from_secs(30);
++        let error = dbus::Error::new_custom(
++            "org.freedesktop.DBus.Error.NoReply",
++            "Did not receive a reply.",
++        );
++
++        let result = optional_find_read::<u32>(deadline, error);
++
++        assert_eq!(result.unwrap_err().0, "timeout");
++    }
++
+     #[test]
+     fn rejects_window_title_process_owner_outside_pid_range() {
+         let request: Request = serde_json::from_str(
 diff --git a/recording/native/linux/tests/accessibility_gtk.py b/recording/native/linux/tests/accessibility_gtk.py
 new file mode 100644
-index 0000000..2cd156f
+index 0000000..d3f3aca
 --- /dev/null
 +++ b/recording/native/linux/tests/accessibility_gtk.py
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,88 @@
 +"""Snapshot a real GTK dialog, then activate the captured button through AT-SPI."""
 +import json
 +import subprocess
 +import sys
 +import time
 +
++import dbus
 +import gi
 +
 +gi.require_version("Atspi", "2.0")
@@ -442,6 +591,34 @@ index 0000000..2cd156f
 +    yield node
 +    for index in range(node.get_child_count()):
 +        yield from walk(node.get_child_at_index(index))
++
++
++def direct_native_role(accessible):
++    session_bus = dbus.SessionBus()
++    address = session_bus.get_object("org.a11y.Bus", "/org/a11y/bus").GetAddress(
++        dbus_interface="org.a11y.Bus"
++    )
++    accessibility_bus = dbus.bus.BusConnection(address)
++    desktop = dbus.Interface(
++        accessibility_bus.get_object(
++            "org.a11y.atspi.Registry",
++            "/org/a11y/atspi/accessible/root",
++            introspect=False,
++        ),
++        "org.a11y.atspi.Accessible",
++    )
++    for name, _ in desktop.GetChildren():
++        try:
++            native = dbus.Interface(
++                accessibility_bus.get_object(name, accessible.path, introspect=False),
++                "org.a11y.atspi.Accessible",
++            )
++            raw_role = int(native.GetRole())
++            if raw_role == 43:
++                return raw_role, str(native.GetRoleName())
++        except dbus.DBusException:
++            continue
++    raise AssertionError(f"No direct D-Bus object found for {accessible.path}")
 +
 +
 +def wait_for_button(pid):
@@ -472,9 +649,12 @@ index 0000000..2cd156f
 +    node, = (n for n in response["snapshot"]["nodes"]
 +             if n["name"] == "Complete proof" and n["role"] == "button")
 +
-+    assert node["platformRole"] == button.get_role_name(), node
-+    assert "sensitive" in node["states"] and not {"disabled", "selected"}.intersection(node["states"]), node
-+    assert ("enabled" in node["states"]) == button.get_state_set().contains(Atspi.StateType.ENABLED), node
++    raw_role, native_role_name = direct_native_role(button)
++    assert raw_role == 43, raw_role
++    assert node["platformRole"] == native_role_name == "button", node
++    assert button.get_state_set().contains(Atspi.StateType.SENSITIVE)
++    assert "sensitive" in node["states"], node
++    assert {"disabled", "selected", "enabled"}.isdisjoint(node["states"]), node
 +    assert button.do_action(0)
 +    assert dialog.wait(timeout=5) == 0
 +    print("accessibility-gtk: activated", node["platformRole"], node["states"])

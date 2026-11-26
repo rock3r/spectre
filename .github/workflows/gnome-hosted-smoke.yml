@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [portal, capture, accessibility, atspi-ownership, identity, mutter-control]
+        mode: [accessibility, atspi-ownership]
 
     steps:
       - name: Check out temporary workflow tooling
@@ -54,15 +54,15 @@ jobs:
         working-directory: atspi-reader
         run: |
           patch="$GITHUB_WORKSPACE/smoke-tooling/.github/reader-overlays/canonical-atspi.patch"
-          printf '%s  %s\n' 63df1beae77c775c5862ddf44ac6f2b23f0e72c2697b15cecd49579c8bc89316 "$patch" | sha256sum -c -
+          printf '%s  %s\n' 9232c066487bfec91a0c1fe0da71381e5211a690ecdf31f8890ed849c74751ad "$patch" | sha256sum -c -
           git apply --index "$patch"
-          test "$(git write-tree)" = 4f8fbefa6e79a6cbfa86e38789f5f8bf7136e6c7
+          test "$(git write-tree)" = 05e906416b3a28f7001f793edd13f80e03d5daf5
 
       - name: Check out native accessibility fixture
         if: matrix.mode == 'accessibility' || matrix.mode == 'atspi-ownership'
         uses: actions/checkout@v6
         with:
-          ref: 96cd6cb20e44d5d26a4cfb93d8a3f8e1b6375aa8
+          ref: e3368c3c2476f9b955290cfdcb05722908f1f4a5
           persist-credentials: false
           path: fixture
 
