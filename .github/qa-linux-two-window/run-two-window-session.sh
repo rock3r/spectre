@@ -32,7 +32,7 @@ export FIXTURE_HOME="$fixture_home"
 export FIXTURE_JAVA_TOOL_OPTIONS="-Djavax.accessibility.assistive_technologies=org.GNOME.Accessibility.AtkWrapper -Djava.library.path=/usr/lib/x86_64-linux-gnu/jni -Dskiko.renderApi=SOFTWARE_COMPAT"
 export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu/jni${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-./gradlew --no-daemon -I "$QA_DIR/write-attached-validation-classpath.gradle" \
+./gradlew --no-configuration-cache --no-daemon -I "$QA_DIR/write-attached-validation-classpath.gradle" \
   :sample-desktop:writeAttachedValidationClasspath --console=plain
 classpath=sample-desktop/build/two-window-qa-classpath.txt
 printf '%s' "$bridge:$(cat "$classpath")" > "$classpath"
