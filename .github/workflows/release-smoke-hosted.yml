@@ -77,8 +77,8 @@ jobs:
           printf '%s' "$AWT_FIXTURE_PATCH_GZIP_BASE64" | base64 -d | gzip -dc > "$RUNNER_TEMP/awt-test-fixture.patch"
           git apply --index "$RUNNER_TEMP/awt-test-fixture.patch"
           git diff --cached --check
-          test "$(git write-tree)" = feaf5015e5e9bfc7264912b32e6eb6a85ccb1b45
-          GIT_AUTHOR_DATE=2026-11-26T00:00:00Z GIT_COMMITTER_DATE=2026-11-26T00:00:00Z git -c user.name=Verification -c user.email=verification@localhost commit -m "Rehearse the corrected AWT fixtures and Windows shell contract"
+          test "$(git write-tree)" = 09db68eadf0541ef9b60f8ab8c1ce968b6d1ad21
+          GIT_AUTHOR_DATE=2026-11-26T00:00:00Z GIT_COMMITTER_DATE=2026-11-26T00:00:00Z git -c user.name=Verification -c user.email=verification@localhost commit -m "Rehearse the experimental desktop build service with the same fixtures"
           test -z "$(git status --porcelain --untracked-files=all)"
           printf '%s\n' "$CANDIDATE_SHA" > "$RUNNER_TEMP/release-smoke-identity/original-sha.txt"
           git rev-parse HEAD > "$RUNNER_TEMP/release-smoke-identity/exact-sha.txt"
@@ -312,7 +312,7 @@ jobs:
         timeout-minutes: 40
         run: ./gradlew check
       - name: Repeated native Windows short-launch classification
-        if: matrix.replica == 1
+        if: always() && matrix.replica == 1
         shell: bash
         run: |
           test "$(git rev-parse HEAD)" = bd60a28580dd77a76cd334677f122f628a9d6dc7
