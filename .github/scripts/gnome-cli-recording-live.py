@@ -131,6 +131,65 @@ def run_json(command: list[str], stdout_path: Path, stderr_path: Path) -> tuple[
     return value, result.returncode
 
 
+def interface_version(bus, bus_name: str, interface: str, *, optional: bool = False) -> int | None:
+    """Read a portal's advertised public/implementation interface version."""
+    try:
+        proxy = bus.get_object(bus_name, "/org/freedesktop/portal/desktop")
+        value = proxy.Get(interface, "version", dbus_interface="org.freedesktop.DBus.Properties")
+    except dbus.DBusException:
+        if optional:
+            return None
+        raise
+    version = int(value)
+    if version < 1:
+        raise RuntimeError(f"invalid {interface} version from {bus_name}: {version}")
+    return version
+
+
+def portal_versions(bus) -> dict[str, int | None]:
+    """Return the protocol facts which determine whether restore tokens are supported."""
+    return {
+        "remoteDesktop": interface_version(
+            bus, portal.PORTAL, "org.freedesktop.portal.RemoteDesktop"),
+        "screenCast": interface_version(
+            bus, portal.PORTAL, "org.freedesktop.portal.ScreenCast"),
+        "gnomeBackendRemoteDesktop": interface_version(
+            bus, portal.BACKEND, "org.freedesktop.impl.portal.RemoteDesktop", optional=True),
+    }
+
+
+def verify_permissions(request: dict, checked: dict, remote_desktop_version: int,
+                       marker_after_request: bool, marker_after_check: bool) -> bool:
+    """Fail closed on grants/sessions while applying the protocol's restore-token contract."""
+    for name, value in (("request", request), ("check", checked)):
+        if value.get("granted") is not True or value.get("status") != "granted":
+            raise RuntimeError(f"CLI {name} did not report a granted permission: {value}")
+        if value.get("sessionActive") is not True or not value.get("sessionSocket"):
+            raise RuntimeError(f"CLI {name} did not report an active session: {value}")
+        if not isinstance(value.get("tokenStored"), bool) or not value.get("tokenPath"):
+            raise RuntimeError(f"CLI {name} returned invalid restore-token facts: {value}")
+    for key in ("granted", "status", "sessionActive", "sessionSocket", "tokenStored", "tokenPath"):
+        if request[key] != checked[key]:
+            raise RuntimeError(f"CLI request/check disagree on {key}")
+    stored = request["tokenStored"]
+    if stored != marker_after_request or stored != marker_after_check:
+        raise RuntimeError("tokenStored does not match marker existence after request/check")
+    if remote_desktop_version >= 2 and not stored:
+        raise RuntimeError("RemoteDesktop v2+ did not persist its required restore-token marker")
+    if remote_desktop_version == 1 and stored:
+        raise RuntimeError("RemoteDesktop v1 unexpectedly claimed an unsupported restore token")
+    return stored
+
+
+def socket_owner(socket: Path) -> int:
+    """Return the sole live daemon owning the real session socket."""
+    owners = [int(value) for value in subprocess.check_output(
+        ["fuser", str(socket)], text=True, stderr=subprocess.DEVNULL).split()]
+    if len(owners) != 1 or not Path(f"/proc/{owners[0]}").is_dir():
+        raise RuntimeError(f"expected one live owner of the session socket: {owners}")
+    return owners[0]
+
+
 def main() -> None:
     artifacts = Path(os.environ["SMOKE_ARTIFACTS"])
     receipts = artifacts / "cli-live-phase-receipts.jsonl"
@@ -141,7 +200,9 @@ def main() -> None:
     java_version = subprocess.run([str(runtime_java), "-version"], text=True,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
-    backend = portal.backend_pid(dbus.SessionBus())
+    bus = dbus.SessionBus()
+    backend = portal.backend_pid(bus)
+    versions = portal_versions(bus)
     observation_file = artifacts / "portal-observations.jsonl"
     observer_ready = artifacts / "portal-observer.ready"
     watcher = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--observe",
@@ -197,28 +258,24 @@ def main() -> None:
     observer_after_grant = time.monotonic()
     if watcher.poll() is not None:
         raise RuntimeError("independent portal observer stopped during grant")
-    if not (proof.get("granted") and proof.get("sessionActive") and proof.get("tokenStored")):
-        raise RuntimeError(f"CLI did not report an active persistent grant: {proof}")
-    marker = Path(proof["tokenPath"])
-    socket = Path(proof["sessionSocket"])
-    if not marker.is_file() or not socket.is_socket():
-        raise RuntimeError("CLI grant token or active session socket is missing")
-    helper_pids = [int(value) for value in subprocess.check_output(
-        ["fuser", str(socket)], text=True, stderr=subprocess.DEVNULL).split()]
-    if len(helper_pids) != 1 or not Path(f"/proc/{helper_pids[0]}").is_dir():
-        raise RuntimeError(f"expected one live owner of the session socket: {helper_pids}")
-    receipt(receipts, "permissions-request", exitCode=request.returncode, **{
-        key: proof[key] for key in ("granted", "sessionActive", "tokenStored")})
-
+    marker = Path(proof.get("tokenPath", ""))
+    socket = Path(proof.get("sessionSocket", ""))
+    marker_after_request = marker.is_file()
+    if not socket.is_socket():
+        raise RuntimeError("CLI active session socket is missing")
+    helper_pid = socket_owner(socket)
     checked, check_exit = run_json(
         [str(cli), "permissions", "check", "--json"],
         artifacts / "cli-permissions-check.json", artifacts / "cli-permissions-check.stderr")
-    if not (checked.get("granted") and checked.get("sessionActive") and
-            checked.get("tokenStored") and checked.get("sessionSocket") == str(socket) and
-            checked.get("tokenPath") == str(marker)):
-        raise RuntimeError(f"CLI check did not describe the same active grant: {checked}")
+    marker_after_check = marker.is_file()
+    token_required = verify_permissions(
+        proof, checked, versions["remoteDesktop"], marker_after_request, marker_after_check)
+    if socket_owner(socket) != helper_pid:
+        raise RuntimeError("active session socket owner changed between request and check")
+    receipt(receipts, "permissions-request", exitCode=request.returncode, **{
+        key: proof[key] for key in ("granted", "status", "sessionActive", "tokenStored")})
     receipt(receipts, "permissions-check", exitCode=check_exit, **{
-        key: checked[key] for key in ("granted", "sessionActive", "tokenStored")})
+        key: checked[key] for key in ("granted", "status", "sessionActive", "tokenStored")})
 
     evidence_path = artifacts / "cli-recording-live-evidence.json"
     evidence = {
@@ -229,11 +286,21 @@ def main() -> None:
         "packagedLauncher": str(cli),
         "packagedRuntimeJava": str(runtime_java),
         "packagedJavaVersion": (java_version.stderr or java_version.stdout).splitlines()[0],
+        "portalInterfaceVersions": versions,
         "selectedSource": selected,
         "grant": {key: proof.get(key) for key in
-                  ("granted", "sessionActive", "tokenStored", "sessionSocket", "tokenPath")},
+                  ("granted", "status", "sessionActive", "tokenStored", "sessionSocket",
+                   "tokenPath")},
         "check": checked,
-        "helperPid": helper_pids[0],
+        "helperPid": helper_pid,
+        "restoreTokenExpectation": "required" if token_required else "unsupported",
+        "restoreTokenSemantics": (
+            "org.freedesktop.portal.RemoteDesktop v2+ persistent restore marker"
+            if token_required else
+            "org.freedesktop.portal.RemoteDesktop v1 has no persistent restore marker"),
+        "restoreAcrossProcessRestartsTested": False,
+        "markerExistsAfterRequest": marker_after_request,
+        "markerExistsAfterCheck": marker_after_check,
         "crossProcessByTitleScope": {
             "documentedUnsupportedLinuxApi": True,
             "doesNotAssertRawPeerDenial": True,
@@ -279,7 +346,8 @@ def main() -> None:
         nonzero_runs == 1 and max(item["pickerCount"] for item in samples) == 1 and
         not subsequent_picker_samples
     )
-    helper_alive = Path(f"/proc/{helper_pids[0]}").is_dir() and socket.is_socket()
+    helper_alive = (Path(f"/proc/{helper_pid}").is_dir() and socket.is_socket() and
+                    socket_owner(socket) == helper_pid)
     evidence.update({
         "cropExitCode": crop.returncode,
         "cropEvidence": json.loads((artifacts / "public-window-crop-evidence.json").read_text())
@@ -296,6 +364,7 @@ def main() -> None:
         "helperAliveAfterCaptures": helper_alive,
         "sessionSocketExists": socket.is_socket(),
         "grantMarkerExists": marker.is_file(),
+        "markerExistsAfterCapture": marker.is_file(),
     })
     evidence_path.write_text(json.dumps(evidence, indent=2) + "\n")
     receipt(receipts, "native-proven-public-crop", exitCode=crop.returncode,
@@ -304,7 +373,7 @@ def main() -> None:
         raise RuntimeError(f"native-tested public crop probe failed ({crop.returncode})")
     if not picker_valid:
         raise RuntimeError("observer did not prove exactly one grant picker and zero later pickers")
-    if not helper_alive or not marker.is_file():
+    if not helper_alive or marker.is_file() != token_required:
         raise RuntimeError("packaged CLI session did not govern capture through completion")
 
 

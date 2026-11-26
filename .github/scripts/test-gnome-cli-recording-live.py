@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Structural contracts for the packaged CLI/public crop verification cell."""
+import ast
 from pathlib import Path
 import unittest
 
@@ -10,12 +11,71 @@ DRIVER = (ROOT / ".github/scripts/gnome-cli-recording-live.py").read_text()
 CROP = (ROOT / ".github/scripts/gnome-public-window-crop.py").read_text()
 
 
+def load_permission_verifier():
+    """Load the pure verifier without importing native GNOME dependencies."""
+    tree = ast.parse(DRIVER)
+    function = next(node for node in tree.body
+                    if isinstance(node, ast.FunctionDef) and node.name == "verify_permissions")
+    module = ast.Module(body=[function], type_ignores=[])
+    namespace = {"RuntimeError": RuntimeError, "dict": dict, "bool": bool, "int": int}
+    exec(compile(ast.fix_missing_locations(module), "gnome-cli-recording-live.py", "exec"),
+         namespace)
+    return namespace["verify_permissions"]
+
+
+VERIFY_PERMISSIONS = load_permission_verifier()
+
+
+def permission_result(*, stored):
+    return {
+        "granted": True,
+        "status": "granted",
+        "sessionActive": True,
+        "sessionSocket": "/run/user/1001/spectre/wayland-session.sock",
+        "tokenStored": stored,
+        "tokenPath": "/tmp/wayland-rd-restore-token-rd-monitor-embedded",
+    }
+
+
 class CliRecordingLiveContractTest(unittest.TestCase):
+    def test_native_jammy_v1_accepts_real_session_without_restore_marker(self):
+        result = permission_result(stored=False)
+        self.assertFalse(VERIFY_PERMISSIONS(result, result.copy(), 1, False, False))
+
+    def test_native_noble_v2_requires_real_restore_marker(self):
+        result = permission_result(stored=True)
+        self.assertTrue(VERIFY_PERMISSIONS(result, result.copy(), 2, True, True))
+
+    def test_contradictory_token_flags_or_markers_are_rejected(self):
+        stored = permission_result(stored=True)
+        missing = permission_result(stored=False)
+        cases = (
+            (stored, stored.copy(), 2, False, False),
+            (missing, missing.copy(), 2, False, False),
+            (missing, missing.copy(), 1, True, True),
+            (stored, missing, 2, True, True),
+        )
+        for values in cases:
+            with self.subTest(values=values), self.assertRaises(RuntimeError):
+                VERIFY_PERMISSIONS(*values)
+
+    def test_grant_session_and_request_check_agreement_are_never_waived(self):
+        baseline = permission_result(stored=False)
+        for key, contradictory in (
+            ("granted", False), ("status", "denied"), ("sessionActive", False),
+            ("sessionSocket", "/run/user/1001/spectre/other.sock"),
+            ("tokenPath", "/tmp/different-marker"),
+        ):
+            checked = baseline.copy()
+            checked[key] = contradictory
+            with self.subTest(key=key), self.assertRaises(RuntimeError):
+                VERIFY_PERMISSIONS(baseline, checked, 1, False, False)
+
     def test_cell_is_separate_read_only_and_pinned(self):
         self.assertIn("public-wayland-cli-recording-live:", WORKFLOW)
         self.assertIn("permissions:\n  contents: read", WORKFLOW)
         self.assertIn("sha256sum -c -", WORKFLOW)
-        self.assertIn("d38754b614d0a0561c9921d95abe5cb4fb0a5f96", WORKFLOW)
+        self.assertIn("b517c7cd4bf9769c1f668a7ae8858cffedc885975d3d65ecb540da2d1ff0cfb6", WORKFLOW)
         self.assertNotIn("git push", WORKFLOW)
 
     def test_packaged_cli_requests_once_then_checks_same_live_session(self):
@@ -28,6 +88,10 @@ class CliRecordingLiveContractTest(unittest.TestCase):
         self.assertIn("portal.accept_dialog", DRIVER)
         self.assertIn("socket.is_socket()", DRIVER)
         self.assertIn("tokenPath", DRIVER)
+        self.assertIn("org.freedesktop.DBus.Properties", DRIVER)
+        self.assertIn("org.freedesktop.portal.RemoteDesktop", DRIVER)
+        self.assertIn("org.freedesktop.portal.ScreenCast", DRIVER)
+        self.assertIn("org.freedesktop.impl.portal.RemoteDesktop", DRIVER)
         self.assertNotIn('\"--session\"', DRIVER)
 
     def test_exact_native_proven_crop_probe_is_called_with_inherited_environment(self):
@@ -66,6 +130,9 @@ class CliRecordingLiveContractTest(unittest.TestCase):
         self.assertIn("packagedCliVersion", DRIVER)
         self.assertIn("documentedUnsupportedLinuxApi", DRIVER)
         self.assertIn("doesNotAssertRawPeerDenial", DRIVER)
+        self.assertIn("portalInterfaceVersions", DRIVER)
+        self.assertIn("restoreTokenExpectation", DRIVER)
+        self.assertNotIn("read_bytes", DRIVER)
 
 
 if __name__ == "__main__":
