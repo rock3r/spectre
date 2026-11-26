@@ -558,12 +558,14 @@ private fun daemonFixtureRuntimeClassPath(): String =
 
 private fun deleteTemporaryDaemonFixtureSocketPath(socketPath: Path) {
     Files.deleteIfExists(socketPath)
+    Files.deleteIfExists(DaemonProcessLauncher.diagnosticPath(socketPath))
     Files.deleteIfExists(socketPath.parent)
     Files.deleteIfExists(socketPath.parent.parent)
 }
 
 private fun deleteDaemonSocketAndParent(socketPath: Path) {
     Files.deleteIfExists(socketPath)
+    Files.deleteIfExists(DaemonProcessLauncher.diagnosticPath(socketPath))
     Files.deleteIfExists(socketPath.parent)
 }
 

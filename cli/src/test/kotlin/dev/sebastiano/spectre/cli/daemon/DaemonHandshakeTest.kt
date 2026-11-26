@@ -177,7 +177,7 @@ class DaemonHandshakeTest {
             ),
         )
         assertEquals(
-            DaemonProtocolVersion(major = 1, minor = 15),
+            DaemonProtocolVersion(major = 1, minor = 17),
             DaemonProtocol.minimumDaemonVersion(
                 DaemonRequest.Capture(
                     sessionId = "session-1234",

@@ -161,8 +161,9 @@ internal class DaemonSessionRecording(
             }
             // Always ledger Spectre-allocated dirs (including partial files after a failed stop)
             // so prune/retention can clean them up. Never ledger user --output parents.
+            var housekeepingFailure: IOException? = null
             if (directory != null && !explicit) {
-                runCatching {
+                try {
                     appendLedger(
                         directory,
                         sizeBytes = CaptureLifecycle.directorySizeBytes(directory),
@@ -173,9 +174,13 @@ internal class DaemonSessionRecording(
                         ledger = ledger,
                         liveSessionIds = liveSessionIds + sessionId,
                     )
+                } catch (exception: IOException) {
+                    housekeepingFailure =
+                        IOException("recording stopped but capture bookkeeping failed", exception)
                 }
             }
             if (error != null) throw error
+            if (housekeepingFailure != null) throw housekeepingFailure
             result ?: error("recording stopped without an output path")
         } finally {
             // Always clear in-memory state so a failed stop cannot leave start() blocked.

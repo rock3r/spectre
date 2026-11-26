@@ -439,6 +439,24 @@ public object SpectreMcpServer {
                     )
                 )
         ) {
+            is DaemonResponse.Diagnosed -> {
+                val result =
+                    when (val operation = response.response) {
+                        is DaemonResponse.Capture -> captureToolResult(operation, includeImage)
+                        is DaemonResponse.Error ->
+                            CallToolResult(listOf(TextContent(operation.message)), isError = true)
+                        else ->
+                            CallToolResult(
+                                listOf(
+                                    TextContent("Spectre daemon returned an unexpected response.")
+                                ),
+                                isError = true,
+                            )
+                    }
+                result.copy(
+                    content = response.warnings.map { TextContent("warning: $it") } + result.content
+                )
+            }
             is DaemonResponse.Capture -> captureToolResult(response, includeImage)
             is DaemonResponse.AccessibilityErrorResult ->
                 CallToolResult(
@@ -770,21 +788,30 @@ private fun CallToolRequest.validateKnownArguments() {
 private val MCP_JSON: Json = Json { encodeDefaults = true }
 
 private fun DaemonResponse.asResult(expected: (DaemonResponse) -> Boolean): CallToolResult =
-    when {
-        this is DaemonResponse.Error -> CallToolResult(listOf(TextContent(message)), isError = true)
-        expected(this) -> CallToolResult(listOf(TextContent(MCP_JSON.encodeToString(this))))
-        else ->
-            CallToolResult(
-                listOf(TextContent("Spectre daemon returned an unexpected response.")),
-                isError = true,
-            )
-    }
+    if (this is DaemonResponse.Diagnosed) {
+        val result = response.asResult(expected)
+        result.copy(content = warnings.map { TextContent("warning: $it") } + result.content)
+    } else
+        when {
+            this is DaemonResponse.Error ->
+                CallToolResult(listOf(TextContent(message)), isError = true)
+            expected(this) -> CallToolResult(listOf(TextContent(MCP_JSON.encodeToString(this))))
+            else ->
+                CallToolResult(
+                    listOf(TextContent("Spectre daemon returned an unexpected response.")),
+                    isError = true,
+                )
+        }
 
 internal fun normalizeRecordingOutputPath(outputPath: String): String =
     java.nio.file.Path.of(outputPath).toAbsolutePath().normalize().toString()
 
 internal fun DaemonResponse.screenshotResult(): CallToolResult =
     when (this) {
+        is DaemonResponse.Diagnosed -> {
+            val result = response.screenshotResult()
+            result.copy(content = warnings.map { TextContent("warning: $it") } + result.content)
+        }
         is DaemonResponse.Screenshot ->
             CallToolResult(
                 content =
