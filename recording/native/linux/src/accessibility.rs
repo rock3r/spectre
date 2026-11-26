@@ -7,6 +7,7 @@
 use anyhow::{Context, Result};
 use dbus::arg::{RefArg, Variant};
 use dbus::blocking::{Connection, Proxy, SyncConnection};
+use dbus::{Message, MessageType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -26,7 +27,10 @@ const REGISTRY_POLL_TIME: Duration = Duration::from_millis(20);
 const ROOT_READ_ATTEMPTS: usize = 3;
 const ATSPI_ROOT: &str = "/org/a11y/atspi/accessible/root";
 const ATSPI_CACHE: &str = "/org/a11y/atspi/cache";
-const CACHE_PREFETCH_BATCH: usize = 64;
+// Keep comfortably below the D-Bus daemon's commonly configured
+// max_replies_per_connection=128. This is a call limit, not an object limit: each cached object
+// can require three or four independent method calls.
+const CACHE_PENDING_CALL_LIMIT: usize = 64;
 
 type CacheRef = (String, dbus::Path<'static>);
 // AT-SPI's CacheItem wire format. Unlike registry GetItems, this is requested from the
@@ -202,7 +206,7 @@ fn response_from_result(result: std::result::Result<Snapshot, CaptureError>) -> 
 type CaptureError = (&'static str, String, Option<Snapshot>);
 
 fn capture_inner(request: &Request) -> std::result::Result<Snapshot, CaptureError> {
-    let deadline = Instant::now() + Duration::from_millis(request.timeout_ms);
+    let deadline = request_deadline(request)?;
     let session = Connection::new_session().map_err(|e| timed_err(deadline, e))?;
     let status = fresh_status_proxy(&session, deadline)?;
     let enabled: bool = get_property(&status, "org.a11y.Status", "IsEnabled")
@@ -231,6 +235,27 @@ fn capture_inner(request: &Request) -> std::result::Result<Snapshot, CaptureErro
         );
     }
     capture_with_status(request, deadline, &session, changed)
+}
+
+fn request_deadline(request: &Request) -> std::result::Result<Instant, CaptureError> {
+    // JVM callers express this field as an unsigned 32-bit millisecond count. Keep the native
+    // boundary equally typed instead of accepting values that cannot be represented by clients.
+    if request.timeout_ms > u32::MAX as u64 {
+        return Err((
+            "invalid-request",
+            "timeoutMs must be in the range 1..=4294967295".into(),
+            None,
+        ));
+    }
+    Instant::now()
+        .checked_add(Duration::from_millis(request.timeout_ms))
+        .ok_or_else(|| {
+            (
+                "invalid-request",
+                "timeoutMs is too large for this platform".into(),
+                None,
+            )
+        })
 }
 
 fn with_prepared_status_restoration<P>(
@@ -495,6 +520,51 @@ fn provider_cache(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CachedCallKind {
+    Attributes,
+    Bounds,
+    RoleName,
+    Text,
+}
+
+#[derive(Clone, Debug)]
+struct PendingCachedCall {
+    serial: u32,
+    owner: String,
+    path: String,
+    kind: CachedCallKind,
+}
+
+#[derive(Clone, Debug)]
+struct CachedCallSpec {
+    path: String,
+    kind: CachedCallKind,
+}
+
+#[derive(Debug)]
+enum CachedReply {
+    Attributes(HashMap<String, String>),
+    Bounds(Rect),
+    RoleName(String),
+    Text(String),
+    Unsupported,
+}
+
+fn pending_cached_call(
+    serial: u32,
+    owner: &str,
+    path: &str,
+    kind: CachedCallKind,
+) -> PendingCachedCall {
+    PendingCachedCall {
+        serial,
+        owner: owner.to_string(),
+        path: path.to_string(),
+        kind,
+    }
+}
+
 fn enrich_cached_nodes(
     bus: &Arc<SyncConnection>,
     owner: &str,
@@ -528,141 +598,254 @@ fn enrich_cached_nodes(
             );
         }
     }
-    let addresses: Vec<_> = ordered
-        .into_iter()
-        .map(|(path, has_text)| {
-            (
-                Address {
-                    bus: owner.to_string(),
-                    path: path.into(),
-                },
-                has_text,
-            )
-        })
-        .collect();
-    // Hash-map order is irrelevant: results are written by object path and final traversal follows
-    // the cache's ordered child references. The batch bounds both threads and outstanding calls.
-    for batch in addresses.chunks(CACHE_PREFETCH_BATCH) {
-        if Instant::now() >= deadline {
-            anyhow::bail!("deadline exceeded while enriching provider cache")
-        }
-        let results = std::thread::scope(|scope| {
-            batch
-                .iter()
-                .cloned()
-                .map(|(address, has_text)| {
-                    scope.spawn(move || {
-                        let data = read_cached_extras(bus, &address, has_text, deadline);
-                        (address.path.to_string(), data)
-                    })
-                })
-                .collect::<Vec<_>>()
-                .into_iter()
-                .map(|handle| handle.join().unwrap())
-                .collect::<Vec<_>>()
-        });
-        for (path, extras) in results {
-            let extras = extras?;
-            let node = nodes
-                .get_mut(&path)
-                .context("provider cache object disappeared")?;
-            apply_cached_extras(node, extras);
-        }
+    let extras = read_cached_extras(bus, owner, &ordered, deadline)?;
+    for (path, extra) in extras {
+        let node = nodes
+            .get_mut(&path)
+            .context("provider cache object disappeared")?;
+        apply_cached_extras(node, extra);
     }
     Ok(())
 }
 
 fn read_cached_extras(
     bus: &SyncConnection,
-    address: &Address,
-    has_text: bool,
+    owner: &str,
+    objects: &[(String, bool)],
     deadline: Instant,
-) -> Result<CachedExtras> {
-    let attributes = optional_cached_call(deadline, || {
-        let proxy = bus.with_proxy(
-            &address.bus,
-            address.path.clone(),
-            call_timeout_anyhow(deadline)?,
-        );
-        proxy
-            .method_call::<(HashMap<String, String>,), _, _, _>(
+) -> Result<HashMap<String, CachedExtras>> {
+    if Instant::now() >= deadline {
+        anyhow::bail!("deadline exceeded before cached AT-SPI enrichment batch")
+    }
+    let specs = cached_call_specs(objects);
+    let mut result = HashMap::new();
+    for window in cached_call_windows(&specs, CACHE_PENDING_CALL_LIMIT) {
+        let extras = read_cached_window(bus, owner, window, deadline)?;
+        for (path, extra) in extras {
+            result
+                .entry(path)
+                .or_insert_with(CachedExtras::default)
+                .merge(extra);
+        }
+    }
+    Ok(result)
+}
+
+fn cached_call_specs(objects: &[(String, bool)]) -> Vec<CachedCallSpec> {
+    let mut calls = Vec::with_capacity(objects.len() * 4);
+    for (path, has_text) in objects {
+        for kind in [
+            CachedCallKind::Attributes,
+            CachedCallKind::Bounds,
+            CachedCallKind::RoleName,
+        ] {
+            calls.push(CachedCallSpec {
+                path: path.clone(),
+                kind,
+            });
+        }
+        if *has_text {
+            calls.push(CachedCallSpec {
+                path: path.clone(),
+                kind: CachedCallKind::Text,
+            });
+        }
+    }
+    calls
+}
+
+fn cached_call_windows(
+    calls: &[CachedCallSpec],
+    limit: usize,
+) -> impl Iterator<Item = &[CachedCallSpec]> {
+    calls.chunks(limit)
+}
+
+fn read_cached_window(
+    bus: &SyncConnection,
+    owner: &str,
+    specs: &[CachedCallSpec],
+    deadline: Instant,
+) -> Result<HashMap<String, CachedExtras>> {
+    let mut calls = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let message = match spec.kind {
+            CachedCallKind::Attributes => Message::call_with_args(
+                owner,
+                spec.path.as_str(),
                 "org.a11y.atspi.Accessible",
                 "GetAttributes",
                 (),
-            )
-            .map(|value| value.0)
-            .map_err(Into::into)
-    })?
-    .unwrap_or_default();
-    let bounds = optional_cached_call(deadline, || {
-        let proxy = bus.with_proxy(
-            &address.bus,
-            address.path.clone(),
-            call_timeout_anyhow(deadline)?,
-        );
-        proxy
-            .method_call::<((i32, i32, i32, i32),), _, _, _>(
+            ),
+            CachedCallKind::Bounds => Message::call_with_args(
+                owner,
+                spec.path.as_str(),
                 "org.a11y.atspi.Component",
                 "GetExtents",
                 (0u32,),
-            )
-            .map(|value| Rect {
-                x: value.0 .0,
-                y: value.0 .1,
-                width: value.0 .2,
-                height: value.0 .3,
+            ),
+            CachedCallKind::RoleName => Message::call_with_args(
+                owner,
+                spec.path.as_str(),
+                "org.a11y.atspi.Accessible",
+                "GetRoleName",
+                (),
+            ),
+            CachedCallKind::Text => Message::call_with_args(
+                owner,
+                spec.path.as_str(),
+                "org.a11y.atspi.Text",
+                "GetText",
+                (0i32, -1i32),
+            ),
+        };
+        queue_cached_call(bus, owner, &spec.path, spec.kind, message, &mut calls)?;
+    }
+
+    // `send` only appends to libdbus' outgoing queue. Flush the complete bounded window before
+    // waiting, otherwise a pop can wait while calls needed to produce replies remain buffered.
+    bus.channel().flush();
+
+    let calls_by_serial: HashMap<_, _> = calls
+        .iter()
+        .enumerate()
+        .map(|(index, call)| (call.serial, index))
+        .collect();
+    let mut replies = HashMap::with_capacity(calls.len());
+    while replies.len() < calls.len() {
+        let timeout = call_timeout_anyhow(deadline)?;
+        let Some(mut message) = bus.channel().blocking_pop_message(timeout)? else {
+            anyhow::bail!("deadline exceeded waiting for cached AT-SPI enrichment replies")
+        };
+        if !matches!(
+            message.msg_type(),
+            MessageType::MethodReturn | MessageType::Error
+        ) {
+            continue;
+        }
+        let Some(serial) = message.get_reply_serial() else {
+            continue;
+        };
+        let Some(call) = calls_by_serial
+            .get(&serial)
+            .map(|index| &calls[*index])
+            .filter(|call| {
+                cached_reply_matches(message.msg_type(), message.sender().as_deref(), &call.owner)
             })
-            .map_err(Into::into)
-    })?;
-    let provider_role_name = optional_cached_call(deadline, || {
-        let proxy = bus.with_proxy(
-            &address.bus,
-            address.path.clone(),
-            call_timeout_anyhow(deadline)?,
-        );
-        proxy
-            .method_call::<(String,), _, _, _>("org.a11y.atspi.Accessible", "GetRoleName", ())
-            .map(|value| value.0)
-            .map_err(Into::into)
-    })?;
-    let value = has_text
-        .then(|| {
-            optional_cached_call(deadline, || {
-                let proxy = bus.with_proxy(
-                    &address.bus,
-                    address.path.clone(),
-                    call_timeout_anyhow(deadline)?,
-                );
-                proxy
-                    .method_call::<(String,), _, _, _>(
-                        "org.a11y.atspi.Text",
-                        "GetText",
-                        (0i32, -1i32),
-                    )
-                    .map(|value| value.0)
-                    .map_err(Into::into)
+        else {
+            continue;
+        };
+        let reply = match message.as_result() {
+            Ok(message) => decode_cached_reply(message, call.kind)?,
+            Err(error) if is_dbus_timeout_error(&error) || Instant::now() >= deadline => {
+                return Err(error.into())
+            }
+            Err(_) => CachedReply::Unsupported,
+        };
+        replies.insert(serial, reply);
+    }
+    assemble_cached_extras(&calls, replies)
+}
+
+fn cached_reply_matches(kind: MessageType, sender: Option<&str>, owner: &str) -> bool {
+    match kind {
+        // Errors such as LimitsExceeded and NoReply can be synthesized by the bus daemon, so
+        // their sender is not the destination owner. The reply serial still identifies our call.
+        MessageType::Error => true,
+        MessageType::MethodReturn => sender == Some(owner),
+        _ => false,
+    }
+}
+
+fn queue_cached_call(
+    bus: &SyncConnection,
+    owner: &str,
+    path: &str,
+    kind: CachedCallKind,
+    message: Message,
+    calls: &mut Vec<PendingCachedCall>,
+) -> Result<()> {
+    let serial = bus
+        .channel()
+        .send(message)
+        .map_err(|()| anyhow::anyhow!("failed to queue cached AT-SPI enrichment call"))?;
+    calls.push(pending_cached_call(serial, owner, path, kind));
+    Ok(())
+}
+
+fn decode_cached_reply(message: &Message, kind: CachedCallKind) -> Result<CachedReply> {
+    Ok(match kind {
+        CachedCallKind::Attributes => {
+            CachedReply::Attributes(message.read1::<HashMap<String, String>>()?)
+        }
+        CachedCallKind::Bounds => {
+            let (x, y, width, height) = message.read1::<(i32, i32, i32, i32)>()?;
+            CachedReply::Bounds(Rect {
+                x,
+                y,
+                width,
+                height,
             })
-        })
-        .transpose()?
-        .flatten()
-        .filter(|value| !value.is_empty());
-    Ok(CachedExtras {
-        id: attributes
-            .get("id")
-            .or_else(|| attributes.get("accessible_id"))
-            .cloned()
-            .filter(|value| !value.is_empty()),
-        bounds,
-        value,
-        provider_role_name: provider_role_name.filter(|value| !value.is_empty()),
+        }
+        CachedCallKind::RoleName => CachedReply::RoleName(message.read1::<String>()?),
+        CachedCallKind::Text => CachedReply::Text(message.read1::<String>()?),
     })
 }
 
+fn assemble_cached_extras(
+    calls: &[PendingCachedCall],
+    mut replies: HashMap<u32, CachedReply>,
+) -> Result<HashMap<String, CachedExtras>> {
+    let mut result = HashMap::new();
+    for call in calls {
+        let reply = replies
+            .remove(&call.serial)
+            .context("cached AT-SPI enrichment reply was not matched")?;
+        let extra = result
+            .entry(call.path.clone())
+            .or_insert_with(CachedExtras::default);
+        match reply {
+            CachedReply::Attributes(attributes) => {
+                extra.id = attributes
+                    .get("id")
+                    .or_else(|| attributes.get("accessible_id"))
+                    .cloned()
+                    .filter(|value| !value.is_empty());
+            }
+            CachedReply::Bounds(bounds) => extra.bounds = Some(bounds),
+            CachedReply::RoleName(value) => {
+                extra.provider_role_name = (!value.is_empty()).then_some(value)
+            }
+            CachedReply::Text(value) => extra.value = (!value.is_empty()).then_some(value),
+            CachedReply::Unsupported => {}
+        }
+    }
+    Ok(result)
+}
+
+#[derive(Default)]
 struct CachedExtras {
     id: Option<String>,
     bounds: Option<Rect>,
     value: Option<String>,
     provider_role_name: Option<String>,
+}
+
+impl CachedExtras {
+    fn merge(&mut self, other: Self) {
+        if other.id.is_some() {
+            self.id = other.id;
+        }
+        if other.bounds.is_some() {
+            self.bounds = other.bounds;
+        }
+        if other.value.is_some() {
+            self.value = other.value;
+        }
+        if other.provider_role_name.is_some() {
+            self.provider_role_name = other.provider_role_name;
+        }
+    }
 }
 
 fn apply_cached_extras(node: &mut NodeData, extras: CachedExtras) {
@@ -1457,6 +1640,16 @@ fn optional_role_call<T>(deadline: Instant, call: impl FnOnce() -> Result<T>) ->
             }
         }
     }
+}
+fn is_dbus_timeout_error(error: &dbus::Error) -> bool {
+    error.name().is_some_and(|name| {
+        matches!(
+            name,
+            "org.freedesktop.DBus.Error.NoReply"
+                | "org.freedesktop.DBus.Error.Timeout"
+                | "org.freedesktop.DBus.Error.TimedOut"
+        )
+    })
 }
 fn is_timeout_error(error: &anyhow::Error) -> bool {
     error
@@ -2327,6 +2520,101 @@ mod tests {
             entry.raw_role.and_then(normalize_raw_role).as_deref(),
             Some("entry")
         );
+    }
+
+    #[test]
+    fn cached_pipeline_matches_out_of_order_replies_to_exact_object_and_call() {
+        let calls = vec![
+            pending_cached_call(11, ":1.42", "/node/a", CachedCallKind::Attributes),
+            pending_cached_call(12, ":1.42", "/node/a", CachedCallKind::RoleName),
+            pending_cached_call(13, ":1.42", "/node/b", CachedCallKind::RoleName),
+        ];
+        let mut replies = HashMap::new();
+        replies.insert(13, CachedReply::RoleName("custom b".into()));
+        replies.insert(
+            11,
+            CachedReply::Attributes(HashMap::from([("id".into(), "leaf-a".into())])),
+        );
+        replies.insert(12, CachedReply::RoleName("generic".into()));
+
+        let extras = assemble_cached_extras(&calls, replies).unwrap();
+        assert_eq!(extras["/node/a"].id.as_deref(), Some("leaf-a"));
+        assert_eq!(
+            extras["/node/a"].provider_role_name.as_deref(),
+            Some("generic")
+        );
+        assert_eq!(
+            extras["/node/b"].provider_role_name.as_deref(),
+            Some("custom b")
+        );
+    }
+
+    #[test]
+    fn cached_pipeline_does_not_generalize_one_objects_unsupported_role() {
+        let calls = vec![
+            pending_cached_call(21, ":1.42", "/node/a", CachedCallKind::RoleName),
+            pending_cached_call(22, ":1.42", "/node/b", CachedCallKind::RoleName),
+        ];
+        let replies = HashMap::from([
+            (21, CachedReply::Unsupported),
+            (22, CachedReply::RoleName("generic".into())),
+        ]);
+
+        let extras = assemble_cached_extras(&calls, replies).unwrap();
+        assert_eq!(extras["/node/a"].provider_role_name, None);
+        assert_eq!(
+            extras["/node/b"].provider_role_name.as_deref(),
+            Some("generic")
+        );
+    }
+
+    #[test]
+    fn cached_pipeline_windows_by_call_count_not_object_count() {
+        let objects = vec![
+            ("/node/a".to_string(), true),
+            ("/node/b".to_string(), false),
+            ("/node/c".to_string(), true),
+        ];
+        let calls = cached_call_specs(&objects);
+        let windows = cached_call_windows(&calls, 4)
+            .map(|window| window.len())
+            .collect::<Vec<_>>();
+
+        assert_eq!(calls.len(), 11);
+        assert_eq!(windows, [4, 4, 3]);
+    }
+
+    #[test]
+    fn cached_pipeline_accepts_daemon_errors_but_not_foreign_returns() {
+        assert!(cached_reply_matches(
+            MessageType::Error,
+            Some("org.freedesktop.DBus"),
+            ":1.42"
+        ));
+        assert!(cached_reply_matches(
+            MessageType::Error,
+            Some(":1.0"),
+            ":1.42"
+        ));
+        assert!(cached_reply_matches(
+            MessageType::MethodReturn,
+            Some(":1.42"),
+            ":1.42"
+        ));
+        assert!(!cached_reply_matches(
+            MessageType::MethodReturn,
+            Some(":1.99"),
+            ":1.42"
+        ));
+    }
+
+    #[test]
+    fn timeout_milliseconds_that_do_not_fit_an_instant_are_rejected() {
+        let mut request = request();
+        request.timeout_ms = u64::MAX;
+        let error = request_deadline(&request).unwrap_err();
+        assert_eq!(error.0, "invalid-request");
+        assert!(error.1.contains("timeoutMs"));
     }
 
     #[test]
