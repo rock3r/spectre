@@ -472,6 +472,7 @@ internal constructor(
             val native = requireNotNull(nativeRegionCapture) { macOsRegionCaptureUnavailable() }
             return native(captureRegion).scaledTo(captureRegion.width, captureRegion.height)
         }
+        tccGuard.requireScreenRecording()
         return screenCapture.createScreenCapture(captureRegion).also(tccGuard::validateCapture)
     }
 
@@ -502,6 +503,7 @@ internal constructor(
             val native = requireNotNull(nativeRegionCapture) { macOsRegionCaptureUnavailable() }
             return native(captureRegion)
         }
+        tccGuard.requireScreenRecording()
         return screenCapture
             .createDeviceScaleScreenCapture(captureRegion)
             .also(tccGuard::validateCapture)
