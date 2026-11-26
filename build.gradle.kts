@@ -225,6 +225,9 @@ val verifyWindowsCheckTimeout by
                 ".github/workflows/windows.yml",
                 ".github/workflows/validation-windows.yml",
                 ".github/scripts/dump-jvm-stacks.sh",
+                ".github/scripts/install-windows-app-runtime.ps1",
+                ".github/scripts/test-windows-helper-preflight.ps1",
+                ".github/scripts/windows-helper-preflight.ps1",
                 ".github/scripts/test-windows-check-timeout.sh",
             )
             .withPathSensitivity(PathSensitivity.RELATIVE)
