@@ -91,7 +91,7 @@ def ids(r):
 
 def expected_node(window, ident, parent, role, platform, name, bounds):
     return {
-        "key": window + "/" + ident,
+        "key": (parent + "/" + ident) if parent else window + "/" + ident,
         "parentKey": parent,
         "id": ident,
         "platformRole": platform,
@@ -142,7 +142,12 @@ def expected_window(prefix, index):
             {"x": x + 30, "y": 130, "width": 120, "height": 30},
         ),
     ]
-    return {"key": key, "title": title, "bounds": bounds, "boundsSpace": "screen"}, nodes
+    return {
+        "key": key,
+        "title": title,
+        "bounds": bounds,
+        "boundsSpace": "screen",
+    }, nodes
 
 
 def exact_snapshot(result, prefixes):
@@ -163,15 +168,50 @@ def exact_snapshot(result, prefixes):
     )
 
 
-def exact_cap(result):
-    s = snap(result) or {}
-    alpha_window, alpha_nodes = expected_window("alpha", 0)
-    beta_window, beta_nodes = expected_window("beta", 1)
+def expected_parts(prefixes):
+    expected_windows, expected_nodes = [], []
+    for index, prefix in enumerate(prefixes):
+        window, nodes = expected_window(prefix, index)
+        expected_windows.append(window)
+        expected_nodes.extend(nodes)
+    return expected_windows, expected_nodes
+
+
+def exact_limit(result, count):
+    snapshot = snap(result) or {}
+    expected_windows, expected_nodes = expected_parts(["alpha", "beta"])
+    expected_nodes = expected_nodes[:count]
+    keys = {node["key"] for node in expected_nodes}
+    expected_emitted_windows = expected_windows[:1] if count == 4 else expected_windows
     return (
-        s.get("windows") == [alpha_window, beta_window]
-        and s.get("nodes") == alpha_nodes + beta_nodes[:1]
-        and s.get("nodes", [])[-1].get("parentKey") is None
+        snapshot.get("windows") == expected_emitted_windows
+        and snapshot.get("nodes") == expected_nodes
+        and all(
+            node["parentKey"] is None or node["parentKey"] in keys
+            for node in expected_nodes
+        )
     )
+
+
+def topology(result):
+    nodes = (snap(result) or {}).get("nodes", [])
+    by_key = {node.get("key"): node for node in nodes}
+    return [
+        {
+            "id": node.get("id"),
+            "key": node.get("key"),
+            "parentKey": node.get("parentKey"),
+            "parentId": by_key.get(node.get("parentKey"), {}).get("id"),
+        }
+        for node in nodes
+    ]
+
+
+def windows(result):
+    return [
+        {"key": window.get("key"), "title": window.get("title")}
+        for window in (snap(result) or {}).get("windows", [])
+    ]
 
 
 def main():
@@ -195,7 +235,8 @@ def main():
     )
     bus = dbus.bus.BusConnection(address)
     admin = dbus.Interface(
-        bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus"), "org.freedesktop.DBus"
+        bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus"),
+        "org.freedesktop.DBus",
     )
     registry = dbus.Interface(
         bus.get_object("org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root"),
@@ -231,7 +272,18 @@ def main():
         time.sleep(0.15)
         with a.journal.open() as journal:
             journal.seek(before)
-            result["orderedProviderCalls"] = [json.loads(line) for line in journal if line.strip()]
+            result["orderedProviderCalls"] = [
+                json.loads(line) for line in journal if line.strip()
+            ]
+        provider_errors = [
+            call
+            for call in result["orderedProviderCalls"]
+            if call.get("outcome") not in (None, "return")
+        ]
+        result["providerErrorDetail"] = [
+            {"outcome": call.get("outcome"), "detail": call.get("detail")}
+            for call in provider_errors
+        ]
         result["rawWire"] = wire_entries(a.wire, ready["owner"])
         result["tag"] = tag
         requests.append(result)
@@ -240,20 +292,25 @@ def main():
     fault = ready["fault"]
 
     def target(name):
-        return {"type": "window-id", "value": ready["owner"] + "|" + ready["windows"][name]}
+        return {
+            "type": "window-id",
+            "value": ready["owner"] + "|" + ready["windows"][name],
+        }
 
     if fault == "none":
         pid = run("pid-both", {"type": "process-id", "value": ready["pid"]})
         alpha = run("alpha-window", target("alpha"))
         beta = run("beta-window", target("beta"))
-        cap = run(
-            "pid-shared-cap", {"type": "process-id", "value": ready["pid"]}, maximumNodeCount=5
-        )
+        process_target = {"type": "process-id", "value": ready["pid"]}
+        cap4 = run("pid-shared-cap-4", process_target, maximumNodeCount=4)
+        cap5 = run("pid-shared-cap-5", process_target, maximumNodeCount=5)
     elif fault == "error":
         alpha = run("early-error", target("alpha"))
     else:
         alpha = run("slow-timeout", target("alpha"), timeoutMs=650)
-    calls = [json.loads(line) for line in a.journal.read_text().splitlines() if line.strip()]
+    calls = [
+        json.loads(line) for line in a.journal.read_text().splitlines() if line.strip()
+    ]
     helper_pids = sorted(
         {
             c.get("senderPid")
@@ -263,7 +320,8 @@ def main():
     )
     checks = {
         "registrySingleOwner": matches == [(ready["owner"], ready["application"])],
-        "ownerPid": int(admin.GetConnectionUnixProcessID(ready["owner"])) == ready["pid"],
+        "ownerPid": int(admin.GetConnectionUnixProcessID(ready["owner"]))
+        == ready["pid"],
         "nativeCacheFailure": cache.get("errorName")
         in (
             "org.freedesktop.DBus.Error.UnknownMethod",
@@ -274,29 +332,70 @@ def main():
         "helpersExited": all(r["processExited"] for r in requests),
     }
     if fault == "none":
-        cap_calls = cap["orderedProviderCalls"]
+        alpha_chain = [
+            ("alpha-root", "w0/alpha-root", None, None),
+            ("alpha-group", "w0/alpha-root/alpha-group", "w0/alpha-root", "alpha-root"),
+            (
+                "alpha-interior",
+                "w0/alpha-root/alpha-group/alpha-interior",
+                "w0/alpha-root/alpha-group",
+                "alpha-group",
+            ),
+            (
+                "alpha-marker",
+                "w0/alpha-root/alpha-group/alpha-interior/alpha-marker",
+                "w0/alpha-root/alpha-group/alpha-interior",
+                "alpha-interior",
+            ),
+        ]
+
+        def compact(result):
+            return [
+                (node["id"], node["key"], node["parentKey"], node["parentId"])
+                for node in topology(result)
+            ]
+
+        def illegal_beta_reads(result):
+            return [
+                call
+                for call in result["orderedProviderCalls"]
+                if call["path"].startswith(ready["windows"]["beta"] + "/group")
+            ]
+
+        def typed_boundary(result, count):
+            return (
+                result["request"]["target"]
+                == {"type": "process-id", "value": ready["pid"]}
+                and result["request"]["maximumNodeCount"] == count
+                and not result["response"].get("ok", True)
+                and result["response"].get("error", {}).get("code") == "limit-reached"
+            )
+
         checks.update(
             processExactAllFields=exact_snapshot(pid, ["alpha", "beta"]),
+            processWindows=windows(pid)
+            == [{"key": "w0", "title": "Alpha"}, {"key": "w1", "title": "Beta"}],
             explicitAlphaExact=exact_snapshot(alpha, ["alpha"]),
             explicitBetaExact=exact_snapshot(beta, ["beta"]),
-            sharedCapTyped=(
-                not cap["response"].get("ok", True)
-                and cap["response"].get("error", {}).get("code") == "limit-reached"
-                and ids(cap)
-                == ["alpha-root", "alpha-group", "alpha-interior", "alpha-marker", "beta-root"]
-                and exact_cap(cap)
-            ),
-            betaDescendantsUnread=not any(
-                c["path"].startswith(ready["windows"]["beta"] + "/group") for c in cap_calls
-            ),
-            betaRootMetadataRead=any(
-                c["path"] == ready["windows"]["beta"]
-                and c["member"] in ("GetAttributes", "GetExtents")
-                for c in cap_calls
-            ),
-            rootsDiscovered=any(
-                c["path"] == ready["application"] and c["member"] == "GetChildren"
-                for c in cap_calls
+            cap4PidTypedBoundary=typed_boundary(cap4, 4),
+            cap4ExactSnapshot=exact_limit(cap4, 4),
+            cap4Windows=windows(cap4) == [{"key": "w0", "title": "Alpha"}],
+            cap4RootChildChain=compact(cap4) == alpha_chain,
+            cap4NoBetaDescendantReads=not illegal_beta_reads(cap4),
+            cap5PidTypedBoundary=typed_boundary(cap5, 5),
+            cap5ExactSnapshot=exact_limit(cap5, 5),
+            cap5Windows=windows(cap5)
+            == [{"key": "w0", "title": "Alpha"}, {"key": "w1", "title": "Beta"}],
+            cap5RootChildChain=compact(cap5)
+            == alpha_chain + [("beta-root", "w1/beta-root", None, None)],
+            cap5NoBetaDescendantReads=not illegal_beta_reads(cap5),
+            rootsDiscovered=all(
+                any(
+                    call["path"] == ready["application"]
+                    and call["member"] == "GetChildren"
+                    for call in result["orderedProviderCalls"]
+                )
+                for result in (cap4, cap5)
             ),
         )
     elif fault == "error":
@@ -304,20 +403,23 @@ def main():
         fixture = "fixture ordinary child read rejected before deadline"
         checks.update(
             ordinaryFailure=error.get("code") == "no-accessibility-tree",
-            exactNativeContext=error.get("message")
-            == "failed to read an AT-SPI child: AT-SPI GetChildren failed",
-            fixtureRejectionRecordedSeparately=any(
+            originalMethodContext="AT-SPI GetChildren failed"
+            in error.get("message", ""),
+            noGenericProtocolMask="protocol" not in error.get("message", "").lower(),
+            providerErrorResult=any(
                 c.get("outcome") == "org.a11y.atspi.Error.NotAvailable"
                 for c in alpha["orderedProviderCalls"]
             ),
-            fixtureMessageNotRequired=fixture not in error.get("message", ""),
-            meaningfulTypedPartial=ids(alpha) == ["alpha-root", "alpha-group", "alpha-interior"],
+            providerDetailRecorded=bool(alpha.get("providerErrorDetail")),
+            noPartial="partialSnapshot" not in error
+            or error.get("partialSnapshot") is None,
         )
     else:
         error = alpha["response"].get("error", {})
         elapsed = alpha["processExitMs"]
         checks.update(
-            typedTimeout=error.get("code") == "timeout", meaningfulTypedPartial=len(ids(alpha)) >= 1
+            typedTimeout=error.get("code") == "timeout",
+            meaningfulTypedPartial=len(ids(alpha)) >= 1,
         )
         if a.deadline_acceptance:
             checks.update(
@@ -335,10 +437,16 @@ def main():
         "helperSenderPids": helper_pids,
         "requests": requests,
         "orderedProviderCalls": calls,
+        "requestTopology": {
+            result["tag"]: {"windows": windows(result), "nodes": topology(result)}
+            for result in requests
+        },
         "checks": checks,
         "passed": all(checks.values()),
     }
-    (a.artifacts / f"{a.label}-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    (a.artifacts / f"{a.label}-receipt.json").write_text(
+        json.dumps(receipt, indent=2) + "\n"
+    )
     print(json.dumps(receipt))
     if a.candidate and not receipt["passed"]:
         raise SystemExit(1)
