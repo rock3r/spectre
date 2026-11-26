@@ -56,7 +56,23 @@ else
 fi
 extension_target="$HOME/.local/share/gnome-shell/extensions/$extension_uuid"
 mkdir -p "$(dirname "$extension_target")"
-cp -a "$extension_source" "$extension_target"
+if [[ "$extension_uuid" == spectre-window-identity@sebastiano.dev && -f "$SMOKE_REPO/recording/native/linux/gnome-shell-extension/install.sh" ]]; then
+  (cd "$SMOKE_REPO"; ./gradlew --no-daemon -PVERSION_NAME=0.10.0 :recording-linux:jar --console=plain) >"$SMOKE_ARTIFACTS/extension-jar-build.log" 2>&1
+  jarfile=$(find "$SMOKE_REPO/recording-linux/build/libs" -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' -print -quit)
+  [[ -f "$jarfile" ]]
+  jarroot=$(mktemp -d "$XDG_RUNTIME_DIR/spectre-extension-XXXXXXXX")
+  (
+    cd "$jarroot"
+    "$JAVA_HOME/bin/jar" xf "$jarfile" native/linux/gnome-shell-extension
+    installer=native/linux/gnome-shell-extension/install.sh
+    stat -c '%a %n' "$installer"
+    sha256sum "$jarfile" "$installer"
+    if [[ -x "$installer" ]]; then "$installer"; else bash "$installer"; fi
+    sha256sum "$extension_target/extension.js"
+  ) 2>&1 | tee "$SMOKE_ARTIFACTS/extension-install.log"
+else
+  cp -a "$extension_source" "$extension_target"
+fi
 gsettings set org.gnome.shell disable-user-extensions false
 gsettings set org.gnome.shell enabled-extensions "['$extension_uuid']"
 

@@ -1,0 +1,23 @@
+diff --git a/recording/native/linux/tests/gst_static_duration.sh b/recording/native/linux/tests/gst_static_duration.sh
+index f721d8d29e12e5bde4c3f92d6511182970100d88..838e338ce99dc2739383b7d61ed24362b832d22a 100755
+--- a/recording/native/linux/tests/gst_static_duration.sh
++++ b/recording/native/linux/tests/gst_static_duration.sh
+@@ -4,7 +4,8 @@ set -euo pipefail
+ for tool in gst-launch-1.0 gst-inspect-1.0 ffprobe ffmpeg; do
+   command -v "$tool" >/dev/null || { echo "missing required test tool: $tool" >&2; exit 1; }
+ done
+-gst-inspect-1.0 pipewiresrc | grep -q 'keepalive-time.*Periodically send last buffer'
++pipewiresrc_inspection="$(gst-inspect-1.0 pipewiresrc)"
++grep -q 'keepalive-time.*Periodically send last buffer' <<<"$pipewiresrc_inspection"
+ 
+ work="$(mktemp -d)"
+ trap 'rm -rf "$work"' EXIT
+@@ -25,7 +26,7 @@ record_for "$work/static.mp4" \
+ 
+ read -r frames first_pts last_pts < <(
+   ffprobe -v error -select_streams v:0 -show_entries frame=pts_time \
+-    -of csv=p=0 "$work/static.mp4" \
++    -of default=noprint_wrappers=1:nokey=1 "$work/static.mp4" \
+     | awk 'NR == 1 { first=$1 } { last=$1; count++ } END { print count, first, last }'
+ )
+ awk -v frames="$frames" -v first="$first_pts" -v last="$last_pts" 'BEGIN {

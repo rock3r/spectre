@@ -9,12 +9,13 @@ permissions:
   contents: read
 jobs:
   jammy-gnome:
-    name: Jammy native selected monitor / ${{ matrix.mode }}
-    runs-on: ubuntu-22.04
+    name: ${{ matrix.os }} / ${{ matrix.mode }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        mode: [portal]
+        os: [ubuntu-22.04, ubuntu-24.04]
+        mode: [capture, cli-recording-live]
     timeout-minutes: 55
     steps:
       - name: Check out temporary workflow tooling
@@ -36,6 +37,14 @@ jobs:
           test "$(git rev-parse HEAD)" = 51cf4ee24572c14fe48da0fb15be1b3d9aaea9b6
           test "$(git write-tree)" = d889d474eee688cbf3da4a141b3407777a313af8
           test -z "$(git status --porcelain)"
+          overlays="$GITHUB_WORKSPACE/smoke-tooling/.github/smoke-overlays"
+          for entry in 'c9e136ae1990975c905466925ae0334a9082da7e0a52c12d5270893b57d1b223 jammy-pipefail.patch' 'f3c5d0fcc30f0332da6990736158c9efa99becadf943201ca314c5d09875cbf9 jammy-identity.patch'; do
+            read -r digest filename <<< "$entry"
+            printf '%s  %s\n' "$digest" "$overlays/$filename" | sha256sum -c -
+            git apply --index "$overlays/$filename"
+          done
+          git diff --cached --check
+          test "$(git write-tree)" = 8f139d21ec1f57b678a292604d05ba561ac665c4
 
       - name: Set up JDK 25
         uses: actions/setup-java@v5
@@ -76,7 +85,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: jammy-gnome-${{ matrix.mode }}-${{ github.run_attempt }}
+          name: native-gnome-${{ matrix.os }}-${{ matrix.mode }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gnome-cli-recording-live/
           if-no-files-found: error
           retention-days: 7
