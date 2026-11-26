@@ -262,6 +262,14 @@ X11, macOS, and Windows keep their input and capture paths.
   cursor mode cannot be changed after the portal stream is opened. X11 still capture continues to
   request a hidden cursor explicitly.
 
+  Region screenshots require the held helper to return its verified stream-relative crop; the PNG
+  dimensions alone cannot prove that the requested pixels were not shifted or clipped. A new
+  client therefore rejects a screenshot response from a running 0.9.0 helper instead of inferring
+  a crop from the PNG. Upgrade every Spectre client and restart all applications using the held
+  session, then run `spectre permissions request` before retrying. Spectre does not terminate the
+  old helper while other clients may still hold its grant. Older portals may show a new Share
+  picker because the replacement helper needs a new grant.
+
   **`WaylandPortalWindowRecorder` needs `xprop` on `PATH` and GTK/Mutter frame extents.**
   Mutter includes invisible shadows in window streams, often 25 px per side for
   GNOME GTK client-side decoration. `Frame.getBounds()` covers only the inner window.

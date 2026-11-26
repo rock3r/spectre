@@ -25,7 +25,7 @@ class LinuxNativeScreenshotterTest {
     @Test
     fun `Wayland captureRegion requests the held session's embedded cursor stream`() {
         val tempDir = Files.createTempDirectory("spectre-linux-screenshotter-test-")
-        var command: dev.sebastiano.spectre.recording.portal.Command.Screenshot? = null
+        var capturedRegion: Rectangle? = null
         val screenshotter =
             linuxScreenshotter(
                 tempDir,
@@ -36,17 +36,15 @@ class LinuxNativeScreenshotterTest {
                     },
                 isWayland = true,
                 waylandRegionCapture = {
-                    command = it
+                    capturedRegion = it
                     BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
                 },
             )
 
         try {
-            screenshotter.captureRegion(Rectangle(1, 2, 3, 4))
-            assertEquals(
-                dev.sebastiano.spectre.recording.portal.CursorMode.EMBEDDED,
-                command?.cursorMode,
-            )
+            val region = Rectangle(1, 2, 3, 4)
+            screenshotter.captureRegion(region)
+            assertEquals(region, capturedRegion)
         } finally {
             tempDir.toFile().deleteRecursively()
         }
@@ -192,9 +190,9 @@ class LinuxNativeScreenshotterTest {
         tempDir: Path,
         processFactory: LinuxNativeScreenshotter.ProcessFactory,
         isWayland: Boolean = false,
-        waylandRegionCapture:
-            ((dev.sebastiano.spectre.recording.portal.Command.Screenshot) -> BufferedImage)? =
-            null,
+        waylandRegionCapture: (Rectangle) -> BufferedImage = {
+            error("no Wayland region stream in unit tests")
+        },
     ): LinuxNativeScreenshotter =
         LinuxNativeScreenshotter(
             helperExtractor =
