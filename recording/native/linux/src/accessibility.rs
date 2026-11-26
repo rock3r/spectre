@@ -551,13 +551,11 @@ fn enrich_cached_nodes(
                 .collect::<Vec<_>>()
         });
         for (path, extras) in results {
-            let (id, bounds, value) = extras?;
+            let extras = extras?;
             let node = nodes
                 .get_mut(&path)
                 .context("provider cache object disappeared")?;
-            node.id = id;
-            node.bounds = bounds;
-            node.value = value;
+            apply_cached_extras(node, extras);
         }
     }
     Ok(())
@@ -568,48 +566,115 @@ fn read_cached_extras(
     address: &Address,
     has_text: bool,
     deadline: Instant,
-) -> Result<(Option<String>, Option<Rect>, Option<String>)> {
-    let proxy = bus.with_proxy(&address.bus, address.path.clone(), remaining(deadline));
-    let attributes = proxy
-        .method_call::<(HashMap<String, String>,), _, _, _>(
-            "org.a11y.atspi.Accessible",
-            "GetAttributes",
-            (),
-        )
-        .ok()
-        .map(|value| value.0)
-        .unwrap_or_default();
-    let bounds = proxy
-        .method_call::<((i32, i32, i32, i32),), _, _, _>(
-            "org.a11y.atspi.Component",
-            "GetExtents",
-            (0u32,),
-        )
-        .ok()
-        .map(|value| Rect {
-            x: value.0 .0,
-            y: value.0 .1,
-            width: value.0 .2,
-            height: value.0 .3,
-        });
+) -> Result<CachedExtras> {
+    let attributes = optional_cached_call(deadline, || {
+        let proxy = bus.with_proxy(
+            &address.bus,
+            address.path.clone(),
+            call_timeout_anyhow(deadline)?,
+        );
+        proxy
+            .method_call::<(HashMap<String, String>,), _, _, _>(
+                "org.a11y.atspi.Accessible",
+                "GetAttributes",
+                (),
+            )
+            .map(|value| value.0)
+            .map_err(Into::into)
+    })?
+    .unwrap_or_default();
+    let bounds = optional_cached_call(deadline, || {
+        let proxy = bus.with_proxy(
+            &address.bus,
+            address.path.clone(),
+            call_timeout_anyhow(deadline)?,
+        );
+        proxy
+            .method_call::<((i32, i32, i32, i32),), _, _, _>(
+                "org.a11y.atspi.Component",
+                "GetExtents",
+                (0u32,),
+            )
+            .map(|value| Rect {
+                x: value.0 .0,
+                y: value.0 .1,
+                width: value.0 .2,
+                height: value.0 .3,
+            })
+            .map_err(Into::into)
+    })?;
+    let provider_role_name = optional_cached_call(deadline, || {
+        let proxy = bus.with_proxy(
+            &address.bus,
+            address.path.clone(),
+            call_timeout_anyhow(deadline)?,
+        );
+        proxy
+            .method_call::<(String,), _, _, _>("org.a11y.atspi.Accessible", "GetRoleName", ())
+            .map(|value| value.0)
+            .map_err(Into::into)
+    })?;
     let value = has_text
         .then(|| {
-            proxy
-                .method_call::<(String,), _, _, _>("org.a11y.atspi.Text", "GetText", (0i32, -1i32))
-                .ok()
-                .map(|value| value.0)
-                .filter(|value| !value.is_empty())
+            optional_cached_call(deadline, || {
+                let proxy = bus.with_proxy(
+                    &address.bus,
+                    address.path.clone(),
+                    call_timeout_anyhow(deadline)?,
+                );
+                proxy
+                    .method_call::<(String,), _, _, _>(
+                        "org.a11y.atspi.Text",
+                        "GetText",
+                        (0i32, -1i32),
+                    )
+                    .map(|value| value.0)
+                    .map_err(Into::into)
+            })
         })
-        .flatten();
-    Ok((
-        attributes
+        .transpose()?
+        .flatten()
+        .filter(|value| !value.is_empty());
+    Ok(CachedExtras {
+        id: attributes
             .get("id")
             .or_else(|| attributes.get("accessible_id"))
             .cloned()
             .filter(|value| !value.is_empty()),
         bounds,
         value,
-    ))
+        provider_role_name: provider_role_name.filter(|value| !value.is_empty()),
+    })
+}
+
+struct CachedExtras {
+    id: Option<String>,
+    bounds: Option<Rect>,
+    value: Option<String>,
+    provider_role_name: Option<String>,
+}
+
+fn apply_cached_extras(node: &mut NodeData, extras: CachedExtras) {
+    node.id = extras.id;
+    node.bounds = extras.bounds;
+    node.value = extras.value;
+    if let Some(provider_role_name) = extras.provider_role_name {
+        node.platform_role = Some(provider_role_name);
+    }
+}
+
+fn optional_cached_call<T>(
+    deadline: Instant,
+    call: impl FnOnce() -> Result<T>,
+) -> Result<Option<T>> {
+    if Instant::now() >= deadline {
+        anyhow::bail!("deadline exceeded before cached AT-SPI enrichment call")
+    }
+    match call() {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if is_timeout_error(&error) || Instant::now() >= deadline => Err(error),
+        Err(_) => Ok(None),
+    }
 }
 
 fn find_window(
@@ -1374,18 +1439,7 @@ fn optional_role_call<T>(deadline: Instant, call: impl FnOnce() -> Result<T>) ->
     match call() {
         Ok(value) => Ok(Some(value)),
         Err(error) => {
-            let timed_out = Instant::now() >= deadline
-                || error
-                    .downcast_ref::<dbus::Error>()
-                    .and_then(dbus::Error::name)
-                    .is_some_and(|name| {
-                        matches!(
-                            name,
-                            "org.freedesktop.DBus.Error.NoReply"
-                                | "org.freedesktop.DBus.Error.Timeout"
-                                | "org.freedesktop.DBus.Error.TimedOut"
-                        )
-                    });
+            let timed_out = Instant::now() >= deadline || is_timeout_error(&error);
             if timed_out {
                 Err(error)
             } else {
@@ -1393,6 +1447,19 @@ fn optional_role_call<T>(deadline: Instant, call: impl FnOnce() -> Result<T>) ->
             }
         }
     }
+}
+fn is_timeout_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<dbus::Error>()
+        .and_then(dbus::Error::name)
+        .is_some_and(|name| {
+            matches!(
+                name,
+                "org.freedesktop.DBus.Error.NoReply"
+                    | "org.freedesktop.DBus.Error.Timeout"
+                    | "org.freedesktop.DBus.Error.TimedOut"
+            )
+        })
 }
 fn remaining(deadline: Instant) -> Duration {
     deadline
@@ -1402,16 +1469,7 @@ fn remaining(deadline: Instant) -> Duration {
 fn timed_err(deadline: Instant, error: impl Into<anyhow::Error>) -> CaptureError {
     let error = error.into();
     // libdbus uses millisecond timeouts and can report expiration before the Rust deadline.
-    let dbus_timeout = matches!(
-        error
-            .downcast_ref::<dbus::Error>()
-            .and_then(dbus::Error::name),
-        Some(
-            "org.freedesktop.DBus.Error.NoReply"
-                | "org.freedesktop.DBus.Error.Timeout"
-                | "org.freedesktop.DBus.Error.TimedOut"
-        )
-    );
+    let dbus_timeout = is_timeout_error(&error);
     if dbus_timeout || Instant::now() >= deadline {
         ("timeout", "accessibility snapshot timed out".into(), None)
     } else {
@@ -2087,6 +2145,122 @@ mod tests {
         assert_eq!(data.states, ["sensitive", "visible"]);
         assert_eq!(data.children[0].path, child_a.1);
         assert_eq!(data.children[1].path, child_b.1);
+    }
+
+    #[test]
+    fn cached_enrichment_preserves_provider_role_name_and_numeric_normalization() {
+        let selected = Address {
+            bus: ":1.42".into(),
+            path: "/window/7".into(),
+        };
+        let mut item = cached_item(
+            cache_ref(":1.42", "/window/7"),
+            cache_ref(":1.42", ATSPI_ROOT),
+            0,
+            0,
+        );
+        item.7 = 39;
+        let mut tree = cache_tree(&selected, vec![item]).unwrap();
+        let panel = tree.get_mut("/window/7").unwrap();
+
+        apply_cached_extras(
+            panel,
+            CachedExtras {
+                id: None,
+                bounds: None,
+                value: None,
+                provider_role_name: Some("generic".into()),
+            },
+        );
+
+        assert_eq!(panel.platform_role.as_deref(), Some("generic"));
+        assert_eq!(
+            panel.raw_role.and_then(normalize_raw_role).as_deref(),
+            Some("panel")
+        );
+    }
+
+    #[test]
+    fn cached_enrichment_keeps_known_provider_name_for_unknown_numeric_role() {
+        let mut unknown = NodeData {
+            id: None,
+            raw_role: Some(10_000),
+            platform_role: None,
+            name: None,
+            states: vec![],
+            value: None,
+            bounds: None,
+            children: vec![],
+            interfaces: vec![],
+        };
+
+        apply_cached_extras(
+            &mut unknown,
+            CachedExtras {
+                id: None,
+                bounds: None,
+                value: None,
+                provider_role_name: Some("custom widget".into()),
+            },
+        );
+
+        assert_eq!(unknown.platform_role.as_deref(), Some("custom widget"));
+        assert_eq!(unknown.raw_role.and_then(normalize_raw_role), None);
+    }
+
+    #[test]
+    fn cached_enrichment_falls_back_when_provider_role_name_is_unsupported() {
+        let mut entry = NodeData {
+            id: None,
+            raw_role: Some(79),
+            platform_role: role_name(79).map(str::to_owned),
+            name: None,
+            states: vec![],
+            value: None,
+            bounds: None,
+            children: vec![],
+            interfaces: vec![],
+        };
+
+        apply_cached_extras(
+            &mut entry,
+            CachedExtras {
+                id: None,
+                bounds: None,
+                value: None,
+                provider_role_name: None,
+            },
+        );
+
+        assert_eq!(entry.platform_role.as_deref(), Some("entry"));
+        assert_eq!(
+            entry.raw_role.and_then(normalize_raw_role).as_deref(),
+            Some("entry")
+        );
+    }
+
+    #[test]
+    fn cached_optional_reads_check_deadline_and_preserve_timeout_errors() {
+        let called = std::cell::Cell::new(false);
+        let result = optional_cached_call::<u32>(Instant::now(), || {
+            called.set(true);
+            Ok(7)
+        });
+        assert!(result.is_err());
+        assert!(!called.get());
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let unsupported = dbus::Error::new_custom(
+            "org.freedesktop.DBus.Error.UnknownMethod",
+            "GetRoleName is not implemented",
+        );
+        assert_eq!(
+            optional_cached_call::<String>(deadline, || Err(unsupported.into())).unwrap(),
+            None
+        );
+        let error =
+            dbus::Error::new_custom("org.freedesktop.DBus.Error.NoReply", "provider timed out");
+        assert!(optional_cached_call::<u32>(deadline, || Err(error.into())).is_err());
     }
     #[test]
     fn window_title_target_deserializes() {
