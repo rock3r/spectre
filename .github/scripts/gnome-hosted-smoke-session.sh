@@ -10,6 +10,14 @@ export XDG_CURRENT_DESKTOP=GNOME
 export XDG_SESSION_DESKTOP=gnome
 export JAVA_HOME="${SMOKE_JAVA_HOME:?}"
 export PATH="$JAVA_HOME/bin:$PATH"
+export GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.java.home=$JAVA_HOME"
+{
+  printf 'JAVA_HOME=%s\n' "$JAVA_HOME"
+  readlink -f "$JAVA_HOME/bin/java"
+  "$JAVA_HOME/bin/java" -version
+  command -v java
+  java -version
+} > "$SMOKE_ARTIFACTS/session-java-version.log" 2>&1
 if [[ "${1:-}" != --inside-dbus ]]; then
   exec dbus-run-session -- "$0" --inside-dbus
 fi
