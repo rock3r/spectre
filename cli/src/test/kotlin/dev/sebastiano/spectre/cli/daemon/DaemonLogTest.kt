@@ -14,20 +14,26 @@ import org.junit.jupiter.api.io.TempDir
 
 class DaemonLogTest {
     @Test
-    fun `tail reads only bounded suffix of sparse file`() {
-        val path = Files.createTempFile("spectre-sparse-log", ".log")
+    fun `tail reads only bounded suffix of sparse file`(@TempDir directory: Path) {
+        val path = directory.resolve("sparse.log")
         val suffix = "bounded-tail".toByteArray()
-        FileChannel.open(path, StandardOpenOption.WRITE).use { channel ->
-            channel.position(2L * 1024 * 1024 * 1024)
-            channel.write(ByteBuffer.wrap(suffix))
-        }
+        FileChannel.open(
+                path,
+                StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.SPARSE,
+            )
+            .use { channel ->
+                channel.position(2L * 1024 * 1024 * 1024)
+                channel.write(ByteBuffer.wrap(suffix))
+            }
 
         assertContentEquals(suffix, DaemonLog.readLogTail(path, suffix.size))
     }
 
     @Test
-    fun `rotation truncates live inode and later appends remain visible`() {
-        val path = Files.createTempFile("spectre-live-log", ".log")
+    fun `rotation truncates live inode and later appends remain visible`(@TempDir directory: Path) {
+        val path = Files.createFile(directory.resolve("live.log"))
         FileChannel.open(path, StandardOpenOption.APPEND).use { writer ->
             writer.write(ByteBuffer.wrap("0123456789".toByteArray()))
             DaemonLog.rotateIfNeeded(path, maxBytes = 8, retainedBytes = 4)
