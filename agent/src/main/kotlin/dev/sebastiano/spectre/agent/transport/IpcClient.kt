@@ -36,6 +36,9 @@ constructor(
     /** Per-frame read/write deadline; `<= 0` disables (tests only). */
     private val frameIoTimeoutMs: Long = FrameIoDeadline.DEFAULT_TIMEOUT_MS,
 ) : AutoCloseable {
+    lateinit var sessionInfo: AgentSessionInfoDto
+        private set
+
     private val channel: SocketChannel =
         SocketChannel.open(StandardProtocolFamily.UNIX).also { channel ->
             var success = false
@@ -78,6 +81,18 @@ constructor(
                                     "${ProtocolVersion.CURRENT}",
                         )
                     }
+                    sessionInfo =
+                        ack.sessionInfo
+                            ?: AgentSessionInfoDto(
+                                driverKind = "unknown",
+                                inputLeasePolicy = "unknown",
+                                coreProvenance = "unknown",
+                                warnings =
+                                    listOf(
+                                        "Target agent does not report session diagnostics; " +
+                                            "driver, lease policy, and core version are unresolved"
+                                    ),
+                            )
                     handshakeOk = true
                 }
                 is AgentResponse.Error -> {
