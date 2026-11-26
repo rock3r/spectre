@@ -81,7 +81,9 @@ internal fun defaultManagedAutomatorFactory(
     coordinatedFactory: ManagedAutomatorFactory = ManagedAutomatorFactory {
         val driver = RobotDriver.synthetic(InputLeasePolicy.Required)
         runCatching { ManagedAutomator(ComposeAutomator.inProcess(driver), driver) }
-            .onFailure { driver.close() }
+            .onFailure { primary ->
+                runCatching { driver.close() }.exceptionOrNull()?.let(primary::addSuppressed)
+            }
             .getOrThrow()
     },
 ): ManagedAutomatorFactory? = coordinatedFactory.takeIf {

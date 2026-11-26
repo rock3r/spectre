@@ -34,9 +34,7 @@ import org.opentest4j.TestAbortedException
 class ComposeAutomatorExtensionFailureArtifactsTest {
 
     @Test
-    fun `afterTestExecution sets once-per-invocation flag so lifecycle handler is a no-op`(
-        @TempDir temp: Path
-    ) {
+    fun `empty capture remains retryable for a later lifecycle failure`(@TempDir temp: Path) {
         val extension = headlessExtension(temp)
         val context =
             RecordingExtensionContext(
@@ -47,10 +45,10 @@ class ComposeAutomatorExtensionFailureArtifactsTest {
 
         extension.beforeEach(context)
         extension.afterTestExecution(context)
-        assertEquals(true, context.storeValue("failureArtifactsCaptured"))
+        assertEquals(null, context.storeValue("failureArtifactsCaptured"))
 
-        // A later @AfterEach failure re-enters captureFailureArtifacts; CAPTURED_KEY must short-
-        // circuit before another recordFailure (would still rethrow the AfterEach throwable).
+        // A later @AfterEach failure retries because a window might have appeared after the first
+        // empty discovery (and still rethrows the AfterEach throwable).
         try {
             extension.handleAfterEachMethodExecutionException(
                 context,
@@ -60,8 +58,8 @@ class ComposeAutomatorExtensionFailureArtifactsTest {
         } catch (expected: IllegalStateException) {
             assertEquals("afterEach also failed", expected.message)
         }
-        assertEquals(true, context.storeValue("failureArtifactsCaptured"))
-        // Headless: zero windows → nothing on disk either way; flag is the control-plane proof.
+        assertEquals(null, context.storeValue("failureArtifactsCaptured"))
+        // Headless: zero windows → nothing on disk either way.
         assertFalse(Files.walk(temp).use { s -> s.anyMatch { Files.isRegularFile(it) } })
     }
 

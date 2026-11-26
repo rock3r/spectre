@@ -4,6 +4,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -15,6 +16,17 @@ import kotlin.test.assertTrue
  * claim Linux agent support while headless CI never executed the attach fixture.
  */
 class CapabilityMatrixEvidenceTest {
+    @Test
+    fun `skipped scenarios are not counted as passes`() {
+        val skipped =
+            AutomatorContractCorpus.ScenarioResult(
+                id = "skip",
+                transport = AutomatorTransport.Agent,
+                outcome = AutomatorContractCorpus.ScenarioOutcome.Skipped,
+                detail = "not available",
+            )
+        assertFalse(skipped.passed)
+    }
 
     @Test
     fun `every supported cell has non-empty resolvable evidence`() {

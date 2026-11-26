@@ -3,89 +3,167 @@
 package dev.sebastiano.spectre.testing
 
 import dev.sebastiano.spectre.core.ComposeAutomator
-import dev.sebastiano.spectre.core.WindowIdentitySnapshot
 import dev.sebastiano.spectre.recording.AutoRecorder
 import dev.sebastiano.spectre.recording.RecordingHandle
+import dev.sebastiano.spectre.recording.RecordingOptions
+import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
+import dev.sebastiano.spectre.recording.screencapturekit.asTitledWindow
+import java.awt.Dialog
+import java.awt.Frame
+import java.awt.GraphicsDevice
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
-import java.lang.ProcessHandle
+import java.awt.Window
 import java.nio.file.Path
 
 /**
- * Production [FailureVideoStarter]: routes through [AutoRecorder] (window-targeted when a unique
- * non-blank title is available, otherwise region using the surface/window bounds or primary
- * display). Best-effort — returns null when no backend can start so the test outcome is unaffected.
+ * Starts a window-scoped recording for an in-process tracked AWT window.
+ *
+ * There is deliberately no region or display fallback: those modes can capture unrelated apps and
+ * violate the window-capture invariant. The session reports the thrown reason when no video can be
+ * produced.
  */
 internal object AutoFailureVideoStarter : FailureVideoStarter {
-
-    override fun start(output: Path, automator: ComposeAutomator): RecordingHandle? = runCatching {
-        val recorder = AutoRecorder()
-        val identities = runCatching { automator.windowIdentities() }.getOrDefault(emptyList())
-        val primary = identities.firstOrNull { !it.isPopup }
-        if (primary != null) {
-            startForIdentity(recorder, primary, identities, output)
-                ?: startRegionFallback(recorder, primary, output)
-        } else {
-            startFullscreenRegion(recorder, output)
-        }
-    }
-        .getOrNull()
-
-    private fun startForIdentity(
-        recorder: AutoRecorder,
-        identity: WindowIdentitySnapshot,
-        allIdentities: List<WindowIdentitySnapshot>,
+    override fun start(
         output: Path,
-    ): RecordingHandle? {
-        val title = identity.title?.takeIf { it.isNotBlank() } ?: return null
-        // Helpers match by title among all same-PID windows (including popups). Only use
-        // window-targeted mode when the title uniquely identifies the selected surface.
-        val titleMatches = allIdentities.count { candidate ->
-            candidate.title.orEmpty().contains(title) || candidate.title == title
-        }
-        if (titleMatches != 1) return null
-        val crop =
-            if (identity.cropRequired) {
-                Rectangle(identity.surfaceBoundsInWindow)
-            } else {
-                null
+        automator: ComposeAutomator,
+        scope: FailureVideoScope,
+    ): RecordingHandle? =
+        when (scope) {
+            FailureVideoScope.Window -> start(output, automator)
+            is FailureVideoScope.Region -> AutoRecorder().startRegion(scope.bounds, output)
+            is FailureVideoScope.Display -> {
+                val environment = GraphicsEnvironment.getLocalGraphicsEnvironment()
+                val devices = environment.screenDevices
+                require(scope.index in devices.indices) {
+                    "display ${scope.index} is not available"
+                }
+                val requested = devices[scope.index]
+                val request =
+                    displayRecordingRequest(
+                        requested = requested,
+                        devices = devices.toList(),
+                        primary = environment.defaultScreenDevice,
+                    )
+                AutoRecorder()
+                    .startRegion(
+                        region = request.region,
+                        output = output,
+                        options = RecordingOptions(screenIndex = request.backendIndex),
+                    )
             }
-        return runCatching {
-            recorder.startWindowByTitle(
-                title = title,
-                windowOwnerPid = ProcessHandle.current().pid(),
+        }
+
+    override fun start(output: Path, automator: ComposeAutomator): RecordingHandle? {
+        automator.refreshWindows()
+        val surfaceId =
+            discoverWindow(automator) ?: error("no tracked non-popup window is available")
+        return startWindow(output, automator, surfaceId)
+    }
+
+    fun discoverWindow(automator: ComposeAutomator): String? {
+        automator.refreshWindows()
+        return automator.windows.firstOrNull { !it.isPopup }?.surfaceId
+    }
+
+    fun startWindow(
+        output: Path,
+        automator: ComposeAutomator,
+        surfaceId: String,
+    ): RecordingHandle? {
+        automator.refreshWindows()
+        val index = automator.surfaceIds().indexOf(surfaceId)
+        check(index >= 0) { "tracked window $surfaceId disappeared before recording started" }
+        val tracked = automator.windows[index]
+        check(!tracked.isPopup) { "tracked surface $surfaceId is a popup" }
+        val identity = automator.windowIdentity(index)
+        check(identity.surfaceId == surfaceId) {
+            "window identity changed during recording discovery"
+        }
+        val titled =
+            when (val window = tracked.window) {
+                is Frame -> routeX11SafeWindow(window) { it }
+                is Dialog -> routeX11SafeWindow(window) { it }
+                else ->
+                    error(
+                        "tracked ${window.javaClass.name} cannot be adapted for window-scoped recording"
+                    )
+            }
+        val crop = identity.surfaceBoundsInWindow.takeIf { identity.cropRequired }?.let(::Rectangle)
+        return AutoRecorder()
+            .startWindow(
+                window = titled,
                 output = output,
                 cropInWindow = crop,
                 scaleX = identity.scaleX,
                 scaleY = identity.scaleY,
             )
+    }
+}
+
+internal fun <T> routeX11SafeWindow(
+    window: Window,
+    start: (TitledWindow) -> T,
+): T {
+    val titled =
+        when (window) {
+            is Frame -> window.asTitledWindow()
+            is Dialog -> window.asTitledWindow()
+            else -> error("unsupported titled window ${window.javaClass.name}")
         }
-            .getOrNull()
-    }
+    return start(titled)
+}
 
-    private fun startRegionFallback(
-        recorder: AutoRecorder,
-        identity: WindowIdentitySnapshot,
-        output: Path,
-    ): RecordingHandle? {
-        // Pass AWT user-space bounds unchanged — same contract as startFullscreenRegion and
-        // other AutoRecorder.startRegion callers (locationOnScreen / GraphicsConfiguration.bounds).
-        // Do not multiply by scaleX/scaleY; that double-scales on HiDPI.
-        val bounds =
-            identity.surfaceBoundsOnScreen.takeIf { it.width > 0 && it.height > 0 }
-                ?: identity.windowBoundsOnScreen.takeIf { it.width > 0 && it.height > 0 }
-                ?: return null
-        return runCatching { recorder.startRegion(region = bounds, output = output) }.getOrNull()
+internal fun macOsBackendDisplayIndex(
+    requested: GraphicsDevice,
+    devices: List<GraphicsDevice>,
+    primary: GraphicsDevice,
+    isMacOs: Boolean = System.getProperty("os.name").startsWith("Mac", ignoreCase = true),
+): Int {
+    val awtIndex = devices.indexOf(requested)
+    check(awtIndex >= 0) { "requested display is not in the AWT display list" }
+    if (!isMacOs) return awtIndex
+    check(
+        devices.count { it.defaultConfiguration.bounds == requested.defaultConfiguration.bounds } ==
+            1
+    ) {
+        "cannot map AWT display to ScreenCaptureKit: display bounds are ambiguous"
     }
+    devices.forEach { device ->
+        val transform = device.defaultConfiguration.defaultTransform
+        check(transform.scaleX > 0.0 && transform.scaleY > 0.0) {
+            "cannot map AWT display to ScreenCaptureKit: invalid display scale"
+        }
+    }
+    val ordered =
+        devices.sortedWith(
+            compareBy<GraphicsDevice> { if (it === primary) 0 else 1 }
+                .thenBy { it.defaultConfiguration.bounds.x }
+                .thenBy { it.defaultConfiguration.bounds.y }
+        )
+    return ordered.indexOf(requested).also { index ->
+        check(index >= 0) { "cannot map AWT display to ScreenCaptureKit" }
+    }
+}
 
-    private fun startFullscreenRegion(recorder: AutoRecorder, output: Path): RecordingHandle? {
-        if (GraphicsEnvironment.isHeadless()) return null
-        val bounds =
-            GraphicsEnvironment.getLocalGraphicsEnvironment()
-                .defaultScreenDevice
-                .defaultConfiguration
-                .bounds
-        if (bounds.width <= 0 || bounds.height <= 0) return null
-        return runCatching { recorder.startRegion(region = bounds, output = output) }.getOrNull()
+internal data class DisplayRecordingRequest(val region: Rectangle, val backendIndex: Int)
+
+internal fun displayRecordingRequest(
+    requested: GraphicsDevice,
+    devices: List<GraphicsDevice>,
+    primary: GraphicsDevice,
+    isMacOs: Boolean = System.getProperty("os.name").startsWith("Mac", ignoreCase = true),
+): DisplayRecordingRequest {
+    val bounds = requested.defaultConfiguration.bounds
+    return if (isMacOs) {
+        DisplayRecordingRequest(
+            region = Rectangle(0, 0, bounds.width, bounds.height),
+            backendIndex = macOsBackendDisplayIndex(requested, devices, primary, isMacOs = true),
+        )
+    } else {
+        DisplayRecordingRequest(
+            region = Rectangle(bounds),
+            backendIndex = RecordingOptions.DEFAULT_SCREEN_INDEX,
+        )
     }
 }

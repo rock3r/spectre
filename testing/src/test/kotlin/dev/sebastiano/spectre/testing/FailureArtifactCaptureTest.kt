@@ -59,14 +59,16 @@ class FailureArtifactCaptureTest {
     @Test
     fun `continues remaining windows when one capture throws`(@TempDir temp: Path) {
         val methodDir = temp.resolve("com.example.T").resolve("partial")
+        val missing = mutableListOf<String>()
         val captures =
-            FailureArtifactCapture.captureWindows(
+            FailureArtifactCapture.captureWindowsWithDiagnostics(
                 methodDirectory = methodDir,
                 windowCount = 3,
                 captureWindow = { index ->
                     if (index == 1) error("boom on window 1")
                     fakeAtomicCapture(windowIndex = index)
                 },
+                onMissing = missing::add,
             )
         assertEquals(2, captures.size)
         val runDir = captures.first().directory.parent
@@ -74,6 +76,8 @@ class FailureArtifactCaptureTest {
         assertTrue(Files.isRegularFile(runDir.resolve("window-0").resolve("capture.json")))
         assertFalse(Files.exists(runDir.resolve("window-1")))
         assertTrue(Files.isRegularFile(runDir.resolve("window-2").resolve("capture.json")))
+        assertTrue(missing.single().contains("window-1 capture failed: IllegalStateException"))
+        assertTrue(missing.single().contains("boom on window 1"))
     }
 
     @Test
