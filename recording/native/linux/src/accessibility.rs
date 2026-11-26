@@ -25,6 +25,24 @@ const REGISTRY_SETTLE_TIME: Duration = Duration::from_millis(300);
 const REGISTRY_POLL_TIME: Duration = Duration::from_millis(20);
 const ROOT_READ_ATTEMPTS: usize = 3;
 const ATSPI_ROOT: &str = "/org/a11y/atspi/accessible/root";
+const ATSPI_CACHE: &str = "/org/a11y/atspi/cache";
+const CACHE_PREFETCH_BATCH: usize = 64;
+
+type CacheRef = (String, dbus::Path<'static>);
+// AT-SPI's CacheItem wire format. Unlike registry GetItems, this is requested from the
+// application's own unique name, where AccessKit exposes its complete live tree.
+type CachedItem = (
+    CacheRef,
+    CacheRef,
+    CacheRef,
+    i32,
+    i32,
+    Vec<String>,
+    String,
+    u32,
+    String,
+    Vec<u32>,
+);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -287,9 +305,33 @@ fn capture_with_status(
             Vec::new()
         },
     };
-    let root_data =
+    let mut provider_nodes =
+        provider_cache(&bus, &window_address, deadline).map_err(|e| timed_err(deadline, e))?;
+    if let Some(nodes) = provider_nodes.as_mut() {
+        enrich_cached_nodes(
+            &bus,
+            &window_address.bus,
+            &window_address.path.to_string(),
+            nodes,
+            request.maximum_node_count,
+            request.maximum_depth,
+            deadline,
+        )
+        .map_err(|e| timed_err(deadline, e))?;
+    }
+    let root_data = if let Some(nodes) = provider_nodes.as_mut() {
+        nodes
+            .remove(&window_address.path.to_string())
+            .ok_or_else(|| {
+                err(
+                    "no-accessibility-tree",
+                    "the provider cache lost the selected AT-SPI root",
+                )
+            })?
+    } else {
         retry_selected_root_read(deadline, || read_node(&bus, &window_address, deadline))
-            .map_err(|e| timed_err(deadline, e))?;
+            .map_err(|e| timed_err(deadline, e))?
+    };
     let window_bounds = root_data.bounds.clone().ok_or_else(|| {
         err(
             "no-accessibility-tree",
@@ -303,17 +345,31 @@ fn capture_with_status(
         bounds_space,
     });
     let root_key = format!("w0/{}", segment(root_data.id.as_deref(), 0, false));
-    walk(
-        &bus,
-        root_data,
-        root_key,
-        None,
-        0,
-        request,
-        deadline,
-        &window_bounds,
-        &mut snapshot,
-    )?;
+    if let Some(nodes) = provider_nodes.as_mut() {
+        walk_cached(
+            nodes,
+            root_data,
+            root_key,
+            None,
+            0,
+            request,
+            deadline,
+            &window_bounds,
+            &mut snapshot,
+        )?;
+    } else {
+        walk(
+            &bus,
+            root_data,
+            root_key,
+            None,
+            0,
+            request,
+            deadline,
+            &window_bounds,
+            &mut snapshot,
+        )?;
+    }
     Ok(snapshot)
 }
 
@@ -327,6 +383,309 @@ struct NodeData {
     value: Option<String>,
     bounds: Option<Rect>,
     children: Vec<Address>,
+    interfaces: Vec<String>,
+}
+
+#[cfg(test)]
+fn cache_ref(bus: &str, path: &str) -> CacheRef {
+    (bus.to_string(), path.to_string().into())
+}
+
+fn cache_ref_belongs_to(reference: &CacheRef, owner: &str) -> bool {
+    reference.0 == owner && reference.1.to_string().starts_with('/')
+}
+
+fn cache_tree(selected: &Address, items: Vec<CachedItem>) -> Option<HashMap<String, NodeData>> {
+    let owner = selected.bus.as_str();
+    let mut raw = HashMap::new();
+    for item in items {
+        if !cache_ref_belongs_to(&item.0, owner)
+            || !cache_ref_belongs_to(&item.1, owner)
+            || (item.0 .1.to_string() != ATSPI_ROOT && !cache_ref_belongs_to(&item.2, owner))
+        {
+            return None;
+        }
+        if raw.insert(item.0 .1.to_string(), item).is_some() {
+            return None;
+        }
+    }
+    if !raw.contains_key(&selected.path.to_string()) {
+        return None;
+    }
+    let mut children_by_parent: HashMap<String, Vec<(i32, CacheRef)>> = HashMap::new();
+    for item in raw.values() {
+        children_by_parent
+            .entry(item.2 .1.to_string())
+            .or_default()
+            .push((item.3, item.0.clone()));
+    }
+    for children in children_by_parent.values_mut() {
+        children.sort_by_key(|(index, _)| *index);
+    }
+    let mut result = HashMap::new();
+    let mut pending = vec![selected.path.to_string()];
+    while let Some(path) = pending.pop() {
+        if result.contains_key(&path) {
+            return None;
+        }
+        let item = raw.remove(&path)?;
+        let children: Vec<_> = children_by_parent
+            .remove(&path)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(_, (bus, path))| Address { bus, path })
+            .collect();
+        if item.4 >= 0 && children.len() != item.4 as usize {
+            return None;
+        }
+        pending.extend(children.iter().rev().map(|child| child.path.to_string()));
+        result.insert(
+            path,
+            NodeData {
+                id: None,
+                raw_role: Some(item.7),
+                platform_role: role_name(item.7).map(str::to_owned),
+                name: (!item.6.is_empty()).then_some(item.6),
+                states: decode_states(&item.9),
+                value: None,
+                bounds: None,
+                children,
+                interfaces: item.5,
+            },
+        );
+    }
+    Some(result)
+}
+
+#[cfg(test)]
+fn cached_item(object: CacheRef, parent: CacheRef, index: i32, child_count: i32) -> CachedItem {
+    (
+        object,
+        cache_ref(":1.42", ATSPI_ROOT),
+        parent,
+        index,
+        child_count,
+        vec![],
+        String::new(),
+        0,
+        String::new(),
+        vec![],
+    )
+}
+
+fn provider_cache(
+    bus: &SyncConnection,
+    selected: &Address,
+    deadline: Instant,
+) -> Result<Option<HashMap<String, NodeData>>> {
+    let proxy = bus.with_proxy(&selected.bus, ATSPI_CACHE, remaining(deadline));
+    match proxy.method_call::<(Vec<CachedItem>,), _, _, _>("org.a11y.atspi.Cache", "GetItems", ()) {
+        Ok((items,)) => Ok(cache_tree(selected, items)),
+        Err(error)
+            if matches!(
+                error.name(),
+                Some("org.freedesktop.DBus.Error.UnknownInterface")
+                    | Some("org.freedesktop.DBus.Error.UnknownMethod")
+                    | Some("org.freedesktop.DBus.Error.UnknownObject")
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn enrich_cached_nodes(
+    bus: &Arc<SyncConnection>,
+    owner: &str,
+    root_path: &str,
+    nodes: &mut HashMap<String, NodeData>,
+    maximum_node_count: usize,
+    maximum_depth: usize,
+    deadline: Instant,
+) -> Result<()> {
+    let mut ordered = Vec::new();
+    let mut pending = vec![(root_path.to_string(), 0usize)];
+    while let Some((path, depth)) = pending.pop() {
+        if ordered.len() >= maximum_node_count.saturating_add(1) {
+            break;
+        }
+        let node = nodes
+            .get(&path)
+            .context("provider cache object disappeared")?;
+        ordered.push((
+            path,
+            node.interfaces
+                .iter()
+                .any(|interface| interface.ends_with(".Text")),
+        ));
+        if depth < maximum_depth {
+            pending.extend(
+                node.children
+                    .iter()
+                    .rev()
+                    .map(|child| (child.path.to_string(), depth + 1)),
+            );
+        }
+    }
+    let addresses: Vec<_> = ordered
+        .into_iter()
+        .map(|(path, has_text)| {
+            (
+                Address {
+                    bus: owner.to_string(),
+                    path: path.into(),
+                },
+                has_text,
+            )
+        })
+        .collect();
+    // Hash-map order is irrelevant: results are written by object path and final traversal follows
+    // the cache's ordered child references. The batch bounds both threads and outstanding calls.
+    for batch in addresses.chunks(CACHE_PREFETCH_BATCH) {
+        if Instant::now() >= deadline {
+            anyhow::bail!("deadline exceeded while enriching provider cache")
+        }
+        let results = std::thread::scope(|scope| {
+            batch
+                .iter()
+                .cloned()
+                .map(|(address, has_text)| {
+                    scope.spawn(move || {
+                        let data = read_cached_extras(bus, &address, has_text, deadline);
+                        (address.path.to_string(), data)
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        for (path, extras) in results {
+            let extras = extras?;
+            let node = nodes
+                .get_mut(&path)
+                .context("provider cache object disappeared")?;
+            apply_cached_extras(node, extras);
+        }
+    }
+    Ok(())
+}
+
+fn read_cached_extras(
+    bus: &SyncConnection,
+    address: &Address,
+    has_text: bool,
+    deadline: Instant,
+) -> Result<CachedExtras> {
+    let attributes = optional_cached_call(deadline, || {
+        let proxy = bus.with_proxy(
+            &address.bus,
+            address.path.clone(),
+            call_timeout_anyhow(deadline)?,
+        );
+        proxy
+            .method_call::<(HashMap<String, String>,), _, _, _>(
+                "org.a11y.atspi.Accessible",
+                "GetAttributes",
+                (),
+            )
+            .map(|value| value.0)
+            .map_err(Into::into)
+    })?
+    .unwrap_or_default();
+    let bounds = optional_cached_call(deadline, || {
+        let proxy = bus.with_proxy(
+            &address.bus,
+            address.path.clone(),
+            call_timeout_anyhow(deadline)?,
+        );
+        proxy
+            .method_call::<((i32, i32, i32, i32),), _, _, _>(
+                "org.a11y.atspi.Component",
+                "GetExtents",
+                (0u32,),
+            )
+            .map(|value| Rect {
+                x: value.0 .0,
+                y: value.0 .1,
+                width: value.0 .2,
+                height: value.0 .3,
+            })
+            .map_err(Into::into)
+    })?;
+    let provider_role_name = optional_cached_call(deadline, || {
+        let proxy = bus.with_proxy(
+            &address.bus,
+            address.path.clone(),
+            call_timeout_anyhow(deadline)?,
+        );
+        proxy
+            .method_call::<(String,), _, _, _>("org.a11y.atspi.Accessible", "GetRoleName", ())
+            .map(|value| value.0)
+            .map_err(Into::into)
+    })?;
+    let value = has_text
+        .then(|| {
+            optional_cached_call(deadline, || {
+                let proxy = bus.with_proxy(
+                    &address.bus,
+                    address.path.clone(),
+                    call_timeout_anyhow(deadline)?,
+                );
+                proxy
+                    .method_call::<(String,), _, _, _>(
+                        "org.a11y.atspi.Text",
+                        "GetText",
+                        (0i32, -1i32),
+                    )
+                    .map(|value| value.0)
+                    .map_err(Into::into)
+            })
+        })
+        .transpose()?
+        .flatten()
+        .filter(|value| !value.is_empty());
+    Ok(CachedExtras {
+        id: attributes
+            .get("id")
+            .or_else(|| attributes.get("accessible_id"))
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        bounds,
+        value,
+        provider_role_name: provider_role_name.filter(|value| !value.is_empty()),
+    })
+}
+
+struct CachedExtras {
+    id: Option<String>,
+    bounds: Option<Rect>,
+    value: Option<String>,
+    provider_role_name: Option<String>,
+}
+
+fn apply_cached_extras(node: &mut NodeData, extras: CachedExtras) {
+    node.id = extras.id;
+    node.bounds = extras.bounds;
+    node.value = extras.value;
+    if let Some(provider_role_name) = extras.provider_role_name {
+        node.platform_role = Some(provider_role_name);
+    }
+}
+
+fn optional_cached_call<T>(
+    deadline: Instant,
+    call: impl FnOnce() -> Result<T>,
+) -> Result<Option<T>> {
+    if Instant::now() >= deadline {
+        anyhow::bail!("deadline exceeded before cached AT-SPI enrichment call")
+    }
+    match call() {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if is_timeout_error(&error) || Instant::now() >= deadline => Err(error),
+        Err(_) => Ok(None),
+    }
 }
 
 fn find_window(
@@ -653,6 +1012,89 @@ fn parse_window_id(id: &str) -> Option<Address> {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn walk_cached(
+    nodes: &mut HashMap<String, NodeData>,
+    data: NodeData,
+    key: String,
+    parent: Option<String>,
+    depth: usize,
+    request: &Request,
+    deadline: Instant,
+    window: &Rect,
+    snapshot: &mut Snapshot,
+) -> std::result::Result<(), CaptureError> {
+    check_deadline(deadline, Some(snapshot))?;
+    if snapshot.nodes.len() >= request.maximum_node_count {
+        return node_limit_error(request.maximum_node_count, snapshot);
+    }
+    let on_screen = data
+        .bounds
+        .as_ref()
+        .map(|bounds| intersects(bounds, window));
+    snapshot.nodes.push(Node {
+        key: key.clone(),
+        parent_key: parent,
+        id: data.id.clone(),
+        platform_role: data.platform_role,
+        role: data.raw_role.and_then(normalize_raw_role),
+        name: data.name,
+        states: data.states,
+        value: data.value,
+        on_screen,
+        bounds: data.bounds,
+    });
+    if depth >= request.maximum_depth && !data.children.is_empty() {
+        return Err((
+            "limit-reached",
+            format!("maximumDepth {} reached", request.maximum_depth),
+            Some(std::mem::replace(snapshot, empty_snapshot())),
+        ));
+    }
+    let prefetch_count = child_prefetch_count(
+        snapshot.nodes.len(),
+        request.maximum_node_count,
+        data.children.len(),
+    );
+    let children_truncated = prefetch_count < data.children.len();
+    let mut children = Vec::with_capacity(prefetch_count);
+    for address in &data.children[..prefetch_count] {
+        let child = nodes.remove(&address.path.to_string()).ok_or_else(|| {
+            structural_read_error("provider cache child missing", deadline, snapshot)
+        })?;
+        children.push(child);
+    }
+    let mut ids = HashMap::new();
+    for child in &children {
+        if let Some(id) = &child.id {
+            *ids.entry(id.clone()).or_insert(0usize) += 1;
+        }
+    }
+    for (index, child) in children.into_iter().enumerate() {
+        let duplicate = child.id.as_ref().is_some_and(|id| ids[id] > 1);
+        let child_key = format!(
+            "{}/{}",
+            key,
+            child_segment(child.id.as_deref(), index, duplicate, children_truncated)
+        );
+        walk_cached(
+            nodes,
+            child,
+            child_key,
+            Some(key.clone()),
+            depth + 1,
+            request,
+            deadline,
+            window,
+            snapshot,
+        )?;
+    }
+    if children_truncated {
+        return node_limit_error(request.maximum_node_count, snapshot);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn walk(
     bus: &Arc<SyncConnection>,
     data: NodeData,
@@ -935,6 +1377,7 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
         value,
         bounds,
         children: children_result.context("AT-SPI GetChildren failed")?,
+        interfaces,
     })
 }
 
@@ -1006,18 +1449,7 @@ fn optional_role_call<T>(deadline: Instant, call: impl FnOnce() -> Result<T>) ->
     match call() {
         Ok(value) => Ok(Some(value)),
         Err(error) => {
-            let timed_out = Instant::now() >= deadline
-                || error
-                    .downcast_ref::<dbus::Error>()
-                    .and_then(dbus::Error::name)
-                    .is_some_and(|name| {
-                        matches!(
-                            name,
-                            "org.freedesktop.DBus.Error.NoReply"
-                                | "org.freedesktop.DBus.Error.Timeout"
-                                | "org.freedesktop.DBus.Error.TimedOut"
-                        )
-                    });
+            let timed_out = Instant::now() >= deadline || is_timeout_error(&error);
             if timed_out {
                 Err(error)
             } else {
@@ -1025,6 +1457,19 @@ fn optional_role_call<T>(deadline: Instant, call: impl FnOnce() -> Result<T>) ->
             }
         }
     }
+}
+fn is_timeout_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<dbus::Error>()
+        .and_then(dbus::Error::name)
+        .is_some_and(|name| {
+            matches!(
+                name,
+                "org.freedesktop.DBus.Error.NoReply"
+                    | "org.freedesktop.DBus.Error.Timeout"
+                    | "org.freedesktop.DBus.Error.TimedOut"
+            )
+        })
 }
 fn remaining(deadline: Instant) -> Duration {
     deadline
@@ -1034,16 +1479,7 @@ fn remaining(deadline: Instant) -> Duration {
 fn timed_err(deadline: Instant, error: impl Into<anyhow::Error>) -> CaptureError {
     let error = error.into();
     // libdbus uses millisecond timeouts and can report expiration before the Rust deadline.
-    let dbus_timeout = matches!(
-        error
-            .downcast_ref::<dbus::Error>()
-            .and_then(dbus::Error::name),
-        Some(
-            "org.freedesktop.DBus.Error.NoReply"
-                | "org.freedesktop.DBus.Error.Timeout"
-                | "org.freedesktop.DBus.Error.TimedOut"
-        )
-    );
+    let dbus_timeout = is_timeout_error(&error);
     if dbus_timeout || Instant::now() >= deadline {
         ("timeout", "accessibility snapshot timed out".into(), None)
     } else {
@@ -1748,6 +2184,173 @@ mod tests {
         assert_eq!(address.path.to_string(), "/org/a11y/atspi/accessible/7");
         assert!(parse_window_id("org.example.App|/window/7").is_none());
         assert!(parse_window_id(":1.42|not-a-path").is_none());
+    }
+
+    #[test]
+    fn provider_cache_rejects_cross_owner_references() {
+        let own = cache_ref(":1.42", "/window/7");
+        let foreign = cache_ref(":1.99", "/window/8");
+        assert!(cache_ref_belongs_to(&own, ":1.42"));
+        assert!(!cache_ref_belongs_to(&foreign, ":1.42"));
+    }
+
+    #[test]
+    fn provider_cache_is_used_only_when_it_contains_the_selected_root() {
+        let selected = Address {
+            bus: ":1.42".into(),
+            path: "/window/7".into(),
+        };
+        let item = cached_item(
+            cache_ref(":1.42", "/window/8"),
+            cache_ref(":1.42", ATSPI_ROOT),
+            0,
+            0,
+        );
+        assert!(cache_tree(&selected, vec![item]).is_none());
+    }
+
+    #[test]
+    fn provider_cache_preserves_children_names_roles_states_and_order() {
+        let selected = Address {
+            bus: ":1.42".into(),
+            path: "/window/7".into(),
+        };
+        let mut root = cached_item(
+            cache_ref(":1.42", "/window/7"),
+            cache_ref(":1.42", ATSPI_ROOT),
+            0,
+            2,
+        );
+        root.6 = "Fixture window".into();
+        root.7 = 68;
+        root.9 = vec![(1 << 24) | (1 << 30), 0];
+        let child_a = cache_ref(":1.42", "/node/a");
+        let child_b = cache_ref(":1.42", "/node/b");
+        let leaf_a = cached_item(child_a.clone(), cache_ref(":1.42", "/window/7"), 0, 0);
+        let leaf_b = cached_item(child_b.clone(), cache_ref(":1.42", "/window/7"), 1, 0);
+        let tree = cache_tree(&selected, vec![root, leaf_a, leaf_b]).unwrap();
+        let data = tree.get(&selected.path.to_string()).unwrap();
+        assert_eq!(data.name.as_deref(), Some("Fixture window"));
+        assert_eq!(data.raw_role, Some(68));
+        assert_eq!(data.states, ["sensitive", "visible"]);
+        assert_eq!(data.children[0].path, child_a.1);
+        assert_eq!(data.children[1].path, child_b.1);
+    }
+
+    #[test]
+    fn cached_enrichment_preserves_provider_role_name_and_numeric_normalization() {
+        let selected = Address {
+            bus: ":1.42".into(),
+            path: "/window/7".into(),
+        };
+        let mut item = cached_item(
+            cache_ref(":1.42", "/window/7"),
+            cache_ref(":1.42", ATSPI_ROOT),
+            0,
+            0,
+        );
+        item.7 = 39;
+        let mut tree = cache_tree(&selected, vec![item]).unwrap();
+        let panel = tree.get_mut("/window/7").unwrap();
+
+        apply_cached_extras(
+            panel,
+            CachedExtras {
+                id: None,
+                bounds: None,
+                value: None,
+                provider_role_name: Some("generic".into()),
+            },
+        );
+
+        assert_eq!(panel.platform_role.as_deref(), Some("generic"));
+        assert_eq!(
+            panel.raw_role.and_then(normalize_raw_role).as_deref(),
+            Some("panel")
+        );
+    }
+
+    #[test]
+    fn cached_enrichment_keeps_known_provider_name_for_unknown_numeric_role() {
+        let mut unknown = NodeData {
+            id: None,
+            raw_role: Some(10_000),
+            platform_role: None,
+            name: None,
+            states: vec![],
+            value: None,
+            bounds: None,
+            children: vec![],
+            interfaces: vec![],
+        };
+
+        apply_cached_extras(
+            &mut unknown,
+            CachedExtras {
+                id: None,
+                bounds: None,
+                value: None,
+                provider_role_name: Some("custom widget".into()),
+            },
+        );
+
+        assert_eq!(unknown.platform_role.as_deref(), Some("custom widget"));
+        assert_eq!(unknown.raw_role.and_then(normalize_raw_role), None);
+    }
+
+    #[test]
+    fn cached_enrichment_falls_back_when_provider_role_name_is_unsupported() {
+        let mut entry = NodeData {
+            id: None,
+            raw_role: Some(79),
+            platform_role: role_name(79).map(str::to_owned),
+            name: None,
+            states: vec![],
+            value: None,
+            bounds: None,
+            children: vec![],
+            interfaces: vec![],
+        };
+
+        apply_cached_extras(
+            &mut entry,
+            CachedExtras {
+                id: None,
+                bounds: None,
+                value: None,
+                provider_role_name: None,
+            },
+        );
+
+        assert_eq!(entry.platform_role.as_deref(), Some("entry"));
+        assert_eq!(
+            entry.raw_role.and_then(normalize_raw_role).as_deref(),
+            Some("entry")
+        );
+    }
+
+    #[test]
+    fn cached_optional_reads_check_deadline_and_preserve_timeout_errors() {
+        let called = std::cell::Cell::new(false);
+        let result = optional_cached_call::<u32>(Instant::now(), || {
+            called.set(true);
+            Ok(7)
+        });
+        assert!(result.is_err());
+        assert!(!called.get());
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let unsupported = dbus::Error::new_custom(
+            "org.freedesktop.DBus.Error.UnknownMethod",
+            "GetRoleName is not implemented",
+        );
+        assert_eq!(
+            optional_cached_call::<String>(deadline, || Err(unsupported.into())).unwrap(),
+            None
+        );
+        let error =
+            dbus::Error::new_custom("org.freedesktop.DBus.Error.NoReply", "provider timed out");
+        assert!(optional_cached_call::<u32>(deadline, || Err(error.into())).is_err());
     }
     #[test]
     fn window_title_target_deserializes() {
