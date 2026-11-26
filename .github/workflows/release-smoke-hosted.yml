@@ -77,7 +77,7 @@ jobs:
           printf '%s' "$AWT_FIXTURE_PATCH_GZIP_BASE64" | base64 -d | gzip -dc > "$RUNNER_TEMP/awt-test-fixture.patch"
           git apply --index "$RUNNER_TEMP/awt-test-fixture.patch"
           git diff --cached --check
-          test "$(git write-tree)" = 4d4e7204cf74955a649a31c8346cbd2a6a4e794d
+          test "$(git write-tree)" = 78eda88b105f515a3b2d29c03097216bc99e90e0
           GIT_AUTHOR_DATE=2026-11-26T00:00:00Z GIT_COMMITTER_DATE=2026-11-26T00:00:00Z git -c user.name=Verification -c user.email=verification@localhost commit -m "Rehearse the scoped native desktop service and mapped recording fixtures"
           test -z "$(git status --porcelain --untracked-files=all)"
           printf '%s\n' "$CANDIDATE_SHA" > "$RUNNER_TEMP/release-smoke-identity/original-sha.txt"
