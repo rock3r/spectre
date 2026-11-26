@@ -59,6 +59,9 @@ internal constructor(
 
     /** Whether callers may use a platform capture backend instead of this driver's adapter. */
     internal val allowsPlatformCapture: Boolean
+        get() = screenCapture !== HeadlessThrowingScreenCaptureAdapter
+
+    private val usesNativeMacOsRegionCapture: Boolean
         get() = screenCapture.gatesMacOsScreenRecordingTcc
 
     // Public surface: the no-argument constructor is the explicit real-OS opt-in
@@ -470,7 +473,7 @@ internal constructor(
      */
     public fun screenshot(region: Rectangle? = null): BufferedImage {
         val captureRegion = region ?: screenCapture.defaultScreenshotRegion()
-        if (isMacOs() && allowsPlatformCapture) {
+        if (isMacOs() && usesNativeMacOsRegionCapture) {
             val native = requireNotNull(nativeRegionCapture) { macOsRegionCaptureUnavailable() }
             return native(captureRegion).scaledTo(captureRegion.width, captureRegion.height)
         }
@@ -499,7 +502,7 @@ internal constructor(
      */
     public fun screenshotAtDeviceScale(region: Rectangle? = null): BufferedImage {
         val captureRegion = region ?: screenCapture.defaultScreenshotRegion()
-        if (isMacOs() && allowsPlatformCapture) {
+        if (isMacOs() && usesNativeMacOsRegionCapture) {
             val native = requireNotNull(nativeRegionCapture) { macOsRegionCaptureUnavailable() }
             return native(captureRegion)
         }

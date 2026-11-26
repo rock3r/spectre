@@ -7,7 +7,6 @@ import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class RobotDriverScreenshotTest {
@@ -88,7 +87,7 @@ class RobotDriverScreenshotTest {
 
         assertEquals(1, capture.captureCalls)
         assertEquals(0, nativeCalls)
-        assertFalse(driver.allowsPlatformCapture)
+        assertTrue(driver.allowsPlatformCapture)
     }
 
     @Test

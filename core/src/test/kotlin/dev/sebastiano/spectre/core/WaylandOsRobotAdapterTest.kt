@@ -60,6 +60,26 @@ class WaylandOsRobotAdapterTest {
     }
 
     @Test
+    fun `Linux Wayland driver remains eligible for platform capture`() {
+        val wayland = RecordingWaylandAdapter()
+        val selected =
+            defaultRealOsRobotAdapter(
+                isLinux = true,
+                wayland = true,
+                waylandAdapter = { wayland },
+                awtAdapter = { error("AWT Robot must not open a portal on Wayland") },
+            )
+        val driver = RobotDriver(robot = selected, screenCapture = selected)
+        val backend = PlatformScreenCaptureBackend(driver)
+
+        val image = backend.captureRegion(Rectangle(10, 20, 30, 40))
+
+        assertEquals(1, image.width)
+        assertEquals(1, image.height)
+        assertTrue(driver.allowsPlatformCapture)
+    }
+
+    @Test
     fun `Linux Wayland fails closed on first use when the helper bridge is missing`() {
         val adapter =
             defaultRealOsRobotAdapter(
