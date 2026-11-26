@@ -2,6 +2,11 @@ name: Scratch native AT-SPI optional fields
 
 on:
   workflow_dispatch:
+    inputs:
+      early_typed_timeout:
+        description: Require final candidate typed early-timeout behavior
+        type: boolean
+        default: false
   push:
     branches: [release-0.10/gnome-hosted-smoke]
     paths:
@@ -17,7 +22,7 @@ jobs:
     timeout-minutes: 25
     env:
       BASELINE_SHA: 3e831adde0ff84b535ec997446a347be90431304
-      CANDIDATE_TREE: 157176b3c4e9d1ce0308651ef837d159ad013505
+      QA_EARLY_TYPED_TIMEOUT: ${{ inputs.early_typed_timeout && '1' || '0' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -40,7 +45,7 @@ jobs:
             git -C candidate apply --index "$GITHUB_WORKSPACE/qa/.github/qa-atspi-multi-window-contract/$CANDIDATE_PATCH"
           fi
           actual_tree=$(git -C candidate write-tree)
-          test "$actual_tree" = "$CANDIDATE_TREE"
+          test "$actual_tree" = "$CANDIDATE_FULL_TREE"
           printf '%s\n' "$BASELINE_SHA" >"$RUNNER_TEMP/baseline-commit.txt"
           printf '%s\n' "$actual_tree" >"$RUNNER_TEMP/candidate-tree.txt"
       - uses: dtolnay/rust-toolchain@stable
@@ -64,6 +69,7 @@ jobs:
             ARTIFACTS="$artifacts" \
             BASELINE_HELPER="$GITHUB_WORKSPACE/product/recording/native/linux/target/release/spectre-wayland-helper" \
             CANDIDATE_HELPER="$GITHUB_WORKSPACE/candidate/recording/native/linux/target/release/spectre-wayland-helper" \
+            QA_EARLY_TYPED_TIMEOUT="$QA_EARLY_TYPED_TIMEOUT" \
             "$GITHUB_WORKSPACE/qa/.github/qa-atspi-multi-window-contract/optional-fields-run-session.sh"
       - name: Preserve raw and typed actual results
         if: always()

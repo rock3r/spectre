@@ -51,11 +51,19 @@ class Node(dbus.service.Object):
         self.record(sender, interface, member, "org.freedesktop.DBus.Error.UnknownMethod")
         raise dbus.DBusException("fixture deliberately omitted " + member, name="org.freedesktop.DBus.Error.UnknownMethod")
 
+    def no_reply(self, sender, interface, member):
+        self.record(sender, interface, member, "org.freedesktop.DBus.Error.NoReply")
+        raise dbus.DBusException(
+            "fixture returned a typed early timeout while the client deadline was live",
+            name="org.freedesktop.DBus.Error.NoReply",
+        )
+
     def optional_absent(self, member):
         return self.target and self.mode == "optional-absent" and member in {"Get", "GetAttributes", "GetState", "GetInterfaces", "GetExtents"}
 
     @dbus.service.method(ACC, in_signature="", out_signature="a(so)", sender_keyword="sender")
     def GetChildren(self, sender=None):
+        if self.target and self.mode == "early-children-timeout": self.no_reply(sender, ACC, "GetChildren")
         if self.target and self.mode == "missing-children": self.reject(sender, ACC, "GetChildren")
         self.record(sender, ACC, "GetChildren"); return self.children
 
@@ -66,6 +74,7 @@ class Node(dbus.service.Object):
 
     @dbus.service.method(ACC, in_signature="", out_signature="u", sender_keyword="sender")
     def GetRole(self, sender=None):
+        if self.target and self.mode == "early-role-timeout": self.no_reply(sender, ACC, "GetRole")
         if self.target and self.mode == "missing-role": self.reject(sender, ACC, "GetRole")
         self.record(sender, ACC, "GetRole"); return dbus.UInt32(self.role)
 
@@ -105,7 +114,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ready", type=Path, required=True)
     parser.add_argument("--journal", type=Path, required=True)
-    parser.add_argument("--mode", choices=("control", "optional-absent", "missing-role", "missing-children"), required=True)
+    parser.add_argument("--mode", choices=("control", "optional-absent", "missing-role", "missing-children", "early-children-timeout", "early-role-timeout"), required=True)
     args = parser.parse_args()
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     session = dbus.SessionBus()
