@@ -574,11 +574,36 @@ fn enrich_cached_nodes(
     maximum_depth: usize,
     deadline: Instant,
 ) -> Result<()> {
+    let (ordered, _) =
+        cached_enrichment_order(nodes, root_path, maximum_node_count, maximum_depth)?;
+    let extras = read_cached_extras(bus, owner, &ordered, deadline)?;
+    for (path, extra) in extras {
+        let node = nodes
+            .get_mut(&path)
+            .context("provider cache object disappeared")?;
+        apply_cached_extras(node, extra);
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CachedTraversalEnd {
+    Natural,
+    DepthLimit,
+    NodeLimit,
+}
+
+fn cached_enrichment_order(
+    nodes: &HashMap<String, NodeData>,
+    root_path: &str,
+    maximum_node_count: usize,
+    maximum_depth: usize,
+) -> Result<(Vec<(String, bool)>, CachedTraversalEnd)> {
     let mut ordered = Vec::new();
     let mut pending = vec![(root_path.to_string(), 0usize)];
     while let Some((path, depth)) = pending.pop() {
-        if ordered.len() >= maximum_node_count.saturating_add(1) {
-            break;
+        if ordered.len() >= maximum_node_count {
+            return Ok((ordered, CachedTraversalEnd::NodeLimit));
         }
         let node = nodes
             .get(&path)
@@ -589,23 +614,17 @@ fn enrich_cached_nodes(
                 .iter()
                 .any(|interface| interface.ends_with(".Text")),
         ));
-        if depth < maximum_depth {
-            pending.extend(
-                node.children
-                    .iter()
-                    .rev()
-                    .map(|child| (child.path.to_string(), depth + 1)),
-            );
+        if depth >= maximum_depth && !node.children.is_empty() {
+            return Ok((ordered, CachedTraversalEnd::DepthLimit));
         }
+        pending.extend(
+            node.children
+                .iter()
+                .rev()
+                .map(|child| (child.path.to_string(), depth + 1)),
+        );
     }
-    let extras = read_cached_extras(bus, owner, &ordered, deadline)?;
-    for (path, extra) in extras {
-        let node = nodes
-            .get_mut(&path)
-            .context("provider cache object disappeared")?;
-        apply_cached_extras(node, extra);
-    }
-    Ok(())
+    Ok((ordered, CachedTraversalEnd::Natural))
 }
 
 fn read_cached_extras(
@@ -713,9 +732,17 @@ fn read_cached_window(
         .collect();
     let mut replies = HashMap::with_capacity(calls.len());
     while replies.len() < calls.len() {
-        let timeout = call_timeout_anyhow(deadline)?;
-        let Some(mut message) = bus.channel().blocking_pop_message(timeout)? else {
-            anyhow::bail!("deadline exceeded waiting for cached AT-SPI enrichment replies")
+        let mut message = loop {
+            match bus
+                .channel()
+                .blocking_pop_message(call_timeout_anyhow(deadline)?)?
+            {
+                Some(message) => break message,
+                None if Instant::now() >= deadline => {
+                    anyhow::bail!("deadline exceeded waiting for cached AT-SPI enrichment replies")
+                }
+                None => continue,
+            }
         };
         if !matches!(
             message.msg_type(),
@@ -737,10 +764,7 @@ fn read_cached_window(
         };
         let reply = match message.as_result() {
             Ok(message) => decode_cached_reply(message, call.kind)?,
-            Err(error) if is_dbus_timeout_error(&error) || Instant::now() >= deadline => {
-                return Err(error.into())
-            }
-            Err(_) => CachedReply::Unsupported,
+            Err(error) => classify_cached_error(&error, call.kind, deadline)?,
         };
         replies.insert(serial, reply);
     }
@@ -748,12 +772,33 @@ fn read_cached_window(
 }
 
 fn cached_reply_matches(kind: MessageType, sender: Option<&str>, owner: &str) -> bool {
-    match kind {
-        // Errors such as LimitsExceeded and NoReply can be synthesized by the bus daemon, so
-        // their sender is not the destination owner. The reply serial still identifies our call.
-        MessageType::Error => true,
-        MessageType::MethodReturn => sender == Some(owner),
-        _ => false,
+    matches!(kind, MessageType::MethodReturn | MessageType::Error)
+        && matches!(sender, Some(value) if value == owner || (kind == MessageType::Error && value == "org.freedesktop.DBus"))
+}
+
+fn classify_cached_error(
+    error: &dbus::Error,
+    kind: CachedCallKind,
+    deadline: Instant,
+) -> Result<CachedReply> {
+    if is_dbus_timeout_error(error) || Instant::now() >= deadline {
+        return Err(dbus::Error::new_custom(
+            error.name().unwrap_or("org.freedesktop.DBus.Error.Failed"),
+            &error.to_string(),
+        )
+        .into());
+    }
+    match error.name() {
+        Some(
+            "org.freedesktop.DBus.Error.UnknownInterface"
+            | "org.freedesktop.DBus.Error.UnknownMethod"
+            | "org.freedesktop.DBus.Error.UnknownObject",
+        ) => Ok(CachedReply::Unsupported),
+        // AT-SPI providers commonly use these for an optional attribute unavailable on one node.
+        Some("org.a11y.atspi.Error.NotImplemented" | "org.a11y.atspi.Error.NotSupported") => {
+            Ok(CachedReply::Unsupported)
+        }
+        _ => anyhow::bail!("cached AT-SPI {kind:?} call failed: {error}"),
     }
 }
 
@@ -2345,6 +2390,136 @@ mod tests {
         assert!(validate(&r).is_err());
     }
     #[test]
+    fn cached_enrichment_stops_at_first_depth_boundary() {
+        let root_path = "/root".to_string();
+        let first_path = "/first".to_string();
+        let missing_later_path = "/later".to_string();
+        let grandchild_path = "/grandchild".to_string();
+        let address = |path: &str| Address {
+            bus: ":1.42".into(),
+            path: path.to_string().into(),
+        };
+        let node = |children: Vec<Address>| NodeData {
+            id: None,
+            raw_role: None,
+            platform_role: None,
+            name: None,
+            states: vec![],
+            value: None,
+            bounds: None,
+            children,
+            interfaces: vec![],
+        };
+        let nodes = HashMap::from([
+            (
+                root_path.clone(),
+                node(vec![address(&first_path), address(&missing_later_path)]),
+            ),
+            (first_path.clone(), node(vec![address(&grandchild_path)])),
+        ]);
+
+        // The absent later sibling instruments a provider call that would fail (or hang). It is
+        // deliberately unreachable because walking stops as soon as the first child proves the
+        // depth limit.
+        let (selected, end) = cached_enrichment_order(&nodes, &root_path, 10, 1).unwrap();
+        assert_eq!(
+            selected,
+            vec![(root_path.clone(), false), (first_path, false)]
+        );
+        assert_eq!(end, CachedTraversalEnd::DepthLimit);
+
+        let (selected, end) = cached_enrichment_order(&nodes, &root_path, 1, 10).unwrap();
+        assert_eq!(selected, vec![(root_path.clone(), false)]);
+        assert_eq!(end, CachedTraversalEnd::NodeLimit);
+
+        let leaf_path = "/leaf".to_string();
+        let leaves = HashMap::from([(leaf_path.clone(), node(vec![]))]);
+        let (selected, end) = cached_enrichment_order(&leaves, &leaf_path, 1, 0).unwrap();
+        assert_eq!(selected, vec![(leaf_path, false)]);
+        assert_eq!(end, CachedTraversalEnd::Natural);
+    }
+
+    #[test]
+    fn cached_walk_reports_depth_limit_with_the_selected_prefix() {
+        let address = |path: &str| Address {
+            bus: ":1.42".into(),
+            path: path.to_string().into(),
+        };
+        let data = |id: &str, children: Vec<Address>| NodeData {
+            id: Some(id.into()),
+            raw_role: None,
+            platform_role: None,
+            name: None,
+            states: vec![],
+            value: None,
+            bounds: None,
+            children,
+            interfaces: vec![],
+        };
+        let mut root = data("root", vec![address("/first"), address("/later")]);
+        let mut nodes = HashMap::from([
+            (
+                "/first".into(),
+                data("repeated", vec![address("/grandchild")]),
+            ),
+            ("/later".into(), data("repeated", vec![])),
+        ]);
+        let mut request = request();
+        request.maximum_depth = 1;
+        request.maximum_node_count = 10;
+        let mut snapshot = empty_snapshot();
+        let result = walk_cached(
+            &mut nodes,
+            root.clone(),
+            "w0/root".into(),
+            None,
+            0,
+            &request,
+            Instant::now() + Duration::from_secs(1),
+            &Rect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+            &mut snapshot,
+        );
+        let (code, message, partial) = result.unwrap_err();
+        assert_eq!(code, "limit-reached");
+        assert_eq!(message, "maximumDepth 1 reached");
+        let partial = partial.unwrap();
+        assert_eq!(
+            partial
+                .nodes
+                .iter()
+                .map(|node| node.key.as_str())
+                .collect::<Vec<_>>(),
+            ["w0/root", "w0/root/0"]
+        );
+
+        root.children.clear();
+        request.maximum_depth = 0;
+        let mut snapshot = empty_snapshot();
+        assert!(walk_cached(
+            &mut HashMap::new(),
+            root,
+            "w0/root".into(),
+            None,
+            0,
+            &request,
+            Instant::now() + Duration::from_secs(1),
+            &Rect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1
+            },
+            &mut snapshot,
+        )
+        .is_ok());
+        assert_eq!(snapshot.nodes.len(), 1);
+    }
+    #[test]
     fn rejects_process_target_outside_linux_pid_range() {
         let request: Request = serde_json::from_str(
             r#"{"target":{"type":"process-id","value":2147483648},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#,
@@ -2585,7 +2760,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_pipeline_accepts_daemon_errors_but_not_foreign_returns() {
+    fn cached_pipeline_rejects_foreign_errors_and_returns() {
         assert!(cached_reply_matches(
             MessageType::Error,
             Some("org.freedesktop.DBus"),
@@ -2593,12 +2768,12 @@ mod tests {
         ));
         assert!(cached_reply_matches(
             MessageType::Error,
-            Some(":1.0"),
+            Some(":1.42"),
             ":1.42"
         ));
-        assert!(cached_reply_matches(
-            MessageType::MethodReturn,
-            Some(":1.42"),
+        assert!(!cached_reply_matches(
+            MessageType::Error,
+            Some(":1.99"),
             ":1.42"
         ));
         assert!(!cached_reply_matches(
@@ -2606,6 +2781,29 @@ mod tests {
             Some(":1.99"),
             ":1.42"
         ));
+    }
+
+    #[test]
+    fn cached_pipeline_only_hides_optional_provider_errors() {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        for name in [
+            "org.freedesktop.DBus.Error.UnknownMethod",
+            "org.a11y.atspi.Error.NotImplemented",
+        ] {
+            let error = dbus::Error::new_custom(name, "optional field unavailable");
+            assert!(matches!(
+                classify_cached_error(&error, CachedCallKind::RoleName, deadline).unwrap(),
+                CachedReply::Unsupported
+            ));
+        }
+        for name in [
+            "org.freedesktop.DBus.Error.LimitsExceeded",
+            "org.freedesktop.DBus.Error.Disconnected",
+            "org.freedesktop.DBus.Error.ServiceUnknown",
+        ] {
+            let error = dbus::Error::new_custom(name, "required route failed");
+            assert!(classify_cached_error(&error, CachedCallKind::Attributes, deadline).is_err());
+        }
     }
 
     #[test]
