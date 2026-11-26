@@ -38,7 +38,7 @@ it in-band.
 
 The skill covers:
 
-- schemaVersion **1** field reference
+- schemaVersion **2** field reference
 - ready-made `jq` recipes (clickable nodes by text, bounds by test tag, tree diffs)
 - capture → act → capture → diff workflow
 - node-key lifetime (re-capture after navigation / re-attach / hot reload settle)
@@ -50,6 +50,16 @@ For reload settle and generation-stamped keys, see
 [Compose Hot Reload awareness](hot-reload.md).
 
 ## Schema versioning
+
+Version 2 adds document `source`, snapshot-local `parentKey`/`id`, raw `platformRole`, normalised
+`states`, `value`, computed `onScreen`, and window `boundsSpace`. Compose captures use
+`compose-semantics`, fill `id` from `testTag`, and leave OS-only values null. Accessibility captures
+use `os-accessibility`. Keys are valid for one snapshot only; stable identity across captures is
+not part of the contract. Never interpret `boundsSpace: "window"` as screen coordinates.
+
+The daemon/native-reader wire contract, including target and limit requests, structured errors,
+partial trees, escaping, and key construction, is in
+[Native accessibility helper protocol](../architecture/accessibility-helper-protocol.md).
 
 `capture.json` is stable API. When `schemaVersion` bumps:
 

@@ -14,7 +14,34 @@ class CaptureDocumentJsonTest {
         val actual = CaptureJson.encode(document).trim().replace("\r\n", "\n")
         val expected =
             javaClass
-                .getResourceAsStream("/capture/capture-schema-v1.golden.json")!!
+                .getResourceAsStream("/capture/capture-schema-v2-compose.golden.json")!!
+                .bufferedReader()
+                .use { it.readText().trim().replace("\r\n", "\n") }
+        assertEquals(expected, actual)
+    }
+
+    @Test
+    fun `accessibility source golden carries raw role states value and coordinate space`() {
+        val compose = sampleDocument()
+        val document =
+            compose.copy(
+                source = CaptureSource.OsAccessibility,
+                window = compose.window.copy(boundsSpace = BoundsSpace.Window),
+                nodes =
+                    compose.nodes.map {
+                        it.copy(
+                            key = "w0/submit",
+                            id = "submit",
+                            platformRole = "AXButton",
+                            states = listOf("focusable", "enabled"),
+                            value = "Save",
+                        )
+                    },
+            )
+        val actual = CaptureJson.encode(document).trim().replace("\r\n", "\n")
+        val expected =
+            javaClass
+                .getResourceAsStream("/capture/capture-schema-v2-accessibility.golden.json")!!
                 .bufferedReader()
                 .use { it.readText().trim().replace("\r\n", "\n") }
         assertEquals(expected, actual)
@@ -43,6 +70,7 @@ class CaptureDocumentJsonTest {
         if (minimal) {
             return CaptureDocument(
                 schemaVersion = CaptureDocument.SCHEMA_VERSION,
+                source = CaptureSource.ComposeSemantics,
                 capturedAt = "2026-07-20T12:00:00.000Z",
                 window =
                     CaptureWindow(
@@ -51,6 +79,7 @@ class CaptureDocumentJsonTest {
                         title = null,
                         isPopup = false,
                         boundsScreen = CaptureRect(0, 0, 1, 1),
+                        boundsSpace = BoundsSpace.Screen,
                         densityScaleX = 1.0,
                         densityScaleY = 1.0,
                         imageWidth = 1,
@@ -70,6 +99,7 @@ class CaptureDocumentJsonTest {
         }
         return CaptureDocument(
             schemaVersion = CaptureDocument.SCHEMA_VERSION,
+            source = CaptureSource.ComposeSemantics,
             capturedAt = "2026-07-20T12:00:00.000Z",
             window =
                 CaptureWindow(
@@ -78,6 +108,7 @@ class CaptureDocumentJsonTest {
                     title = "Fixture",
                     isPopup = false,
                     boundsScreen = CaptureRect(x = 10, y = 20, width = 400, height = 300),
+                    boundsSpace = BoundsSpace.Screen,
                     densityScaleX = 2.0,
                     densityScaleY = 2.0,
                     imageWidth = 800,
@@ -87,12 +118,17 @@ class CaptureDocumentJsonTest {
                 listOf(
                     CaptureNode(
                         key = "surface-main:0:42",
+                        parentKey = null,
+                        id = "submit",
                         testTag = "submit",
                         text = "Save",
                         texts = listOf("Save"),
                         editableText = null,
                         contentDescription = null,
                         role = "Button",
+                        platformRole = null,
+                        states = listOf("enabled", "clickable"),
+                        value = null,
                         enabled = true,
                         clickable = true,
                         focused = false,
