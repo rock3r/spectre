@@ -52,6 +52,19 @@ class DiagnosticHarnessContractTest(unittest.TestCase):
         self.assertNotIn("taskkill", harness.lower())
         self.assertIn("${{ runner.temp }}/launch-marker-", workflow)
 
+    def test_harness_does_not_assign_reserved_automatic_variables(self) -> None:
+        harness = HARNESS.read_text(encoding="utf-8")
+        assigned = re.findall(r"(?im)^\s*\$(\w+)\s*=|foreach\s*\(\s*\$(\w+)", harness)
+        assigned_names = {name.lower() for pair in assigned for name in pair if name}
+        reserved = {
+            "args", "error", "foreach", "home", "host", "input", "matches",
+            "myinvocation", "nestedpromptlevel", "null", "pid", "profile",
+            "psboundparameters", "pscmdlet", "psitem", "pwd", "stacktrace",
+            "switch", "this", "true",
+        }
+        self.assertEqual(assigned_names & reserved, set())
+        self.assertIn("$fixtureGradleUserHome =", harness)
+
 
 if __name__ == "__main__":
     unittest.main()

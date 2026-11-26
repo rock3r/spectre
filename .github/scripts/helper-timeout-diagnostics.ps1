@@ -35,9 +35,11 @@ function Get-FixtureDirectories {
     foreach ($root in @(Get-ChildItem $env:TEMP -Directory -Filter "junit*" -ErrorAction SilentlyContinue)) {
         foreach ($name in $fixtureNames) {
             $fixture = Join-Path $root.FullName $name
-            if (Test-Path $fixture -PathType Container) { Get-Item $fixture }
-            $home = Join-Path $root.FullName "$name-home"
-            if (Test-Path $home -PathType Container) { Get-Item $home }
+            if (Test-Path $fixture -PathType Container) { Get-Item $fixture -ErrorAction SilentlyContinue }
+            $fixtureGradleUserHome = Join-Path $root.FullName "$name-home"
+            if (Test-Path $fixtureGradleUserHome -PathType Container) {
+                Get-Item $fixtureGradleUserHome -ErrorAction SilentlyContinue
+            }
         }
     }
 }
