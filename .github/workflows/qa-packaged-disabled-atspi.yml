@@ -16,6 +16,7 @@ jobs:
     if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && (github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'Verify public disabled accessibility'))
     runs-on: ubuntu-24.04
     env:
+      PORTABLE_FIXTURE: ${{ contains(github.event.head_commit.message, 'portable fixture') }}
       COMPLETE_STOCK: ${{ endsWith(github.event.head_commit.message, 'full consent case') }}
       ATTACHED_CHECK: ${{ endsWith(github.event.head_commit.message, 'attached and standalone') }}
       REUSE_STOCK_ZIP: ${{ startsWith(github.event.head_commit.message, 'Verify public disabled accessibility stock replay') }}
@@ -77,6 +78,13 @@ jobs:
             git apply --index "$RUNNER_TEMP/full-qa.patch"
             tree=$(git write-tree)
             test "$tree" = ff831b117d6f66a005935416c77b25235dbe44ac
+            if [[ "$PORTABLE_FIXTURE" == true ]]; then
+              base64 --decode "$qa/native-typed-jni.diff.b64" > "$RUNNER_TEMP/portable.patch"
+              echo "97297391c3654673ba509790f442640e6a5ac7b0f8f5006bbd9f4ef69c4c96b7  $RUNNER_TEMP/portable.patch" | sha256sum --check --strict
+              git apply --index "$RUNNER_TEMP/portable.patch"
+              tree=$(git write-tree)
+              test "$tree" = 23a87a96bc74dcea09e267c7bdaed97e71261664
+            fi
             printf '%s\n' "$tree" >"$RUNNER_TEMP/qa-packaged-disabled-atspi/stock-result-tree.txt"
             git diff --cached --name-only "$original" >"$RUNNER_TEMP/qa-packaged-disabled-atspi/replay-source-changes.txt"
           elif [[ "$PUBLIC_SHA" == "$original" ]]; then
@@ -175,6 +183,35 @@ jobs:
           QA_DIR: ${{ github.workspace }}/scratch/.github/qa-packaged-disabled-atspi
           QA_ARTIFACTS: ${{ runner.temp }}/qa-packaged-disabled-atspi
         run: dbus-run-session -- scratch/.github/qa-packaged-disabled-atspi/run-session.sh
+      - name: Check and format only the candidate attached JVM test on hosted Linux
+        if: env.PORTABLE_FIXTURE == 'true'
+        working-directory: product
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/qa-packaged-disabled-atspi"
+          testfile=cli/src/test/kotlin/dev/sebastiano/spectre/cli/daemon/DaemonFixtureIntegrationTest.kt
+          if ! ./gradlew :cli:ktfmtCheckTest --console=plain > "$out/format-before.log" 2>&1; then
+            ./gradlew :cli:ktfmtFormatTest --console=plain
+            test "$(git diff --name-only)" = "$testfile"
+          fi
+          ./gradlew :cli:ktfmtCheckTest --console=plain > "$out/format-after.log" 2>&1
+          git diff --full-index -- "$testfile" > "$out/hosted-ktfmt-verified.diff"
+          cp "$testfile" "$out/DaemonFixtureIntegrationTest.kt"
+          git add -- "$testfile"
+          git write-tree | tee "$out/formatted-stock-result-tree.txt"
+          git rev-parse ":$testfile" | tee "$out/formatted-fixture-blob.txt"
+      - name: Export verified hosted Kotlin formatting before native smoke
+        if: env.PORTABLE_FIXTURE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-hosted-ktfmt
+          path: |
+            ${{ runner.temp }}/qa-packaged-disabled-atspi/hosted-ktfmt-verified.diff
+            ${{ runner.temp }}/qa-packaged-disabled-atspi/formatted-stock-result-tree.txt
+            ${{ runner.temp }}/qa-packaged-disabled-atspi/formatted-fixture-blob.txt
+            ${{ runner.temp }}/qa-packaged-disabled-atspi/DaemonFixtureIntegrationTest.kt
+          if-no-files-found: error
+          retention-days: 7
       - name: Run the unmodified stock AccessKit release-smoke case against the same extracted ZIP
         if: always() && env.PACKAGED_CLI != '' && env.ATTACHED_CHECK != 'true' && !endsWith(github.event.head_commit.message, 'GTK only')
         working-directory: product
@@ -187,6 +224,7 @@ jobs:
           if [[ "$COMPLETE_STOCK" == true ]]; then
             test -f /usr/share/java/java-atk-wrapper.jar
             dpkg -L libatk-wrapper-java-jni | grep libatk-wrapper.so | tee "$RUNNER_TEMP/qa-packaged-disabled-atspi/atk-provider.txt"
+            if [[ "$PORTABLE_FIXTURE" != true ]]; then
             provider="$(dpkg -L libatk-wrapper-java-jni | grep -E '/libatk-wrapper\.so$')"
             jni="$(dirname "$provider")"
             cat >"$RUNNER_TEMP/LoadAtk.java" <<'JAVA'
@@ -201,6 +239,7 @@ jobs:
             export LD_LIBRARY_PATH="$jni${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             ldd "$provider" | tee "$RUNNER_TEMP/qa-packaged-disabled-atspi/atk-provider-dependencies.txt"
             java --class-path /usr/share/java/java-atk-wrapper.jar "$RUNNER_TEMP/LoadAtk.java" >"$RUNNER_TEMP/qa-packaged-disabled-atspi/augmented-atk-loader.txt" 2>&1 || cat "$RUNNER_TEMP/qa-packaged-disabled-atspi/augmented-atk-loader.txt"
+            fi
             launcher=(xvfb-run -a -s '-screen 0 1280x720x24 -nolisten tcp')
           else
             launcher=()
@@ -267,7 +306,7 @@ jobs:
           assert all(suite.get(k) == '0' for k in ['skipped','errors','failures']) and suite.get('tests')=='1'
           PYTHON
       - name: Replay the exact Java fixture startup without the added JNI search directory
-        if: always() && env.COMPLETE_STOCK == 'true' && env.PACKAGED_CLI != ''
+        if: always() && env.PORTABLE_FIXTURE != 'true' && env.COMPLETE_STOCK == 'true' && env.PACKAGED_CLI != ''
         working-directory: product
         run: |
           set -euo pipefail
