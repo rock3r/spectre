@@ -295,6 +295,25 @@ val buildSrcUnitTests by
         outputs.upToDateWhen { false }
     }
 
+// Cross-platform fixture contracts stay in the normal check gate without building the Rust app.
+// Live native API reads belong to the headed validation lanes below.
+val verifyAccessKitFixture by
+    tasks.registering(Exec::class) {
+        group = "verification"
+        description = "Checks the private AccessKit fixture and per-OS golden contracts."
+        workingDir = rootProject.layout.projectDirectory.asFile
+        commandLine("python3", "-m", "unittest", "tests.test_accesskit_fixture")
+        onlyIf("Host with python3") {
+            runCatching { ProcessBuilder("python3", "--version").start().waitFor() == 0 }
+                .getOrDefault(false)
+        }
+        inputs.files(
+            "tests/test_accesskit_fixture.py",
+            fileTree("fixtures/accesskit") { exclude("target/**") },
+        )
+        outputs.upToDateWhen { false }
+    }
+
 // Both tasks launch nested Gradle builds that write buildSrc/build. Running them concurrently can
 // corrupt a cache restore or expose a partially compiled buildSrc classpath on clean CI workers.
 // #456: the seal-preservation script this task runs reads the packaged macOS zips under
@@ -319,6 +338,7 @@ tasks.named("check") {
         verifyIdeUiTestWorkflow,
         verifyReleaseSmokeScripts,
         buildSrcUnitTests,
+        verifyAccessKitFixture,
     )
 }
 
