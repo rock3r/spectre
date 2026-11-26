@@ -14,8 +14,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04]
-        mode: [cli-recording-live, cli-recording-restart]
+        os: [ubuntu-22.04, ubuntu-24.04]
+        mode: [capture, cli-recording-live]
     timeout-minutes: 55
     steps:
       - name: Check out temporary workflow tooling
@@ -27,24 +27,24 @@ jobs:
       - name: Check out the release candidate
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.candidate_sha || '51cf4ee24572c14fe48da0fb15be1b3d9aaea9b6' }}
+          ref: ${{ inputs.candidate_sha || 'da8d1f8d27c2f70c092fae785aef98c9d1c94703' }}
           persist-credentials: false
           path: candidate
 
       - name: Verify the immutable public GNOME candidate
         working-directory: candidate
         run: |
-          test "$(git rev-parse HEAD)" = 51cf4ee24572c14fe48da0fb15be1b3d9aaea9b6
-          test "$(git write-tree)" = d889d474eee688cbf3da4a141b3407777a313af8
+          test "$(git rev-parse HEAD)" = da8d1f8d27c2f70c092fae785aef98c9d1c94703
+          test "$(git write-tree)" = 66b00155aa679348cbfd1cc921210fee4c9fb86c
           test -z "$(git status --porcelain)"
           overlays="$GITHUB_WORKSPACE/smoke-tooling/.github/smoke-overlays"
-          for entry in 'c9e136ae1990975c905466925ae0334a9082da7e0a52c12d5270893b57d1b223 jammy-pipefail.patch' 'f3c5d0fcc30f0332da6990736158c9efa99becadf943201ca314c5d09875cbf9 jammy-identity.patch'; do
+          for entry in '02b05d32ae5e7ce309ff955ab84c70a47f2f55979f63f33652e77ada6b8e8fb3 jammy-identity.patch'; do
             read -r digest filename <<< "$entry"
             printf '%s  %s\n' "$digest" "$overlays/$filename" | sha256sum -c -
             git apply --index "$overlays/$filename"
           done
           git diff --cached --stat
-          test "$(git write-tree)" = 8f139d21ec1f57b678a292604d05ba561ac665c4
+          test "$(git write-tree)" = b04240825d8b9ef45576fcef0121bb7e253f886c
 
       - name: Set up JDK 21 for the project toolchain
         uses: actions/setup-java@v5
@@ -68,7 +68,7 @@ jobs:
           ATSPI_REPO: unused
           FIXTURE_CHECKOUT: unused
           SMOKE_MODE: ${{ matrix.mode }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha || '51cf4ee24572c14fe48da0fb15be1b3d9aaea9b6' }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || 'da8d1f8d27c2f70c092fae785aef98c9d1c94703' }}
           SMOKE_ARTIFACTS: ${{ runner.temp }}/gnome-cli-recording-live
           SMOKE_REPO: ${{ github.workspace }}/candidate
           SMOKE_SESSION_SCRIPT: ${{ github.workspace }}/smoke-tooling/.github/scripts/gnome-hosted-smoke-session.sh

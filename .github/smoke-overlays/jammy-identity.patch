@@ -1,544 +1,451 @@
-diff --git a/docs/guide/troubleshooting.md b/docs/guide/troubleshooting.md
-index f70859f8b3255836267ee7f0786fdc91f937d70f..baa55fc48189577ad154dca4877739f8d8a6461e 100644
---- a/docs/guide/troubleshooting.md
-+++ b/docs/guide/troubleshooting.md
-@@ -518,58 +518,57 @@ If dialogs still appear:
- - Do not point token storage at `~/.java/robot/` — Spectre stores
-   `wayland-rd-restore-token-*` under `$XDG_STATE_HOME/spectre/` (or
-   `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`).
- - A rejected token is cleared and retried once. A second failure is fatal; delete the
-   token file only when re-consent is intended.
+diff --git a/docs/guide/recording.md b/docs/guide/recording.md
+index fa81748ae8ec788cdf076250ed250e85b28e3422..1c1b37cfd7f97cc4c0cb4d6036eb6f7255b6a5a2 100644
+--- a/docs/guide/recording.md
++++ b/docs/guide/recording.md
+@@ -81,11 +81,11 @@ Two limits apply:
+ - **Two windows with the same position and size make the capture fail.** The helper cannot tell
+   which one to capture, so it reports an error instead of guessing. This also applies to two
+   windows that share a title on Windows or Linux X11.
+-- **Linux Wayland window capture needs GNOME, and a Frame or Dialog that can take keyboard focus.**
+-  Spectre binds a GNOME Mutter window stream to each window the first time it captures it (see
+-  [Linux Wayland window capture](#linux-wayland-window-capture)). Titles do not matter there. A
+-  translucent window, or a desktop other than GNOME, makes the capture fail with an error that
+-  says why. Spectre never uses a crop of a monitor capture instead.
++- **Linux Wayland window capture needs GNOME and the bundled window-identity extension.**
++  Spectre binds a GNOME Mutter window stream to the requested Xwayland window (see
++  [Linux Wayland window capture](#linux-wayland-window-capture)). Titles and keyboard focus do not
++  select the target. A desktop other than GNOME makes the capture fail with an error that says
++  why. Spectre never uses a crop of a monitor capture instead.
  
- - A "window picker" dialog (pick one window) comes from `WaylandPortalWindowRecorder`, which
-   you call directly. `AutoRecorder` and screenshots do not use it.
+ Video recording still needs a titled window: there is no `TitledWindow` adapter for a `JWindow`.
+ Record the owner window or a screen region instead.
+@@ -95,7 +95,7 @@ Record the owner window or a screen region instead.
+ | macOS | ScreenCaptureKit helper (`spectre-screencapture --mode screenshot`) | Captures only the window source; overlapping apps are excluded | Requires `spectre-recording-macos` at runtime and Screen Recording permission |
+ | Windows | Windows Graphics Capture helper (`spectre-window-capture.exe`) | Captures the named top-level window | Requires `spectre-recording-windows`, Windows 10 version 1903 or newer, .NET 8 Desktop Runtime, Windows App Runtime 1.8, and a non-blank exact window title (or an untitled window found by its bounds) |
+ | Linux Xorg/Xvfb | Linux helper + GStreamer `ximagesrc` | Captures visible screen pixels | The target window must be visible/frontmost, same limitation as `ComposeAutomator.screenshot(...)`; window mode needs a non-blank exact title (or an untitled window found by its bounds) |
+-| Linux Wayland | Linux helper + GNOME Mutter window stream (`org.gnome.Mutter.ScreenCast`) | Captures only the window, even when other windows cover it; follows the window when it moves | GNOME only. Needs the session helper, so the one-time `spectre permissions request` grant. The first capture of each window may focus it briefly. Region stills use the portal monitor stream |
++| Linux Wayland | Linux helper + GNOME Mutter window stream (`org.gnome.Mutter.ScreenCast`) | Captures only the owner-bound target, even when other windows cover it; follows the window when it moves | GNOME only. Needs the session helper, so run `spectre permissions request` when no live session or reusable token is available. Capturing does not switch focus. Region stills use the portal monitor stream |
  
- If nobody answers a dialog that a capture opened within 60 seconds, or someone cancels it,
- Spectre does not ask again in the same JVM. Every later capture fails at once with an error
- that tells you to run `spectre permissions request`.
+ An embedded `ComposePanel` needs its **host** top-level window for window capture.
+ When the host exposes a titled `Frame`, capture that window and crop to the panel
+@@ -138,17 +138,29 @@ Expected results by platform:
  
- When `XDG_RUNTIME_DIR` is not set, for example in a Bazel test, Spectre falls back to
- `/run/user/<uid>` if the current user owns it. It also passes that directory and its D-Bus
- `bus` socket to the helper. If that directory does not exist, set `XDG_RUNTIME_DIR` or
- `SPECTRE_WAYLAND_SESSION_DIR`.
+ ## Linux Wayland consent
  
- SSH or headless sessions without a compositor seat cannot complete the dialog.
- See [Linux Wayland consent](recording.md#linux-wayland-consent).
+-Approve Spectre once, then never again. Run this while someone is at the seat:
++Start a Spectre portal session while someone is at the seat:
  
- ## "Linux Wayland window capture fails: could not bind a GNOME Mutter window stream"
+ ```bash
+ spectre permissions request
+ ```
  
- On Linux Wayland, Spectre captures a window through a GNOME Mutter window stream. Install the
- GNOME Shell extension bundled in the `spectre-recording-linux` jar, then enable it and start a new
--GNOME session. These commands preserve the UUID directory expected by GNOME Shell:
-+GNOME session. The installer selects GNOME Shell's legacy entry point on versions 42–44 and its
-+ES-module entry point on versions 45–50:
+-The desktop shows the Share / Allow remote interaction dialog. Select the whole screen, tick
+-Remember, and click Share. Spectre stores the grant and keeps its session running, so later test
+-runs, captures, recordings, and real input open no dialog. `spectre permissions check` reports the
+-grant without opening a dialog. Each dialog step waits 300 seconds; change it with `--timeout`.
+-From code, call `WaylandPortalAccess.preflight()` or `WaylandPortalAccess.request()`.
++The desktop shows its Share or Allow remote interaction dialog. Select the whole screen and
++approve it. Portal versions differ: there may be no **Remember** control and no reusable token.
++While the helper remains alive, later test runs, captures, recordings, and real input reuse that
++live session without another picker. Separately, if the portal returns a reusable restore token,
++Spectre stores it and can ask the portal to restore a session after the helper restarts. Restoration
++is not guaranteed: the token can expire or become invalid when monitors or permissions change.
++
++Inspect those two states without opening a dialog:
++
++```bash
++spectre permissions check --json
++```
++
++`sessionActive` means a helper is serving a live portal session now. `tokenStored` means an optional
++restore token is on disk; it is not required for reuse while `sessionActive` is true. The request
++command waits 300 seconds for each dialog step by default; change it with `--timeout`. From code,
++call `WaylandPortalAccess.preflight()` or `WaylandPortalAccess.request()`.
  
- ```shell
- jar xf spectre-recording-linux-<version>.jar \
--  native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev
--mkdir -p ~/.local/share/gnome-shell/extensions
--cp -R native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev \
--  ~/.local/share/gnome-shell/extensions/
+ Tests that use the JUnit integration never open the dialog themselves. Without a grant, the first
+ capture or real input fails at once with an error that names `spectre permissions request`, and
+@@ -158,17 +170,31 @@ the run prints that fix once. Set `-Dspectre.wayland.consentPrompt=allow` (or
+ On a seated GNOME/Mutter desktop, Spectre uses **one** long-lived `spectre-wayland-helper`
+ session for monitor capture and real OS input:
+ 
+-1. The helper installs `dev.sebastiano.spectre.desktop` and calls the host portal
+-   `Registry.Register` before any ScreenCast or RemoteDesktop method, so the grant is bound
+-   to Spectre. An empty host `app_id` would lose that identity.
+-2. It opens one RemoteDesktop session (keyboard + pointer + monitor source, persist until
+-   revoked). The first run shows Share + Remember / Allow remote interaction. Later Spectre
+-   processes on that seat connect to `$XDG_RUNTIME_DIR/spectre/wayland-session.sock`
+-   through the existing portal session.
+-3. Replacement `restore_token` values live under `$XDG_STATE_HOME/spectre/` (or
++1. The helper stages `dev.sebastiano.spectre.desktop` when applicable. If the host portal exposes
++   `org.freedesktop.host.portal.Registry`, it registers that identity before opening the portal
++   session; older backends without the optional interface are allowed and continue unregistered.
++2. It opens one RemoteDesktop session for keyboard, pointer, and a monitor source. Later Spectre
++   processes on that seat connect to `$XDG_RUNTIME_DIR/spectre/wayland-session.sock` and reuse the
++   live session.
++3. When supplied, replacement `restore_token` values live under `$XDG_STATE_HOME/spectre/` (or
+    `SPECTRE_WAYLAND_RESTORE_TOKEN_DIR`). They are not stored in `~/.java/robot/`.
+-4. If the compositor rejects a stored token, Spectre clears it, retries the dialog once,
+-   and fails closed if that retry fails.
++4. If the helper has exited and `tokenStored` is false, the old socket pathname is not a grant.
++   Run `spectre permissions request` again; a new picker and helper are expected. If the portal
++   rejects a stored token, Spectre clears it and requests consent again rather than capturing with
++   the wrong authority.
++
++For reference, Ubuntu 22.04 with GNOME Shell 42.9, portal-gnome 42.1, public RemoteDesktop v1 and
++ScreenCast v4, and GNOME's RemoteDesktop backend v0 reported `granted=true`,
++`sessionActive=true`, and `tokenStored=false`. Separate screenshots and recordings reused one
++picker while the helper lived. After the helper was stopped, a second request restarted it and
++showed a second picker
++([live consent and dynamic-capture verification](https://github.com/rock3r/spectre/actions/runs/45749559957/job/139673792065),
++[helper-stop, restart, and second-request verification](https://github.com/rock3r/spectre/actions/runs/45749559957/job/139673792412)).
++Ubuntu 24.04 with GNOME 46 and the packaged Spectre CLI 0.10.0 reported `granted=true`,
++`sessionActive=true`, and `tokenStored=true`, wrote the token, and reused the live session across
++clips with one picker while the helper remained alive. Helper-restart restoration was not measured
++([native verification](https://github.com/rock3r/spectre/actions/runs/45746386387/job/139663371101)).
++These are verified scenarios, not a promise that every GNOME or Wayland version behaves alike.
+ 
+ `RobotDriver()`, attach (including the inject payload, which talks to the existing seat
+ socket without shipping `spectre-recording`), CLI, and MCP on Wayland use this helper. `RobotDriver(robot)` still
+@@ -176,38 +202,37 @@ wraps the supplied `java.awt.Robot`. X11, macOS, and Windows keep their existing
+ 
+ ### Linux Wayland window capture
+ 
+-The portal's window source cannot serve tests: it asks the user to pick every window, and GNOME
+-cannot restore that grant onto a new window. So window stills, `waitForVisualIdle()` samples, and
+-window recording use GNOME Mutter's own `org.gnome.Mutter.ScreenCast` API through the same session
+-helper. It needs no dialog. Its stream renders only the window, so other windows on top of it do
+-not show, and it follows the window when it moves.
++Install the GNOME Shell extension bundled in the `spectre-recording-linux` jar, enable it, and
++start a new GNOME session. The installer chooses the entry point for the installed GNOME Shell
++version:
++
++```bash
++jar xf spectre-recording-linux-<version>.jar \
 +  native/linux/gnome-shell-extension
-+native/linux/gnome-shell-extension/install.sh
- gnome-extensions enable spectre-window-identity@sebastiano.dev
- ```
++bash native/linux/gnome-shell-extension/install.sh
++gnome-extensions enable spectre-window-identity@sebastiano.dev
++```
  
- On a seated GNOME Wayland terminal (not SSH and not Xvfb), run the exact hard smoke below. It opens
- two same-title, same-size windows, keeps the blue decoy focused before and after binding, checks the
- covered red window's pixels, records it, and binds a third window. It must print `PASS`, open no
- Share dialog, and leave its evidence in `/tmp/spectre-mutter-window-smoke/`:
+-Mutter selects the window that has keyboard focus. The first time Spectre captures a window, it
+-focuses that window if needed, binds the stream, checks that the frame shows a window of the
+-expected size, and gives focus back. The stream stays bound until the window closes.
++The portal's window source cannot serve unattended tests: it asks the user to pick every window,
++and GNOME cannot restore that grant onto a new window. Window stills, `waitForVisualIdle()` samples,
++and window recording therefore use GNOME Mutter's own `org.gnome.Mutter.ScreenCast` API through
++the same session helper. It needs no window picker. Its stream renders only the requested window,
++so other windows on top do not show, and it follows the window when it moves.
  
- ```shell
- echo "$XDG_SESSION_TYPE $WAYLAND_DISPLAY $DISPLAY"
- gnome-extensions info spectre-window-identity@sebastiano.dev
- ./gradlew --no-daemon :recording:runWaylandMutterWindowSmoke
- ```
+-GNOME ignores a Java window's own focus request (`toFront`, `requestFocus`) when another
+-application, or no window, has focus. This happens, for example, when a test closes its window
+-and the next test opens a new one. When the window does not get focus from its own request,
+-Spectre asks the window manager to activate it, with the same request a taskbar sends
+-(`_NET_ACTIVE_WINDOW`). Spectre does not give focus back to another application's window. Limits:
++Spectre resolves the current Xwayland XID and owner PID, and the bundled
++`spectre-window-identity` GNOME Shell extension exchanges that exact pair for Mutter's internal
++window ID. The helper binds `RecordWindow` to that ID. This owner-bound lookup distinguishes
++same-title, same-size windows and neither reads nor changes keyboard focus. Limits:
  
- Spectre resolves the JVM PID and exact Xwayland XID through that extension and passes the returned
- Mutter id to `RecordWindow`. It does not focus the window. The error means the extension is absent,
- the PID/XID was missing or ambiguous, the first frame did not match, or the window was translucent.
+ - **GNOME only.** On another Wayland desktop, window capture fails with an error. Capture a screen
+   region instead, or run under X11 or Xvfb.
+-- **Popup windows cannot be captured yet.** A `JWindow`, or any window that is not a `Frame` or
+-  `Dialog`, never gets X keyboard focus under AWT: AWT keeps it on the owner frame, so Mutter
+-  would record the owner. Window stills, visual-idle samples, and atomic captures of such a popup
+-  fail at once with an `UnsupportedOperationException`. Capture the owner window or a screen
+-  region instead. [#640](https://github.com/rock3r/spectre/issues/640) tracks binding by window
+-  identity.
+-- **The window must take focus when asked.** Spectre makes a non-focusable window focusable for
+-  that moment. If AWT still does not report the window as focused after the window manager was
+-  asked to activate it, for example because a modal dialog holds focus, the capture fails with an
+-  error instead of risking another window.
+-- **The first capture of a window must not run on the AWT event dispatch thread,** because
+-  binding waits for focus events there. Later captures of a bound window work on any thread.
+-- **Translucent windows cannot be bound yet**, because Spectre finds the window by its opaque
+-  pixels.
++- **The target must be a current Xwayland window owned by the requesting JVM.** If the extension
++  cannot match both its XID and owner PID, capture fails instead of selecting a similarly titled,
++  sized, or focused window.
++- **The first bind must run off the AWT event dispatch thread** because it performs blocking helper
++  I/O; an already-bound stream can be reused on the EDT.
++- **The first frame must contain fully opaque (alpha 255) pixels with size-compatible bounds.** No
++  opaque pixels or bounds incompatible with the target AWT outer size fail binding.
  
- - Confirm `gnome-extensions info spectre-window-identity@sebastiano.dev` reports `State: ENABLED`.
- - Translucent windows cannot be bound yet. Capture a screen region instead.
- - On a desktop other than GNOME there is no Mutter API, and window capture fails with an
-   error. Use `screenshot(region)`, `startRegion`, or X11/Xvfb.
+ See [Recording limitations](../RECORDING-LIMITATIONS.md) for token env vars and the
+ compositor matrix.
+@@ -253,7 +278,7 @@ This matrix describes each recorder's source, movement behaviour, and requiremen
+ | `FfmpegWindowRecorder` (deprecated) | Legacy named window (`gdigrab title=`) | Yes — `gdigrab` retracks the window across moves and resizes | Captures only the window's pixels. Compose `OnWindow` popups land in a separate OS window with a different title and are excluded. `OnSameCanvas` / `OnComponent` popups are part of the window surface and are captured | `ffmpeg` on `PATH`; visible window with a non-blank exact title | Windows |
+ | `ScreenCaptureKitRecorder` | Named window (pid + title substring), optional window-relative crop, or screen region | Window mode follows moves/resizes of the host window; optional `sourceRect` crop is **fixed at start** (v1). Region mode is fixed at `start()` | Window mode (with or without crop) captures only the window's pixels — occluders excluded. Region mode captures visible display pixels including overlapping apps | `spectre-recording-macos` runtime helper (`spectre-screencapture`); macOS Screen Recording TCC for the launching app | macOS |
+ | `LinuxX11Recorder` | Screen region or named X11 window (`ximagesrc`) | Region mode is fixed at `start()`; window mode resolves the XID from `WM_NAME` / `_NET_WM_NAME` and captures with `ximagesrc xid=` | Captures visible X server pixels for the selected source; occluding apps can appear in region capture. A title that does not match a mapped window fails; root/desktop recording is excluded | `spectre-recording-linux` runtime helper; `gst-launch-1.0` with `ximagesrc`, `videorate`, `x264enc`, and `mp4mux`; `DISPLAY`; `libX11.so.6` at runtime for named-window lookup | Linux Xorg/Xvfb; named XWayland windows only when the process is deliberately forced onto the X11 backend |
+-| `WaylandPortalRecorder` | Monitor region (portal `SourceType.MONITOR`, cropped) | No — monitor-level source | Depends on the compositor. GNOME/Mutter validation includes the user's overlays and excludes apps occluding the recorded region | `spectre-recording-linux` runtime helper (`spectre-wayland-helper`); `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`. First human consent stores a `restore_token` under `$XDG_STATE_HOME/spectre/` so later agent sessions skip the dialog (#188) | Linux Wayland |
++| `WaylandPortalRecorder` | Monitor region (portal `SourceType.MONITOR`, cropped) | No — monitor-level source | Depends on the compositor. GNOME/Mutter validation includes the user's overlays and excludes apps occluding the recorded region | `spectre-recording-linux` runtime helper (`spectre-wayland-helper`); `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`. A live helper session avoids another dialog; a portal-provided `restore_token` can additionally allow restoration after restart | Linux Wayland |
+ | `WaylandPortalWindowRecorder` | Named window (portal `SourceType.WINDOW` + fixed crop) | **No.** The crop is computed once from `_GTK_FRAME_EXTENTS` at `start()` and stays at those pixel coordinates for the rest of the recording. Moving or resizing the window during recording misaligns the crop (typically the recording shows blank / black for the unrendered area of the original rectangle); see `WaylandPortalWindowRecorder`'s KDoc for the detailed rationale | The stream contains only the picked window's pixels; `OnWindow` popups are excluded | `spectre-recording-linux` runtime helper; `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`; `xprop` on `PATH`; compositor must publish `_GTK_FRAME_EXTENTS` (GNOME/Mutter verified; older Mutter / KDE / sway may fail with an error to avoid misaligned video) | Linux Wayland |
  
- Spectre does not fall back to a crop of a monitor capture, because that would show any window
- that covers the target.
-diff --git a/recording-linux/build.gradle.kts b/recording-linux/build.gradle.kts
-index af1a4c84f04a45b7e88d1f27a5967d1009d55be0..5b8f206c6ce37f01d13d5a0ac3a8a3bc2836174b 100644
---- a/recording-linux/build.gradle.kts
-+++ b/recording-linux/build.gradle.kts
-@@ -28,117 +28,131 @@ dependencies {
- tasks.withType<Test>().configureEach { useJUnitPlatform() }
- 
- val linuxFamily = objects.named<OperatingSystemFamily>(OperatingSystemFamily.LINUX)
- 
- configurations
-     .matching { it.name == "apiElements" || it.name == "runtimeElements" }
-     .configureEach {
-         attributes.attribute(OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE, linuxFamily)
+ Wayland window capture receives only the selected window's pixels.
+diff --git a/recording/native/linux/src/mutter_window.rs b/recording/native/linux/src/mutter_window.rs
+index 78cac0c19ad7c2f78b11f62b1d95912e07bcb704..302ede39fda7e4e9ce9c454edf77224850a78ebb 100644
+--- a/recording/native/linux/src/mutter_window.rs
++++ b/recording/native/linux/src/mutter_window.rs
+@@ -93,6 +93,7 @@ pub fn is_service_missing(message: &str) -> bool {
+ #[derive(Debug, Clone)]
+ pub struct BoundWindow {
+     session_path: String,
++    service_owner: String,
+     pub node_id: u32,
+     pub logical_size: (i32, i32),
+     pub owner: u64,
+@@ -178,7 +179,7 @@ impl MutterWindowStreams {
+             return false;
+         };
+         if let Some(conn) = self.connection.as_ref() {
+-            stop_session(conn, &bound.session_path);
++            stop_session(conn, &bound.service_owner, &bound.session_path);
+         }
+         true
      }
- 
- val recordingProject = project(":recording")
- val testGnomeWindowIdentity =
-     tasks.register<Exec>("testGnomeWindowIdentity") {
-         group = "verification"
-         description = "Tests strict Xwayland identity matching and one-time handoffs."
-         workingDir(recordingProject.layout.projectDirectory)
-         commandLine("node", "native/linux/gnome-shell-extension/windowIdentity.test.mjs")
-         inputs.files(
-             recordingProject.file(
-                 "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js"
-             ),
-             recordingProject.file("native/linux/gnome-shell-extension/windowIdentity.test.mjs"),
-         )
-     }
- 
-+val testGnomeExtensionInstaller =
-+    tasks.register<Exec>("testGnomeExtensionInstaller") {
-+        group = "verification"
-+        description = "Tests GNOME Shell legacy and ES-module entry-point selection."
-+        workingDir(recordingProject.layout.projectDirectory)
-+        commandLine("bash", "native/linux/gnome-shell-extension/install.test.sh")
-+        inputs.dir(recordingProject.file("native/linux/gnome-shell-extension"))
-+    }
-+
-+tasks.named("check") { dependsOn(testGnomeWindowIdentity, testGnomeExtensionInstaller) }
-+
- val prebuiltLinuxHelpersDir = providers.gradleProperty("prebuiltLinuxHelpersDir")
- val useAllLinuxArches = providers.gradleProperty("allLinuxArches").isPresent
- val shouldVerifyLinuxHelpers =
-     prebuiltLinuxHelpersDir.isPresent || OperatingSystem.current().isLinux
- val expectedLinuxHelperPaths =
-     if (prebuiltLinuxHelpersDir.isPresent || useAllLinuxArches) {
-         listOf(
-             "native/linux/x86_64/spectre-wayland-helper",
-             "native/linux/aarch64/spectre-wayland-helper",
-         )
-     } else {
-         val arch =
-             when (System.getProperty("os.arch").orEmpty().lowercase()) {
-                 "amd64",
-                 "x86_64",
-                 "x64" -> "x86_64"
-                 "aarch64",
-                 "arm64" -> "aarch64"
-                 else -> System.getProperty("os.arch").orEmpty().lowercase()
-             }
-         listOf("native/linux/$arch/spectre-wayland-helper")
-     }
- 
- tasks.named<ProcessResources>("processResources") {
-     from(recordingProject.layout.buildDirectory.dir("generated/waylandHelper"))
-     from(recordingProject.layout.projectDirectory.dir("native/linux/gnome-shell-extension")) {
-         into("native/linux/gnome-shell-extension")
-     }
-     when {
-         prebuiltLinuxHelpersDir.isPresent ->
-             dependsOn(recordingProject.tasks.named("stagePrebuiltLinuxHelpers"))
-         OperatingSystem.current().isLinux && useAllLinuxArches ->
-             dependsOn(recordingProject.tasks.named("assembleWaylandHelperAllArches"))
-         OperatingSystem.current().isLinux ->
-             dependsOn(recordingProject.tasks.named("assembleWaylandHelper"))
-     }
+@@ -200,8 +201,8 @@ fn keys_owned_by(windows: &HashMap<String, BoundWindow>, owner: u64) -> Vec<Stri
+         .collect()
  }
  
- tasks.register("verifyRecordingLinuxHelpers") {
-     group = "verification"
-     description = "Verifies the Linux helper resources are packaged in spectre-recording-linux."
-     enabled = shouldVerifyLinuxHelpers
-     dependsOn(tasks.named("jar"))
- 
-     val jarFile = tasks.named<Jar>("jar").flatMap { it.archiveFile }
-     val expectedHelpers = expectedLinuxHelperPaths
-     val expectedExtensionPaths =
-         listOf(
-             "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/metadata.json",
-             "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension.js",
-+            "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension-legacy.js",
-             "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js",
-+            "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentityCore.js",
-+            "native/linux/gnome-shell-extension/install.sh",
-         )
-     doLast {
-         val jar = jarFile.get().asFile
-         val entries = ZipFile(jar).use { zip -> zip.entries().asSequence().map { it.name }.toSet() }
-         val missing = (expectedHelpers + expectedExtensionPaths).filter { it !in entries }
-         if (missing.isNotEmpty()) {
-             throw GradleException(
-                 "spectre-recording-linux jar is missing helper resources: " + missing.joinToString()
-             )
-         }
-         ZipFile(jar).use { zip ->
-             val metadata =
-                 JsonSlurper().parse(zip.getInputStream(zip.getEntry(expectedExtensionPaths[0])))
-                     as Map<*, *>
-             val supported = (metadata["shell-version"] as List<*>).map(Any?::toString)
--            val expected = (45..50).map(Int::toString)
-+            val expected = (42..50).map(Int::toString)
-             if (supported != expected) {
-                 throw GradleException(
-                     "GNOME identity extension supports $supported; expected $expected"
-                 )
+-fn stop_session(conn: &Connection, session_path: &str) {
+-    let proxy = conn.with_proxy(MUTTER_SCREEN_CAST_BUS, session_path, CALL_TIMEOUT);
++fn stop_session(conn: &Connection, service_owner: &str, session_path: &str) {
++    let proxy = conn.with_proxy(service_owner, session_path, CALL_TIMEOUT);
+     if let Err(e) = proxy.method_call::<(), _, _, _>(SESSION_INTERFACE, "Stop", ()) {
+         eprintln!("spectre-wayland-helper: stopping Mutter session {session_path}: {e}");
+     }
+@@ -212,11 +213,8 @@ fn bind_focused_window(
+     owner: u64,
+     cursor_mode: CursorMode,
+ ) -> Result<BoundWindow> {
+-    let manager = conn.with_proxy(
+-        MUTTER_SCREEN_CAST_BUS,
+-        MUTTER_SCREEN_CAST_PATH,
+-        CALL_TIMEOUT,
+-    );
++    let service_owner = mutter_service_owner(conn)?;
++    let manager = conn.with_proxy(&service_owner, MUTTER_SCREEN_CAST_PATH, CALL_TIMEOUT);
+     let empty: PropMap = HashMap::new();
+     let (session_path,): (DBusPath,) = manager
+         .method_call(MUTTER_SCREEN_CAST_BUS, "CreateSession", (empty,))
+@@ -236,10 +234,10 @@ fn bind_focused_window(
              }
-             val source =
-                 zip.getInputStream(zip.getEntry(expectedExtensionPaths[1])).bufferedReader().use {
-                     it.readText()
-                 }
-             val requiredAsyncReplies =
-                 listOf("return_value", "return_dbus_error", ".AccessDenied", ".NotFound")
-             val missingReplies = requiredAsyncReplies.filter { it !in source }
-             if (missingReplies.isNotEmpty()) {
-                 throw GradleException(
-                     "GNOME identity extension is missing explicit async D-Bus replies: " +
-                         missingReplies.joinToString()
-                 )
-             }
+         })?;
+     let session_path = session_path.to_string();
+-    match record_and_start(conn, &session_path, owner, cursor_mode) {
++    match record_and_start(conn, &service_owner, &session_path, owner, cursor_mode) {
+         Ok(bound) => Ok(bound),
+         Err(e) => {
+-            stop_session(conn, &session_path);
++            stop_session(conn, &service_owner, &session_path);
+             Err(e)
          }
      }
+@@ -251,20 +249,24 @@ fn bind_window_id(
+     cursor_mode: CursorMode,
+     window_id: u64,
+ ) -> Result<BoundWindow> {
+-    let manager = conn.with_proxy(
+-        MUTTER_SCREEN_CAST_BUS,
+-        MUTTER_SCREEN_CAST_PATH,
+-        CALL_TIMEOUT,
+-    );
++    let service_owner = mutter_service_owner(conn)?;
++    let manager = conn.with_proxy(&service_owner, MUTTER_SCREEN_CAST_PATH, CALL_TIMEOUT);
+     let empty: PropMap = HashMap::new();
+     let (session_path,): (DBusPath,) = manager
+         .method_call(MUTTER_SCREEN_CAST_BUS, "CreateSession", (empty,))
+         .map_err(|e| anyhow!("org.gnome.Mutter.ScreenCast.CreateSession: {e}"))?;
+     let session_path = session_path.to_string();
+-    match record_and_start_with_id(conn, &session_path, owner, cursor_mode, Some(window_id)) {
++    match record_and_start_with_id(
++        conn,
++        &service_owner,
++        &session_path,
++        owner,
++        cursor_mode,
++        Some(window_id),
++    ) {
+         Ok(bound) => Ok(bound),
+         Err(e) => {
+-            stop_session(conn, &session_path);
++            stop_session(conn, &service_owner, &session_path);
+             Err(e)
+         }
+     }
+@@ -272,21 +274,23 @@ fn bind_window_id(
+ 
+ fn record_and_start(
+     conn: &Connection,
++    service_owner: &str,
+     session_path: &str,
+     owner: u64,
+     cursor_mode: CursorMode,
+ ) -> Result<BoundWindow> {
+-    record_and_start_with_id(conn, session_path, owner, cursor_mode, None)
++    record_and_start_with_id(conn, service_owner, session_path, owner, cursor_mode, None)
  }
  
- tasks.named("check") {
-     dependsOn(testGnomeWindowIdentity)
-     dependsOn("verifyRecordingLinuxHelpers")
-diff --git a/recording/native/linux/gnome-shell-extension/install.sh b/recording/native/linux/gnome-shell-extension/install.sh
-new file mode 100755
-index 0000000000000000000000000000000000000000..43266bc03b4ae6d8007fc8b818d1db889394dedf
---- /dev/null
-+++ b/recording/native/linux/gnome-shell-extension/install.sh
-@@ -0,0 +1,18 @@
-+#!/usr/bin/env bash
-+set -euo pipefail
-+
-+root=$(cd "$(dirname "$0")" && pwd)
-+uuid=spectre-window-identity@sebastiano.dev
-+major=$(gnome-shell --version | sed -E 's/^[^0-9]*([0-9]+).*/\1/')
-+case "$major" in
-+  42|43|44) entry=extension-legacy.js ;;
-+  45|46|47|48|49|50) entry=extension.js ;;
-+  *) echo "Unsupported GNOME Shell version: $major" >&2; exit 1 ;;
-+esac
-+
-+destination=${XDG_DATA_HOME:-"$HOME/.local/share"}/gnome-shell/extensions/$uuid
-+mkdir -p "$destination"
-+cp "$root/$uuid/metadata.json" "$root/$uuid/windowIdentity.js" \
-+  "$root/$uuid/windowIdentityCore.js" "$destination/"
-+cp "$root/$uuid/$entry" "$destination/extension.js"
-+printf 'Installed %s for GNOME Shell %s at %s\n' "$uuid" "$major" "$destination"
-diff --git a/recording/native/linux/gnome-shell-extension/install.test.sh b/recording/native/linux/gnome-shell-extension/install.test.sh
-new file mode 100755
-index 0000000000000000000000000000000000000000..b8e228aa3db27831aa7632bfdb30208e0423b382
---- /dev/null
-+++ b/recording/native/linux/gnome-shell-extension/install.test.sh
-@@ -0,0 +1,23 @@
-+#!/usr/bin/env bash
-+set -euo pipefail
-+
-+root=$(cd "$(dirname "$0")" && pwd)
-+uuid=spectre-window-identity@sebastiano.dev
-+tmp=$(mktemp -d)
-+trap 'rm -rf "$tmp"' EXIT
-+
-+run_install() {
-+  local version=$1
-+  local expected=$2
-+  mkdir -p "$tmp/bin" "$tmp/home"
-+  printf '#!/bin/sh\necho "GNOME Shell %s"\n' "$version" > "$tmp/bin/gnome-shell"
-+  chmod +x "$tmp/bin/gnome-shell"
-+  PATH="$tmp/bin:$PATH" XDG_DATA_HOME="$tmp/home" "$root/install.sh"
-+  cmp "$root/$expected" "$tmp/home/gnome-shell/extensions/$uuid/extension.js"
-+  rm -rf "$tmp/home/gnome-shell"
-+}
-+
-+run_install 42.9 "$uuid/extension-legacy.js"
-+run_install 45.0 "$uuid/extension.js"
-+run_install 50.rc "$uuid/extension.js"
-+
-diff --git a/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension-legacy.js b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension-legacy.js
-new file mode 100644
-index 0000000000000000000000000000000000000000..00e3b9a9c8687a62bb47d3d3b62d80780569e326
---- /dev/null
-+++ b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension-legacy.js
-@@ -0,0 +1,88 @@
-+const {Gio, GLib, Meta} = imports.gi;
-+const ExtensionUtils = imports.misc.extensionUtils;
-+const {SpectreWindowIdentityCore} = ExtensionUtils.getCurrentExtension().imports.windowIdentityCore;
-+
-+const XML = `<node><interface name="dev.sebastiano.Spectre.WindowIdentity">
-+  <method name="LookupWindow"><arg type="u" direction="in" name="owner_pid"/><arg type="t" direction="in" name="xid"/><arg type="s" direction="out" name="binding_token"/></method>
-+  <method name="RedeemWindow"><arg type="s" direction="in" name="binding_token"/><arg type="u" direction="in" name="owner_pid"/><arg type="t" direction="out" name="window_id"/></method>
-+</interface></node>`;
-+const BUS = 'dev.sebastiano.Spectre.WindowIdentity';
-+const PATH = '/dev/sebastiano/Spectre/WindowIdentity';
-+const ERROR = `${BUS}.Error`;
-+
-+function parentPid(pid) {
-+    try {
-+        const [, bytes] = GLib.file_get_contents(`/proc/${pid}/status`);
-+        const match = imports.byteArray.toString(bytes).match(/^PPid:\s+(\d+)$/m);
-+        return match ? Number(match[1]) : 0;
-+    } catch (_) {
-+        return 0;
-+    }
-+}
-+
-+function isAncestor(ancestor, child) {
-+    for (let pid = child, depth = 0; pid > 1 && depth < 32; depth++) {
-+        if (pid === ancestor) return true;
-+        pid = parentPid(pid);
-+    }
-+    return false;
-+}
-+
-+async function senderPid(invocation) {
-+    const reply = await Gio.DBus.session.call(
-+        'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
-+        'GetConnectionUnixProcessID', new GLib.Variant('(s)', [invocation.get_sender()]),
-+        new GLib.VariantType('(u)'), Gio.DBusCallFlags.NONE, 3000, null);
-+    return reply.deepUnpack()[0];
-+}
-+
-+class SpectreWindowIdentity {
-+    enable() {
-+        this._bindings = new SpectreWindowIdentityCore.OneTimeBindings();
-+        const service = {
-+            LookupWindowAsync: async ([ownerPid, xid], invocation) => {
-+                try {
-+                    const callerPid = await senderPid(invocation);
-+                    if (!isAncestor(ownerPid, callerPid)) {
-+                        invocation.return_dbus_error(`${ERROR}.AccessDenied`, `PID ${ownerPid} is not the caller or its ancestor`);
-+                        return;
-+                    }
-+                    const matches = global.get_window_actors().map(a => a.meta_window).filter(w =>
-+        SpectreWindowIdentityCore.windowMatchesXid(w, ownerPid, xid, Meta.WindowClientType.X11));
-+                    if (matches.length !== 1) {
-+                        invocation.return_dbus_error(`${ERROR}.NotFound`, `expected exactly one owned window for PID ${ownerPid}, XID ${xid}; found ${matches.length}`);
-+                        return;
-+                    }
-+                    const token = GLib.uuid_string_random();
-+                    this._bindings.put(token, ownerPid, matches[0].get_id());
-+                    invocation.return_value(new GLib.Variant('(s)', [token]));
-+                } catch (error) {
-+                    invocation.return_dbus_error(`${ERROR}.Failed`, `${error}`);
-+                }
-+            },
-+            RedeemWindowAsync: ([token, ownerPid], invocation) => {
-+                const windowId = this._bindings.redeem(token, ownerPid);
-+                if (windowId === null) {
-+                    invocation.return_dbus_error(`${ERROR}.AccessDenied`, 'unknown, expired, replayed, or mismatched window binding');
-+                    return;
-+                }
-+                invocation.return_value(new GLib.Variant('(t)', [windowId]));
-+            },
-+        };
-+        this._object = Gio.DBusExportedObject.wrapJSObject(XML, service);
-+        this._object.export(Gio.DBus.session, PATH);
-+        this._name = Gio.bus_own_name_on_connection(Gio.DBus.session, BUS, Gio.BusNameOwnerFlags.NONE, null, null);
-+    }
-+
-+    disable() {
-+        if (this._name) Gio.bus_unown_name(this._name);
-+        this._name = 0;
-+        if (this._object) this._object.unexport();
-+        this._object = null;
-+        if (this._bindings) this._bindings.clear();
-+    }
-+}
-+
-+function init() {
-+    return new SpectreWindowIdentity();
-+}
-diff --git a/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/metadata.json b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/metadata.json
-index 0476b7fdc000aa7c8a3badec640fb738e6024409..56c8e3bad69203e66e1deda8d23f46167ce6362f 100644
---- a/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/metadata.json
-+++ b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/metadata.json
-@@ -1,7 +1,7 @@
- {
-   "uuid": "spectre-window-identity@sebastiano.dev",
-   "name": "Spectre Window Identity",
-   "description": "Lets Spectre resolve only its own Xwayland windows to Mutter window ids.",
--  "shell-version": ["45", "46", "47", "48", "49", "50"],
-+  "shell-version": ["42", "43", "44", "45", "46", "47", "48", "49", "50"],
-   "version": 1
- }
-diff --git a/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js
-index 1e319b1954243262f340c937acb1cecb0c15ba96..bdbce37b3719dec214a87b26fa947f546e806f54 100644
---- a/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js
-+++ b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js
-@@ -1,51 +1,7 @@
--const X11_DESCRIPTION = /^0x([0-9a-fA-F]+)(?: \([\s\S]*\))?$/;
-+import './windowIdentityCore.js';
+ fn record_and_start_with_id(
+     conn: &Connection,
++    service_owner: &str,
+     session_path: &str,
+     owner: u64,
+     cursor_mode: CursorMode,
+     window_id: Option<u64>,
+ ) -> Result<BoundWindow> {
+-    let session = conn.with_proxy(MUTTER_SCREEN_CAST_BUS, session_path, CALL_TIMEOUT);
++    let session = conn.with_proxy(service_owner, session_path, CALL_TIMEOUT);
+     let properties = record_window_properties(cursor_mode, window_id);
+     let (stream_path,): (DBusPath,) = session
+         .method_call(SESSION_INTERFACE, "RecordWindow", (properties,))
+@@ -296,8 +300,7 @@ fn record_and_start_with_id(
+     // Subscribe before Start: Mutter announces the PipeWire node once the stream is running.
+     let node: Arc<Mutex<Option<u32>>> = Arc::new(Mutex::new(None));
+     let node_slot = Arc::clone(&node);
+-    let mut rule = dbus::message::MatchRule::new_signal(STREAM_INTERFACE, "PipeWireStreamAdded");
+-    rule.path = Some(stream_path.clone().into());
++    let rule = pipewire_stream_added_match(&stream_path, service_owner)?;
+     let token = conn
+         .add_match(rule, move |(node_id,): (u32,), _conn, _msg| {
+             *node_slot.lock().unwrap() = Some(node_id);
+@@ -311,18 +314,65 @@ fn record_and_start_with_id(
+     let _ = conn.remove_match(token);
+     let node_id = node_id?;
  
--export function parseX11WindowDescription(description) {
--    if (typeof description !== 'string') return null;
--    const match = description.match(X11_DESCRIPTION);
--    return match === null ? null : BigInt(`0x${match[1]}`);
--}
--
--export function windowMatchesXid(window, ownerPid, xid, x11ClientType) {
--    if (window.get_client_type() !== x11ClientType || window.get_pid() !== ownerPid) return false;
--    const windowXid = parseX11WindowDescription(window.get_description());
--    return windowXid !== null && windowXid === BigInt(xid);
--}
--
--/**
-- * Short-lived handoffs from an authenticated lookup caller to the authenticated session client.
-- * A token belongs to one JVM PID, expires, and is consumed by every redemption attempt (including
-- * an owner mismatch), so it can never be probed and replayed.
-- */
--export class OneTimeBindings {
--    constructor(now = Date.now, ttlMs = 30_000, maximum = 256) {
--        this.values = new Map();
--        this.now = now;
--        this.ttlMs = ttlMs;
--        this.maximum = maximum;
--    }
--
--    cleanup() {
--        const now = this.now();
--        for (const [key, value] of this.values) {
--            if (value.expiresAt <= now) this.values.delete(key);
--        }
--    }
--
--    put(token, ownerPid, windowId) {
--        this.cleanup();
--        if (this.values.size >= this.maximum) throw new Error('too many pending window bindings');
--        this.values.set(token, {ownerPid, windowId, expiresAt: this.now() + this.ttlMs});
--    }
--
--    redeem(token, ownerPid) {
--        this.cleanup();
--        const value = this.values.get(token);
--        this.values.delete(token);
--        return value?.ownerPid === ownerPid ? value.windowId : null;
--    }
--
--    clear() {
--        this.values.clear();
--    }
--}
-+export const {
-+    OneTimeBindings,
-+    parseX11WindowDescription,
-+    windowMatchesXid,
-+} = globalThis.SpectreWindowIdentityCore;
-diff --git a/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentityCore.js b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentityCore.js
-new file mode 100644
-index 0000000000000000000000000000000000000000..65f69d774194b86eb1a612bb1922c6b93248bac2
---- /dev/null
-+++ b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentityCore.js
-@@ -0,0 +1,55 @@
-+/* exported SpectreWindowIdentityCore */
-+const X11_DESCRIPTION = /^0x([0-9a-fA-F]+)(?: \([\s\S]*\))?$/;
-+
-+class OneTimeBindings {
-+    constructor(now = Date.now, ttlMs = 30_000, maximum = 256) {
-+        this.values = new Map();
-+        this.now = now;
-+        this.ttlMs = ttlMs;
-+        this.maximum = maximum;
-+    }
-+
-+    cleanup() {
-+        const now = this.now();
-+        for (const [key, value] of this.values) {
-+            if (value.expiresAt <= now) this.values.delete(key);
+-    let stream = conn.with_proxy(MUTTER_SCREEN_CAST_BUS, &stream_path, CALL_TIMEOUT);
++    let stream = conn.with_proxy(service_owner, &stream_path, CALL_TIMEOUT);
+     let parameters: PropMap = stream
+         .get(STREAM_INTERFACE, "Parameters")
+         .unwrap_or_default();
+     Ok(BoundWindow {
+         session_path: session_path.to_string(),
++        service_owner: service_owner.to_string(),
+         node_id,
+         logical_size: parse_size(&parameters).unwrap_or((0, 0)),
+         owner,
+     })
+ }
+ 
++fn mutter_service_owner(conn: &Connection) -> Result<String> {
++    let result: std::result::Result<(String,), dbus::Error> = conn
++        .with_proxy(
++            "org.freedesktop.DBus",
++            "/org/freedesktop/DBus",
++            CALL_TIMEOUT,
++        )
++        .method_call(
++            "org.freedesktop.DBus",
++            "GetNameOwner",
++            (MUTTER_SCREEN_CAST_BUS,),
++        );
++    result.map(|(owner,)| owner).map_err(|e| {
++        let message = e.to_string();
++        if is_service_missing(&message) {
++            typed(
++                ERROR_KIND_MUTTER_UNAVAILABLE,
++                format!("this Wayland desktop has no GNOME Mutter ScreenCast API ({message})"),
++            )
++        } else {
++            anyhow!("resolving the owner of {MUTTER_SCREEN_CAST_BUS}: {message}")
 +        }
-+    }
-+
-+    put(token, ownerPid, windowId) {
-+        this.cleanup();
-+        if (this.values.size >= this.maximum) throw new Error('too many pending window bindings');
-+        this.values.set(token, {ownerPid, windowId, expiresAt: this.now() + this.ttlMs});
-+    }
-+
-+    redeem(token, ownerPid) {
-+        this.cleanup();
-+        const value = this.values.get(token);
-+        this.values.delete(token);
-+        return value?.ownerPid === ownerPid ? value.windowId : null;
-+    }
-+
-+    clear() {
-+        this.values.clear();
-+    }
++    })
 +}
 +
-+function parseX11WindowDescription(description) {
-+    if (typeof description !== 'string') return null;
-+    const match = description.match(X11_DESCRIPTION);
-+    return match === null ? null : BigInt(`0x${match[1]}`);
++fn pipewire_stream_added_match(
++    stream_path: &str,
++    service_owner: &str,
++) -> Result<dbus::message::MatchRule<'static>> {
++    let mut rule = dbus::message::MatchRule::new_signal(STREAM_INTERFACE, "PipeWireStreamAdded");
++    rule.path = Some(
++        stream_path
++            .to_string()
++            .try_into()
++            .context("invalid Mutter stream path")?,
++    );
++    rule.sender = Some(
++        service_owner
++            .to_string()
++            .try_into()
++            .context("invalid Mutter unique bus owner")?,
++    );
++    rule.strict_sender = true;
++    Ok(rule)
 +}
 +
-+function windowMatchesXid(window, ownerPid, xid, x11ClientType) {
-+    if (window.get_client_type() !== x11ClientType || window.get_pid() !== ownerPid) return false;
-+    const windowXid = parseX11WindowDescription(window.get_description());
-+    return windowXid !== null && windowXid === BigInt(xid);
-+}
-+
-+var SpectreWindowIdentityCore = {
-+    parseX11WindowDescription,
-+    windowMatchesXid,
-+    OneTimeBindings,
-+};
-+
-+globalThis.SpectreWindowIdentityCore = SpectreWindowIdentityCore;
-diff --git a/recording/native/linux/gnome-shell-extension/windowIdentity.test.mjs b/recording/native/linux/gnome-shell-extension/windowIdentity.test.mjs
-index d608f587323aa857a8d80c7ab98cad7eb47f67ef..d610248c9714df407850269c69c5c4d818698d0a 100644
---- a/recording/native/linux/gnome-shell-extension/windowIdentity.test.mjs
-+++ b/recording/native/linux/gnome-shell-extension/windowIdentity.test.mjs
-@@ -1,38 +1,52 @@
- import assert from 'node:assert/strict';
-+import fs from 'node:fs';
-+import vm from 'node:vm';
- import {
-     OneTimeBindings,
-     parseX11WindowDescription,
-     windowMatchesXid,
- } from './spectre-window-identity@sebastiano.dev/windowIdentity.js';
+ fn record_window_properties(cursor_mode: CursorMode, window_id: Option<u64>) -> PropMap {
+     let mut properties = make_options([("cursor-mode", variant(mutter_cursor_mode(cursor_mode)))]);
+     if let Some(window_id) = window_id {
+@@ -369,6 +419,42 @@ fn parse_size(parameters: &PropMap) -> Option<(i32, i32)> {
+ mod tests {
+     use super::*;
  
- const X11 = 1;
- const WAYLAND = 0;
- const window = ({clientType = X11, description = '0x2a', pid = 1234} = {}) => ({
-     get_client_type: () => clientType,
-     get_description: () => description,
-     get_pid: () => pid,
- });
- 
- assert.equal(parseX11WindowDescription('0x2a'), 42n);
- assert.equal(parseX11WindowDescription('0x2a (title)'), 42n);
- for (const value of ['2a', 'prefix 0x2a', '0x2a title', '0x2a (title) trailing', '0x2aZZ']) {
-     assert.equal(parseX11WindowDescription(value), null, value);
- }
- assert(windowMatchesXid(window(), 1234, 42n, X11));
- assert(!windowMatchesXid(window({clientType: WAYLAND}), 1234, 42n, X11));
- assert(!windowMatchesXid(window({pid: 7}), 1234, 42n, X11));
- 
-+const legacyContext = {};
-+vm.runInNewContext(
-+    fs.readFileSync(new URL('./spectre-window-identity@sebastiano.dev/windowIdentityCore.js', import.meta.url), 'utf8'),
-+    legacyContext,
-+);
-+const legacyMatches = legacyContext.SpectreWindowIdentityCore.windowMatchesXid.bind(
-+    legacyContext.SpectreWindowIdentityCore,
-+);
-+assert(legacyMatches(window(), 1234, 42n, X11));
-+assert(!legacyMatches(window({clientType: WAYLAND}), 1234, 42n, X11));
-+assert(!legacyMatches(window({description: 'not an xid'}), 1234, 42n, X11));
++    const MUTTER_OWNER: &str = ":1.42";
 +
- let now = 100;
- const bindings = new OneTimeBindings(() => now, 10, 2);
- bindings.put('good', 1234, 2n);
- assert.equal(bindings.redeem('good', 7), null);
- assert.equal(bindings.redeem('good', 1234), null);
- bindings.put('once', 1234, 2n);
- assert.equal(bindings.redeem('once', 1234), 2n);
- assert.equal(bindings.redeem('once', 1234), null);
- bindings.put('expires', 1234, 3n);
- now = 111;
- assert.equal(bindings.redeem('expires', 1234), null);
- bindings.put('a', 1, 1n);
- bindings.put('b', 1, 1n);
- assert.throws(() => bindings.put('c', 1, 1n), /too many/);
++    fn stream_added_message(sender: &str) -> dbus::Message {
++        let mut message = dbus::Message::new_signal(
++            "/org/gnome/Mutter/ScreenCast/Stream/u1",
++            STREAM_INTERFACE,
++            "PipeWireStreamAdded",
++        )
++        .unwrap()
++        .append1(61_u32);
++        message.set_sender(Some(sender.into()));
++        message
++    }
++
++    #[test]
++    fn pipewire_stream_added_match_is_scoped_to_the_verified_mutter_owner() {
++        let rule =
++            pipewire_stream_added_match("/org/gnome/Mutter/ScreenCast/Stream/u1", MUTTER_OWNER)
++                .unwrap();
++
++        assert_eq!(
++            rule.sender.as_ref().map(ToString::to_string).as_deref(),
++            Some(MUTTER_OWNER)
++        );
++        assert!(rule.matches(&stream_added_message(MUTTER_OWNER)));
++    }
++
++    #[test]
++    fn pipewire_stream_added_match_rejects_the_same_signal_from_another_owner() {
++        let rule =
++            pipewire_stream_added_match("/org/gnome/Mutter/ScreenCast/Stream/u1", MUTTER_OWNER)
++                .unwrap();
++
++        assert!(!rule.matches(&stream_added_message(":1.99")));
++    }
++
+     #[test]
+     fn window_id_is_dbus_uint64_without_truncation() {
+         let window_id = u64::MAX - 1;
+@@ -390,6 +476,7 @@ mod tests {
+     fn bound(owner: u64) -> BoundWindow {
+         BoundWindow {
+             session_path: format!("/org/gnome/Mutter/ScreenCast/Session/u{owner}"),
++            service_owner: MUTTER_OWNER.into(),
+             node_id: 61,
+             logical_size: (2560, 1440),
+             owner,
+diff --git a/recording/src/test/kotlin/dev/sebastiano/spectre/recording/LinuxCaptureDependenciesTest.kt b/recording/src/test/kotlin/dev/sebastiano/spectre/recording/LinuxCaptureDependenciesTest.kt
+index f12eb72a8a2fdb5e09adc2e31a5b349f2b8dff82..e368fd3fcf26b461f10f26aa327abe71dcf5f137 100644
+--- a/recording/src/test/kotlin/dev/sebastiano/spectre/recording/LinuxCaptureDependenciesTest.kt
++++ b/recording/src/test/kotlin/dev/sebastiano/spectre/recording/LinuxCaptureDependenciesTest.kt
+@@ -187,10 +187,16 @@ class LinuxCaptureDependenciesTest {
+     @Test
+     fun `discarded probe output cannot fill the pipe and time out`() {
+         if (!System.getProperty("os.name").contains("linux", ignoreCase = true)) return
+-        val result = awaitGstProcess {
+-            gstProbeBuilder("python3", "-c", "print('x' * 1_000_000)").start()
++
++        val stdoutResult = awaitGstProcess {
++            gstProbeBuilder("head", "-c", "1000000", "/dev/zero").start()
++        }
++        assertEquals(true, stdoutResult, "a 1MB stdout report must not block waitFor")
++
++        val stderrResult = awaitGstProcess {
++            gstProbeBuilder("sh", "-c", "head -c 1000000 /dev/zero >&2").start()
+         }
+-        assertEquals(true, result, "a 1MB inspect-sized report must not block waitFor")
++        assertEquals(true, stderrResult, "a 1MB stderr report must not block waitFor")
+     }
+ 
+     @Test
