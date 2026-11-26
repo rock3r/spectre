@@ -8,6 +8,7 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.io.TempDir
@@ -16,6 +17,33 @@ import org.junit.jupiter.api.io.TempDir
 class WaylandSessionClientTest {
 
     @TempDir lateinit var tempDir: Path
+
+    @Test
+    fun `nonresponsive identity helper is forcibly reaped and all streams close`() {
+        val process = IdentityProcess(interruptWait = false)
+        val client = identityClient(process)
+
+        val failure = assertFailsWith<IllegalStateException> { client.locateWindow(IDENTITY) }
+
+        assertTrue(failure.message.orEmpty().contains("timed out"))
+        assertTrue(process.destroyed)
+        assertTrue(process.forciblyDestroyed)
+        assertFalse(process.isAlive)
+        assertTrue(process.allStreamsClosed)
+    }
+
+    @Test
+    fun `interrupted identity wait preserves interruption while reaping the helper`() {
+        val process = IdentityProcess(interruptWait = true)
+        val client = identityClient(process)
+
+        assertFailsWith<InterruptedException> { client.locateWindow(IDENTITY) }
+
+        assertTrue(Thread.interrupted(), "the caller's interrupted status must be restored")
+        assertTrue(process.forciblyDestroyed)
+        assertFalse(process.isAlive)
+        assertTrue(process.allStreamsClosed)
+    }
 
     @Test
     fun `a consent timeout or denial is not prompted again in the same client`() {
@@ -332,6 +360,79 @@ class WaylandSessionClientTest {
             consentPrompt = { prompt },
         )
 
+    private fun identityClient(process: Process): WaylandSessionClient =
+        WaylandSessionClient(
+            helperExtractor = extractor(),
+            envLookup = { null },
+            processFactory = SupplyingProcessFactory { ExitedProcess(0) },
+            identityProcessFactory =
+                fun(helperPath, environment): Process {
+                    assertTrue(helperPath.isAbsolute)
+                    assertTrue(environment.isEmpty())
+                    return process
+                },
+            identityTimeoutSeconds = 0,
+            identityDestroyTimeoutMs = 0,
+        )
+
+    private class CloseTrackingOutputStream : OutputStream() {
+        var closed = false
+
+        override fun write(value: Int) = Unit
+
+        override fun close() {
+            closed = true
+        }
+    }
+
+    private class CloseTrackingInputStream : InputStream() {
+        var closed = false
+
+        override fun read(): Int = -1
+
+        override fun close() {
+            closed = true
+        }
+    }
+
+    private class IdentityProcess(private val interruptWait: Boolean) : Process() {
+        private val output = CloseTrackingOutputStream()
+        private val input = CloseTrackingInputStream()
+        private val error = CloseTrackingInputStream()
+        private var alive = true
+        var destroyed = false
+        var forciblyDestroyed = false
+        val allStreamsClosed: Boolean
+            get() = output.closed && input.closed && error.closed
+
+        override fun getOutputStream(): OutputStream = output
+
+        override fun getInputStream(): InputStream = input
+
+        override fun getErrorStream(): InputStream = error
+
+        override fun waitFor(): Int = error("not used")
+
+        override fun waitFor(timeout: Long, unit: java.util.concurrent.TimeUnit): Boolean {
+            if (interruptWait && !destroyed) throw InterruptedException("test interruption")
+            return !alive
+        }
+
+        override fun exitValue(): Int = if (alive) throw IllegalThreadStateException() else 0
+
+        override fun isAlive(): Boolean = alive
+
+        override fun destroy() {
+            destroyed = true
+        }
+
+        override fun destroyForcibly(): Process {
+            forciblyDestroyed = true
+            alive = false
+            return this
+        }
+    }
+
     private class SupplyingProcessFactory(private val supply: () -> Process) :
         WaylandSessionClient.SessionProcessFactory {
         var starts = 0
@@ -401,5 +502,6 @@ class WaylandSessionClientTest {
 
     private companion object {
         val PING: Command = Command.PointerMove(1, 1)
+        val IDENTITY = MutterWindowIdentity(7720, Region(10, 20, 300, 200))
     }
 }

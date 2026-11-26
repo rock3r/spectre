@@ -101,4 +101,24 @@ class WaylandHelperProtocolTest {
         assertFalse(isFatalWaylandHelperExit(0))
         assertFalse(isFatalWaylandHelperExit(WAYLAND_SESSION_OWNED_EXIT))
     }
+
+    @Test
+    fun `window identity handoff stays opaque on the wire`() {
+        val locate = Command.LocateWindow(7720, Region(10, 20, 300, 200))
+        val bind = Command.BindWindow("window", "/tmp/frame.png", 7720, "one-use-token")
+        val encodedLocate = json.encodeToString(Command.serializer(), locate)
+        val encodedBind = json.encodeToString(Command.serializer(), bind)
+        assertTrue(encodedLocate.contains("\"command\":\"locate_window\""), encodedLocate)
+        assertTrue(encodedBind.contains("\"binding_token\":\"one-use-token\""), encodedBind)
+        assertFalse(encodedBind.contains("window_id"), encodedBind)
+        assertFalse(encodedBind.contains("\"frame\""), encodedBind)
+        val located = Event.WindowLocated("one-use-token")
+        assertEquals(
+            located,
+            json.decodeFromString(
+                Event.serializer(),
+                json.encodeToString(Event.serializer(), located),
+            ),
+        )
+    }
 }

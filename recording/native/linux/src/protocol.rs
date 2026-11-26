@@ -45,9 +45,14 @@ pub enum Command {
         key: String,
         output: String,
         owner_pid: u32,
-        frame: Region,
+        binding_token: String,
         #[serde(default = "hidden_cursor")]
         cursor_mode: CursorMode,
+    },
+    /// One-shot only: resolve an owned X11 window and obtain an opaque GNOME handoff token.
+    LocateWindow {
+        owner_pid: u32,
+        frame: Region,
     },
     /// Session only. Write one RGBA PNG frame of the window bound under `key` to `output`.
     WindowScreenshot {
@@ -230,6 +235,8 @@ pub enum Event {
     /// The window manager was asked to activate the X11 window `xid`. The JVM still confirms
     /// focus itself: the request can be refused.
     WindowActivated { xid: u64 },
+    /// Opaque, one-use GNOME window binding created by the owning process (or its child).
+    WindowLocated { binding_token: String },
     /// Anything that didn't reach a Stopped state. `kind` is a coarse category the JVM can
     /// pattern-match for surfacing the right exception type; `message` is the human-readable
     /// detail.

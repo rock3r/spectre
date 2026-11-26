@@ -8,7 +8,8 @@ use crate::session_lock::{self, acquire_session_lock, SessionLock};
 use anyhow::{Context, Result};
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
 use nix::sys::signal::{kill, Signal};
-use nix::unistd::Pid;
+use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
+use nix::unistd::{geteuid, Pid};
 use std::collections::{BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -253,6 +254,15 @@ fn handle_client(
     windows: &Mutex<MutterWindowStreams>,
     client_id: u64,
 ) -> Result<()> {
+    let credentials =
+        getsockopt(&stream, PeerCredentials).context("reading session peer credentials")?;
+    if credentials.uid() != geteuid().as_raw() {
+        anyhow::bail!(
+            "refusing Wayland session client from uid {}",
+            credentials.uid()
+        );
+    }
+    let peer_pid = u32::try_from(credentials.pid()).context("invalid session peer pid")?;
     let _reap = DisconnectReap {
         state,
         windows,
@@ -269,7 +279,7 @@ fn handle_client(
         }
         let command: Command = serde_json::from_str(line.trim())
             .with_context(|| format!("parsing session command: {}", line.trim()))?;
-        let event = dispatch(command, state, windows, client_id);
+        let event = dispatch(command, state, windows, client_id, peer_pid);
         write_event(&mut writer, event)?;
     }
 }
@@ -321,6 +331,7 @@ fn dispatch(
     state: &Mutex<SessionState>,
     windows: &Mutex<MutterWindowStreams>,
     client_id: u64,
+    peer_pid: u32,
 ) -> Event {
     match command {
         Command::BindFocusedWindow {
@@ -338,17 +349,32 @@ fn dispatch(
             key,
             output,
             owner_pid,
-            frame,
+            binding_token,
             cursor_mode,
-        } => window_event(bind_identity_window(
-            windows,
-            &key,
-            &output,
-            owner_pid,
-            frame,
-            cursor_mode,
-            client_id,
-        )),
+        } => {
+            if owner_pid != peer_pid {
+                Event::Error {
+                    kind: "Identity".into(),
+                    message: format!(
+                        "window owner PID {owner_pid} is not authenticated peer PID {peer_pid}"
+                    ),
+                }
+            } else {
+                window_event(bind_identity_window(
+                    windows,
+                    &key,
+                    &output,
+                    owner_pid,
+                    &binding_token,
+                    cursor_mode,
+                    client_id,
+                ))
+            }
+        }
+        Command::LocateWindow { .. } => Event::Error {
+            kind: "Protocol".into(),
+            message: "locate_window requires a one-shot child helper".into(),
+        },
         Command::WindowScreenshot { key, output } => {
             window_event(window_screenshot(windows, &key, &output))
         }
@@ -594,16 +620,15 @@ fn bind_identity_window(
     key: &str,
     output: &str,
     owner_pid: u32,
-    frame: crate::protocol::Region,
+    binding_token: &str,
     cursor_mode: crate::protocol::CursorMode,
     client_id: u64,
 ) -> Result<Event> {
-    let xid = crate::x11_window::find_window_by_frame(None, frame, Some(owner_pid))?.xid;
     let bound = {
         let mut guard = windows
             .lock()
             .map_err(|e| anyhow::anyhow!("window stream mutex poisoned: {e}"))?;
-        guard.bind_identity(key, client_id, owner_pid, xid, cursor_mode)?
+        guard.bind_identity(key, client_id, owner_pid, binding_token, cursor_mode)?
     };
     let output = PathBuf::from(output);
     if let Err(e) = write_window_frame(bound.node_id, &output) {

@@ -36,6 +36,20 @@ configurations
     }
 
 val recordingProject = project(":recording")
+val testGnomeWindowIdentity =
+    tasks.register<Exec>("testGnomeWindowIdentity") {
+        group = "verification"
+        description = "Tests strict Xwayland identity matching and one-time handoffs."
+        workingDir(recordingProject.layout.projectDirectory)
+        commandLine("node", "native/linux/gnome-shell-extension/windowIdentity.test.mjs")
+        inputs.files(
+            recordingProject.file(
+                "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js"
+            ),
+            recordingProject.file("native/linux/gnome-shell-extension/windowIdentity.test.mjs"),
+        )
+    }
+
 val prebuiltLinuxHelpersDir = providers.gradleProperty("prebuiltLinuxHelpersDir")
 val useAllLinuxArches = providers.gradleProperty("allLinuxArches").isPresent
 val shouldVerifyLinuxHelpers =
@@ -86,6 +100,7 @@ tasks.register("verifyRecordingLinuxHelpers") {
         listOf(
             "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/metadata.json",
             "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension.js",
+            "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js",
         )
     doLast {
         val jar = jarFile.get().asFile
@@ -124,4 +139,7 @@ tasks.register("verifyRecordingLinuxHelpers") {
     }
 }
 
-tasks.named("check") { dependsOn("verifyRecordingLinuxHelpers") }
+tasks.named("check") {
+    dependsOn(testGnomeWindowIdentity)
+    dependsOn("verifyRecordingLinuxHelpers")
+}

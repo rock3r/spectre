@@ -266,7 +266,8 @@ internal constructor(
                 is Event.InputAck,
                 is Event.WindowBound,
                 is Event.WindowUnbound,
-                is Event.WindowActivated -> {
+                is Event.WindowActivated,
+                is Event.WindowLocated -> {
                     // Ignore recording/input-only events until a terminal screenshot event arrives.
                 }
             }

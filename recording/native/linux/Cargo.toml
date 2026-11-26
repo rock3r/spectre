@@ -30,7 +30,7 @@ serde_json = "1"
 # PipeWire FD before spawning gst-launch (so the FD survives exec(2)). Pinned to 0.27 (the
 # last 0.x line that doesn't pull edition2024 transitives on this Rust version). Default-
 # features off to keep the binary lean — we only use the fcntl + signal subsets.
-nix = { version = "=0.27.1", default-features = false, features = ["fs", "process", "signal"] }
+nix = { version = "=0.27.1", default-features = false, features = ["fs", "process", "signal", "socket", "user"] }
 
 # anyhow — for error propagation up to the protocol-error event. The helper is a thin
 # orchestrator; we don't need fine-grained error types, but we do want context-preserving

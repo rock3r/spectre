@@ -184,7 +184,13 @@ internal interface WaylandWindowStreamSession {
     fun startRecording(command: Command.StartWindowRecording, output: Path): RecordingHandle
 }
 
-internal data class MutterWindowIdentity(val ownerPid: Long, val frame: Region)
+internal data class MutterWindowIdentity(
+    val ownerPid: Long,
+    /** X11 client-area geometry used only to resolve the verified XID. */
+    val frame: Region,
+    /** Public AWT Window geometry: includes decorations when the Window does. */
+    val windowSize: Dimension = Dimension(frame.width, frame.height),
+)
 
 /** Binds by the target's PID and X11 client frame; it never reads or changes keyboard focus. */
 internal class IdentityWindowStreamBinder<W : Any>(
@@ -200,7 +206,7 @@ internal class IdentityWindowStreamBinder<W : Any>(
                     "Mutter bound window identity ${expected.ownerPid}/${expected.frame}, but " +
                         "its first frame was transparent."
                 )
-        val awtSize = Dimension(expected.frame.width, expected.frame.height)
+        val awtSize = expected.windowSize
         val scale =
             matchingScale(content, awtSize, streamScale(frame, event))
                 ?: throw WaylandCaptureUnavailableException(
@@ -465,9 +471,10 @@ internal class HelperWindowStreamSession(private val client: WaylandSessionClien
         identity: MutterWindowIdentity,
         cursorMode: CursorMode,
     ): Pair<Event.WindowBound, BufferedImage> = withFrameFile { output ->
+        val bindingToken = client.locateWindow(identity)
         val event = mutterCall {
             client.send(
-                Command.BindWindow(key, output, identity.ownerPid, identity.frame, cursorMode)
+                Command.BindWindow(key, output, identity.ownerPid, bindingToken, cursorMode)
             )
         }
         check(event is Event.WindowBound) { "unexpected reply to bind_window: $event" }
@@ -620,6 +627,7 @@ internal object DefaultWaylandWindowStreams {
                     MutterWindowIdentity(
                         ProcessHandle.current().pid(),
                         Region(frame.x, frame.y, frame.width, frame.height),
+                        onEdt { window.size },
                     )
                 },
             windowSize = ::awtWindowSize,

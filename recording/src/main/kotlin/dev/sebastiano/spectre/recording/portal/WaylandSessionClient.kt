@@ -17,6 +17,69 @@ import javax.imageio.ImageIO
 import kotlin.io.path.deleteIfExists
 import kotlinx.serialization.json.Json
 
+private fun locateWindow(
+    identity: MutterWindowIdentity,
+    process: Process,
+    json: Json,
+    timeoutSeconds: Long,
+    destroyTimeoutMs: Long,
+): String {
+    var restoreInterrupt = false
+    try {
+        process.outputWriter(StandardCharsets.UTF_8).use { writer ->
+            writer.appendLine(
+                json.encodeToString(
+                    Command.serializer(),
+                    Command.LocateWindow(identity.ownerPid, identity.frame),
+                )
+            )
+        }
+        check(process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+            "window identity helper timed out"
+        }
+        val line = process.inputReader(StandardCharsets.UTF_8).use { it.readLine() }
+        check(process.exitValue() == 0 && line != null) { "window identity helper failed" }
+        return when (val event = json.decodeFromString(Event.serializer(), line)) {
+            is Event.WindowLocated -> event.bindingToken
+            is Event.Error -> throw WaylandHelperErrorException(event.kind, event.message)
+            else -> error("unexpected reply to locate_window: $event")
+        }
+    } catch (error: InterruptedException) {
+        restoreInterrupt = true
+        throw error
+    } finally {
+        closeAndReapIdentityProcess(process, destroyTimeoutMs, restoreInterrupt)
+    }
+}
+
+private fun closeAndReapIdentityProcess(
+    process: Process,
+    destroyTimeoutMs: Long,
+    restoreInterrupt: Boolean,
+) {
+    var interrupted = Thread.interrupted() || restoreInterrupt
+    runCatching { process.outputStream.close() }
+    runCatching { process.inputStream.close() }
+    runCatching { process.errorStream.close() }
+    if (process.isAlive) process.destroy()
+    try {
+        if (!process.waitFor(destroyTimeoutMs, TimeUnit.MILLISECONDS)) {
+            process.destroyForcibly()
+            process.waitFor(destroyTimeoutMs, TimeUnit.MILLISECONDS)
+        }
+    } catch (_: InterruptedException) {
+        interrupted = true
+        process.destroyForcibly()
+        try {
+            process.waitFor(destroyTimeoutMs, TimeUnit.MILLISECONDS)
+        } catch (_: InterruptedException) {
+            interrupted = true
+        }
+    } finally {
+        if (interrupted) Thread.currentThread().interrupt()
+    }
+}
+
 /**
  * Client for the long-lived `spectre-wayland-helper --session` process.
  *
@@ -29,13 +92,21 @@ import kotlinx.serialization.json.Json
  */
 internal class WaylandSessionClient
 internal constructor(
-    helperExtractor: WaylandHelperBinaryExtractor,
+    private val helperExtractor: WaylandHelperBinaryExtractor,
     private val envLookup: (String) -> String?,
     processFactory: SessionProcessFactory,
     waitForSocket: (Path, Long) -> Boolean = ::waitUntilExists,
     private val consentPrompt: () -> WaylandConsentPrompt = {
         waylandConsentPrompt(System::getProperty, envLookup)
     },
+    identityProcessFactory: (Path, Map<String, String>) -> Process =
+        fun(helper, environment): Process =
+            ProcessBuilder(helper.toString())
+                .apply { environment().putAll(environment) }
+                .redirectError(ProcessBuilder.Redirect.INHERIT)
+                .start(),
+    identityTimeoutSeconds: Long = IDENTITY_TIMEOUT_SECONDS,
+    identityDestroyTimeoutMs: Long = IDENTITY_DESTROY_TIMEOUT_MS,
 ) {
     constructor() :
         this(
@@ -99,6 +170,24 @@ internal constructor(
 
     fun send(command: Command): Event =
         synchronized(lock) { inputConnection.send(ensureSocket(), command) }
+
+    /**
+     * Resolves identity in a bounded short-lived child while it remains a descendant of the JVM.
+     * The returned token is then redeemed once by the UID/PID-authenticated session connection.
+     */
+    val locateWindow: (MutterWindowIdentity) -> String =
+        fun(identity): String =
+            locateWindow(
+                identity = identity,
+                process =
+                    identityProcessFactory(
+                        helperExtractor.extract(),
+                        waylandHelperEnvironment(envLookup),
+                    ),
+                json = json,
+                timeoutSeconds = identityTimeoutSeconds,
+                destroyTimeoutMs = identityDestroyTimeoutMs,
+            )
 
     /** The session socket path for this environment, or null without a runtime directory. */
     fun sessionSocketPath(): Path? = sessionDirOrNull()?.let { waylandSessionPaths(it).socket }
@@ -217,6 +306,8 @@ internal constructor(
         const val SOCKET_POLL_MS: Long = 50
         const val PORTAL_CONSENT_STEPS: Long = 3
         const val SOCKET_MARGIN_SECONDS: Long = 30
+        const val IDENTITY_TIMEOUT_SECONDS: Long = 10
+        const val IDENTITY_DESTROY_TIMEOUT_MS: Long = 500
 
         fun waitUntilExists(path: Path, timeoutMs: Long): Boolean {
             val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)

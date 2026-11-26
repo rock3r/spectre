@@ -56,6 +56,12 @@ fn main() -> Result<()> {
     let outcome: Result<()> = match read_first_command() {
         Ok(Command::Start(start)) => recorder::run(start, event_tx.clone()),
         Ok(Command::Screenshot(screenshot)) => screenshot::run(screenshot, event_tx.clone()),
+        Ok(Command::LocateWindow { owner_pid, frame }) => {
+            let xid = x11_window::find_window_by_frame(None, frame, Some(owner_pid))?.xid;
+            let binding_token = mutter_window::locate_window(owner_pid, xid)?;
+            let _ = event_tx.send(Event::WindowLocated { binding_token });
+            Ok(())
+        }
         Ok(Command::Stop) => {
             let _ = event_tx.send(Event::Error {
                 kind: "Protocol".into(),
@@ -75,8 +81,9 @@ fn main() -> Result<()> {
         | Ok(Command::ActivateWindow { .. }) => {
             let _ = event_tx.send(Event::Error {
                 kind: "Protocol".into(),
-                message: "input and window-stream commands require spectre-wayland-helper --session"
-                    .into(),
+                message:
+                    "input and window-stream commands require spectre-wayland-helper --session"
+                        .into(),
             });
             Ok(())
         }
