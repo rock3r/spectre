@@ -60,6 +60,18 @@ class DocsGuidanceContractTest {
         assertContains(sources, "fails instead of substituting a Robot region")
     }
 
+    @Test
+    fun `skill documents fail closed visual idle capture`() {
+        val skill = root.resolve("skills/spectre/SKILL.md").readText()
+
+        assertContains(skill, "Missing helpers fail immediately")
+        assertContains(skill, "allowScreenRegionFallback = true")
+        assertFalse(
+            skill.contains("falls back to `Robot` region capture"),
+            "waitForVisualIdle must not promise an implicit Robot region fallback",
+        )
+    }
+
     private fun assertContains(haystack: String, needle: String) {
         assertTrue(haystack.contains(needle), "Expected docs/skill guidance to contain: $needle")
     }
