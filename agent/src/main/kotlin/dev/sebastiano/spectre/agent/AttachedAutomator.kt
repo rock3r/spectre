@@ -457,6 +457,18 @@ internal constructor(
         timeoutMs: Long = 5_000,
         stableFrames: Int = 3,
         pollIntervalMs: Long = 16,
+    ): Unit = waitForVisualIdle(timeoutMs, stableFrames, pollIntervalMs, false)
+
+    /**
+     * Wait until visual frames are stable, optionally permitting occlusion-sensitive screen crops
+     * when the target cannot provide native window capture.
+     */
+    @Throws(IOException::class)
+    public fun waitForVisualIdle(
+        timeoutMs: Long = 5_000,
+        stableFrames: Int = 3,
+        pollIntervalMs: Long = 16,
+        allowScreenRegionFallback: Boolean,
     ) {
         val deadline = waitDeadlineFor(timeoutMs)
         val resp =
@@ -465,6 +477,7 @@ internal constructor(
                     timeoutMs = timeoutMs,
                     stableFrames = stableFrames,
                     pollIntervalMs = pollIntervalMs,
+                    allowScreenRegionFallback = allowScreenRegionFallback,
                 ),
                 deadlineEpochMs = deadline,
             )
