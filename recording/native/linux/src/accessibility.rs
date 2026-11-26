@@ -21,6 +21,24 @@ const REGISTRY_SETTLE_TIME: Duration = Duration::from_millis(300);
 const REGISTRY_POLL_TIME: Duration = Duration::from_millis(20);
 const ROOT_READ_ATTEMPTS: usize = 3;
 const ATSPI_ROOT: &str = "/org/a11y/atspi/accessible/root";
+const ATSPI_CACHE: &str = "/org/a11y/atspi/cache";
+const CACHE_PREFETCH_BATCH: usize = 64;
+
+type CacheRef = (String, dbus::Path<'static>);
+// AT-SPI's CacheItem wire format. Unlike registry GetItems, this is requested from the
+// application's own unique name, where AccessKit exposes its complete live tree.
+type CachedItem = (
+    CacheRef,
+    CacheRef,
+    CacheRef,
+    i32,
+    i32,
+    Vec<String>,
+    String,
+    u32,
+    String,
+    Vec<u32>,
+);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -252,9 +270,33 @@ fn capture_with_status(
             Vec::new()
         },
     };
-    let root_data =
+    let mut provider_nodes =
+        provider_cache(&bus, &window_address, deadline).map_err(|e| timed_err(deadline, e))?;
+    if let Some(nodes) = provider_nodes.as_mut() {
+        enrich_cached_nodes(
+            &bus,
+            &window_address.bus,
+            &window_address.path.to_string(),
+            nodes,
+            request.maximum_node_count,
+            request.maximum_depth,
+            deadline,
+        )
+        .map_err(|e| timed_err(deadline, e))?;
+    }
+    let root_data = if let Some(nodes) = provider_nodes.as_mut() {
+        nodes
+            .remove(&window_address.path.to_string())
+            .ok_or_else(|| {
+                err(
+                    "no-accessibility-tree",
+                    "the provider cache lost the selected AT-SPI root",
+                )
+            })?
+    } else {
         retry_selected_root_read(deadline, || read_node(&bus, &window_address, deadline))
-            .map_err(|e| timed_err(deadline, e))?;
+            .map_err(|e| timed_err(deadline, e))?
+    };
     let window_bounds = root_data.bounds.clone().ok_or_else(|| {
         err(
             "no-accessibility-tree",
@@ -268,17 +310,31 @@ fn capture_with_status(
         bounds_space,
     });
     let root_key = format!("w0/{}", segment(root_data.id.as_deref(), 0, false));
-    walk(
-        &bus,
-        root_data,
-        root_key,
-        None,
-        0,
-        request,
-        deadline,
-        &window_bounds,
-        &mut snapshot,
-    )?;
+    if let Some(nodes) = provider_nodes.as_mut() {
+        walk_cached(
+            nodes,
+            root_data,
+            root_key,
+            None,
+            0,
+            request,
+            deadline,
+            &window_bounds,
+            &mut snapshot,
+        )?;
+    } else {
+        walk(
+            &bus,
+            root_data,
+            root_key,
+            None,
+            0,
+            request,
+            deadline,
+            &window_bounds,
+            &mut snapshot,
+        )?;
+    }
     Ok(snapshot)
 }
 
@@ -292,6 +348,244 @@ struct NodeData {
     value: Option<String>,
     bounds: Option<Rect>,
     children: Vec<Address>,
+    interfaces: Vec<String>,
+}
+
+#[cfg(test)]
+fn cache_ref(bus: &str, path: &str) -> CacheRef {
+    (bus.to_string(), path.to_string().into())
+}
+
+fn cache_ref_belongs_to(reference: &CacheRef, owner: &str) -> bool {
+    reference.0 == owner && reference.1.to_string().starts_with('/')
+}
+
+fn cache_tree(selected: &Address, items: Vec<CachedItem>) -> Option<HashMap<String, NodeData>> {
+    let owner = selected.bus.as_str();
+    let mut raw = HashMap::new();
+    for item in items {
+        if !cache_ref_belongs_to(&item.0, owner)
+            || !cache_ref_belongs_to(&item.1, owner)
+            || (item.0 .1.to_string() != ATSPI_ROOT && !cache_ref_belongs_to(&item.2, owner))
+        {
+            return None;
+        }
+        if raw.insert(item.0 .1.to_string(), item).is_some() {
+            return None;
+        }
+    }
+    if !raw.contains_key(&selected.path.to_string()) {
+        return None;
+    }
+    let mut children_by_parent: HashMap<String, Vec<(i32, CacheRef)>> = HashMap::new();
+    for item in raw.values() {
+        children_by_parent
+            .entry(item.2 .1.to_string())
+            .or_default()
+            .push((item.3, item.0.clone()));
+    }
+    for children in children_by_parent.values_mut() {
+        children.sort_by_key(|(index, _)| *index);
+    }
+    let mut result = HashMap::new();
+    let mut pending = vec![selected.path.to_string()];
+    while let Some(path) = pending.pop() {
+        if result.contains_key(&path) {
+            return None;
+        }
+        let item = raw.remove(&path)?;
+        let children: Vec<_> = children_by_parent
+            .remove(&path)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(_, (bus, path))| Address { bus, path })
+            .collect();
+        if item.4 >= 0 && children.len() != item.4 as usize {
+            return None;
+        }
+        pending.extend(children.iter().rev().map(|child| child.path.to_string()));
+        result.insert(
+            path,
+            NodeData {
+                id: None,
+                raw_role: Some(item.7),
+                platform_role: role_name(item.7).map(str::to_owned),
+                name: (!item.6.is_empty()).then_some(item.6),
+                states: decode_states(&item.9),
+                value: None,
+                bounds: None,
+                children,
+                interfaces: item.5,
+            },
+        );
+    }
+    Some(result)
+}
+
+#[cfg(test)]
+fn cached_item(object: CacheRef, parent: CacheRef, index: i32, child_count: i32) -> CachedItem {
+    (
+        object,
+        cache_ref(":1.42", ATSPI_ROOT),
+        parent,
+        index,
+        child_count,
+        vec![],
+        String::new(),
+        0,
+        String::new(),
+        vec![],
+    )
+}
+
+fn provider_cache(
+    bus: &SyncConnection,
+    selected: &Address,
+    deadline: Instant,
+) -> Result<Option<HashMap<String, NodeData>>> {
+    let proxy = bus.with_proxy(&selected.bus, ATSPI_CACHE, remaining(deadline));
+    match proxy.method_call::<(Vec<CachedItem>,), _, _, _>("org.a11y.atspi.Cache", "GetItems", ()) {
+        Ok((items,)) => Ok(cache_tree(selected, items)),
+        Err(error)
+            if matches!(
+                error.name(),
+                Some("org.freedesktop.DBus.Error.UnknownInterface")
+                    | Some("org.freedesktop.DBus.Error.UnknownMethod")
+                    | Some("org.freedesktop.DBus.Error.UnknownObject")
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn enrich_cached_nodes(
+    bus: &Arc<SyncConnection>,
+    owner: &str,
+    root_path: &str,
+    nodes: &mut HashMap<String, NodeData>,
+    maximum_node_count: usize,
+    maximum_depth: usize,
+    deadline: Instant,
+) -> Result<()> {
+    let mut ordered = Vec::new();
+    let mut pending = vec![(root_path.to_string(), 0usize)];
+    while let Some((path, depth)) = pending.pop() {
+        if ordered.len() >= maximum_node_count.saturating_add(1) {
+            break;
+        }
+        let node = nodes
+            .get(&path)
+            .context("provider cache object disappeared")?;
+        ordered.push((
+            path,
+            node.interfaces
+                .iter()
+                .any(|interface| interface.ends_with(".Text")),
+        ));
+        if depth < maximum_depth {
+            pending.extend(
+                node.children
+                    .iter()
+                    .rev()
+                    .map(|child| (child.path.to_string(), depth + 1)),
+            );
+        }
+    }
+    let addresses: Vec<_> = ordered
+        .into_iter()
+        .map(|(path, has_text)| {
+            (
+                Address {
+                    bus: owner.to_string(),
+                    path: path.into(),
+                },
+                has_text,
+            )
+        })
+        .collect();
+    // Hash-map order is irrelevant: results are written by object path and final traversal follows
+    // the cache's ordered child references. The batch bounds both threads and outstanding calls.
+    for batch in addresses.chunks(CACHE_PREFETCH_BATCH) {
+        if Instant::now() >= deadline {
+            anyhow::bail!("deadline exceeded while enriching provider cache")
+        }
+        let results = std::thread::scope(|scope| {
+            batch
+                .iter()
+                .cloned()
+                .map(|(address, has_text)| {
+                    scope.spawn(move || {
+                        let data = read_cached_extras(bus, &address, has_text, deadline);
+                        (address.path.to_string(), data)
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        for (path, extras) in results {
+            let (id, bounds, value) = extras?;
+            let node = nodes
+                .get_mut(&path)
+                .context("provider cache object disappeared")?;
+            node.id = id;
+            node.bounds = bounds;
+            node.value = value;
+        }
+    }
+    Ok(())
+}
+
+fn read_cached_extras(
+    bus: &SyncConnection,
+    address: &Address,
+    has_text: bool,
+    deadline: Instant,
+) -> Result<(Option<String>, Option<Rect>, Option<String>)> {
+    let proxy = bus.with_proxy(&address.bus, address.path.clone(), remaining(deadline));
+    let attributes = proxy
+        .method_call::<(HashMap<String, String>,), _, _, _>(
+            "org.a11y.atspi.Accessible",
+            "GetAttributes",
+            (),
+        )
+        .ok()
+        .map(|value| value.0)
+        .unwrap_or_default();
+    let bounds = proxy
+        .method_call::<((i32, i32, i32, i32),), _, _, _>(
+            "org.a11y.atspi.Component",
+            "GetExtents",
+            (0u32,),
+        )
+        .ok()
+        .map(|value| Rect {
+            x: value.0 .0,
+            y: value.0 .1,
+            width: value.0 .2,
+            height: value.0 .3,
+        });
+    let value = has_text
+        .then(|| {
+            proxy
+                .method_call::<(String,), _, _, _>("org.a11y.atspi.Text", "GetText", (0i32, -1i32))
+                .ok()
+                .map(|value| value.0)
+                .filter(|value| !value.is_empty())
+        })
+        .flatten();
+    Ok((
+        attributes
+            .get("id")
+            .or_else(|| attributes.get("accessible_id"))
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        bounds,
+        value,
+    ))
 }
 
 fn find_window(
@@ -600,6 +894,89 @@ fn parse_window_id(id: &str) -> Option<Address> {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn walk_cached(
+    nodes: &mut HashMap<String, NodeData>,
+    data: NodeData,
+    key: String,
+    parent: Option<String>,
+    depth: usize,
+    request: &Request,
+    deadline: Instant,
+    window: &Rect,
+    snapshot: &mut Snapshot,
+) -> std::result::Result<(), CaptureError> {
+    check_deadline(deadline, Some(snapshot))?;
+    if snapshot.nodes.len() >= request.maximum_node_count {
+        return node_limit_error(request.maximum_node_count, snapshot);
+    }
+    let on_screen = data
+        .bounds
+        .as_ref()
+        .map(|bounds| intersects(bounds, window));
+    snapshot.nodes.push(Node {
+        key: key.clone(),
+        parent_key: parent,
+        id: data.id.clone(),
+        platform_role: data.platform_role,
+        role: data.raw_role.and_then(normalize_raw_role),
+        name: data.name,
+        states: data.states,
+        value: data.value,
+        on_screen,
+        bounds: data.bounds,
+    });
+    if depth >= request.maximum_depth && !data.children.is_empty() {
+        return Err((
+            "limit-reached",
+            format!("maximumDepth {} reached", request.maximum_depth),
+            Some(std::mem::replace(snapshot, empty_snapshot())),
+        ));
+    }
+    let prefetch_count = child_prefetch_count(
+        snapshot.nodes.len(),
+        request.maximum_node_count,
+        data.children.len(),
+    );
+    let children_truncated = prefetch_count < data.children.len();
+    let mut children = Vec::with_capacity(prefetch_count);
+    for address in &data.children[..prefetch_count] {
+        let child = nodes.remove(&address.path.to_string()).ok_or_else(|| {
+            structural_read_error("provider cache child missing", deadline, snapshot)
+        })?;
+        children.push(child);
+    }
+    let mut ids = HashMap::new();
+    for child in &children {
+        if let Some(id) = &child.id {
+            *ids.entry(id.clone()).or_insert(0usize) += 1;
+        }
+    }
+    for (index, child) in children.into_iter().enumerate() {
+        let duplicate = child.id.as_ref().is_some_and(|id| ids[id] > 1);
+        let child_key = format!(
+            "{}/{}",
+            key,
+            child_segment(child.id.as_deref(), index, duplicate, children_truncated)
+        );
+        walk_cached(
+            nodes,
+            child,
+            child_key,
+            Some(key.clone()),
+            depth + 1,
+            request,
+            deadline,
+            window,
+            snapshot,
+        )?;
+    }
+    if children_truncated {
+        return node_limit_error(request.maximum_node_count, snapshot);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn walk(
     bus: &Arc<SyncConnection>,
     data: NodeData,
@@ -880,6 +1257,7 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
         value,
         bounds,
         children: children_result.context("AT-SPI GetChildren failed")?,
+        interfaces,
     })
 }
 
@@ -1502,6 +1880,57 @@ mod tests {
         assert_eq!(address.path.to_string(), "/org/a11y/atspi/accessible/7");
         assert!(parse_window_id("org.example.App|/window/7").is_none());
         assert!(parse_window_id(":1.42|not-a-path").is_none());
+    }
+
+    #[test]
+    fn provider_cache_rejects_cross_owner_references() {
+        let own = cache_ref(":1.42", "/window/7");
+        let foreign = cache_ref(":1.99", "/window/8");
+        assert!(cache_ref_belongs_to(&own, ":1.42"));
+        assert!(!cache_ref_belongs_to(&foreign, ":1.42"));
+    }
+
+    #[test]
+    fn provider_cache_is_used_only_when_it_contains_the_selected_root() {
+        let selected = Address {
+            bus: ":1.42".into(),
+            path: "/window/7".into(),
+        };
+        let item = cached_item(
+            cache_ref(":1.42", "/window/8"),
+            cache_ref(":1.42", ATSPI_ROOT),
+            0,
+            0,
+        );
+        assert!(cache_tree(&selected, vec![item]).is_none());
+    }
+
+    #[test]
+    fn provider_cache_preserves_children_names_roles_states_and_order() {
+        let selected = Address {
+            bus: ":1.42".into(),
+            path: "/window/7".into(),
+        };
+        let mut root = cached_item(
+            cache_ref(":1.42", "/window/7"),
+            cache_ref(":1.42", ATSPI_ROOT),
+            0,
+            2,
+        );
+        root.6 = "Fixture window".into();
+        root.7 = 68;
+        root.9 = vec![(1 << 24) | (1 << 30), 0];
+        let child_a = cache_ref(":1.42", "/node/a");
+        let child_b = cache_ref(":1.42", "/node/b");
+        let leaf_a = cached_item(child_a.clone(), cache_ref(":1.42", "/window/7"), 0, 0);
+        let leaf_b = cached_item(child_b.clone(), cache_ref(":1.42", "/window/7"), 1, 0);
+        let tree = cache_tree(&selected, vec![root, leaf_a, leaf_b]).unwrap();
+        let data = tree.get(&selected.path.to_string()).unwrap();
+        assert_eq!(data.name.as_deref(), Some("Fixture window"));
+        assert_eq!(data.raw_role, Some(68));
+        assert_eq!(data.states, ["sensitive", "visible"]);
+        assert_eq!(data.children[0].path, child_a.1);
+        assert_eq!(data.children[1].path, child_b.1);
     }
     #[test]
     fn window_title_target_deserializes() {
