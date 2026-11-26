@@ -17,13 +17,14 @@ internal object BoundedAttachOperation {
         timeoutMs: Long,
         targetAlive: () -> Boolean,
         acceptedExitCodes: Set<Int> = setOf(0),
+        startProcess: (List<String>) -> Process = { ProcessBuilder(it).start() },
     ): String {
         var child: OwnedProcess? = null
         var primary: Throwable? = null
         var result: String? = null
         var interrupted = false
         val operation = runCatching {
-            child = OwnedProcess(ProcessBuilder(command).start())
+            child = OwnedProcess(startProcess(command))
             result = await(checkNotNull(child), timeoutMs, targetAlive, acceptedExitCodes)
         }
         primary = operation.exceptionOrNull()

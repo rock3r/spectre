@@ -2,8 +2,6 @@
 
 package dev.sebastiano.spectre.agent
 
-import com.sun.tools.attach.AgentLoadException
-import com.sun.tools.attach.AttachNotSupportedException
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
@@ -72,8 +70,10 @@ internal object WindowsAttachHelper {
             val causeDetail = decode(fields[3])
             val cause =
                 when (causeType) {
-                    "AttachNotSupportedException" -> AttachNotSupportedException(causeDetail)
-                    "AgentLoadException" -> AgentLoadException(causeDetail)
+                    "AttachNotSupportedException" ->
+                        RemoteAttachFailure(RemoteAttachFailureKind.AttachNotSupported, causeDetail)
+                    "AgentLoadException" ->
+                        RemoteAttachFailure(RemoteAttachFailureKind.AgentLoad, causeDetail)
                     "" -> null
                     else -> RuntimeException("$causeType: $causeDetail")
                 }
