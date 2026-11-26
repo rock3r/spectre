@@ -127,6 +127,36 @@ class FailureVideoSessionTest {
     }
 
     @Test
+    fun `successful stop with empty output reports missing video`(@TempDir temp: Path) {
+        val reports = mutableListOf<Pair<String, String>>()
+        val session = sessionWithFakeFile(temp, FailureVideoPolicy.Always, "")
+        session.start(newHeadlessAutomator(), "com.example.T", "empty")
+        val output = checkNotNull(session.activeOutput)
+
+        session.finalizeAndApply(FailureVideoOutcome.Passed) { key, value ->
+            reports += key to value
+        }
+
+        assertFalse(Files.exists(output))
+        assertEquals(FailureVideoSession.MISSING_REPORT_ENTRY_KEY, reports.single().first)
+        assertTrue(reports.single().second.contains("unreadable").not())
+        assertTrue(reports.single().second.contains("zero-byte"))
+    }
+
+    @Test
+    fun `throwing video publisher is contained for success and missing evidence`(
+        @TempDir temp: Path
+    ) {
+        for (content in listOf("playable", "")) {
+            val session = sessionWithFakeFile(temp, FailureVideoPolicy.Always, content)
+            session.start(newHeadlessAutomator(), "com.example.T", "publisher")
+            session.finalizeAndApply(FailureVideoOutcome.Passed) { _, _ ->
+                error("publisher failed")
+            }
+        }
+    }
+
+    @Test
     fun `abort deletes video even under Always`(@TempDir temp: Path) {
         val session =
             sessionWithFakeFile(
@@ -225,6 +255,7 @@ class FailureVideoSessionTest {
 
     @Test
     fun `stop failure deletes video even under Always`(@TempDir temp: Path) {
+        val reports = mutableListOf<Pair<String, String>>()
         val session =
             FailureVideoSession(
                 config =
@@ -253,13 +284,18 @@ class FailureVideoSessionTest {
             testMethodName = "m",
         )
         val active = checkNotNull(session.activeOutput)
-        session.finalizeAndApply(FailureVideoOutcome.Failed)
+        session.finalizeAndApply(FailureVideoOutcome.Failed) { key, value ->
+            reports += key to value
+        }
         assertFalse(Files.exists(active), "failed stop must not keep partial video")
         assertFalse(session.hasActiveRecorder)
+        assertEquals(FailureVideoSession.MISSING_REPORT_ENTRY_KEY, reports.single().first)
+        assertTrue(reports.single().second.contains("helper crashed during stop"))
     }
 
     @Test
     fun `start failure is best-effort and leaves no active recorder`(@TempDir temp: Path) {
+        val reports = mutableListOf<Pair<String, String>>()
         val session =
             FailureVideoSession(
                 config =
@@ -287,8 +323,12 @@ class FailureVideoSessionTest {
             },
             "failed start must delete partial video",
         )
-        session.finalizeAndApply(FailureVideoOutcome.Failed)
+        session.finalizeAndApply(FailureVideoOutcome.Failed) { key, value ->
+            reports += key to value
+        }
         assertFalse(session.hasActiveRecorder)
+        assertEquals(FailureVideoSession.MISSING_REPORT_ENTRY_KEY, reports.single().first)
+        assertTrue(reports.single().second.contains("helper missing"))
     }
 
     private fun sessionWithFakeFile(

@@ -186,6 +186,7 @@ internal constructor(
                         ownerLabel = ownerLabel(description),
                         leaseFactory = leaseFactory,
                     )
+                var primaryFailure: Throwable? = null
                 try {
                     isolation.acquireBeforeFactory()
                     instance = isolation.createAutomator(factory, managedFactory)
@@ -194,6 +195,7 @@ internal constructor(
                     // runCatching so both Exception and AssertionError (JUnit 4 failures) are
                     // captured without a broad catch-Throwable detekt hit at this boundary.
                     val outcome = runCatching { base.evaluate() }
+                    primaryFailure = outcome.exceptionOrNull()
                     outcome.exceptionOrNull()?.let { failure ->
                         // Assumptions abort without a "failure"; skip stills (same as JUnit 5).
                         if (!FailureArtifactHooks.isNonFailureAbort(failure)) {
@@ -204,21 +206,28 @@ internal constructor(
                     // If finalize itself fails, abandon so we never leave an orphaned recorder.
                     val videoOutcome =
                         FailureVideoDecisions.outcomeFromThrowable(outcome.exceptionOrNull())
-                    runCatching { finalizeVideo(videoOutcome) }
-                        .onFailure {
-                            videoSession?.abandon()
-                            videoSession = null
-                        }
+                    val finalizeFailure = runCatching {
+                        finalizeVideo(videoOutcome)
+                    }
+                        .exceptionOrNull()
+                    if (finalizeFailure != null) {
+                        videoSession?.abandon()
+                        videoSession = null
+                        if (primaryFailure != null) primaryFailure.addSuppressed(finalizeFailure)
+                        else throw finalizeFailure
+                    }
                     outcome.getOrThrow()
                 } finally {
                     // Safety net: never leave an active recorder if evaluate exits oddly.
                     videoSession?.abandon()
                     videoSession = null
-                    try {
-                        after()
-                    } finally {
-                        isolation.close()
+                    val afterFailure = runCatching { after() }.exceptionOrNull()
+                    val isolationFailure = runCatching { isolation.close() }.exceptionOrNull()
+                    val teardownFailure = afterFailure ?: isolationFailure
+                    if (afterFailure != null && isolationFailure != null) {
+                        afterFailure.addSuppressed(isolationFailure)
                     }
+                    preserveOriginalFailure(primaryFailure, teardownFailure)
                     lastDescription = null
                     evaluateInvocationId = null
                 }
@@ -275,9 +284,13 @@ internal constructor(
             config = config,
             testClassName = testClass,
             testMethodName = testMethod,
-            publishReport = { _, _ ->
+            publishReport = { key, value ->
                 // JUnit 4 has no report-entry API equivalent to JUnit 5's publishReportEntry.
-                // Paths still land on disk under build/reports/spectre for CI globs.
+                // Paths still land on disk under build/reports/spectre for CI globs; missing
+                // evidence must remain visible.
+                if (key == FailureArtifactHooks.MISSING_REPORT_ENTRY_KEY) {
+                    System.err.println("Spectre: $value")
+                }
             },
         )
     }
@@ -287,4 +300,10 @@ internal constructor(
         val methodName = description.methodName?.substringBefore('[') ?: "unknown"
         return "$className#$methodName"
     }
+}
+
+private fun preserveOriginalFailure(primaryFailure: Throwable?, teardownFailure: Throwable?) {
+    if (teardownFailure == null) return
+    if (primaryFailure != null) primaryFailure.addSuppressed(teardownFailure)
+    else throw teardownFailure
 }

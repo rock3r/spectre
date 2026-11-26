@@ -103,7 +103,10 @@ coordinated in the target JVM, and a second outer lease self-deadlocks.
   opts out). On test failure, Spectre writes atomic window captures (`screenshot.png` + `capture.json`) per tracked
   window before teardown under `build/reports/spectre/<class>/<method>/` (requires `:recording` + OS helper for PNGs).
 - **Failure video (`FailureVideoConfig`):** off by default (`FailureVideoPolicy.Off` | `OnFailureKeep` | `Always`),
-  writing `build/reports/spectre/<class>/<method>/failure-video.mp4` for in-process JUnit tests:
+  writing `build/reports/spectre/<class>/<method>/failure-video.mp4` for in-process JUnit tests. Recording is strictly
+  scoped to a tracked AWT window; it never falls back to a region or display. When a requested still or video cannot
+  be produced, JUnit 5 publishes a `spectre.failureArtifactMissing` / `spectre.failureVideoMissing` report entry and
+  JUnit 4 prints the reason to stderr. Secondary capture and teardown errors never replace the original test failure:
 
 ```kotlin
 ComposeAutomatorExtension(

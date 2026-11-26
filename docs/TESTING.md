@@ -114,8 +114,8 @@ exactly what it skipped. Everything else runs on every host — attach, `windows
 `findByTestTag`, `click()`, `doubleClick()`, `swipe()`, `scrollWheel()`, window identity, and
 screenshots.
 
-When the gate is off, the corpus records `press-key-tab-after-focus` as passed with the detail
-`skipped:real-keyboard-gate-off` and never touches the driver. Raising and clicking the fixture
+When the gate is off, the corpus records `press-key-tab-after-focus` with the explicit `Skipped`
+outcome, excludes it from pass counts, and never touches the driver. Raising and clicking the fixture
 window are themselves focus-stealing, so a gated-off run has to do nothing at all rather than try
 and tolerate the failure.
 
@@ -136,9 +136,9 @@ Pass `-Pspectre.agent.realKeyboard=false` to turn them off on CI. The `:agent`, 
 environment variable are task inputs, so switching modes never reuses a cached result from the
 other mode.
 
-When the paths do run their assertions are unchanged: hosted macOS CI still tolerates a lost OS
-focus handoff, Linux Xvfb stays fail-closed, and a local opt-in run fails loudly so a real keyboard
-regression is visible.
+When the paths do run, retry exhaustion fails on every platform. A hosted macOS focus handoff is no
+longer converted into a passing `skipped:...` detail, so capability evidence cannot hide a real
+failure.
 
 ## Manual Spike Validation
 

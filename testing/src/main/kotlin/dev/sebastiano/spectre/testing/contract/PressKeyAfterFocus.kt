@@ -59,14 +59,6 @@ public object PressKeyAfterFocus {
             }
         }
         val detail = lastError?.message ?: "unknown focus rejection"
-        // Hosted macOS + JBR (and sometimes Temurin) can prove Compose focus while OS
-        // keyboard focus never settles — same class as typeText soft-skip in
-        // AgentAttachIntegrationTest. Soft-pass only on macOS CI where Agent PressKey is
-        // Experimental; Linux Xvfb remains Supported and must fail closed if retries exhaust.
-        // Locally (any OS), hard-fail so developers see the gap.
-        if (isCi() && isMacOs()) {
-            return "skipped:os-keyboard-focus-after-$maxAttempts-attempts:$detail"
-        }
         error("pressKey after focus failed after $maxAttempts attempts: $detail")
     }
 
