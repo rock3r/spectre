@@ -139,6 +139,48 @@ class InputIsolationLifecycleTest {
     }
 
     @Test
+    fun `JUnit 5 explicit per-interaction rejects an uncoordinated custom factory`() {
+        val extension =
+            ComposeAutomatorExtension(
+                inputIsolation = InputIsolationConfig.perInteraction(),
+                factory = { newHeadlessAutomator() },
+            )
+
+        val failure =
+            assertFailsWith<IllegalStateException> {
+                extension.beforeEach(recordingContext("uncoordinated extension"))
+            }
+
+        assertTrue(failure.message.orEmpty().contains("InputLeasePolicy.Auto"))
+    }
+
+    @Test
+    fun `JUnit 4 explicit per-interaction rejects an uncoordinated custom factory`() {
+        val rule =
+            ComposeAutomatorRule(
+                inputIsolation = InputIsolationConfig.perInteraction(),
+                factory = { newHeadlessAutomator() },
+            )
+
+        val failure =
+            assertFailsWith<IllegalStateException> {
+                rule
+                    .apply(
+                        object : Statement() {
+                            override fun evaluate(): Unit = Unit
+                        },
+                        Description.createTestDescription(
+                            javaClass,
+                            "uncoordinated custom factory",
+                        ),
+                    )
+                    .evaluate()
+            }
+
+        assertTrue(failure.message.orEmpty().contains("InputLeasePolicy.Auto"))
+    }
+
+    @Test
     fun `per-interaction default factory constructs a synthetic driver`() {
         val source =
             Path.of("src/main/kotlin/dev/sebastiano/spectre/testing/InputIsolationConfig.kt")

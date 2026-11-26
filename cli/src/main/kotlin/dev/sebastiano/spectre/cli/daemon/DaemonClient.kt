@@ -16,7 +16,13 @@ import java.nio.file.Path
 
 /** One-request client for the local Spectre daemon protocol. */
 @OptIn(ExperimentalSpectreAgentApi::class)
-public class DaemonClient(public val socketPath: Path) : AutoCloseable {
+public class DaemonClient
+@JvmOverloads
+constructor(
+    public val socketPath: Path,
+    private val warningSink: (String) -> Unit = {},
+    private val retainDiagnostics: Boolean = false,
+) : AutoCloseable {
     /** Starts the daemon when its endpoint is absent, then sends [request]. */
     @Throws(IOException::class)
     public fun requestOrStart(request: DaemonRequest, start: () -> Unit): DaemonResponse =
@@ -44,15 +50,34 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
             val input = Channels.newInputStream(channel)
             val output = Channels.newOutputStream(channel)
             try {
-                requireCompatibleDaemon(output, input, request)
+                val handshakeWarnings = requireCompatibleDaemon(output, input, request)
+                DaemonWireCodec.writeRequest(output, request)
+                val response =
+                    DaemonWireCodec.readResponse(input)
+                        ?: throw IOException("Daemon closed the connection before responding")
+                return@use normalizeResponse(response, handshakeWarnings)
             } catch (exception: EOFException) {
                 throw DaemonConnectionClosedException(exception)
             } catch (exception: SocketException) {
                 throw DaemonConnectionClosedException(exception)
             }
-            DaemonWireCodec.writeRequest(output, request)
-            DaemonWireCodec.readResponse(input)
-                ?: throw IOException("Daemon closed the connection before responding")
+        }
+
+    private fun normalizeResponse(
+        response: DaemonResponse,
+        handshakeWarnings: List<String>,
+    ): DaemonResponse =
+        if (retainDiagnostics && handshakeWarnings.isNotEmpty()) {
+            if (response is DaemonResponse.Diagnosed) {
+                response.copy(warnings = handshakeWarnings + response.warnings)
+            } else {
+                DaemonResponse.Diagnosed(response, handshakeWarnings)
+            }
+        } else if (response is DaemonResponse.Diagnosed && !retainDiagnostics) {
+            response.warnings.forEach(warningSink)
+            response.response
+        } else {
+            response
         }
 
     /** Sends [request], reporting a missing daemon endpoint distinctly from other I/O failures. */
@@ -64,11 +89,13 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
         output: java.io.OutputStream,
         input: java.io.InputStream,
         request: DaemonRequest,
-    ) {
-        val requiredVersion = DaemonProtocol.minimumDaemonVersion(request)
-        DaemonWireCodec.writeRequest(output, DaemonRequest.Hello(requiredVersion))
+    ): List<String> {
+        val requiredVersion = DaemonProtocol.clientHandshakeVersion(request)
+        val configuration = daemonConfiguration()
+        DaemonWireCodec.writeRequest(output, DaemonRequest.Hello(requiredVersion, configuration))
         when (val response = DaemonWireCodec.readResponse(input)) {
             is DaemonResponse.Hello -> {
+                if (!retainDiagnostics) response.warnings.forEach(warningSink)
                 val compatibility =
                     DaemonProtocol.checkCompatibility(
                         client = requiredVersion,
@@ -93,6 +120,16 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
                         )
                         ?.let { throw IOException(it) }
                 }
+                if (
+                    request !is DaemonRequest.Shutdown &&
+                        response.configuration.isNotEmpty() &&
+                        response.configuration != configuration
+                ) {
+                    throw IOException(
+                        configurationMismatchFailure(configuration, response.configuration)
+                    )
+                }
+                return response.warnings
             }
             is DaemonResponse.Error ->
                 throw IOException(daemonHandshakeFailure(requiredVersion, response))
@@ -111,6 +148,30 @@ public class DaemonClient(public val socketPath: Path) : AutoCloseable {
             throw NoSuchFileException(socketPath.toString()).also { it.initCause(exception) }
         }
 }
+
+internal fun daemonConfiguration(): Map<String, String?> =
+    DaemonProcessLauncher.FORWARDED_PROPERTIES.associateWith(System::getProperty)
+
+internal fun configurationMismatchFailure(
+    requested: Map<String, String?>,
+    running: Map<String, String?>,
+): String {
+    val differences =
+        (requested.keys + running.keys)
+            .sorted()
+            .filter {
+                requested.containsKey(it) != running.containsKey(it) || requested[it] != running[it]
+            }
+            .joinToString { name ->
+                "$name: caller=${configurationValue(requested, name)}, " +
+                    "daemon=${configurationValue(running, name)}"
+            }
+    return "The running Spectre daemon has different JVM configuration ($differences). " +
+        "Run `spectre daemon kill` and retry so the requested configuration takes effect."
+}
+
+private fun configurationValue(configuration: Map<String, String?>, name: String): String =
+    if (configuration.containsKey(name)) configuration[name] ?: "<unset>" else "<missing>"
 
 internal class DaemonConnectionClosedException(cause: Throwable? = null) :
     IOException("Daemon closed the connection during handshake", cause)

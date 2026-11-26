@@ -37,6 +37,9 @@ internal constructor(
     internal val deliveryWitness: InputDeliveryWitness = AwtInputDeliveryWitness,
 ) : AutoCloseable by inputLeaseCoordinator {
 
+    /** Cooperative input policy selected when this driver was constructed. */
+    @InternalSpectreApi public val inputLeasePolicy: InputLeasePolicy = inputLeasePolicy
+
     /** Shared-OS-resource capabilities used by isolation integrations. */
     @ExperimentalSpectreInputCoordinationApi
     public val inputCapabilities: InputCapabilities =

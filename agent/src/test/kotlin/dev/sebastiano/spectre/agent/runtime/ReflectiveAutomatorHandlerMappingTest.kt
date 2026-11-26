@@ -919,6 +919,9 @@ private class FakeTrackedWindow(
 
     // Real TrackedWindow.getWindow() returns java.awt.Window; title is Frame or Dialog.
     @Suppress("unused") fun getWindow(): java.awt.Window? = windowValue
+
+    // Compatibility shape used by older core versions when no AWT Window is exposed.
+    @Suppress("unused", "FunctionOnlyReturningConstant") fun isShowing(): Boolean = true
 }
 
 @Suppress("LongParameterList")
@@ -930,6 +933,9 @@ private class FakeAutomatorNode(
     private val roleValue: String? = null,
     private val contentDescriptionValue: String? = null,
     private val isFocusedValue: Boolean = false,
+    private val isDisabledValue: Boolean = false,
+    private val isSelectedValue: Boolean = false,
+    private val isClickableValue: Boolean = false,
     private val isVisibleValue: Boolean = true,
     private val boundsOnScreenValue: Rectangle = Rectangle(0, 0, 0, 0),
 ) {
@@ -946,6 +952,12 @@ private class FakeAutomatorNode(
     @Suppress("unused") fun getContentDescription(): String? = contentDescriptionValue
 
     @Suppress("unused") fun isFocused(): Boolean = isFocusedValue
+
+    @Suppress("unused") fun isDisabled(): Boolean = isDisabledValue
+
+    @Suppress("unused") fun isSelected(): Boolean = isSelectedValue
+
+    @Suppress("unused") fun isClickable(): Boolean = isClickableValue
 
     @Suppress("unused") fun isVisible(): Boolean = isVisibleValue
 

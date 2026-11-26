@@ -32,7 +32,16 @@ class DeferredAutomatorHandlerTest {
             AgentResponse.WindowIdentities(emptyList()),
             handler.handle(AgentRequest.WindowIdentity()),
         )
-        assertEquals(AgentResponse.Ok, handler.handle(AgentRequest.WaitUntilGone(tag = "tag")))
+        listOf(
+                AgentRequest.WaitUntilGone(tag = "tag"),
+                AgentRequest.WaitForIdle(),
+                AgentRequest.WaitForVisualIdle(),
+            )
+            .forEach { request ->
+                val error = assertIs<AgentResponse.Error>(handler.handle(request))
+                assertEquals(AgentErrorCategory.InternalError.wireName, error.category)
+                assertTrue(error.message.contains("No Compose UI has loaded"))
+            }
     }
 
     @Test

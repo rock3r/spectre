@@ -360,6 +360,9 @@ internal class WaitFakeNode(
     private val roleValue: String? = null,
     private val contentDescriptionValue: String? = null,
     private val isFocusedValue: Boolean = false,
+    private val isDisabledValue: Boolean = false,
+    private val isSelectedValue: Boolean = false,
+    private val isClickableValue: Boolean = false,
     private val isVisibleValue: Boolean = true,
     private val boundsOnScreenValue: Rectangle = Rectangle(0, 0, 0, 0),
 ) {
@@ -376,6 +379,12 @@ internal class WaitFakeNode(
     @Suppress("unused") fun getContentDescription(): String? = contentDescriptionValue
 
     @Suppress("unused") fun isFocused(): Boolean = isFocusedValue
+
+    @Suppress("unused") fun isDisabled(): Boolean = isDisabledValue
+
+    @Suppress("unused") fun isSelected(): Boolean = isSelectedValue
+
+    @Suppress("unused") fun isClickable(): Boolean = isClickableValue
 
     @Suppress("unused") fun isVisible(): Boolean = isVisibleValue
 
