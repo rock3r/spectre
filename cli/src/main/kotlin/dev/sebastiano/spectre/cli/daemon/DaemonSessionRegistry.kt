@@ -35,17 +35,7 @@ internal constructor(
 ) : AutoCloseable {
     private val startupConfiguration: Map<String, String?> = daemonConfiguration()
     private val sessionsByPid: MutableMap<Long, DaemonSession> = linkedMapOf()
-    private val accessibilityHandler =
-        AccessibilityDaemonHandler(accessibilityHelperClient) { sessionId, windowIndex ->
-            val session =
-                synchronized(this) {
-                    sessionsByPid.values.firstOrNull { it.sessionId == sessionId }
-                } ?: return@AccessibilityDaemonHandler null
-            val window =
-                session.automator.windows().singleOrNull { it.index == windowIndex }
-                    ?: return@AccessibilityDaemonHandler null
-            SessionAccessibilityTarget(session.summary.targetPid, window)
-        }
+    private val accessibilityHandler = AccessibilityDaemonHandler(accessibilityHelperClient)
     /**
      * PIDs whose agent teardown is still running after the session left [sessionsByPid]. Same-PID
      * re-attach waits on these latches so it does not race an in-flight agent Detach (#413).
@@ -61,6 +51,18 @@ internal constructor(
     private var shutdown: Boolean = false
     private val shutdownLock = Any()
     private var shutdownRecordingOutcomes: List<DaemonResponse.FinalizedRecording>? = null
+    private val attachedAccessibility =
+        AttachedAccessibilityOperations(
+            accessibilityHandler,
+            acquire = { sessionId ->
+                synchronized(this) {
+                    acquireAttachedAccessibilitySession(shutdown, sessionsByPid, sessionId)
+                }
+            },
+            liveSessionIds = {
+                synchronized(this) { sessionsByPid.values.map { it.sessionId }.toSet() }
+            },
+        )
 
     /**
      * Dispatches a daemon request. Long waits (#201), attach (may wait on same-PID detach), and
@@ -74,7 +76,13 @@ internal constructor(
             is DaemonRequest.WaitForVisualIdle,
             is DaemonRequest.WaitForReloadSettled -> handleWaitOutsideLock(request)
             is DaemonRequest.Attach -> attach(request.targetPid)
-            is DaemonRequest.AccessibilityTree -> accessibilityHandler.handle(request)
+            is DaemonRequest.AccessibilityTree -> attachedAccessibility.handle(request)
+            is DaemonRequest.Capture ->
+                if (request.source == DaemonCaptureSource.Accessibility) {
+                    attachedAccessibility.capture(request)
+                } else {
+                    handleSynchronized(request)
+                }
             is DaemonRequest.Detach -> handleDetachOutsideLock(request.sessionId)
             // close() tears down outside the monitor; must not run under @Synchronized.
             DaemonRequest.Shutdown -> {
@@ -187,7 +195,7 @@ internal constructor(
                 found
             }
         return try {
-            runWaitRequest(session, request)
+            runWaitRequest(session, request, hotReloadSessionFactory)
         } catch (exception: IOException) {
             DaemonResponse.Error(
                 code = DaemonErrorCode.OperationFailed,
@@ -197,56 +205,6 @@ internal constructor(
             session.activeWaits.decrementAndGet()
         }
     }
-
-    private fun runWaitRequest(session: DaemonSession, request: DaemonRequest): DaemonResponse =
-        when (request) {
-            is DaemonRequest.WaitForNode -> {
-                val gen = session.keyGuard?.snapshotGeneration() ?: 0L
-                val rawNode =
-                    session.automator.waitForNode(
-                        tag = request.tag,
-                        text = request.text,
-                        timeoutMs = request.timeoutMs,
-                        pollIntervalMs = request.pollIntervalMs,
-                    )
-                val stamped =
-                    stampNodeIfCurrentGeneration(session.keyGuard, gen, rawNode)
-                        ?: return DaemonResponse.Error(
-                            code = DaemonErrorCode.OperationFailed,
-                            message =
-                                "No node found with key=${rawNode.key} (reload settled during wait)",
-                            category = "nodeNotFound",
-                        )
-                DaemonResponse.Nodes(request.sessionId, listOf(stamped))
-            }
-            is DaemonRequest.WaitUntilGone -> waitUntilGoneResponse(session.automator, request)
-            is DaemonRequest.WaitForVisualIdle -> {
-                session.automator.waitForVisualIdle(
-                    timeoutMs = request.timeoutMs,
-                    stableFrames = request.stableFrames,
-                    pollIntervalMs = request.pollIntervalMs,
-                )
-                DaemonResponse.Completed(request.sessionId)
-            }
-            is DaemonRequest.WaitForReloadSettled -> {
-                val hotReload =
-                    session.hotReloadSession ?: discoverHotReload(session, hotReloadSessionFactory)
-                if (hotReload == null) {
-                    DaemonResponse.Error(
-                        code = DaemonErrorCode.HotReloadUnavailable,
-                        message = "hot reload is not available for this session",
-                        category = ReloadSettleErrorCategory.HOT_RELOAD_UNAVAILABLE,
-                    )
-                } else {
-                    mapReloadSettleOutcome(
-                        hotReload.waitForReloadSettled(request.timeoutMs),
-                        request.sessionId,
-                        request.timeoutMs,
-                    )
-                }
-            }
-            else -> error("not a wait request: ${request::class.simpleName}")
-        }
 
     private fun handleSessionCommand(request: DaemonRequest): DaemonResponse =
         when (request) {
@@ -433,6 +391,7 @@ internal constructor(
         }
         val hotReload = session.retire()
         try {
+            session.awaitIdleAccessibility()
             // Finalize while other sessions remain known live (#185); then close so in-flight waits
             // observe a closed automator and fail closed instead of hanging on the full wait
             // budget.
@@ -634,6 +593,7 @@ internal constructor(
                 val ownedGate = ownedGates.first { it.first == pid }.second
                 val hotReload = session.retire()
                 try {
+                    session.awaitIdleAccessibility()
                     session.automator
                         .finalizeWithReport(session.sessionId, emptySet())
                         ?.let(recordingOutcomes::add)
@@ -655,16 +615,70 @@ internal constructor(
         }
 }
 
-private const val WAIT_DRAIN_TIMEOUT_MS: Long = 90_000
-private const val WAIT_DRAIN_MARGIN_MS: Long = 5_000
-private const val WAIT_DRAIN_POLL_MS: Long = 10
+internal const val WAIT_DRAIN_TIMEOUT_MS: Long = 90_000
+internal const val WAIT_DRAIN_MARGIN_MS: Long = 5_000
+internal const val WAIT_DRAIN_POLL_MS: Long = 10
 /**
  * Attach must outlive detach's [DaemonSession.awaitIdleWaits] budget: max(default drain, tracked
  * wait remaining + margin). Headroom covers long client wait timeouts still draining after close.
  */
 private const val ATTACH_WAIT_DETACH_TIMEOUT_MS: Long =
     WAIT_DRAIN_TIMEOUT_MS + WAIT_DRAIN_MARGIN_MS + 120_000
-private const val NANOS_PER_MS: Long = 1_000_000
+internal const val NANOS_PER_MS: Long = 1_000_000
+
+private fun runWaitRequest(
+    session: DaemonSession,
+    request: DaemonRequest,
+    hotReloadSessionFactory: (Long) -> HotReloadCapability?,
+): DaemonResponse =
+    when (request) {
+        is DaemonRequest.WaitForNode -> {
+            val gen = session.keyGuard?.snapshotGeneration() ?: 0L
+            val rawNode =
+                session.automator.waitForNode(
+                    tag = request.tag,
+                    text = request.text,
+                    timeoutMs = request.timeoutMs,
+                    pollIntervalMs = request.pollIntervalMs,
+                )
+            val stamped =
+                stampNodeIfCurrentGeneration(session.keyGuard, gen, rawNode)
+                    ?: return DaemonResponse.Error(
+                        code = DaemonErrorCode.OperationFailed,
+                        message =
+                            "No node found with key=${rawNode.key} (reload settled during wait)",
+                        category = "nodeNotFound",
+                    )
+            DaemonResponse.Nodes(request.sessionId, listOf(stamped))
+        }
+        is DaemonRequest.WaitUntilGone -> waitUntilGoneResponse(session.automator, request)
+        is DaemonRequest.WaitForVisualIdle -> {
+            session.automator.waitForVisualIdle(
+                timeoutMs = request.timeoutMs,
+                stableFrames = request.stableFrames,
+                pollIntervalMs = request.pollIntervalMs,
+            )
+            DaemonResponse.Completed(request.sessionId)
+        }
+        is DaemonRequest.WaitForReloadSettled -> {
+            val hotReload =
+                session.hotReloadSession ?: discoverHotReload(session, hotReloadSessionFactory)
+            if (hotReload == null) {
+                DaemonResponse.Error(
+                    code = DaemonErrorCode.HotReloadUnavailable,
+                    message = "hot reload is not available for this session",
+                    category = ReloadSettleErrorCategory.HOT_RELOAD_UNAVAILABLE,
+                )
+            } else {
+                mapReloadSettleOutcome(
+                    hotReload.waitForReloadSettled(request.timeoutMs),
+                    request.sessionId,
+                    request.timeoutMs,
+                )
+            }
+        }
+        else -> error("not a wait request: ${request::class.simpleName}")
+    }
 
 private fun discoverHotReload(
     session: DaemonSession,
@@ -682,43 +696,6 @@ private fun discoverHotReload(
         session.hotReloadSession = discovered
         discovered
     }
-
-private data class DaemonSession(
-    val summary: DaemonSessionSummary,
-    val automator: DaemonSessionAutomator,
-    var hotReloadSession: HotReloadCapability? = null,
-    var keyGuard: ReloadAwareKeyGuard? = null,
-    var retired: Boolean = false,
-    val activeWaits: java.util.concurrent.atomic.AtomicInteger =
-        java.util.concurrent.atomic.AtomicInteger(0),
-    /** Absolute nanoTime deadline for the longest currently tracked outside-lock wait. */
-    val waitDeadlineNs: java.util.concurrent.atomic.AtomicLong =
-        java.util.concurrent.atomic.AtomicLong(0),
-) {
-    val sessionId: String
-        get() = summary.sessionId
-
-    fun noteWaitStarted(timeoutMs: Long) {
-        val candidate = System.nanoTime() + timeoutMs.coerceAtLeast(0) * NANOS_PER_MS
-        waitDeadlineNs.updateAndGet { current -> maxOf(current, candidate) }
-    }
-
-    fun retire(): HotReloadCapability? =
-        synchronized(this) {
-            retired = true
-            hotReloadSession
-        }
-
-    fun awaitIdleWaits(timeoutMs: Long = WAIT_DRAIN_TIMEOUT_MS) {
-        val trackedRemainingMs =
-            ((waitDeadlineNs.get() - System.nanoTime()) / NANOS_PER_MS).coerceAtLeast(0)
-        val budgetMs = maxOf(timeoutMs, trackedRemainingMs + WAIT_DRAIN_MARGIN_MS)
-        val deadline = System.nanoTime() + budgetMs * NANOS_PER_MS
-        while (activeWaits.get() > 0 && System.nanoTime() < deadline) {
-            Thread.sleep(WAIT_DRAIN_POLL_MS)
-        }
-    }
-}
 
 private const val AGENT_RUNTIME_JAR_PROPERTY: String = "dev.sebastiano.spectre.agent.runtimeJar"
 
@@ -769,7 +746,7 @@ private fun attachPreflightFailure(): DaemonResponse.Error? =
         DaemonResponse.Error(code = DaemonErrorCode.AttachFailed, message = message)
     }
 
-private fun sessionNotFound(sessionId: String): DaemonResponse.Error =
+internal fun sessionNotFound(sessionId: String): DaemonResponse.Error =
     DaemonResponse.Error(
         code = DaemonErrorCode.SessionNotFound,
         message = "session not found: $sessionId",
@@ -786,20 +763,21 @@ private fun stillDetachingError(targetPid: Long): DaemonResponse.Error =
  * latch is still present.
  */
 private fun awaitCountDownLatch(timeoutMs: Long, latch: () -> CountDownLatch?): Boolean {
-    val deadlineNs = System.nanoTime() + timeoutMs * NANOS_PER_MS
+    val deadlineNs = deadlineAfterMillis(timeoutMs)
     while (true) {
         val gate = latch() ?: return true
-        val remainingMs = ((deadlineNs - System.nanoTime()) / NANOS_PER_MS).coerceAtLeast(0)
+        val remainingMs = remainingRegistryMillis(deadlineNs)
         if (remainingMs == 0L) return false
         if (!gate.await(remainingMs, TimeUnit.MILLISECONDS)) return false
     }
 }
 
-private fun writeCapture(
+internal fun writeCapture(
     request: DaemonRequest.Capture,
     automator: DaemonSessionAutomator,
     liveSessionIds: Set<String>,
     accessibilityHandler: AccessibilityDaemonHandler,
+    sessionTarget: ((Int) -> SessionAccessibilityTarget?)? = null,
 ): DaemonResponse {
     if (request.source == DaemonCaptureSource.Compose) {
         return CaptureArtifactStore.write(
@@ -809,15 +787,16 @@ private fun writeCapture(
             liveSessionIds,
         )
     }
-    return when (
-        val tree =
-            accessibilityHandler.handle(
-                DaemonRequest.AccessibilityTree(
-                    sessionId = request.sessionId,
-                    windowIndex = request.windowIndex,
-                )
-            )
-    ) {
+    val treeRequest =
+        DaemonRequest.AccessibilityTree(
+            sessionId = request.sessionId,
+            windowIndex = request.windowIndex,
+        )
+    val tree =
+        sessionTarget?.let { resolver ->
+            accessibilityHandler.handle(treeRequest) { _, index -> resolver(index) }
+        } ?: accessibilityHandler.handle(treeRequest)
+    return when (tree) {
         is DaemonResponse.AccessibilitySnapshotResult ->
             CaptureArtifactStore.writeAccessibility(
                 sessionId = request.sessionId,
