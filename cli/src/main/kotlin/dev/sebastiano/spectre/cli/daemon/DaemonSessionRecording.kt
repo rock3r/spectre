@@ -5,8 +5,10 @@ import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.WindowIdentityDto
 import dev.sebastiano.spectre.recording.AutoRecorder
 import dev.sebastiano.spectre.recording.RecordingHandle
+import dev.sebastiano.spectre.recording.RecordingResult
 import dev.sebastiano.spectre.recording.screencapturekit.MacOsScreenCaptureAccess
 import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureAccessDeniedException
+import dev.sebastiano.spectre.recording.stopWithResult
 import java.awt.Rectangle
 import java.io.IOException
 import java.nio.file.Files
@@ -145,24 +147,23 @@ internal class DaemonSessionRecording(
         }
     }
 
-    fun stop(liveSessionIds: Set<String>): String {
+    fun stop(liveSessionIds: Set<String>): RecordingResult {
         val active = recording ?: throw IOException("no recording is in progress for this session")
         val directory = captureDirectory
         val explicit = ledgerExplicitOutDir
-        val knownOutput = recordingOutput?.toString()
         return try {
-            var result: String? = null
+            var result: RecordingResult? = null
             var error: IOException? = null
             try {
-                active.stop()
-                result = active.output.toString()
+                result = active.stopWithResult()
             } catch (exception: IllegalStateException) {
                 error = IOException(exception.message ?: "failed to stop recording", exception)
             }
             // Always ledger Spectre-allocated dirs (including partial files after a failed stop)
             // so prune/retention can clean them up. Never ledger user --output parents.
+            var housekeepingFailure: IOException? = null
             if (directory != null && !explicit) {
-                runCatching {
+                try {
                     appendLedger(
                         directory,
                         sizeBytes = CaptureLifecycle.directorySizeBytes(directory),
@@ -173,10 +174,14 @@ internal class DaemonSessionRecording(
                         ledger = ledger,
                         liveSessionIds = liveSessionIds + sessionId,
                     )
+                } catch (exception: IOException) {
+                    housekeepingFailure =
+                        IOException("recording stopped but capture bookkeeping failed", exception)
                 }
             }
             if (error != null) throw error
-            result ?: knownOutput ?: error("recording stopped without an output path")
+            if (housekeepingFailure != null) throw housekeepingFailure
+            result ?: error("recording stopped without an output path")
         } finally {
             // Always clear in-memory state so a failed stop cannot leave start() blocked.
             clear()
@@ -193,10 +198,8 @@ internal class DaemonSessionRecording(
     }
 
     /** Finalize any active recording (detach / close). Safe if idle. */
-    fun finalizeIfActive(liveSessionIds: Set<String>) {
-        if (recording != null) runCatching { stop(liveSessionIds) }
-        clear()
-    }
+    fun finalizeIfActive(liveSessionIds: Set<String>): RecordingResult? =
+        if (recording != null) stop(liveSessionIds) else null
 
     private fun clear() {
         recording = null

@@ -11,10 +11,14 @@ public object DaemonMain {
     /** Starts the daemon at the socket supplied by [arguments]. */
     @Throws(IOException::class, InterruptedException::class)
     public fun run(arguments: List<String>) {
+        RequestDiagnostics.install()
         // Applied before the socket opens so every frame this daemon writes — and every budget it
         // forwards into an injected JVM — uses the configured value.
         maxFrameBytes(arguments)?.let(FrameLimits::configure)
-        DaemonProcess(socketPath(arguments)).use { process -> process.runUntilShutdown() }
+        val socketPath = socketPath(arguments)
+        DaemonLog(DaemonProcessLauncher.diagnosticPath(socketPath)).use {
+            DaemonProcess(socketPath).use { process -> process.runUntilShutdown() }
+        }
     }
 
     /** Extracts the socket location from the daemon-only command line. */

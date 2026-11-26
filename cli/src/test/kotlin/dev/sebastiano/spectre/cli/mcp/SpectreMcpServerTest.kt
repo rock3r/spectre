@@ -4,8 +4,6 @@ import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.ProgressRangeDto
 import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.cli.SpectreBuildMetadata
-import dev.sebastiano.spectre.cli.daemon.AccessibilityError
-import dev.sebastiano.spectre.cli.daemon.AccessibilityErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
@@ -46,22 +44,66 @@ import kotlinx.serialization.json.put
 
 class SpectreMcpServerTest {
     @Test
-    fun `accessibility structured failures are never MCP success`() = runBlocking {
-        val server = SpectreMcpServer.create {
-            DaemonResponse.AccessibilityErrorResult(
-                AccessibilityError(
-                    AccessibilityErrorCode.Unknown,
-                    "reader is busy",
-                    rawCode = "reader-busy",
-                )
-            )
+    fun `find_text accepts JSON booleans and defaults exact only when absent`() = runBlocking {
+        for ((arguments, expected) in
+            listOf(
+                buildJsonObject {
+                    put("session_id", "session-1")
+                    put("text", "needle")
+                    put("exact", true)
+                } to true,
+                buildJsonObject {
+                    put("session_id", "session-1")
+                    put("text", "needle")
+                    put("exact", false)
+                } to false,
+                buildJsonObject {
+                    put("session_id", "session-1")
+                    put("text", "needle")
+                } to true,
+            )) {
+            var forwarded: DaemonRequest? = null
+            val server = SpectreMcpServer.create {
+                forwarded = it
+                DaemonResponse.Nodes("session-1", emptyList())
+            }
+            val result = invokeTool(server, "find_text", arguments)
+            assertTrue(result.isError != true, result.toString())
+            assertEquals(DaemonRequest.FindByText("session-1", "needle", expected), forwarded)
         }
+    }
 
-        val result = invokeTool(server, "accessibility_tree", buildJsonObject { put("pid", 42) })
-
-        assertTrue(result.isError == true, "structured helper failure must set isError: $result")
-        val body = Json.parseToJsonElement((result.content.single() as TextContent).text).jsonObject
-        assertEquals("reader-busy", body.getValue("rawCode").jsonPrimitive.content)
+    @Test
+    fun `MCP rejects wrong primitive kinds and unknown names before forwarding`() = runBlocking {
+        val cases =
+            listOf(
+                "find_text" to
+                    buildJsonObject {
+                        put("session_id", "session-1")
+                        put("text", "needle")
+                        put("exact", "false")
+                    },
+                "find" to
+                    buildJsonObject {
+                        put("session_id", "session-1")
+                        put("test_tag", 7)
+                    },
+                "windows" to
+                    buildJsonObject {
+                        put("session_id", "session-1")
+                        put("unknown", true)
+                    },
+            )
+        cases.forEach { (tool, arguments) ->
+            var forwarded = false
+            val server = SpectreMcpServer.create {
+                forwarded = true
+                error("invalid input reached daemon")
+            }
+            val result = invokeTool(server, tool, arguments)
+            assertTrue(result.isError == true, "$tool accepted $arguments")
+            assertTrue(!forwarded, "$tool forwarded $arguments")
+        }
     }
 
     @Test
@@ -102,9 +144,9 @@ class SpectreMcpServerTest {
                 "list_processes",
                 "attach",
                 "detach",
+                "accessibility_tree",
                 "windows",
                 "tree",
-                "accessibility_tree",
                 "find",
                 "find_text",
                 "wait_for_node",
@@ -153,6 +195,22 @@ class SpectreMcpServerTest {
                 .orEmpty()
                 .contains("inline", ignoreCase = true)
         )
+    }
+
+    @Test
+    fun `record stop returns backend diagnostics including unavailable values`() = runBlocking {
+        val server = SpectreMcpServer.create { request ->
+            assertIs<DaemonRequest.StopRecording>(request)
+            DaemonResponse.RecordingStopped(request.sessionId, "/capture.mp4").also {
+                it.diagnostics = DaemonResponse.RecordingDiagnostics(null, true)
+            }
+        }
+        val result =
+            invokeTool(server, "record_stop", buildJsonObject { put("session_id", "pid-3") })
+        val body = Json.parseToJsonElement((result.content.single() as TextContent).text).jsonObject
+        val diagnostics = body.getValue("diagnostics").jsonObject
+        assertEquals("null", diagnostics.getValue("droppedFrames").jsonPrimitive.content)
+        assertEquals("true", diagnostics.getValue("cropFixedAtStart").jsonPrimitive.content)
     }
 
     @Test
@@ -560,83 +618,82 @@ class SpectreMcpServerTest {
         assertTrue(result.isError == true)
         assertEquals(diagnostics, (result.content.single() as TextContent).text)
     }
+}
 
-    private suspend fun invokeTool(
-        server: io.modelcontextprotocol.kotlin.sdk.server.Server,
-        name: String,
-        arguments: kotlinx.serialization.json.JsonObject,
-    ): CallToolResult {
-        val registered = assertNotNull(server.tools[name], "tool $name must be registered")
-        // Mirror SDK handleCallTool: tool-body failures become isError results so unit tests
-        // exercise the same surface official clients see over stdio.
-        return try {
-            registered.handler.invoke(
-                UnusedClientConnection,
-                CallToolRequest(CallToolRequestParams(name = name, arguments = arguments)),
-            )
-        } catch (error: Exception) {
-            CallToolResult(
-                content = listOf(TextContent("Error executing tool $name: ${error.message}")),
-                isError = true,
-            )
-        }
+internal suspend fun invokeTool(
+    server: io.modelcontextprotocol.kotlin.sdk.server.Server,
+    name: String,
+    arguments: kotlinx.serialization.json.JsonObject,
+): CallToolResult {
+    val registered = assertNotNull(server.tools[name], "tool $name must be registered")
+    // Mirror SDK handleCallTool: tool-body failures become isError results so unit tests
+    // exercise the same surface official clients see over stdio.
+    return try {
+        registered.handler.invoke(
+            UnusedClientConnection,
+            CallToolRequest(CallToolRequestParams(name = name, arguments = arguments)),
+        )
+    } catch (error: Exception) {
+        CallToolResult(
+            content = listOf(TextContent("Error executing tool $name: ${error.message}")),
+            isError = true,
+        )
     }
+}
 
-    /**
-     * Tool handlers for Spectre never use the [ClientConnection] receiver; this stub only exists so
-     * unit tests can invoke the registered suspend extension without a live session.
-     */
-    private object UnusedClientConnection : ClientConnection {
-        override val sessionId: String = "unit-test"
+/**
+ * Tool handlers for Spectre never use the [ClientConnection] receiver; this stub only exists so
+ * unit tests can invoke the registered suspend extension without a live session.
+ */
+private object UnusedClientConnection : ClientConnection {
+    override val sessionId: String = "unit-test"
 
-        override suspend fun notification(
-            notification: ServerNotification,
-            relatedRequestId: RequestId?,
-        ) = Unit
+    override suspend fun notification(
+        notification: ServerNotification,
+        relatedRequestId: RequestId?,
+    ) = Unit
 
-        override suspend fun ping(request: PingRequest, options: RequestOptions?): EmptyResult =
-            EmptyResult()
+    override suspend fun ping(request: PingRequest, options: RequestOptions?): EmptyResult =
+        EmptyResult()
 
-        override suspend fun createMessage(
-            request: CreateMessageRequest,
-            options: RequestOptions?,
-        ): CreateMessageResult = error("unused")
+    override suspend fun createMessage(
+        request: CreateMessageRequest,
+        options: RequestOptions?,
+    ): CreateMessageResult = error("unused")
 
-        override suspend fun listRoots(
-            request: ListRootsRequest,
-            options: RequestOptions?,
-        ): ListRootsResult = error("unused")
+    override suspend fun listRoots(
+        request: ListRootsRequest,
+        options: RequestOptions?,
+    ): ListRootsResult = error("unused")
 
-        override suspend fun createElicitation(
-            request: ElicitRequest,
-            options: RequestOptions?,
-        ): ElicitResult = error("unused")
+    override suspend fun createElicitation(
+        request: ElicitRequest,
+        options: RequestOptions?,
+    ): ElicitResult = error("unused")
 
-        override suspend fun createElicitation(
-            message: String,
-            requestedSchema: ElicitRequestParams.RequestedSchema,
-            options: RequestOptions?,
-        ): ElicitResult = error("unused")
+    override suspend fun createElicitation(
+        message: String,
+        requestedSchema: ElicitRequestParams.RequestedSchema,
+        options: RequestOptions?,
+    ): ElicitResult = error("unused")
 
-        override suspend fun createElicitation(
-            message: String,
-            elicitationId: String,
-            url: String,
-            options: RequestOptions?,
-        ): ElicitResult = error("unused")
+    override suspend fun createElicitation(
+        message: String,
+        elicitationId: String,
+        url: String,
+        options: RequestOptions?,
+    ): ElicitResult = error("unused")
 
-        override suspend fun sendLoggingMessage(notification: LoggingMessageNotification) = Unit
+    override suspend fun sendLoggingMessage(notification: LoggingMessageNotification) = Unit
 
-        override suspend fun sendResourceUpdated(notification: ResourceUpdatedNotification) = Unit
+    override suspend fun sendResourceUpdated(notification: ResourceUpdatedNotification) = Unit
 
-        override suspend fun sendResourceListChanged() = Unit
+    override suspend fun sendResourceListChanged() = Unit
 
-        override suspend fun sendToolListChanged() = Unit
+    override suspend fun sendToolListChanged() = Unit
 
-        override suspend fun sendPromptListChanged() = Unit
+    override suspend fun sendPromptListChanged() = Unit
 
-        override suspend fun sendElicitationComplete(
-            notification: ElicitationCompleteNotification
-        ) = Unit
-    }
+    override suspend fun sendElicitationComplete(notification: ElicitationCompleteNotification) =
+        Unit
 }

@@ -25,6 +25,7 @@ internal interface IRecordingFrameSource
 /// </summary>
 internal sealed class CompressedWindowRecorder
 {
+    private static readonly TimeSpan FirstFrameTimeout = TimeSpan.FromSeconds(10);
     // MF_MT_DEFAULT_STRIDE (mfapi.h): bytes per row; the sign gives the row order.
     private static readonly Guid MfMtDefaultStride = new("644b4e48-1e02-4516-b0eb-c01ca9d49ac6");
 
@@ -33,6 +34,8 @@ internal sealed class CompressedWindowRecorder
     private readonly SampleClock clock;
     private readonly System.Diagnostics.Stopwatch sinceFirstSample = new();
     private byte[]? lastFrame;
+    private Exception? sampleError;
+    private bool finalSampleSupplied;
 
     private CompressedWindowRecorder(
         int fps,
@@ -49,7 +52,8 @@ internal sealed class CompressedWindowRecorder
         int fps,
         IRecordingFrameSource frameSource,
         CancellationToken stopToken,
-        Action onReady)
+        Action onReady,
+        CancellationToken abort = default)
     {
         var recorder = new CompressedWindowRecorder(fps, frameSource, stopToken);
         var videoProperties =
@@ -80,7 +84,22 @@ internal sealed class CompressedWindowRecorder
         profile.Video.FrameRate.Denominator = 1;
         profile.Video.PixelAspectRatio.Numerator = 1;
         profile.Video.PixelAspectRatio.Denominator = 1;
+        // CreateMp4(HD720p) otherwise leaves every capture at the 720p preset bitrate, including
+        // 4K and multi-monitor regions. Scale the target with both pixel count and requested fps.
+        profile.Video.Bitrate = BitrateFor(frameSource.Width, frameSource.Height, fps);
 
+        // READY means the full production pipeline has a real frame, not merely that Media
+        // Foundation accepted its descriptors. This bounds startup, stop-before-first-frame, and
+        // the empty-file path with the same ten-second contract.
+        using (var firstFrameTimeout = CancellationTokenSource.CreateLinkedTokenSource(stopToken))
+        {
+            firstFrameTimeout.CancelAfter(FirstFrameTimeout);
+            recorder.lastFrame = frameSource.WaitForFrameBytes(firstFrameTimeout.Token);
+            if (recorder.lastFrame is null)
+            {
+                throw new TimeoutException("No capture frame arrived before recording stopped or timed out.");
+            }
+        }
         await using var outputFile = File.Open(
             output,
             FileMode.Create,
@@ -92,7 +111,7 @@ internal sealed class CompressedWindowRecorder
             await transcoder.PrepareMediaStreamSourceTranscodeAsync(
                 source,
                 randomAccessStream,
-                profile);
+                profile).AsTask(abort);
         if (!prepared.CanTranscode)
         {
             throw new InvalidOperationException(
@@ -100,7 +119,23 @@ internal sealed class CompressedWindowRecorder
         }
 
         onReady();
-        await prepared.TranscodeAsync();
+        await prepared.TranscodeAsync().AsTask(abort);
+        if (recorder.sampleError is { } error)
+        {
+            throw new InvalidOperationException("Recording failed while reading a frame.", error);
+        }
+        if (!recorder.sinceFirstSample.IsRunning || outputFile.Length == 0)
+        {
+            throw new InvalidOperationException("The encoder finalized without a video sample.");
+        }
+    }
+
+    internal static uint BitrateFor(int width, int height, int fps)
+    {
+        // 0.12 bits/pixel/frame is a conservative H.264 desktop-capture target. Keep tiny windows
+        // useful and cap pathological virtual desktops at a rate Media Foundation can represent.
+        var calculated = (long)width * height * fps * 12 / 100;
+        return (uint)Math.Clamp(calculated, 1_000_000L, 80_000_000L);
     }
 
     private void OnStarting(MediaStreamSource sender, MediaStreamSourceStartingEventArgs args)
@@ -110,41 +145,62 @@ internal sealed class CompressedWindowRecorder
 
     private void OnSampleRequested(MediaStreamSource sender, MediaStreamSourceSampleRequestedEventArgs args)
     {
-        if (stopToken.IsCancellationRequested)
+        try
         {
-            args.Request.Sample = null;
-            return;
+            SupplySample(args);
         }
-
-        byte[]? bytes;
-        SampleSlot slot;
-        if (lastFrame is null)
+        catch (Exception error)
         {
-            // The timeline starts at the first captured frame.
-            bytes = frameSource.WaitForFrameBytes(stopToken);
+            // Surface callback failures on the awaited encoder task and finish the media source.
+            sampleError = error;
+            args.Request.Sample = null;
+        }
+    }
+
+    private void SupplySample(MediaStreamSourceSampleRequestedEventArgs args)
+    {
+        // READY guarantees a captured frame. Submit it even when q arrives immediately.
+        byte[] bytes;
+        SampleSlot slot;
+        if (!sinceFirstSample.IsRunning)
+        {
+            bytes = lastFrame ?? throw new InvalidOperationException("Missing first capture frame.");
             sinceFirstSample.Start();
             slot = clock.NextSlot(TimeSpan.Zero);
         }
         else
         {
-            // #610: Windows Graphics Capture delivers frames only when the window changes.
-            // Wait for this sample's slot on the wall clock, then repeat the latest frame,
-            // so idle time stays in the video instead of being dropped.
-            slot = clock.NextSlot(sinceFirstSample.Elapsed);
-            var delay = SampleClock.DelayUntil(slot, sinceFirstSample.Elapsed);
-            if (delay > TimeSpan.Zero && stopToken.WaitHandle.WaitOne(delay))
+            if (stopToken.IsCancellationRequested)
             {
-                args.Request.Sample = null;
-                return;
+                if (finalSampleSupplied)
+                {
+                    args.Request.Sample = null;
+                    return;
+                }
+
+                // Media Foundation does not reliably make a playable H.264 stream when EOS
+                // immediately follows the first sample. Close the timeline with one duplicate at
+                // the next timestamp, including its full duration, before signalling EOS.
+                finalSampleSupplied = true;
+                slot = clock.NextSlot(sinceFirstSample.Elapsed);
+                bytes = lastFrame!;
             }
-
-            bytes = frameSource.LatestFrameBytes() ?? lastFrame;
-        }
-
-        if (bytes is null || stopToken.IsCancellationRequested)
-        {
-            args.Request.Sample = null;
-            return;
+            else
+            {
+                slot = clock.NextSlot(sinceFirstSample.Elapsed);
+                var delay = SampleClock.DelayUntil(slot, sinceFirstSample.Elapsed);
+                if (delay > TimeSpan.Zero && stopToken.WaitHandle.WaitOne(delay))
+                {
+                    // Cancellation while waiting for the next slot follows the same ordering:
+                    // submit this final, duration-bearing sample, then EOS on the next request.
+                    finalSampleSupplied = true;
+                    bytes = lastFrame!;
+                }
+                else
+                {
+                    bytes = frameSource.LatestFrameBytes() ?? lastFrame!;
+                }
+            }
         }
 
         lastFrame = bytes;

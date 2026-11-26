@@ -29,7 +29,7 @@ internal object MissingWaylandHelperAdapter : RobotAdapter {
     override val autoDelayMs: Int = 0
     override val requiresOffEdt: Boolean = true
     override val deliversRealOsInput: Boolean = true
-    override val needsSelectAllLineFallback: Boolean = true
+    override val supportsReliableSelectAll: Boolean = false
     override val shouldDrainAfterClipboardPaste: Boolean
         get() = true
 
@@ -86,7 +86,7 @@ private class WaylandBridgeRobotAdapter(private val bridge: Class<*>) : RobotAda
     override val autoDelayMs: Int = 0
     override val requiresOffEdt: Boolean = true
     override val deliversRealOsInput: Boolean = true
-    override val needsSelectAllLineFallback: Boolean = true
+    override val supportsReliableSelectAll: Boolean = false
     override val shouldDrainAfterClipboardPaste: Boolean
         get() = true
 

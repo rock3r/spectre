@@ -15,6 +15,7 @@ See docs/RELEASE-SMOKE.md and scripts/smoke_lib.py for scenario IDs.
 from __future__ import annotations
 
 import argparse
+import os
 import platform
 import subprocess
 import sys
@@ -54,6 +55,7 @@ from smoke_lib import (  # noqa: E402
     stop_session_helpers,
     build_report,
     collect_preflight,
+    configure_linux_display_mode,
     ensure_macos_screencapture_helper,
     fill_blocked_remaining,
     gradle_ui_force_args,
@@ -83,6 +85,7 @@ from smoke_lib import (  # noqa: E402
     wayland_portal_warmup_command,
     write_json_report,
     write_markdown_report,
+    wayland_restore_token_dir,
     xvfb_prefix,
 )
 
@@ -426,6 +429,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
+    caller_cwd = Path.cwd()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--version",
@@ -438,6 +442,12 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
         help="Previous release tag / base for the delta inventory (default: latest git tag)",
     )
     parser.add_argument("--skip-check", action="store_true", help="Skip ./gradlew check")
+    parser.add_argument(
+        "--display-mode",
+        choices=("auto", "xvfb", "seat"),
+        default="auto",
+        help="Linux display selection: discover automatically, force Xvfb, or force the real seat",
+    )
     parser.add_argument(
         "--allow-dirty",
         action="store_true",
@@ -486,14 +496,24 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
     )
     args = parser.parse_args(argv)
 
+    # Freeze a relative operator override before any subprocess can change its cwd. The same
+    # absolute value is then reported and exported to Gradle, the CLI, and portal warmup.
+    inherited_token_dir = os.environ.get("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR", "").strip()
+    if inherited_token_dir:
+        os.environ["SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"] = str(
+            wayland_restore_token_dir(Path("."), caller_cwd=caller_cwd)
+        )
+
     system = platform.system()
     if system == "Linux":
         # Non-login SSH PATH lacks ~/.cargo/bin; xvfb-run inherits that and
         # :recording:buildWaylandHelper then cannot start cargo.
         apply_linux_toolchain_path()
-        # SSH shells also lack the seat's WAYLAND_DISPLAY / DISPLAY / XAUTHORITY / D-Bus
-        # address, so portal detection and the seated JFrame would fail (#501).
-        seat_env = apply_linux_seat_env()
+        # Explicit Xvfb mode removes every inherited seat handle and skips discovery. Auto and
+        # seat mode retain #501 discovery for SSH shells that lack the seat environment; seat
+        # mode fails immediately when discovery finds no real display.
+        configure_linux_display_mode(args.display_mode)
+        seat_env = apply_linux_seat_env() if args.display_mode == "auto" else {}
         if seat_env:
             print(
                 "linux seat env: "
@@ -541,6 +561,12 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
             stop_failure_log = stop_log
 
     preflight = collect_preflight(ROOT, version=args.version, base=args.base)
+    if system == "Linux" and args.display_mode != "auto":
+        preflight.environment.display_mode = f"{args.display_mode}-forced"
+    if system == "Linux":
+        preflight.environment.extra["waylandRestoreTokenDir"] = str(
+            wayland_restore_token_dir(out_dir)
+        )
     results: list[ScenarioResult] = []
 
     if stop_failure_detail:

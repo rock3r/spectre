@@ -141,8 +141,11 @@ internal constructor(
     }
 }
 
-private class FfmpegRecordingHandle(private val process: Process, override val output: Path) :
-    RecordingHandle {
+private class FfmpegRecordingHandle(
+    private val process: Process,
+    override val output: Path,
+    private val previous: RecordingFileStamp?,
+) : RecordingHandle {
 
     // Three-state lifecycle so concurrent observers see an accurate `isStopped`:
     //   - stopInitiated: CAS guard so the cleanup runs exactly once.
@@ -158,11 +161,6 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
 
     override val isStopped: Boolean
         get() = result.get()?.isSuccess == true
-
-    // Tracks whether stop() *itself* sent SIGTERM/SIGKILL to ffmpeg. Used to decide whether a
-    // signal-shaped exit code (255 / 137 / 143) is "ours" (expected, not a crash) or external
-    // (CI/test harness/OS killed ffmpeg, which IS an error from the caller's perspective).
-    private var sentSignalOurselves: Boolean = false
 
     override fun stop() {
         if (!stopInitiated.compareAndSet(false, true)) {
@@ -222,7 +220,6 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
                 false
             }
         if (!gracefulExit) {
-            sentSignalOurselves = true
             process.destroy()
             val terminatedAfterDestroy =
                 try {
@@ -253,6 +250,10 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
                     "output at $output is in an undefined state."
             )
         }
+        check(gracefulExit) {
+            "ffmpeg did not exit within ${SHUTDOWN_GRACE_SECONDS}s of stop(); it had to be " +
+                "terminated and output at $output may be unfinalised."
+        }
         failIfFfmpegCrashed()
     }
 
@@ -266,33 +267,20 @@ private class FfmpegRecordingHandle(private val process: Process, override val o
             } catch (_: Throwable) {
                 return
             }
-        if (exit == 0) return
-        // 255 (ffmpeg-on-SIGTERM), 143 (POSIX 128+15 SIGTERM if ffmpeg's signal handler
-        // didn't run), and 137 (POSIX 128+9 SIGKILL) are *only* exempted when stop() sent
-        // the signal itself — see sentSignalOurselves. Otherwise they signify external
-        // termination (CI / test harness / OS killing ffmpeg) which IS a crash from the
-        // caller's perspective: the recording was interrupted and the output is likely
-        // truncated.
-        val isExpectedSelfSignal =
-            sentSignalOurselves &&
-                (exit == FFMPEG_SIGTERM_EXIT ||
-                    exit == POSIX_SIGTERM_EXIT ||
-                    exit == FFMPEG_SIGKILL_EXIT)
-        if (!isExpectedSelfSignal) {
-            error(
-                "ffmpeg exited with code $exit during recording — output at $output may be " +
-                    "truncated or missing. Common causes: disk full, encoder error, device " +
-                    "failure during capture, or external termination."
-            )
+        if (exit == 0) {
+            validateRecordingOutput(output, previous = previous)
+            return
         }
+        error(
+            "ffmpeg exited with code $exit during recording — output at $output may be " +
+                "truncated or missing. Common causes: disk full, encoder error, device " +
+                "failure during capture, or external termination."
+        )
     }
 
     private companion object {
         const val SHUTDOWN_GRACE_SECONDS: Long = 5
         const val FORCE_KILL_SECONDS: Long = 2
-        const val FFMPEG_SIGTERM_EXIT: Int = 255
-        const val POSIX_SIGTERM_EXIT: Int = 143 // 128 + 15 (SIGTERM)
-        const val FFMPEG_SIGKILL_EXIT: Int = 137 // 128 + 9 (SIGKILL)
     }
 }
 
@@ -315,6 +303,7 @@ internal fun spawnFfmpegRecording(
     output: Path,
 ): RecordingHandle {
     Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
+    val previous = recordingFileStamp(output)
     val process = processFactory.start(argv)
     val exitedDuringProbe =
         try {
@@ -351,7 +340,7 @@ internal fun spawnFfmpegRecording(
                 "matches no visible window. Argv: $argv"
         )
     }
-    return FfmpegRecordingHandle(process, output)
+    return FfmpegRecordingHandle(process, output, previous)
 }
 
 private const val STARTUP_PROBE_MILLIS: Long = 200

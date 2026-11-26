@@ -18,10 +18,11 @@ public object DaemonWireCodec {
     /** Write one framed daemon response. */
     @Throws(java.io.IOException::class)
     public fun writeResponse(output: OutputStream, response: DaemonResponse): Unit =
-        DaemonFraming.writeFrame(
-            output,
-            DaemonProtocol.cbor.encodeToByteArray(DaemonResponse.serializer(), response),
-        )
+        DaemonFraming.writeFrame(output, encodeResponse(response))
+
+    /** Encodes a response exactly as it will appear in a frame, for byte-capacity decisions. */
+    internal fun encodeResponse(response: DaemonResponse): ByteArray =
+        DaemonProtocol.cbor.encodeToByteArray(DaemonResponse.serializer(), response)
 
     /** Read one framed daemon request, or `null` on clean EOF before a frame starts. */
     @Throws(java.io.IOException::class)
@@ -36,4 +37,17 @@ public object DaemonWireCodec {
         DaemonFraming.readFrame(input)?.let { bytes ->
             DaemonProtocol.cbor.decodeFromByteArray(DaemonResponse.serializer(), bytes)
         }
+}
+
+/** Measures diagnosed responses while encoding the potentially large operation body only once. */
+internal class DiagnosedResponseSizer(
+    response: DaemonResponse,
+    private val encoder: (DaemonResponse) -> ByteArray = DaemonWireCodec::encodeResponse,
+) {
+    private val placeholder = DaemonResponse.Completed("")
+    private val responseSizeDelta = encoder(response).size - encoder(placeholder).size
+
+    /** Exact size because CBOR nests the response's unchanged encoding inside the envelope. */
+    fun encodedSize(warnings: List<String>): Int =
+        encoder(DaemonResponse.Diagnosed(placeholder, warnings)).size + responseSizeDelta
 }

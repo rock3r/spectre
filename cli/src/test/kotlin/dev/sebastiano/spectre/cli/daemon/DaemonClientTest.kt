@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.cli.daemon
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+import dev.sebastiano.spectre.cli.SpectreCli
 import java.io.File
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
@@ -10,10 +11,12 @@ import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -34,13 +37,16 @@ class DaemonClientTest {
                     val input = Channels.newInputStream(channel)
                     val output = Channels.newOutputStream(channel)
                     assertEquals(
-                        DaemonRequest.Hello(DaemonProtocolVersion(1, 15)),
+                        DaemonRequest.Hello(
+                            DaemonProtocolVersion(1, 17),
+                            daemonConfiguration(),
+                        ),
                         DaemonWireCodec.readRequest(input),
                     )
                     DaemonWireCodec.writeResponse(
                         output,
                         DaemonResponse.Hello(
-                            daemonVersion = DaemonProtocolVersion(1, 14),
+                            daemonVersion = DaemonProtocolVersion(1, 16),
                             maxFrameBytes = null,
                             inputCoordination = null,
                         ),
@@ -64,6 +70,116 @@ class DaemonClientTest {
             assertNull(receivedAfterHello.get(), "capture must not reach an incompatible daemon")
         }
         deleteTemporaryDaemonClientSocketPath(socketPath)
+    }
+
+    @Test
+    fun `public CLI prints hello and operation warnings and fails partial operation`() {
+        val property = DaemonProcessLauncher.PROCESS_GROUP_ISOLATED_PROPERTY
+        val original = System.getProperty(property)
+        val socketPath = temporaryDaemonClientSocketPath()
+        System.setProperty(property, "false")
+        val registry = DaemonSessionRegistry {
+            TestDaemonSessionAutomator(
+                windowsResult = {
+                    repeat(101) { RequestDiagnostics.report("window warning $it") }
+                    RequestDiagnostics.report("x".repeat(5_000))
+                    throw java.io.IOException("window provider failed")
+                }
+            )
+        }
+        val server = DaemonServer(socketPath, registry)
+        val output = StringBuilder()
+        val errorOutput = StringBuilder()
+
+        try {
+            assertIs<DaemonResponse.Attached>(
+                DaemonClient(socketPath).request(DaemonRequest.Attach(91))
+            )
+            val exit = SpectreCli(output, errorOutput, socketPath).run(listOf("windows", "pid-91"))
+
+            assertNotEquals(0, exit)
+            val lines = errorOutput.lines().filter(String::isNotEmpty)
+            assertEquals(103, lines.size, errorOutput.toString())
+            assertTrue(
+                lines.single { it.contains("independent process group") }.startsWith("warning: ")
+            )
+            assertEquals(
+                (0..98).map { "warning: window warning $it" },
+                lines.filter { it.startsWith("warning: window warning") },
+            )
+            assertEquals(
+                "warning: [spectre-daemon] diagnostics truncated (discarded 3 warning(s) and " +
+                    "904 warning character(s)); recent diagnostics may remain in the retained " +
+                    "suffix of the per-socket daemon log",
+                lines[100],
+            )
+            assertEquals(1, lines.count { it.contains("window provider failed") })
+        } finally {
+            if (original == null) System.clearProperty(property)
+            else System.setProperty(property, original)
+            server.close()
+            server.awaitTermination()
+            deleteTemporaryDaemonClientSocketPath(socketPath)
+        }
+    }
+
+    @Test
+    fun `hello process isolation warning reaches the public client warning sink`() {
+        val property = DaemonProcessLauncher.PROCESS_GROUP_ISOLATED_PROPERTY
+        val original = System.getProperty(property)
+        val socketPath = temporaryDaemonClientSocketPath()
+        System.setProperty(property, "false")
+        val server = DaemonServer(socketPath, registry = testDaemonSessionRegistry())
+        val warnings = mutableListOf<String>()
+
+        try {
+            assertEquals(
+                DaemonResponse.Sessions(emptyList()),
+                DaemonClient(socketPath, warningSink = warnings::add)
+                    .request(DaemonRequest.ListSessions),
+            )
+            assertTrue(warnings.single().contains("independent process group"))
+        } finally {
+            if (original == null) System.clearProperty(property)
+            else System.setProperty(property, original)
+            server.close()
+            server.awaitTermination()
+            deleteTemporaryDaemonClientSocketPath(socketPath)
+        }
+    }
+
+    @Test
+    fun `configuration mismatch distinguishes an unset value from a missing key`() {
+        val property = "java.io.tmpdir"
+
+        val message = configurationMismatchFailure(mapOf(property to null), emptyMap())
+
+        assertTrue(message.contains("caller=<unset>"), message)
+        assertTrue(message.contains("daemon=<missing>"), message)
+    }
+
+    @Test
+    fun `daemon handshake reports startup configuration after runtime installs embedded agent`() {
+        val property = "dev.sebastiano.spectre.agent.runtimeJar"
+        val original = System.getProperty(property)
+        val socketPath = temporaryDaemonClientSocketPath()
+        System.clearProperty(property)
+        val server = DaemonServer(socketPath, registry = testDaemonSessionRegistry())
+
+        try {
+            System.setProperty(property, "/tmp/extracted-agent-runtime.jar")
+            val failure =
+                assertFailsWith<java.io.IOException> {
+                    DaemonClient(socketPath).request(DaemonRequest.ListSessions)
+                }
+            assertTrue(failure.message.orEmpty().contains(property))
+        } finally {
+            if (original == null) System.clearProperty(property)
+            else System.setProperty(property, original)
+            server.close()
+            server.awaitTermination()
+            deleteTemporaryDaemonClientSocketPath(socketPath)
+        }
     }
 
     @Test
@@ -108,7 +224,6 @@ class DaemonClientTest {
     fun `starts a detached daemon process for the first request`() {
         val socketPath = temporaryDaemonClientSocketPath()
         var process: Process? = null
-        var shutdownConfirmed = false
 
         try {
             DaemonClient(socketPath).use { client ->
@@ -124,12 +239,12 @@ class DaemonClientTest {
                     },
                 )
                 assertEquals(DaemonResponse.ShuttingDown, client.request(DaemonRequest.Shutdown))
-                shutdownConfirmed = true
             }
 
             awaitDaemonClientSocketRemoval(socketPath)
+            assertDaemonExited(requireNotNull(process))
         } finally {
-            if (!shutdownConfirmed) process?.destroyForcibly()?.waitFor()
+            process?.takeIf(Process::isAlive)?.destroyForcibly()?.waitFor()
             deleteTemporaryDaemonClientSocketPath(socketPath)
         }
     }
@@ -177,7 +292,6 @@ class DaemonClientTest {
     fun `restarts a daemon after its process is killed`() {
         val socketPath = temporaryDaemonClientSocketPath()
         val processes = mutableListOf<Process>()
-        var shutdownConfirmed = false
 
         try {
             DaemonClient(socketPath).use { client ->
@@ -203,12 +317,12 @@ class DaemonClientTest {
                 )
                 assertEquals(2, processes.size)
                 assertEquals(DaemonResponse.ShuttingDown, client.request(DaemonRequest.Shutdown))
-                shutdownConfirmed = true
             }
 
             awaitDaemonClientSocketRemoval(socketPath)
+            assertDaemonExited(processes.last())
         } finally {
-            if (!shutdownConfirmed) processes.forEach { it.destroyForcibly().waitFor() }
+            processes.filter(Process::isAlive).forEach { it.destroyForcibly().waitFor() }
             deleteTemporaryDaemonClientSocketPath(socketPath)
         }
     }
@@ -265,15 +379,16 @@ class DaemonClientTest {
     }
 }
 
-private fun temporaryDaemonClientSocketPath(): Path =
+internal fun temporaryDaemonClientSocketPath(): Path =
     if ("posix" in FileSystems.getDefault().supportedFileAttributeViews()) {
         Path.of("/tmp", "sp-d-${UUID.randomUUID().toString().take(8)}", "daemon", "daemon.sock")
     } else {
         Files.createTempDirectory("spectre-daemon-test").resolve("daemon").resolve("daemon.sock")
     }
 
-private fun deleteTemporaryDaemonClientSocketPath(socketPath: Path) {
+internal fun deleteTemporaryDaemonClientSocketPath(socketPath: Path) {
     Files.deleteIfExists(socketPath)
+    Files.deleteIfExists(DaemonProcessLauncher.diagnosticPath(socketPath))
     Files.deleteIfExists(socketPath.parent)
     Files.deleteIfExists(socketPath.parent.parent)
 }
@@ -286,6 +401,13 @@ private fun awaitDaemonClientSocketRemoval(socketPath: Path) {
     error("Timed out waiting for daemon socket removal")
 }
 
+private fun assertDaemonExited(process: Process) {
+    assertTrue(
+        process.waitFor(DAEMON_EXIT_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+        "Daemon JVM did not exit within $DAEMON_EXIT_TIMEOUT_SECONDS seconds after shutdown",
+    )
+}
+
 /** Reads a process's group id with `ps`, which Linux and macOS both ship. */
 private fun processGroupOf(pid: Long): Long {
     val ps = ProcessBuilder("ps", "-o", "pgid=", "-p", pid.toString()).start()
@@ -296,6 +418,7 @@ private fun processGroupOf(pid: Long): Long {
 
 private const val MAX_SOCKET_REMOVAL_ATTEMPTS: Int = 100
 private const val SOCKET_REMOVAL_WAIT_MILLIS: Long = 10
+private const val DAEMON_EXIT_TIMEOUT_SECONDS: Long = 10
 
 private fun testRuntimeClassPath(): String =
     requireNotNull(System.getProperty("spectre.cli.testRuntimeClasspath")) {

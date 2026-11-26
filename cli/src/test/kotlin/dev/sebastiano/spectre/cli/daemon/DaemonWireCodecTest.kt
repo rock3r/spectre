@@ -7,8 +7,68 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class DaemonWireCodecTest {
+    @Test
+    fun `diagnosed size separates polymorphic response bytes from real CBOR envelope`() {
+        val responses =
+            listOf(
+                DaemonResponse.Hello(DaemonProtocol.CurrentVersion),
+                DaemonResponse.Attached("session", 42),
+                DaemonResponse.Screenshot("session", ByteArray(65_537) { it.toByte() }),
+                DaemonResponse.Error(DaemonErrorCode.OperationFailed, "failed-é"),
+            )
+        val warningSets =
+            listOf(
+                listOf("one"),
+                List(23) { "warning-$it-é" },
+                List(200) { "" },
+            )
+
+        responses.forEach { response ->
+            val sizer = DiagnosedResponseSizer(response)
+            warningSets.forEach { warnings ->
+                assertEquals(
+                    DaemonWireCodec.encodeResponse(DaemonResponse.Diagnosed(response, warnings))
+                        .size,
+                    sizer.encodedSize(warnings),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `two hundred warnings require only logarithmically many CBOR envelope measurements`() {
+        var encodingCount = 0
+        val encoder: (DaemonResponse) -> ByteArray = { response ->
+            encodingCount++
+            DaemonWireCodec.encodeResponse(response)
+        }
+        val response = DaemonResponse.Screenshot("session", ByteArray(256 * 1_024))
+        val warnings = List(200) { "warning-$it" }
+        val retainedCount = 137
+        val expectedWarnings =
+            warnings.take(retainedCount) + truncationMarker(warnings.size - retainedCount)
+        val exactBudget =
+            DaemonWireCodec.encodeResponse(DaemonResponse.Diagnosed(response, expectedWarnings))
+                .size
+
+        val result =
+            assertIs<DaemonResponse.Diagnosed>(
+                diagnosedResponse(
+                    response,
+                    warnings,
+                    acceptsDiagnosedResponses = true,
+                    maxFrameBytes = exactBudget,
+                    encoder = encoder,
+                )
+            )
+
+        assertEquals(expectedWarnings, result.warnings)
+        assertTrue(encodingCount <= 11, "encoded $encodingCount times")
+    }
+
     @Test
     fun `writes and reads framed daemon requests`() {
         val output = ByteArrayOutputStream()
