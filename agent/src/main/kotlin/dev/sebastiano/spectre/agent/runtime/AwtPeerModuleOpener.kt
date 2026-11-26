@@ -16,19 +16,19 @@ import java.lang.instrument.Instrumentation
  */
 internal object AwtPeerModuleOpener {
 
-    fun openFor(targetClassLoader: ClassLoader, instrumentation: Instrumentation) {
+    fun openFor(targetClassLoader: ClassLoader, instrumentation: Instrumentation): String? {
         val desktop =
             ModuleLayer.boot().findModule(JAVA_DESKTOP).orElse(null)
                 ?: run {
                     System.err.println(
                         "[spectre-agent] java.desktop module not found; skipping AWT peer opens"
                     )
-                    return
+                    return "java.desktop module not found; native handles for embedded AWT peers may be unavailable"
                 }
         val consumers = collectConsumerModules(targetClassLoader)
         if (consumers.isEmpty()) {
             System.err.println("[spectre-agent] no consumer modules for AWT peer opens; skipping")
-            return
+            return "No consumer modules found for AWT peer opens; native handles may be unavailable"
         }
         // Only request packages that exist on this JDK/OS. Passing missing packages
         // (e.g. sun.awt.windows on macOS) makes redefineModule reject the whole batch.
@@ -37,7 +37,7 @@ internal object AwtPeerModuleOpener {
             System.err.println(
                 "[spectre-agent] no AWT peer packages present on this JDK; skipping opens"
             )
-            return
+            return "No AWT peer packages found on this JDK; native handles may be unavailable"
         }
         val grants = presentPackages.associateWith { consumers }
         try {
@@ -56,20 +56,22 @@ internal object AwtPeerModuleOpener {
                     "${consumers.joinToString { describeModule(it) }}: " +
                     presentPackages.joinToString()
             )
+            return null
         } catch (ex: IllegalArgumentException) {
-            logOpenFailure(ex)
+            return logOpenFailure(ex)
         } catch (ex: IllegalStateException) {
-            logOpenFailure(ex)
+            return logOpenFailure(ex)
         } catch (ex: SecurityException) {
-            logOpenFailure(ex)
+            return logOpenFailure(ex)
         }
     }
 
-    private fun logOpenFailure(ex: Throwable) {
-        System.err.println(
-            "[spectre-agent] failed to export/open AWT peer packages " +
-                "(native window handles may be null): ${ex.javaClass.simpleName}: ${ex.message}"
-        )
+    private fun logOpenFailure(ex: Throwable): String {
+        val warning =
+            "Failed to export/open AWT peer packages; native handles for embedded panels may " +
+                "be null: ${ex.javaClass.simpleName}: ${ex.message}"
+        System.err.println("[spectre-agent] $warning")
+        return warning
     }
 
     private fun collectConsumerModules(targetClassLoader: ClassLoader): Set<Module> {
