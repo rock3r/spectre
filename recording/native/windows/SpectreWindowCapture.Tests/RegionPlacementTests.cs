@@ -18,15 +18,19 @@ public sealed class RegionPlacementTests
     }
 
     [Fact]
-    public void OnePixelOvershootIsClampedInsteadOfRejected()
+    public void OnePixelOvershootIsTheOnlyOverflowThatIsTolerated()
     {
         var monitor = new MonitorRect(0, 0, 1920, 1080);
-        var region = new CaptureRect(1600, 900, 360, 181);
+        var region = new CaptureRect(1600, 900, 321, 181);
 
         var chosen = RegionPlacement.Choose(new[] { monitor }, region);
 
         Assert.NotNull(chosen);
         Assert.Equal(new CaptureRect(1600, 900, 320, 180), chosen.Value.Crop);
+
+        Assert.Null(RegionPlacement.Choose(
+            new[] { monitor },
+            new CaptureRect(1600, 900, 322, 182)));
     }
 
     [Fact]
@@ -50,5 +54,32 @@ public sealed class RegionPlacementTests
         var region = new CaptureRect(4000, 4000, 360, 180);
 
         Assert.Null(RegionPlacement.Choose(new[] { monitor }, region));
+    }
+
+    [Fact]
+    public void RegionSpanningMonitorsIsNotMovedToTheLargestOverlap()
+    {
+        var left = new MonitorRect(0, 0, 1920, 1080);
+        var right = new MonitorRect(1920, 0, 3840, 1080);
+        Assert.Null(RegionPlacement.Choose(
+            new[] { left, right },
+            new CaptureRect(1800, 100, 400, 300)));
+    }
+
+    [Fact]
+    public void EmptyOnePixelIntersectionIsRejectedOnEveryEdge()
+    {
+        var monitor = new MonitorRect(0, 0, 100, 100);
+        Assert.Null(RegionPlacement.Choose(new[] { monitor }, new CaptureRect(-1, 20, 1, 10)));
+        Assert.Null(RegionPlacement.Choose(new[] { monitor }, new CaptureRect(20, -1, 10, 1)));
+        Assert.Null(RegionPlacement.Choose(new[] { monitor }, new CaptureRect(100, 20, 1, 10)));
+        Assert.Null(RegionPlacement.Choose(new[] { monitor }, new CaptureRect(20, 100, 10, 1)));
+    }
+
+    [Fact]
+    public void OverflowingRectangleArithmeticIsRejected()
+    {
+        var monitor = new MonitorRect(0, 0, 100, 100);
+        Assert.Null(RegionPlacement.Choose(new[] { monitor }, new CaptureRect(int.MaxValue, 0, 2, 10)));
     }
 }

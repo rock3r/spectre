@@ -241,7 +241,7 @@ class DaemonSessionRegistryTest {
 
     @Test
     fun `starts and stops a recording through the attached session`() {
-        val outputPath = "/tmp/spectre-recording.mp4"
+        val outputPath = Path.of("/tmp/spectre-recording.mp4").toString()
         var startedAt: String? = null
         var startedWindowIndex: Int? = null
         val registry = DaemonSessionRegistry {

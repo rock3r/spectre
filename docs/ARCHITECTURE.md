@@ -148,8 +148,7 @@ Current backends:
   shared framework-dependent .NET Windows Graphics Capture helper packaged by
   `:recording-windows` for x64 and arm64.
 - `LinuxX11Recorder` — Linux Xorg/Xvfb region and named-window capture via the
-  `spectre-recording-linux` helper and GStreamer `ximagesrc`. Window mode resolves
-  an XID from the title and fails if that window is missing.
+  `spectre-recording-linux` helper and GStreamer `ximagesrc`. Window mode resolves exactly one visible XID from owner pid plus title and fails if the selector is missing or ambiguous.
 - `LinuxNativeScreenshotter` — Linux still screenshots via the same helper: GStreamer
   `ximagesrc` on Xorg/Xvfb, and one-frame portal/PipeWire capture on Wayland.
 - `FfmpegRegionScreenshotter` — deprecated legacy explicit Linux X11 still screenshot
@@ -165,8 +164,7 @@ Current backends:
   Region and monitor capture share a long-lived `spectre-wayland-helper --session`
   process with real OS input. That process uses RemoteDesktop, ScreenCast, host
   `Registry.Register`, and a Spectre-owned `restore_token` under
-  `$XDG_STATE_HOME/spectre`. Window-source capture uses a separate one-shot ScreenCast
-  helper. The `:recording-linux` artefact packages the helper. It passes the
+  `$XDG_STATE_HOME/spectre`. Unverifiable portal window-source capture is rejected; local Wayland windows use a compositor-bound Mutter stream instead. The `:recording-linux` artefact packages the helper. It passes the
   PipeWire FD to `gst-launch-1.0`.
 - `AutoRecorder` selects a backend for each `startWindow(...)` or `startRegion(...)`
   call. It uses the Wayland portal on Wayland, macOS SCK on macOS, Windows Graphics

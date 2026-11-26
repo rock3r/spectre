@@ -54,22 +54,45 @@ class FfmpegBackendTest {
     @Test
     fun `detectWaylandSession ignores blank WAYLAND_DISPLAY`() {
         // An empty string isn't a real signal — some init scripts export the var unset.
-        val getenv = fakeEnv("WAYLAND_DISPLAY" to "")
+        val getenv = fakeEnv("WAYLAND_DISPLAY" to "", "XDG_SESSION_TYPE" to "x11")
         assertFalse(FfmpegBackend.detectWaylandSession(getenv))
     }
 
     @Test
     fun `detectWaylandSession returns false on Xorg session`() {
         val getenv = fakeEnv("XDG_SESSION_TYPE" to "x11", "DISPLAY" to ":0")
-        assertFalse(FfmpegBackend.detectWaylandSession(getenv, displayIsXwayland = { false }))
+        assertFalse(
+            FfmpegBackend.detectWaylandSession(
+                getenv,
+                displayIsPureX11 = { true },
+                displayIsXwayland = { false },
+            )
+        )
     }
 
     @Test
-    fun `detectWaylandSession returns false when no relevant env vars are set`() {
+    fun `detectWaylandSession rejects an unproven session when no relevant env vars are set`() {
         // No DISPLAY, no WAYLAND_DISPLAY, no XDG_SESSION_TYPE — typical for a barebones
         // SSH session or a CI job without a display server. We don't claim "Wayland" in this
         // case; the actual ffmpeg-side error will surface separately.
-        assertFalse(FfmpegBackend.detectWaylandSession(fakeEnv()) { _ -> false })
+        val error =
+            assertFailsWith<IllegalStateException> {
+                FfmpegBackend.detectWaylandSession(fakeEnv()) { _ -> false }
+            }
+        assertTrue(error.message.orEmpty().contains("SPECTRE_CAPTURE_BACKEND"))
+        assertTrue(error.message.orEmpty().contains("DISPLAY"))
+    }
+
+    @Test
+    fun `x11 override still refuses a proven Xwayland display`() {
+        val error =
+            assertFailsWith<UnsupportedOperationException> {
+                FfmpegBackend.checkNotWayland(
+                    fakeEnv("SPECTRE_CAPTURE_BACKEND" to "x11", "DISPLAY" to ":7"),
+                    displayIsXwayland = { true },
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("Xwayland", ignoreCase = true))
     }
 
     // -----------------------------------------------------------------------
@@ -108,7 +131,7 @@ class FfmpegBackendTest {
             FfmpegBackend.detectWaylandSession(
                 getenv = xvfbEnv,
                 runtimeDirHasWaylandSocket = socketPresent,
-                displayIsPureX11 = { false }, // even without pure-X11 confirmation
+                displayIsPureX11 = { true }, // Xvfb is positively identified
                 displayIsXwayland = { false },
             )
         )
@@ -189,7 +212,7 @@ class FfmpegBackendTest {
     @Test
     fun `detectWaylandSession returns false when runtime dir exists but no wayland socket`() {
         // Pure Xorg host: runtime dir is set, but no `wayland-*` socket inside.
-        val xorgEnv = fakeEnv("XDG_SESSION_TYPE" to "tty", "XDG_RUNTIME_DIR" to "/run/user/1000")
+        val xorgEnv = fakeEnv("XDG_SESSION_TYPE" to "x11", "XDG_RUNTIME_DIR" to "/run/user/1000")
         val noSocket: (Path) -> Boolean = { _ -> false }
         assertFalse(FfmpegBackend.detectWaylandSession(xorgEnv, noSocket))
     }
@@ -198,14 +221,14 @@ class FfmpegBackendTest {
     fun `detectWaylandSession skips runtime dir probe when XDG_RUNTIME_DIR is unset`() {
         // No env signals AND no runtime dir to probe → false. The lambda must NOT be called
         // (we'd give it a junk path), so the test enforces that with a throwing fake.
-        val noRuntime = fakeEnv()
+        val noRuntime = fakeEnv("XDG_SESSION_TYPE" to "x11")
         val unreachable: (Path) -> Boolean = { _ -> error("must not probe filesystem") }
         assertFalse(FfmpegBackend.detectWaylandSession(noRuntime, unreachable))
     }
 
     @Test
     fun `detectWaylandSession ignores blank XDG_RUNTIME_DIR`() {
-        val blankRuntime = fakeEnv("XDG_RUNTIME_DIR" to "")
+        val blankRuntime = fakeEnv("XDG_RUNTIME_DIR" to "", "XDG_SESSION_TYPE" to "x11")
         val unreachable: (Path) -> Boolean = { _ -> error("must not probe filesystem") }
         assertFalse(FfmpegBackend.detectWaylandSession(blankRuntime, unreachable))
     }
@@ -241,7 +264,7 @@ class FfmpegBackendTest {
             FfmpegBackend.detectWaylandSession(
                 getenv = env,
                 runtimeDirHasWaylandSocket = { true },
-                displayIsPureX11 = { false },
+                displayIsPureX11 = { true },
                 displayIsXwayland = { false },
                 waylandSocketExists = { path ->
                     probed.add(path)
@@ -249,7 +272,7 @@ class FfmpegBackendTest {
                 },
             )
         )
-        assertEquals(listOf(Path.of("/run/user/1000", "wayland-1")), probed)
+        assertTrue(probed.isEmpty(), "a proven X11 server needs no socket fallback")
     }
 
     @Test
@@ -316,7 +339,7 @@ class FfmpegBackendTest {
         assertFalse(
             FfmpegBackend.detectWaylandSession(
                 getenv = env,
-                displayIsPureX11 = { false },
+                displayIsPureX11 = { true },
                 displayIsXwayland = { false },
                 waylandSocketExists = { error("relative socket cannot be resolved") },
             )
@@ -332,14 +355,14 @@ class FfmpegBackendTest {
                 "XDG_RUNTIME_DIR" to "/run/user/1000",
             )
         val probed = mutableListOf<Path>()
-        assertFalse(
+        assertTrue(
             FfmpegBackend.detectWaylandSession(
                 getenv = env,
                 displayIsPureX11 = { false },
                 displayIsXwayland = { false },
                 waylandSocketExists = { path ->
                     probed.add(path)
-                    false
+                    true
                 },
             )
         )
@@ -351,7 +374,7 @@ class FfmpegBackendTest {
         assertFalse(
             FfmpegBackend.detectWaylandSession(
                 getenv = fakeEnv("DISPLAY" to ":99"),
-                displayIsPureX11 = { error("no Wayland signal to disprove") },
+                displayIsPureX11 = { true },
                 displayIsXwayland = { false },
                 waylandSocketExists = { error("no Wayland signal to confirm") },
             )
@@ -491,7 +514,10 @@ class FfmpegBackendTest {
     @Test
     fun `checkNotWayland is a no-op on Xorg`() {
         // Should not throw. The fakeEnv with no Wayland signals models a healthy Xorg session.
-        FfmpegBackend.checkNotWayland(fakeEnv("DISPLAY" to ":0"), displayIsXwayland = { false })
+        FfmpegBackend.checkNotWayland(
+            fakeEnv("SPECTRE_CAPTURE_BACKEND" to "x11", "DISPLAY" to ":0"),
+            displayIsXwayland = { false },
+        )
     }
 
     @Test

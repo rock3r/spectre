@@ -8,6 +8,7 @@ import dev.sebastiano.spectre.recording.portal.DefaultWaylandHelperBinaryExtract
 import dev.sebastiano.spectre.recording.portal.Region
 import dev.sebastiano.spectre.recording.portal.WaylandHelperBinaryExtractor
 import dev.sebastiano.spectre.recording.portal.WaylandPortalRecorder
+import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import dev.sebastiano.spectre.recording.screencapturekit.WindowRecorder
 import java.awt.Rectangle
@@ -39,25 +40,42 @@ internal constructor(
         output: Path,
         options: RecordingOptions,
     ): RecordingHandle {
+        val framed = window as? FramedWindow
         val title = window.title
-        require(!title.isNullOrBlank()) {
+        require(framed != null || !title.isNullOrBlank()) {
             "LinuxX11Recorder requires a non-blank window title; got \"$title\"."
         }
-        return delegate(CaptureTarget.WINDOW, windowTitle = title)
+        return delegate(
+                CaptureTarget.WINDOW,
+                windowTitle = title,
+                windowOwnerPid = windowOwnerPid,
+                windowFrame = framed?.deviceFrame,
+            )
             .start(window.bounds, output, options)
     }
 
-    private fun delegate(target: CaptureTarget, windowTitle: String?): Recorder =
+    private fun delegate(
+        target: CaptureTarget,
+        windowTitle: String?,
+        windowOwnerPid: Long? = null,
+        windowFrame: Rectangle? = null,
+    ): Recorder =
         WaylandPortalRecorder.createForInternalUse(
             helperExtractor = helperExtractor,
             sourceTypes = emptyList(),
             startCommandFactory = { region, output, options ->
+                require(options.screenIndex == RecordingOptions.DEFAULT_SCREEN_INDEX) {
+                    "LinuxX11Recorder cannot select an X11 screen by index; " +
+                        "screenIndex=${options.screenIndex} cannot be honored."
+                }
                 Command.Start(
                     backend = CaptureBackend.X11,
                     target = target,
                     sourceTypes = emptyList(),
                     displayName = displayNameProvider()?.takeIf { it.isNotBlank() },
                     windowTitle = windowTitle,
+                    windowOwnerPid = windowOwnerPid,
+                    windowFrame = windowFrame?.let { Region(it.x, it.y, it.width, it.height) },
                     cursorMode =
                         if (options.captureCursor) CursorMode.EMBEDDED else CursorMode.HIDDEN,
                     frameRate = options.frameRate,

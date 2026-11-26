@@ -242,6 +242,35 @@ class DaemonSessionCommandProtocolTest {
     }
 
     @Test
+    fun `recording diagnostics survive stop detach and shutdown over CBOR`() {
+        val diagnostics = DaemonResponse.RecordingDiagnostics(13, true)
+        val stopped =
+            DaemonResponse.RecordingStopped("id", "video.mp4").also { it.diagnostics = diagnostics }
+        assertEquals(
+            diagnostics,
+            assertIs<DaemonResponse.RecordingStopped>(roundTripResponse(stopped)).diagnostics,
+        )
+        val detached =
+            DaemonResponse.Detached("id", "video.mp4").also { it.diagnostics = diagnostics }
+        assertEquals(
+            diagnostics,
+            assertIs<DaemonResponse.Detached>(roundTripResponse(detached)).diagnostics,
+        )
+        val final =
+            DaemonResponse.FinalizedRecording("id", "video.mp4").also {
+                it.diagnostics = diagnostics
+            }
+        val shutdown = DaemonResponse.ShuttingDownWithRecordings(listOf(final))
+        assertEquals(
+            diagnostics,
+            assertIs<DaemonResponse.ShuttingDownWithRecordings>(roundTripResponse(shutdown))
+                .recordings
+                .single()
+                .diagnostics,
+        )
+    }
+
+    @Test
     fun `session lifecycle requests round trip through cbor`() {
         val requests =
             listOf<DaemonRequest>(

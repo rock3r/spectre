@@ -389,16 +389,13 @@ takes about 0.15 s, so three stable samples fit inside one blink of a text caret
 versions started a new helper for each still and took about 0.6 s per sample, so a focused
 text field could stop `waitForVisualIdle()` from settling.
 
-macOS does the same for a window that the capture helper can find again by the same selector: an
-untitled window, such as a Swing `JWindow` popup, by its frame, and a window with a unique title by
-that title. A warm still then takes about 35 to 65 ms. Earlier versions started a new
-ScreenCaptureKit capture for each still, which took about 1.4 s. A sample with two windows, such as
-an app window and an open popup, then ran out of its 2 s budget, and `waitForVisualIdle()` timed
-out with most samples unsampleable. A window whose title another window also contains still takes
-one-shot stills, because Spectre adds a different title suffix for each still to find it.
+macOS does the same for every window. Unique titles use an owner-scoped title selector; untitled
+windows and windows whose title is shared use their owner-scoped on-screen frame. A warm still then
+takes about 35 to 65 ms. Spectre never changes the application's title. If two windows share both
+title and frame, capture fails as ambiguous rather than guessing.
 
-Spectre stops every open stills session before it starts a recording or a one-shot still on
-macOS. Then only one capture helper holds a ScreenCaptureKit stream when the new capture starts.
+Spectre stops every open stills session before it starts a recording on macOS. Then only one
+capture helper holds a ScreenCaptureKit stream when the new capture starts.
 
 If every macOS capture fails with `timed out waiting for first recording frame` or
 `timed out waiting for the first stills frame`, and `waitForVisualIdle()` reports every sample as
@@ -531,8 +528,7 @@ If dialogs still appear:
 - A rejected token is cleared and retried once. A second failure is fatal; delete the
   token file only when re-consent is intended.
 
-- A "window picker" dialog (pick one window) comes from `WaylandPortalWindowRecorder`, which
-  you call directly. `AutoRecorder` and screenshots do not use it.
+- Explicit portal window requests fail before opening a picker because the grant cannot identify the requested window.
 
 If nobody answers a dialog that a capture opened within 60 seconds, or someone cancels it,
 Spectre does not ask again in the same JVM. Every later capture fails at once with an error
@@ -548,20 +544,35 @@ See [Linux Wayland consent](recording.md#linux-wayland-consent).
 
 ## "Linux Wayland window capture fails: could not bind a GNOME Mutter window stream"
 
-On Linux Wayland, Spectre captures a window through a GNOME Mutter window stream. Mutter
-records the window that has keyboard focus, so Spectre focuses the window for a moment the
-first time, and checks that the recorded window has the expected size. The error means the
-window did not get focus (for example a modal dialog held it), another window was recorded,
-the window is translucent, or the first capture ran on the AWT event dispatch thread.
+On Linux Wayland, Spectre captures a window through a GNOME Mutter window stream. Install the
+GNOME Shell extension bundled in the `spectre-recording-linux` jar, then enable it and start a new
+GNOME session. The installer selects GNOME Shell's legacy entry point on versions 42–44 and its
+ES-module entry point on versions 45–50:
 
-- Make sure the window can take focus, and that nothing else grabs focus at that moment. When
-  the window's own focus request is ignored, Spectre asks the window manager to activate the
-  window. If the message ends with "window-manager activation failed", that request could not be
-  sent; the text after it says why.
+```shell
+jar xf spectre-recording-linux-<version>.jar \
+  native/linux/gnome-shell-extension
+bash native/linux/gnome-shell-extension/install.sh
+gnome-extensions enable spectre-window-identity@sebastiano.dev
+```
+
+On a seated GNOME Wayland terminal (not SSH and not Xvfb), run the exact hard smoke below. It opens
+two same-title, same-size windows, keeps the blue decoy focused before and after binding, checks the
+covered red window's pixels, records it, and binds a third window. It must print `PASS`, open no
+Share dialog, and leave its evidence in `/tmp/spectre-mutter-window-smoke/`:
+
+```shell
+echo "$XDG_SESSION_TYPE $WAYLAND_DISPLAY $DISPLAY"
+gnome-extensions info spectre-window-identity@sebastiano.dev
+./gradlew --no-daemon :recording:runWaylandMutterWindowSmoke
+```
+
+Spectre resolves the JVM PID and exact Xwayland XID through that extension and passes the returned
+Mutter id to `RecordWindow`. It does not focus the window. The error means the extension is absent,
+the PID/XID was missing or ambiguous, the first frame did not match, or the window was translucent.
+
+- Confirm `gnome-extensions info spectre-window-identity@sebastiano.dev` reports `State: ENABLED`.
 - Translucent windows cannot be bound yet. Capture a screen region instead.
-- Popup windows (a `JWindow`, or any window that is not a `Frame` or `Dialog`) fail with an
-  `UnsupportedOperationException` that names [#640](https://github.com/rock3r/spectre/issues/640):
-  AWT keeps their keyboard focus on the owner frame. Capture the owner window or a region.
 - On a desktop other than GNOME there is no Mutter API, and window capture fails with an
   error. Use `screenshot(region)`, `startRegion`, or X11/Xvfb.
 

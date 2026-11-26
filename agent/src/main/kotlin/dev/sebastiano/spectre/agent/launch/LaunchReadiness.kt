@@ -6,6 +6,8 @@ import dev.sebastiano.spectre.agent.AttachOptions
 import dev.sebastiano.spectre.agent.AttachedAutomator
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.HotSpotAttachSocket
+import dev.sebastiano.spectre.agent.RemoteAttachFailure
+import dev.sebastiano.spectre.agent.RemoteAttachFailureKind
 import dev.sebastiano.spectre.agent.SpectreAgentException
 import dev.sebastiano.spectre.agent.SpectreAttachException
 import dev.sebastiano.spectre.agent.effectiveUdsPath
@@ -222,7 +224,7 @@ internal object LaunchReadiness {
             // stack a full attachTimeoutMs UDS wait after the stage deadline.
             val options = attachOptions.copy(udsPath = udsPath, attachTimeoutMs = remainingMs)
             try {
-                return AgentAttach.attach(attachedPid, options)
+                return AgentAttach.attachLaunched(attachedPid, options, remainingMs)
             } catch (ex: AttachInterruptedException) {
                 Thread.currentThread().interrupt()
                 throw LaunchAgentBootstrapException(
@@ -334,8 +336,20 @@ internal object LaunchReadiness {
         ) {
             return false
         }
-        if (chain.any { it.javaClass.simpleName == "AttachNotSupportedException" }) return true
-        if (chain.any { it.javaClass.simpleName == "AgentLoadException" }) {
+        if (
+            chain.any {
+                (it as? RemoteAttachFailure)?.kind == RemoteAttachFailureKind.AttachNotSupported ||
+                    it.javaClass.simpleName == "AttachNotSupportedException"
+            }
+        ) {
+            return true
+        }
+        if (
+            chain.any {
+                (it as? RemoteAttachFailure)?.kind == RemoteAttachFailureKind.AgentLoad ||
+                    it.javaClass.simpleName == "AgentLoadException"
+            }
+        ) {
             // HotSpot: "Target VM did not respond" and "target process not responding".
             return "not respond" in lower ||
                 "no such process" in lower ||

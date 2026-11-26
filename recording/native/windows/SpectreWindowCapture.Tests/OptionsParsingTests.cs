@@ -143,6 +143,28 @@ public sealed class OptionsParsingTests
         Assert.Equal(99L, options.OwnerPid);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RecordingAcceptsOwnerFrameWithOptionalWindowRelativeCrop(bool cropped)
+    {
+        List<string> args = [
+            "--mode", "recording", "--source", "window", "--owner-pid", "99",
+            "--frame-x", "-1280", "--frame-y", "40", "--frame-width", "300", "--frame-height", "200",
+            "--output", "out.mp4",
+        ];
+        if (cropped)
+        {
+            args.AddRange(["--crop-x", "4", "--crop-y", "6", "--crop-width", "40", "--crop-height", "30"]);
+        }
+        var options = Options.Parse(args.ToArray());
+        Assert.Equal(CaptureMode.Recording, options.Mode);
+        Assert.Equal(99L, options.OwnerPid);
+        Assert.Null(options.Title);
+        Assert.Equal(new CaptureRect(-1280, 40, 300, 200), options.Frame);
+        Assert.Equal(cropped ? new CaptureRect(4, 6, 40, 30) : null, options.Crop);
+    }
+
     [Fact]
     public void ParseRejectsFrameTogetherWithTitle()
     {

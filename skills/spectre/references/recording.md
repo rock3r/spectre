@@ -12,6 +12,10 @@ captures all use the native window backend and **fail closed** when that backend
 the window — they never substitute a `Robot` desktop crop. Use `AutoScreenshotter.captureWindow(frame.asTitledWindow())`
 when calling the top-level window still API directly outside `ComposeAutomator`.
 
+Window selection is scoped to the owner process. A unique title is only a filter; shared or
+untitled local windows are selected by their on-screen frame. If identity and geometry still match
+more than one window, capture fails as ambiguous. Spectre never changes the application's title.
+
 | Platform | Still backend | Runtime helper artefact |
 |---|---|---|
 | macOS | ScreenCaptureKit still-image mode (`ScreenCaptureKitScreenshotter`) | `spectre-recording-macos` |
@@ -105,6 +109,7 @@ Spectre stores the grant and keeps one long-lived `spectre-wayland-helper` sessi
 - **Never retry in a loop in JUnit.** JUnit runs never open the portal dialog unless
   `-Dspectre.wayland.consentPrompt=allow` is explicitly set; without a stored grant they fail immediately naming
   `spectre permissions request`.
+- Explicit generic portal window requests fail before prompting or restoring a grant. The picker cannot identify the requested window.
 - **GNOME Mutter window streams** power window stills, visual-idle samples, and `startWindow` through the same helper
   session (so they still require the one-time grant). On non-GNOME Wayland desktops, use `startRegion(...)`,
   `screenshot(region)`, or X11/Xvfb.

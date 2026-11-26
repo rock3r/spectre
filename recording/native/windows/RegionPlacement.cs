@@ -6,14 +6,17 @@ internal readonly record struct PlacedRegion(MonitorRect Monitor, CaptureRect Cr
 /// Maps a screen-space capture rectangle onto one monitor.
 ///
 /// EnumDisplayMonitors and the JVM can disagree by a pixel at a DPI boundary. A region that is
-/// fully inside a monitor keeps its size. A region that only overshoots is clamped to the overlap
-/// so the helper does not fail closed on that pixel. A region that misses every monitor is not
-/// placed.
+/// fully inside a monitor keeps its size. Only a one-pixel DPI-rounding overshoot is clamped;
+/// cross-monitor and larger overflow is rejected.
 /// </summary>
 internal static class RegionPlacement
 {
     public static PlacedRegion? Choose(IReadOnlyList<MonitorRect> monitors, CaptureRect region)
     {
+        if (region.Width <= 0 || region.Height <= 0)
+        {
+            return null;
+        }
         foreach (var monitor in monitors)
         {
             if (FullyContains(monitor, region))
@@ -22,39 +25,32 @@ internal static class RegionPlacement
             }
         }
 
-        PlacedRegion? best = null;
-        var bestArea = 0;
         foreach (var monitor in monitors)
         {
             var overlap = Intersection(monitor, region);
-            if (overlap is null)
+            if (overlap is null || Overflow(monitor, region) > 1)
             {
                 continue;
             }
-
-            var area = overlap.Width * overlap.Height;
-            if (area > bestArea)
-            {
-                bestArea = area;
-                best = new PlacedRegion(monitor, CropWithin(monitor, overlap));
-            }
+            return new PlacedRegion(monitor, CropWithin(monitor, overlap));
         }
-
-        return best;
+        return null;
     }
 
     private static bool FullyContains(MonitorRect monitor, CaptureRect region) =>
+        region.Width > 0 &&
+        region.Height > 0 &&
         region.X >= monitor.Left &&
         region.Y >= monitor.Top &&
-        region.Right <= monitor.Right &&
-        region.Bottom <= monitor.Bottom;
+        (long)region.X + region.Width <= monitor.Right &&
+        (long)region.Y + region.Height <= monitor.Bottom;
 
     private static CaptureRect? Intersection(MonitorRect monitor, CaptureRect region)
     {
         var left = Math.Max(region.X, monitor.Left);
         var top = Math.Max(region.Y, monitor.Top);
-        var right = Math.Min(region.Right, monitor.Right);
-        var bottom = Math.Min(region.Bottom, monitor.Bottom);
+        var right = Math.Min((long)region.X + region.Width, monitor.Right);
+        var bottom = Math.Min((long)region.Y + region.Height, monitor.Bottom);
         var width = right - left;
         var height = bottom - top;
         if (width <= 0 || height <= 0)
@@ -62,8 +58,13 @@ internal static class RegionPlacement
             return null;
         }
 
-        return new CaptureRect(left, top, width, height);
+        return new CaptureRect((int)left, (int)top, (int)width, (int)height);
     }
+
+    private static long Overflow(MonitorRect monitor, CaptureRect region) =>
+        Math.Max(
+            Math.Max(Math.Max(monitor.Left - region.X, 0), Math.Max(monitor.Top - region.Y, 0)),
+            Math.Max(Math.Max((long)region.X + region.Width - monitor.Right, 0), Math.Max((long)region.Y + region.Height - monitor.Bottom, 0)));
 
     private static CaptureRect CropWithin(MonitorRect monitor, CaptureRect screenRect) =>
         new(
