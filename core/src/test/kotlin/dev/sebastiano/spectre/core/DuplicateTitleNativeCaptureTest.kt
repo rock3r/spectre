@@ -3,8 +3,11 @@
 package dev.sebastiano.spectre.core
 
 import java.awt.Frame
+import java.awt.Rectangle
 import java.awt.Window
 import java.awt.image.BufferedImage
+import java.util.concurrent.TimeUnit
+import javax.swing.SwingUtilities
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -54,14 +57,17 @@ class DuplicateTitleNativeCaptureTest {
     @Test
     fun `duplicate window titles still fail when the frames match too`() {
         assumeLiveAwtAvailable()
+        val requestedBounds = Rectangle(10, 20, 100, 80)
         val first =
             Frame("same title").apply {
-                setBounds(10, 20, 100, 80)
+                isUndecorated = true
+                bounds = requestedBounds
                 isVisible = true
             }
         val second =
             Frame("same title").apply {
-                setBounds(10, 20, 100, 80)
+                isUndecorated = true
+                bounds = requestedBounds
                 isVisible = true
             }
         val backend =
@@ -71,6 +77,27 @@ class DuplicateTitleNativeCaptureTest {
                 nativeCaptureSelectsByFrame = { true },
             )
         try {
+            // A real WM is allowed to place a newly mapped window somewhere other than its
+            // pre-map requested position. Reapply the common frame after both maps, which is the
+            // state this ambiguity test promises to exercise.
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+            var consecutiveMatches = 0
+            do {
+                if (first.bounds != requestedBounds || second.bounds != requestedBounds) {
+                    SwingUtilities.invokeAndWait {
+                        first.bounds = requestedBounds
+                        second.bounds = requestedBounds
+                    }
+                }
+                Thread.sleep(25)
+                if (first.bounds == requestedBounds && second.bounds == requestedBounds) {
+                    consecutiveMatches++
+                } else {
+                    consecutiveMatches = 0
+                }
+            } while (consecutiveMatches < 10 && System.nanoTime() < deadline)
+            assertEquals(requestedBounds, first.bounds, "first frame must match the selector")
+            assertEquals(requestedBounds, second.bounds, "second frame must match the selector")
             val error =
                 assertFailsWith<IllegalStateException> { backend.captureWindow(tracked(second)) }
 
