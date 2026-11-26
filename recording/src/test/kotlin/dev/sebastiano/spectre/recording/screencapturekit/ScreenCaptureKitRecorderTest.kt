@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
 import dev.sebastiano.spectre.recording.RecordingOptions
+import dev.sebastiano.spectre.recording.stopWithResult
 import java.awt.Rectangle
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -24,8 +25,9 @@ class ScreenCaptureKitRecorderTest {
     private fun newRecorder(
         helperPath: Path = Path.of("/tmp/spectre-screencapture-fake"),
         process: Process = FakeHelperProcess(),
+        writesOutput: Boolean = true,
     ): Pair<ScreenCaptureKitRecorder, RecordingProcessFactory> {
-        val factory = RecordingProcessFactory(process)
+        val factory = RecordingProcessFactory(process, writesOutput)
         val extractor =
             HelperBinaryExtractor(
                 envLookup = { null },
@@ -46,9 +48,53 @@ class ScreenCaptureKitRecorderTest {
     }
 
     @Test
+    fun `final result distinguishes reported drops from unreported drops`() {
+        val output = Files.createTempFile("spectre-result-", ".mov")
+        try {
+            for (count in listOf(null, 0L, 7L)) {
+                val process =
+                    object : FakeHelperProcess() {
+                        override fun getInputStream(): InputStream =
+                            ("READY\n" + count?.let { "RECORDING_RESULT $it true\n" }.orEmpty())
+                                .byteInputStream()
+                    }
+                val (recorder, _) = newRecorder(process = process)
+                val handle =
+                    recorder.startMatchingTitle(
+                        "App",
+                        42L,
+                        output,
+                        RecordingOptions(),
+                        crop = Rectangle(0, 0, 4, 4),
+                    )
+                val result = handle.stopWithResult()
+                assertEquals(count, result.droppedFrames)
+                assertEquals(true, result.cropFixedAtStart)
+                assertEquals(result, handle.stopWithResult())
+            }
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `clean helper exit cannot claim an unchanged pre-existing movie`() {
+        val output = Files.createTempFile("spectre-sck-stale-", ".mov")
+        try {
+            Files.write(output, byteArrayOf(1))
+            val (recorder, _) = newRecorder(writesOutput = false)
+            val handle = recorder.start(FakeTitledWindow("App"), 42L, output, RecordingOptions())
+            assertFailsWith<IllegalStateException> { handle.stop() }
+        } finally {
+            output.deleteIfExists()
+        }
+    }
+
+    @Test
     fun `start spawns the helper with arguments derived from the call`() {
         val window = FakeTitledWindow(initialTitle = "MyApp")
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, factory) = newRecorder()
         try {
             recorder.start(
@@ -77,6 +123,7 @@ class ScreenCaptureKitRecorderTest {
     fun `start applies title discriminator and stop restores the original title`() {
         val window = FakeTitledWindow(initialTitle = "MyApp")
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, _) = newRecorder()
         try {
             val handle = recorder.start(window, 4242L, output, RecordingOptions())
@@ -96,6 +143,7 @@ class ScreenCaptureKitRecorderTest {
         val process = InstantlyExitingFakeProcess(exitCode = 3)
         val window = FakeTitledWindow(initialTitle = "MyApp")
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, _) = newRecorder(process = process)
         try {
             val ex =
@@ -117,6 +165,7 @@ class ScreenCaptureKitRecorderTest {
     fun `start with region surfaces helper exit-3 as missing display`() {
         val process = InstantlyExitingFakeProcess(exitCode = 3)
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, _) = newRecorder(process = process)
         try {
             val ex =
@@ -142,6 +191,7 @@ class ScreenCaptureKitRecorderTest {
         val process = InstantlyExitingFakeProcess(exitCode = 4)
         val window = FakeTitledWindow(initialTitle = "MyApp")
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, _) = newRecorder(process = process)
         try {
             val ex =
@@ -163,6 +213,7 @@ class ScreenCaptureKitRecorderTest {
         val window = FakeTitledWindow(initialTitle = "MyApp")
         val process = FakeHelperProcess()
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, _) = newRecorder(process = process)
         try {
             val handle = recorder.start(window, 4242L, output, RecordingOptions())
@@ -183,6 +234,7 @@ class ScreenCaptureKitRecorderTest {
         val window = FakeTitledWindow(initialTitle = "MyApp")
         val process = FakeHelperProcess()
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, _) = newRecorder(process = process)
         try {
             val handle = recorder.start(window, 4242L, output, RecordingOptions())
@@ -198,6 +250,7 @@ class ScreenCaptureKitRecorderTest {
     fun `close delegates to stop`() {
         val window = FakeTitledWindow(initialTitle = "MyApp")
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, _) = newRecorder()
         try {
             val handle = recorder.start(window, 4242L, output, RecordingOptions())
@@ -214,6 +267,7 @@ class ScreenCaptureKitRecorderTest {
         val window = FakeTitledWindow(initialTitle = "MyApp")
         val process = CrashableFakeHelperProcess()
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, _) = newRecorder(process = process)
         try {
             val handle = recorder.start(window, 4242L, output, RecordingOptions())
@@ -233,6 +287,7 @@ class ScreenCaptureKitRecorderTest {
         // The default pid must reflect that without forcing every caller to pass it.
         val window = FakeTitledWindow(initialTitle = "MyApp")
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, factory) = newRecorder()
         try {
             recorder.start(window = window, output = output, options = RecordingOptions())
@@ -248,6 +303,7 @@ class ScreenCaptureKitRecorderTest {
     @Test
     fun `start with region spawns the helper with region source arguments`() {
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, factory) = newRecorder()
         try {
             recorder.start(
@@ -272,6 +328,7 @@ class ScreenCaptureKitRecorderTest {
     @Test
     fun `start with region rejects custom codec before spawning helper`() {
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, factory) = newRecorder()
         try {
             val error =
@@ -294,6 +351,7 @@ class ScreenCaptureKitRecorderTest {
     fun `start with window rejects custom codec before mutating the title`() {
         val window = FakeTitledWindow(initialTitle = "MyApp")
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, factory) = newRecorder()
         try {
             val error =
@@ -317,6 +375,7 @@ class ScreenCaptureKitRecorderTest {
     @Test
     fun `start with region rejects negative origins before spawning helper`() {
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, factory) = newRecorder()
         try {
             val error =
@@ -338,6 +397,7 @@ class ScreenCaptureKitRecorderTest {
     @Test
     fun `start with region rejects empty regions before spawning helper`() {
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, factory) = newRecorder()
         try {
             val error =
@@ -360,6 +420,7 @@ class ScreenCaptureKitRecorderTest {
     fun `start preserves a null original title and stop restores it as null`() {
         val window = FakeTitledWindow(initialTitle = null)
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, _) = newRecorder()
         try {
             val handle = recorder.start(window, 4242L, output, RecordingOptions())
@@ -374,6 +435,7 @@ class ScreenCaptureKitRecorderTest {
     fun `start does not mutate a uniquely titled window and matches its original title`() {
         val window = DiscriminationAwareFakeWindow("Unique title", requiresDiscriminator = false)
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, factory) = newRecorder()
         try {
             val handle = recorder.start(window, 4242L, output, RecordingOptions())
@@ -391,6 +453,7 @@ class ScreenCaptureKitRecorderTest {
     fun `startCropped does not mutate a uniquely titled window`() {
         val window = DiscriminationAwareFakeWindow("Unique title", requiresDiscriminator = false)
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, factory) = newRecorder()
         try {
             val handle =
@@ -413,6 +476,7 @@ class ScreenCaptureKitRecorderTest {
     fun `start with a unique title does not touch the title when helper start fails`() {
         val window = DiscriminationAwareFakeWindow("Unique title", requiresDiscriminator = false)
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, _) = newRecorder(process = InstantlyExitingFakeProcess(exitCode = 3))
         try {
             assertFailsWith<IllegalStateException> {
@@ -428,6 +492,7 @@ class ScreenCaptureKitRecorderTest {
     fun `start applies and restores the discriminator when the window requires one`() {
         val window = DiscriminationAwareFakeWindow("Shared title", requiresDiscriminator = true)
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
+        Files.write(output, byteArrayOf(1))
         val (recorder, factory) = newRecorder()
         try {
             val handle = recorder.start(window, 4242L, output, RecordingOptions())
@@ -463,12 +528,15 @@ private class DiscriminationAwareFakeWindow(
         get() = requiresDiscriminator
 }
 
-private class RecordingProcessFactory(private val process: Process) :
-    ScreenCaptureKitRecorder.ProcessFactory {
+private class RecordingProcessFactory(
+    private val process: Process,
+    private val writesOutput: Boolean,
+) : ScreenCaptureKitRecorder.ProcessFactory {
     var lastArgv: List<String> = emptyList()
         private set
 
     override fun start(argv: List<String>): Process {
+        if (writesOutput) Files.write(Path.of(argv.last()), byteArrayOf(1, 2))
         lastArgv = argv
         return process
     }

@@ -31,6 +31,17 @@ use std::time::{Duration, Instant};
 /// recordings, but 30s is comfortably above any realistic capture finalisation time.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
 
+pub(crate) fn finalized_size(path: &std::path::Path) -> Result<u64> {
+    let metadata = std::fs::metadata(path)
+        .with_context(|| format!("reading finalized recording at {}", path.display()))?;
+    anyhow::ensure!(
+        metadata.is_file() && metadata.len() > 0,
+        "no non-empty recording at {}",
+        path.display()
+    );
+    Ok(metadata.len())
+}
+
 pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
     match start.backend {
         CaptureBackend::WaylandPortal => run_wayland(start, events),
@@ -250,9 +261,7 @@ fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
         return Ok(()); // Don't double-report — the Error event is the canonical signal.
     }
 
-    let output_size_bytes = std::fs::metadata(&start.output)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let output_size_bytes = finalized_size(start.output.as_ref())?;
     let _ = events.send(Event::Stopped { output_size_bytes });
 
     // session is dropped here — drops the D-Bus connection, releases the portal grant.
@@ -421,7 +430,7 @@ fn run_gst_lifecycle(
         return Ok(());
     }
 
-    let output_size_bytes = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+    let output_size_bytes = finalized_size(output.as_ref())?;
     let _ = events.send(Event::Stopped { output_size_bytes });
     Ok(())
 }

@@ -35,7 +35,10 @@ pub fn run(command: ScreenshotCommand, events: mpsc::Sender<Event>) -> Result<()
 }
 
 fn build_x11_screenshot_argv(command: &ScreenshotCommand, output: &PathBuf) -> Result<Vec<String>> {
-    let capture_cursor = matches!(command.cursor_mode, crate::protocol::CursorMode::Embedded);
+    let capture_cursor = matches!(
+        command.cursor_mode,
+        Some(crate::protocol::CursorMode::Embedded)
+    );
     let target = match command.target {
         CaptureTarget::Region => X11CaptureTarget::Region {
             display_name: command.display_name.clone(),
@@ -78,7 +81,9 @@ fn run_wayland_screenshot(command: &ScreenshotCommand, output: &PathBuf) -> Resu
     };
     let session = portal::open_screen_cast_session(
         &source_types,
-        command.cursor_mode,
+        command
+            .cursor_mode
+            .unwrap_or(crate::protocol::CursorMode::Hidden),
         DEFAULT_RESPONSE_TIMEOUT,
     )
     .context("portal screenshot handshake")?;

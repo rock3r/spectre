@@ -1,8 +1,11 @@
 package dev.sebastiano.spectre.recording.portal
 
 import dev.sebastiano.spectre.recording.Recorder
+import dev.sebastiano.spectre.recording.RecordingFileStamp
 import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
+import dev.sebastiano.spectre.recording.recordingFileStamp
+import dev.sebastiano.spectre.recording.validateRecordingOutput
 import dev.sebastiano.spectre.recording.withWaylandHelperEnvironment
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
@@ -110,6 +113,8 @@ private constructor(
         }
         val helperPath = helperExtractor.extract()
         Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
+        val command = startCommandFactory(region, output, options)
+        val previous = recordingFileStamp(output)
         val process = processFactory.start(helperPath)
 
         // The reader thread, the latches, and the events live for the recorder's lifetime.
@@ -129,7 +134,7 @@ private constructor(
 
         @Suppress("TooGenericExceptionCaught")
         try {
-            writeCommand(process.outputStream, startCommandFactory(region, output, options))
+            writeCommand(process.outputStream, command)
         } catch (e: IOException) {
             val launchFailure =
                 IllegalStateException(
@@ -172,6 +177,7 @@ private constructor(
                     throw syncFailure
                 }
         return GstRecordingHandle(
+            previous = previous,
             process = process,
             output = output,
             json = json,
@@ -193,8 +199,9 @@ private constructor(
     ): RecordingHandle {
         Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
         val command = startCommandFactory(region, output, options)
+        val previous = recordingFileStamp(output)
         val held = client.startHeld(command)
-        return SessionRecordingHandle(held, output)
+        return SessionRecordingHandle(held, output, previous)
     }
 
     @Suppress("LongParameterList", "TooGenericExceptionCaught")
@@ -343,6 +350,10 @@ private constructor(
         fun defaultStartCommandFactory(
             sourceTypes: List<SourceType>
         ): (Rectangle, Path, RecordingOptions) -> Command.Start = { region, output, options ->
+            require(options.screenIndex == RecordingOptions.DEFAULT_SCREEN_INDEX) {
+                "Wayland portal display selection is controlled by the portal picker; " +
+                    "screenIndex=${options.screenIndex} cannot be honored."
+            }
             Command.Start(
                 backend = CaptureBackend.WAYLAND_PORTAL,
                 target =
@@ -444,6 +455,7 @@ internal const val FORCED_REAP_TIMEOUT_MS: Long = 2_000
 internal class SessionRecordingHandle(
     private val held: HeldRecordingSession,
     override val output: Path,
+    private val previous: RecordingFileStamp?,
 ) : RecordingHandle {
     private val stopInitiated = AtomicBoolean(false)
     private val finished = CountDownLatch(1)
@@ -465,6 +477,7 @@ internal class SessionRecordingHandle(
                 check(event is Event.Stopped) {
                     "spectre-wayland-helper session did not stop recording: $event"
                 }
+                validateRecordingOutput(output, event.outputSizeBytes, previous)
             }
             result.set(Result.success(Unit))
         } catch (t: Throwable) {
@@ -486,6 +499,7 @@ internal class SessionRecordingHandle(
 private class GstRecordingHandle(
     private val process: Process,
     override val output: Path,
+    private val previous: RecordingFileStamp?,
     private val json: Json,
     @Suppress("unused") private val startedEvent: Event.Started,
     private val stoppedRef: AtomicReference<Event.Stopped?>,
@@ -580,6 +594,11 @@ private class GstRecordingHandle(
                     "process's stderr) for the underlying cause."
             )
         }
+        val stopped =
+            checkNotNull(stoppedRef.get()) {
+                "Recording helper exited without reporting Stopped for $output."
+            }
+        validateRecordingOutput(output, stopped.outputSizeBytes, previous)
     }
 
     private fun waitForGracefulExitOrReap(

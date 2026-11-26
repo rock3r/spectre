@@ -29,6 +29,8 @@ import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -408,14 +410,10 @@ class DaemonFixtureIntegrationTest {
         }
     }
 
-    /**
-     * #185 kill-target acceptance (real attach): daemon-owned record start → kill fixture mid-
-     * record → stop still finalises a non-empty MP4. Skips on headless CI and when Screen Recording
-     * is not granted (macOS TCC).
-     */
+    /** Real CLI acceptance for #662's atomic publication and owner-loss contracts. */
     @Test
     @EnabledOnOs(OS.MAC)
-    fun `CLI record stop finalizes after killing the attached target process`() {
+    fun `CLI record stop publishes healthy output and rejects owner loss`() {
         assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a Compose Desktop display")
         assumeTrue(
             runCatching {
@@ -427,8 +425,10 @@ class DaemonFixtureIntegrationTest {
             "Screen Recording TCC not granted for this runner",
         )
         val daemonUser = "spectre-record-kill-e2e-${UUID.randomUUID()}"
-        val output = Files.createTempFile("spectre-record-kill-", ".mp4")
-        Files.deleteIfExists(output)
+        val healthyOutput = Files.createTempFile("spectre-record-healthy-", ".mp4")
+        val ownerLossOutput = Files.createTempFile("spectre-record-owner-loss-", ".mp4")
+        Files.deleteIfExists(healthyOutput)
+        Files.deleteIfExists(ownerLossOutput)
 
         try {
             spawnComposeFixture().use { fixture ->
@@ -448,29 +448,75 @@ class DaemonFixtureIntegrationTest {
                         "start",
                         sessionId,
                         "--output",
-                        output.toString(),
+                        healthyOutput.toString(),
                         "--json",
                     )
                 assertEquals(0, start.exitCode, start.output + start.errorOutput)
-                assertTrue(Files.exists(output) || start.output.contains("mp4"), start.output)
-                waitForNonEmptyRecording(output)
+                assertEquals(
+                    healthyOutput.toString(),
+                    Json.parseToJsonElement(start.output)
+                        .jsonObject
+                        .getValue("path")
+                        .jsonPrimitive
+                        .content,
+                )
+                assertFalse(Files.exists(healthyOutput), "start must not publish a partial MP4")
 
-                // Kill the target mid-record; daemon + SCK helper must keep running.
+                Thread.sleep(RECORD_HEALTHY_CAPTURE_MILLIS)
+                val healthyStop = runCliBinary(daemonUser, "record", "stop", sessionId, "--json")
+                assertEquals(0, healthyStop.exitCode, healthyStop.output + healthyStop.errorOutput)
+                assertEquals(
+                    healthyOutput.toString(),
+                    Json.parseToJsonElement(healthyStop.output)
+                        .jsonObject
+                        .getValue("path")
+                        .jsonPrimitive
+                        .content,
+                )
+                assertFinalizedMp4(healthyOutput)
+
+                val ownerLossStart =
+                    runCliBinary(
+                        daemonUser,
+                        "record",
+                        "start",
+                        sessionId,
+                        "--output",
+                        ownerLossOutput.toString(),
+                        "--json",
+                    )
+                assertEquals(
+                    0,
+                    ownerLossStart.exitCode,
+                    ownerLossStart.output + ownerLossStart.errorOutput,
+                )
+                assertFalse(
+                    Files.exists(ownerLossOutput),
+                    "start must keep the in-progress movie private",
+                )
+
+                // The fixture emitted READY before attach, and record start returned only after
+                // the native helper emitted its own READY. Kill the actual capture owner now.
                 fixture.close()
                 Thread.sleep(RECORD_AFTER_KILL_SETTLE_MILLIS)
 
                 val stop = runCliBinary(daemonUser, "record", "stop", sessionId, "--json")
-                // Stop may report helper exit 5 if the window vanished; the file must still exist.
+                assertNotEquals(0, stop.exitCode, stop.output + stop.errorOutput)
                 assertTrue(
-                    Files.isRegularFile(output) && Files.size(output) > 0,
-                    "expected finalized MP4 after kill+stop; stop.exit=${stop.exitCode} " +
-                        "out=${stop.output} err=${stop.errorOutput} size=" +
-                        runCatching { Files.size(output) }.getOrDefault(-1),
+                    stop.errorOutput.contains("record", ignoreCase = true) &&
+                        (stop.errorOutput.contains("window", ignoreCase = true) ||
+                            stop.errorOutput.contains("capture", ignoreCase = true)),
+                    "stop must explain the failed recording: ${stop.errorOutput}",
+                )
+                assertFalse(
+                    Files.exists(ownerLossOutput),
+                    "a failed owner-loss recording must not publish a partial MP4",
                 )
             }
         } finally {
             runCatching { runCliBinary(daemonUser, "daemon", "kill") }
-            Files.deleteIfExists(output)
+            Files.deleteIfExists(healthyOutput)
+            Files.deleteIfExists(ownerLossOutput)
             deleteDaemonSocketAndParent(DaemonEndpoint.defaultSocketPath(userName = daemonUser))
         }
     }
@@ -504,16 +550,46 @@ private fun deleteDaemonSocketAndParent(socketPath: Path) {
     Files.deleteIfExists(socketPath.parent)
 }
 
-private fun waitForNonEmptyRecording(output: Path) {
-    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(RECORD_START_TIMEOUT_SECONDS)
-    while (System.nanoTime() < deadline) {
-        if (Files.isRegularFile(output) && Files.size(output) > 0) return
-        Thread.sleep(RECORD_START_POLL_MILLIS)
+private fun assertFinalizedMp4(output: Path) {
+    val bytes = Files.readAllBytes(output)
+    val atomTypes = mutableSetOf<String>()
+    var offset = 0
+    while (offset + MP4_ATOM_HEADER_BYTES <= bytes.size) {
+        val shortSize = bytes.readUnsignedInt(offset)
+        val headerSize = if (shortSize == MP4_EXTENDED_SIZE_MARKER) 16 else 8
+        assertTrue(
+            offset + headerSize <= bytes.size,
+            "truncated MP4 atom header at offset $offset in $output",
+        )
+        val size =
+            when (shortSize) {
+                MP4_EXTENDS_TO_EOF_MARKER -> (bytes.size - offset).toLong()
+                MP4_EXTENDED_SIZE_MARKER -> bytes.readUnsignedLong(offset + 8)
+                else -> shortSize
+            }
+        assertTrue(
+            size >= headerSize && size <= bytes.size - offset,
+            "invalid MP4 atom size $size at offset $offset in $output",
+        )
+        atomTypes += bytes.copyOfRange(offset + 4, offset + 8).toString(Charsets.US_ASCII)
+        offset += size.toInt()
     }
-    error(
-        "recording did not write its first frame within $RECORD_START_TIMEOUT_SECONDS seconds: $output"
+    assertEquals(bytes.size, offset, "MP4 must contain complete top-level atoms")
+    assertTrue(
+        atomTypes.containsAll(setOf("ftyp", "mdat", "moov")),
+        "MP4 is not finalized/decodable; found atoms $atomTypes in $output",
     )
 }
+
+private fun ByteArray.readUnsignedInt(offset: Int): Long =
+    (0 until Int.SIZE_BYTES).fold(0L) { value, index ->
+        (value shl Byte.SIZE_BITS) or (this[offset + index].toLong() and 0xff)
+    }
+
+private fun ByteArray.readUnsignedLong(offset: Int): Long =
+    (0 until Long.SIZE_BYTES).fold(0L) { value, index ->
+        (value shl Byte.SIZE_BITS) or (this[offset + index].toLong() and 0xff)
+    }
 
 private fun spawnComposeFixture(environment: Map<String, String> = emptyMap()): FixtureProcess {
     var lastError: String? = null
@@ -997,9 +1073,11 @@ private const val FIXTURE_STOP_TIMEOUT_SECONDS: Long = 2
 private const val DRAINER_JOIN_TIMEOUT_MILLIS: Long = 500
 private const val CLI_PROCESS_TIMEOUT_SECONDS: Long = 30
 private const val MCP_CONNECTION_TIMEOUT_MILLIS: Long = 10_000
-private const val RECORD_START_TIMEOUT_SECONDS: Long = 10
-private const val RECORD_START_POLL_MILLIS: Long = 100
+private const val RECORD_HEALTHY_CAPTURE_MILLIS: Long = 1_500
 private const val RECORD_AFTER_KILL_SETTLE_MILLIS: Long = 1_500
+private const val MP4_ATOM_HEADER_BYTES: Long = 8
+private const val MP4_EXTENDS_TO_EOF_MARKER: Long = 0
+private const val MP4_EXTENDED_SIZE_MARKER: Long = 1
 private const val MIN_PNG_BYTES: Int = 100
 private const val POPUP_SIZE_SLACK_PX: Int = 2
 // Display colour management can shift a solid colour a little in a native still.

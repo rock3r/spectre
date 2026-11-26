@@ -10,10 +10,12 @@ import java.nio.channels.SocketChannel
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.serialization.ExperimentalSerializationApi
 
-@OptIn(ExperimentalSpectreAgentApi::class)
+@OptIn(ExperimentalSpectreAgentApi::class, ExperimentalSerializationApi::class)
 class DaemonDiagnosticsHandshakeTest {
     @Test
     fun `current handshake receives diagnostics while old handshake fails closed`() {
@@ -37,6 +39,32 @@ class DaemonDiagnosticsHandshakeTest {
                         .request(DaemonRequest.AllNodes("pid-73"))
                 )
             assertEquals(listOf("degraded tree"), current.warnings)
+
+            SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
+                channel.connect(UnixDomainSocketAddress.of(socketPath))
+                val input = Channels.newInputStream(channel)
+                val output = Channels.newOutputStream(channel)
+                val originalHello =
+                    assertIs<DaemonRequest.Hello>(
+                        DaemonProtocol.cbor.decodeFromByteArray(
+                            DaemonRequest.serializer(),
+                            published15Hello,
+                        )
+                    )
+                assertEquals(
+                    DaemonProtocolVersion(major = 1, minor = 15),
+                    originalHello.clientVersion,
+                )
+                assertFalse(originalHello.acceptsShutdownRecordings)
+                assertFalse(originalHello.acceptsDiagnosedResponses)
+                writePublished15Hello(output)
+                val hello = assertIs<DaemonResponse.Hello>(DaemonWireCodec.readResponse(input))
+                assertEquals(DaemonProtocol.CurrentVersion, hello.daemonVersion)
+                DaemonWireCodec.writeRequest(output, DaemonRequest.AllNodes("pid-73"))
+                val diagnosed =
+                    assertIs<DaemonResponse.Diagnosed>(DaemonWireCodec.readResponse(input))
+                assertEquals(listOf("degraded tree"), diagnosed.warnings)
+            }
 
             SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
                 channel.connect(UnixDomainSocketAddress.of(socketPath))

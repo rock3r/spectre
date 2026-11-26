@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.recording.portal.WaylandHelperBinaryExtractor
 import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import java.awt.Rectangle
+import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -16,9 +17,37 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LinuxNativeScreenshotterTest {
+
+    @Test
+    fun `Wayland captureRegion leaves cursor mode unspecified for the embedded session stream`() {
+        val tempDir = Files.createTempDirectory("spectre-linux-screenshotter-test-")
+        var command: dev.sebastiano.spectre.recording.portal.Command.Screenshot? = null
+        val screenshotter =
+            linuxScreenshotter(
+                tempDir,
+                processFactory =
+                    object : LinuxNativeScreenshotter.ProcessFactory {
+                        override fun start(helperPath: Path): Process =
+                            error("session capture must not start a one-shot helper")
+                    },
+                isWayland = true,
+                waylandRegionCapture = {
+                    command = it
+                    BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
+                },
+            )
+
+        try {
+            screenshotter.captureRegion(Rectangle(1, 2, 3, 4))
+            assertNull(command?.cursorMode)
+        } finally {
+            tempDir.toFile().deleteRecursively()
+        }
+    }
 
     @Test
     fun `captureRegion destroys helper when command write fails`() {
@@ -136,6 +165,9 @@ class LinuxNativeScreenshotterTest {
         tempDir: Path,
         processFactory: LinuxNativeScreenshotter.ProcessFactory,
         isWayland: Boolean = false,
+        waylandRegionCapture:
+            ((dev.sebastiano.spectre.recording.portal.Command.Screenshot) -> BufferedImage)? =
+            null,
     ): LinuxNativeScreenshotter =
         LinuxNativeScreenshotter(
             helperExtractor =
@@ -149,6 +181,7 @@ class LinuxNativeScreenshotterTest {
             isWayland = { isWayland },
             displayNameProvider = { ":99" },
             waylandWindowCapture = { error("no Mutter window stream in unit tests") },
+            waylandRegionCapture = waylandRegionCapture,
         )
 }
 

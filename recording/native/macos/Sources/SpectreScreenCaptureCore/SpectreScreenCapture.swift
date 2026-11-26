@@ -611,6 +611,7 @@ final class Recorder {
     private var sessionStarted = false
     private var pipelineError: Error?
     private var framesSeen: Int = 0
+    private var recordingFile: URL?
     private var framesAppended: Int = 0
     // Wakes startup after either its first successfully appended frame or a terminal pipeline
     // error. The waiter inspects the protected state to distinguish the two outcomes.
@@ -656,6 +657,9 @@ final class Recorder {
         // + window discovery cost. Pure precondition check, doesn't depend on a window
         // existing.
         try validateOutputPath(args.output)
+        defer {
+            if let recordingFile { _ = unlink(recordingFile.path) }
+        }
 
         let target = try await discoverTarget()
         try await startCapture(target: target)
@@ -670,38 +674,73 @@ final class Recorder {
             }
         }
         try await finalize()
+        let (seen, appended, dropped) = frameCounts()
         // Diagnostic counters always printed to stderr so the JVM-side smoke can see whether
         // the helper actually saw frames or was just sat there idle.
         FileHandle.standardError.write(
             Data(
-                "spectre-screencapture: frames seen=\(framesSeen) accepted=\(framesAppended) dropped=\(framesDropped)\n"
+                "spectre-screencapture: frames seen=\(seen) accepted=\(appended) dropped=\(dropped)\n"
                     .utf8)
         )
-        if let pipelineError {
+        if let pipelineError = currentPipelineError() {
             throw CLIError(
                 code: 5, message: "capture pipeline error: \(pipelineError.localizedDescription)")
         }
         if let waitError {
             throw waitError
         }
+        if let recordingFile {
+            guard rename(recordingFile.path, args.output.path) == 0 else {
+                throw CLIError(code: 5, message: "cannot install finalized recording: \(String(cString: strerror(errno)))")
+            }
+        }
+        if args.mode == .recording && ProcessInfo.processInfo.environment["SPECTRE_RECORDING_RESULT"] == "1" {
+            FileHandle.standardOutput.write(Data("RECORDING_RESULT \(dropped) \(args.crop != nil)\n".utf8))
+        }
     }
 
     /// Pick the backing-scale factor of the NSScreen with the largest overlap area with the
     /// target window. For windows that straddle displays in a mixed-DPI setup (Retina laptop +
     /// non-Retina external), `NSScreen.screens` ordering would otherwise let us pick the wrong
-    /// scale and produce stretched / cropped output. Falls back to NSScreen.main, then to a
-    /// 2.0 default for environments where AppKit isn't initialised yet.
-    private func backingScaleFactor(for windowFrame: CGRect) -> CGFloat {
+    /// scale and produce stretched / cropped output. SCWindow and CGDisplayBounds both use the
+    /// top-left global coordinate space; AppKit screen frames do not.
+    private func backingScaleFactor(for windowFrame: CGRect) throws -> CGFloat {
         let dominant = NSScreen.screens
             .map { screen -> (NSScreen, CGFloat) in
-                let overlap = windowFrame.intersection(screen.frame)
+                guard
+                    let number = screen.deviceDescription[
+                        NSDeviceDescriptionKey("NSScreenNumber")
+                    ] as? NSNumber
+                else { return (screen, 0) }
+                let overlap = windowFrame.intersection(
+                    CGDisplayBounds(CGDirectDisplayID(number.uint32Value)))
                 let area = overlap.isNull ? 0 : overlap.width * overlap.height
                 return (screen, area)
             }
             .filter { $0.1 > 0 }
             .max(by: { $0.1 < $1.1 })?
             .0
-        return dominant?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+        guard let dominant else {
+            throw CLIError(code: 5, message: "cannot determine backing scale for target window")
+        }
+        return dominant.backingScaleFactor
+    }
+
+    /// Match an SCDisplay to NSScreen by the stable Core Graphics display identifier rather than
+    /// intersecting frames expressed in ScreenCaptureKit's top-left and AppKit's bottom-left
+    /// coordinate systems.
+    private func backingScaleFactor(for display: SCDisplay) throws -> CGFloat {
+        guard let screen = NSScreen.screens.first(where: { candidate in
+            guard let number = candidate.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
+                as? NSNumber
+            else { return false }
+            return CGDirectDisplayID(number.uint32Value) == display.displayID
+        }) else {
+            throw CLIError(
+                code: 5,
+                message: "cannot determine backing scale for display id \(display.displayID)")
+        }
+        return screen.backingScaleFactor
     }
 
     /// Refuse to overwrite a directory if the caller mistakenly passed one as `--output`.
@@ -830,9 +869,8 @@ final class Recorder {
             // Use the backing-scale of the screen the target window actually lives on, not
             // `NSScreen.main`'s. Mixed-DPI setups (Retina laptop + non-Retina external) would
             // otherwise pick the wrong scale and produce stretched / cropped output for windows
-            // off the main screen. Falls back to NSScreen.main and finally a hardcoded 2.0 if
-            // neither lookup succeeds — neither degrades worse than the previous behaviour.
-            let scale = backingScaleFactor(for: targetWindow.frame)
+            // off the main screen. Never guess a scale when the display cannot be identified.
+            let scale = try backingScaleFactor(for: targetWindow.frame)
 
             // Window-attached filter — output is the target window's pixels (optionally cropped
             // via sourceRect for embedded Compose surfaces / handle-less panels, issue #186).
@@ -850,8 +888,9 @@ final class Recorder {
                 height = max(2, Int((targetWindow.frame.height * scale).rounded()))
             }
         case .region(let display, let region):
-            width = max(2, region.width)
-            height = max(2, region.height)
+            let scale = try backingScaleFactor(for: display)
+            width = max(2, Int((CGFloat(region.width) * scale).rounded()))
+            height = max(2, Int((CGFloat(region.height) * scale).rounded()))
             filter = SCContentFilter(display: display, excludingWindows: [])
             sourceRect = region.sourceRect()
         }
@@ -872,14 +911,18 @@ final class Recorder {
         // Without this re-check, the unconditional `removeItem` would silently `rm -rf`
         // that directory tree — the destructive failure mode the guard is supposed to
         // prevent. Cheap stat call; runs once per recording start.
-        if args.mode != .stills {
+        if args.mode == .screenshot {
             try validateOutputPath(args.output)
             try? FileManager.default.removeItem(at: args.output)
         }
 
         if args.mode == .recording {
+            // Publish only after a frame was accepted and AVAssetWriter finished successfully.
+            let temporary = args.output.deletingLastPathComponent()
+                .appendingPathComponent(".spectre-\(UUID().uuidString).\(args.output.pathExtension)")
+            recordingFile = temporary
             let writer = try AVAssetWriter(
-                outputURL: args.output, fileType: args.fileType.assetWriterFileType)
+                outputURL: temporary, fileType: args.fileType.assetWriterFileType)
             let videoSettings: [String: Any] = [
                 AVVideoCodecKey: AVVideoCodecType.h264,
                 AVVideoWidthKey: width,
@@ -1302,6 +1345,12 @@ final class Recorder {
         }
     }
 
+    private func frameCounts() -> (Int, Int, Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (framesSeen, framesAppended, framesDropped)
+    }
+
     private func didAppendFrame() -> Bool {
         lock.lock()
         let didAppendFrame = framesAppended > 0
@@ -1353,10 +1402,15 @@ final class Recorder {
         self.pixelBufferAdaptor = nil
         lock.unlock()
 
-        guard let writer, let videoInput else { return }
+        guard let writer, let videoInput else {
+            if args.mode == .recording {
+                throw CLIError(code: 5, message: "missing recording writer at finalization")
+            }
+            return
+        }
         videoInput.markAsFinished()
         await writer.finishWriting()
-        if writer.status == .failed {
+        if writer.status != .completed {
             throw CLIError(
                 code: 5,
                 message:
