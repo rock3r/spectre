@@ -196,30 +196,52 @@ internal data class MutterWindowIdentity(
 /** Binds by the target's PID and X11 client frame; it never reads or changes keyboard focus. */
 internal class IdentityWindowStreamBinder<W : Any>(
     private val session: WaylandWindowStreamSession,
+    private val paintWaitMs: Long = DEFAULT_PAINT_WAIT_MS,
+    private val sleep: (Long) -> Unit = Thread::sleep,
+    private val nanoTime: () -> Long = System::nanoTime,
     private val identityOf: (W) -> MutterWindowIdentity,
 ) : WaylandWindowStreamBinder<W> {
     override fun bind(window: W, key: String, cursor: CursorMode): BoundWindowStream {
         val expected = identityOf(window)
-        val (event, frame) = session.bindWindow(key, expected, cursor)
-        val content =
-            opaqueContentBounds(frame)
-                ?: throw WaylandCaptureUnavailableException(
-                    "Mutter bound window identity ${expected.ownerPid}/${expected.frame}, but " +
-                        "its first frame was transparent."
-                )
-        val awtSize = expected.windowSize
-        val scale =
-            matchingScale(content, awtSize, streamScale(frame, event))
-                ?: throw WaylandCaptureUnavailableException(
-                    "Mutter returned a stream whose ${content.width}x${content.height} content does not match " +
-                        "the requested identity ${expected.ownerPid}/${expected.frame}."
-                )
-        return BoundWindowStream(
-            key,
-            Point(content.x, content.y),
-            scale,
-            Dimension(frame.width, frame.height),
-        )
+        val (event, firstFrame) = session.bindWindow(key, expected, cursor)
+        var succeeded = false
+        try {
+            val deadline = nanoTime() + TimeUnit.MILLISECONDS.toNanos(paintWaitMs)
+            var frame = firstFrame
+            while (true) {
+                val content = opaqueContentBounds(frame)
+                val scale = content?.let {
+                    matchingScale(it, expected.windowSize, streamScale(frame, event))
+                }
+                if (content != null && scale != null) {
+                    succeeded = true
+                    return BoundWindowStream(
+                        key,
+                        Point(content.x, content.y),
+                        scale,
+                        Dimension(frame.width, frame.height),
+                    )
+                }
+                if (nanoTime() >= deadline) {
+                    val recorded =
+                        content?.let { "${it.width}x${it.height} content" } ?: "transparent frames"
+                    throw WaylandCaptureUnavailableException(
+                        "Mutter bound window identity ${expected.ownerPid}/${expected.frame}, but " +
+                            "$recorded did not match its ${expected.windowSize.width}x" +
+                            "${expected.windowSize.height} AWT size."
+                    )
+                }
+                sleep(PAINT_POLL_MS)
+                frame = session.screenshot(key)
+            }
+        } finally {
+            if (!succeeded) runCatching { session.unbind(key) }
+        }
+    }
+
+    private companion object {
+        const val DEFAULT_PAINT_WAIT_MS: Long = 1_000
+        const val PAINT_POLL_MS: Long = 50
     }
 }
 

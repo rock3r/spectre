@@ -61,10 +61,7 @@ fn main() -> Result<()> {
         Ok(Command::Start(start)) => recorder::run(start, event_tx.clone()),
         Ok(Command::Screenshot(screenshot)) => screenshot::run(screenshot, event_tx.clone()),
         Ok(Command::LocateWindow { owner_pid, frame }) => {
-            let xid = x11_window::find_window_by_frame(None, frame, Some(owner_pid))?.xid;
-            let binding_token = mutter_window::locate_window(owner_pid, xid)?;
-            let _ = event_tx.send(Event::WindowLocated { binding_token });
-            Ok(())
+            locate_window(owner_pid, frame, &event_tx)
         }
         Ok(Command::Stop) => {
             let _ = event_tx.send(Event::Error {
@@ -110,6 +107,17 @@ fn main() -> Result<()> {
     }
     drop(event_tx); // close the channel so the writer thread exits
     let _ = writer_handle.join();
+    Ok(())
+}
+
+fn locate_window(
+    owner_pid: u32,
+    frame: protocol::Region,
+    event_tx: &mpsc::Sender<Event>,
+) -> Result<()> {
+    let xid = x11_window::find_window_by_frame(None, frame, Some(owner_pid))?.xid;
+    let binding_token = mutter_window::locate_window(owner_pid, xid)?;
+    let _ = event_tx.send(Event::WindowLocated { binding_token });
     Ok(())
 }
 

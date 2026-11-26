@@ -95,6 +95,37 @@ class WaylandSessionClientTest {
     }
 
     @Test
+    fun `identity helper cannot return a successful token with a nonzero exit`() {
+        val client =
+            identityClient(
+                EventProcess(
+                    """{"event":"window_located","binding_token":"stale-token"}""",
+                    exitCode = 17,
+                )
+            )
+
+        val error = assertFailsWith<IllegalStateException> { client.locateWindow(IDENTITY) }
+
+        assertTrue(error.message.orEmpty().contains("exit 17"), error.message)
+    }
+
+    @Test
+    fun `identity helper error event preserves actionable detail despite a nonzero exit`() {
+        val client =
+            identityClient(
+                EventProcess(
+                    """{"event":"error","kind":"Helper","message":"no matching XID for stale PID"}""",
+                    exitCode = 19,
+                )
+            )
+
+        val error = assertFailsWith<WaylandHelperErrorException> { client.locateWindow(IDENTITY) }
+
+        assertEquals("Helper", error.kind)
+        assertTrue(error.message.orEmpty().contains("no matching XID for stale PID"), error.message)
+    }
+
+    @Test
     fun `legacy screenshot response explains how to replace the held helper`() {
         val client = screenshotClient(Event.ScreenshotSaved(outputSizeBytes = 1))
 
@@ -588,6 +619,26 @@ class WaylandSessionClientTest {
         override fun waitFor(): Int = code
 
         override fun exitValue(): Int = code
+
+        override fun isAlive(): Boolean = false
+
+        override fun destroy() = Unit
+    }
+
+    private class EventProcess(event: String, private val exitCode: Int) : Process() {
+        private val input = ByteArrayInputStream("$event\n".toByteArray())
+
+        override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
+
+        override fun getInputStream(): InputStream = input
+
+        override fun getErrorStream(): InputStream = InputStream.nullInputStream()
+
+        override fun waitFor(): Int = exitCode
+
+        override fun waitFor(timeout: Long, unit: java.util.concurrent.TimeUnit): Boolean = true
+
+        override fun exitValue(): Int = exitCode
 
         override fun isAlive(): Boolean = false
 
