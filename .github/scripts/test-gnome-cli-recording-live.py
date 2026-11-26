@@ -9,6 +9,8 @@ WORKFLOW = (ROOT / ".github/workflows/gnome-hosted-smoke.yml").read_text()
 SESSION = (ROOT / ".github/scripts/gnome-hosted-smoke-session.sh").read_text()
 DRIVER = (ROOT / ".github/scripts/gnome-cli-recording-live.py").read_text()
 CROP = (ROOT / ".github/scripts/gnome-public-window-crop.py").read_text()
+REGION_DRIVER = (ROOT / ".github/scripts/gnome-cli-region-stills.py").read_text()
+REGION_FIXTURE = (ROOT / ".github/verification/wayland-cli-region-stills/PublicWaylandRegionStills.kt").read_text()
 
 
 def load_permission_verifier():
@@ -127,7 +129,7 @@ class CliRecordingLiveContractTest(unittest.TestCase):
         self.assertIn("public-wayland-cli-recording-live:", WORKFLOW)
         self.assertIn("permissions:\n  contents: read", WORKFLOW)
         self.assertIn("sha256sum -c -", WORKFLOW)
-        self.assertIn("b517c7cd4bf9769c1f668a7ae8858cffedc885975d3d65ecb540da2d1ff0cfb6", WORKFLOW)
+        self.assertIn("6428fa41d2ff70aee2b405a111e8ae2bb411ee05cd691d1203efc8d4bb3c0bda", WORKFLOW)
         self.assertNotIn("git push", WORKFLOW)
 
     def test_packaged_cli_requests_once_then_checks_same_live_session(self):
@@ -185,6 +187,22 @@ class CliRecordingLiveContractTest(unittest.TestCase):
         self.assertIn("portalInterfaceVersions", DRIVER)
         self.assertIn("restoreTokenExpectation", DRIVER)
         self.assertNotIn("read_bytes", DRIVER)
+
+    def test_region_stills_settle_frames_and_preserve_client_contract(self):
+        self.assertEqual(2, REGION_FIXTURE.count("LinuxNativeScreenshotter()"))
+        self.assertEqual(1, REGION_FIXTURE.count('"Escape"'))
+        self.assertNotIn("Robot", REGION_FIXTURE.replace("not Robot", ""))
+        self.assertIn("settleFrame", REGION_FIXTURE)
+        self.assertIn("region-$phase-full-reference.png", REGION_FIXTURE)
+        self.assertIn("reference.getRGB(request.x + x, request.y + y)", REGION_FIXTURE)
+        self.assertIn('listOf("ps", "-eo", "pid,ppid,comm")', REGION_FIXTURE)
+        self.assertIn("GetCurrentState", REGION_FIXTURE)
+        self.assertIn("xwininfo", REGION_FIXTURE)
+        self.assertIn("region-stage-boundaries.jsonl", REGION_FIXTURE)
+        self.assertIn("redirectOutput", REGION_FIXTURE)
+        self.assertIn("image.tobytes() != ref.tobytes()", REGION_DRIVER)
+        self.assertNotIn("capture_output=True", REGION_DRIVER)
+        self.assertNotIn(".crop((0, 0", REGION_DRIVER)
 
 
 if __name__ == "__main__":

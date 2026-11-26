@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Launch and independently inspect the genuine public REGION still fixture."""
-import json, os, pathlib, re, subprocess
+import json, os, pathlib, re, subprocess, time
 from PIL import Image
 
 A = pathlib.Path(os.environ["SMOKE_ARTIFACTS"])
@@ -14,46 +14,88 @@ def sanitized(text):
     return re.sub(r'(?i)(authorization|bearer|restore[_ -]?token)(["=: ]+)[^\s",}]+',
                   r'\1\2<redacted>', text)
 
-compile_command = [str(R / "gradlew"), "--no-daemon", "-I", init,
-                   ":recording:compileTestKotlin", "--console=plain"]
-run_command = [str(R / "gradlew"), "--no-daemon", "-I", init,
-               ":recording:runPublicWaylandRegionStills", "--console=plain"]
-for label, command, timeout in (("compile", compile_command, 600), ("run", run_command, 180)):
-    result = subprocess.run(command, cwd=R, env=env, text=True, capture_output=True, timeout=timeout)
-    (A / f"region-{label}.stdout").write_text(result.stdout)
-    (A / f"region-{label}.stderr").write_text(sanitized(result.stderr))
-    if result.returncode:
-        raise RuntimeError(f"region fixture {label} failed with {result.returncode}")
+def invoke(label, command, timeout):
+    started = time.monotonic_ns()
+    stdout_path = A / f"region-{label}.stdout"
+    stderr_path = A / f"region-{label}.stderr"
+    try:
+        with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
+            result = subprocess.run(command, cwd=R, env=env, text=True,
+                                    stdout=stdout, stderr=stderr, timeout=timeout)
+        returncode = result.returncode
+    except subprocess.TimeoutExpired:
+        returncode = "timeout"
+    stdout_path.write_text(sanitized(stdout_path.read_text()))
+    stderr_path.write_text(sanitized(stderr_path.read_text()))
+    with (A / "region-python-boundaries.jsonl").open("a") as receipt:
+        receipt.write(json.dumps({"stage": label, "startedNs": started,
+                                  "endedNs": time.monotonic_ns(),
+                                  "returnCode": returncode}) + "\n")
+    if returncode != 0:
+        raise RuntimeError(f"region fixture {label} failed with {returncode}")
 
-expected = {
-    "region-a-red.png": ((311, 173), "red"),
-    "region-b-red.png": ((229, 191), "red"),
-    "region-a-green-fresh.png": ((311, 173), "green"),
-    "region-b-green-repeated.png": ((229, 191), "green"),
+invoke("compile", [str(R / "gradlew"), "--no-daemon", "-I", init,
+                   ":recording:compileTestKotlin", "--console=plain"], 600)
+invoke("run", [str(R / "gradlew"), "--no-daemon", "-I", init,
+               ":recording:runPublicWaylandRegionStills", "--console=plain"], 240)
+
+geometry = json.loads((A / "region-app-geometry.json").read_text())
+origin = geometry["sceneOrigin"]
+if origin is None:
+    raise RuntimeError("fixture never reported its mapped scene origin")
+
+def exact_box(image, box, rgb, label):
+    x, y, width, height = box
+    for py in range(y, y + height):
+        for px in range(x, x + width):
+            if image.getpixel((px, py)) != rgb:
+                raise RuntimeError(f"{label}: mismatch at {px},{py}: {image.getpixel((px, py))}")
+
+regions = {
+    "region-a-red.png": ("red", "first", "cyan", (0, 255, 255), (32, 62)),
+    "region-b-red.png": ("red", "second", "magenta", (255, 0, 255), (23, 91)),
+    "region-a-green-fresh.png": ("green", "first", "cyan", (0, 255, 255), (32, 62)),
+    "region-b-green-repeated.png": ("green", "second", "magenta", (255, 0, 255), (23, 91)),
 }
 proof = {}
-for name, (size, phase) in expected.items():
+references = {}
+for phase in ("red", "green"):
+    path = A / f"region-{phase}-full-reference.png"
+    reference = Image.open(path).convert("RGB")
+    device = geometry["device"]
+    if reference.size != (device["width"], device["height"]):
+        raise RuntimeError(f"{path.name}: full source dimensions {reference.size} != {device}")
+    references[phase] = reference
+    proof[path.name] = {"dimensions": list(reference.size),
+                        "independentFullScreenReference": True}
+
+for name, (phase, key, marker, rgb, local) in regions.items():
     image = Image.open(A / name).convert("RGB")
-    if image.size != size:
-        raise RuntimeError(f"{name}: expected {size}, got {image.size}")
-    pixels = list(image.getdata())
-    positive = sum((r > 170 and g < 70) if phase == "red" else
-                   (g > 160 and r < 70) for r, g, b in pixels) / len(pixels)
-    black = sum(r < 8 and g < 8 and b < 8 for r, g, b in pixels) / len(pixels)
-    if positive < .70 or black > 0:
-        raise RuntimeError(f"{name}: positive={positive}, black={black}")
+    request = geometry[key]
+    if image.size != (request["width"], request["height"]):
+        raise RuntimeError(f"{name}: expected request dimensions, got {image.size}")
+    ref = references[phase].crop((origin["x"] + request["x"], origin["y"] + request["y"],
+                                  origin["x"] + request["x"] + request["width"],
+                                  origin["y"] + request["y"] + request["height"]))
+    if image.tobytes() != ref.tobytes():
+        raise RuntimeError(f"{name}: pixels differ from independently retained full reference")
+    exact_box(image, (*local, 18, 18), rgb, f"{name} exact {marker}")
     proof[name] = {"dimensions": list(image.size), "phase": phase,
-                   "positiveInteriorRatio": positive, "blackRatio": black}
+                   "exactReferenceMatch": True, "marker": marker,
+                   "markerBox": [*local, 18, 18]}
 
 receipts = [json.loads(line) for line in (A / "region-java-receipts.jsonl").read_text().splitlines()]
-if [item["name"] for item in receipts] != list(expected):
+region_receipts = [item["name"] for item in receipts if item["kind"] == "public-region"]
+expected_order = list(regions)
+if region_receipts != expected_order:
     raise RuntimeError(f"unexpected capture order: {receipts}")
 (A / "public-region-stills-evidence.json").write_text(json.dumps({
     "evidenceKind": "region",
-    "isOriginalWindowCrop": False,
     "publicCaller": "LinuxNativeScreenshotter.captureRegion(Rectangle)",
     "productCommit": os.environ["CANDIDATE_SHA"],
     "productTree": "c2bdbe1c9aa55eb536ee727231d0e33877fbcafd",
+    "geometryReportedBeforeAssertions": True,
+    "comparison": "exact RGB crop versus independently captured retained full-screen reference",
     "captures": proof,
     "receipts": receipts,
 }, indent=2) + "\n")

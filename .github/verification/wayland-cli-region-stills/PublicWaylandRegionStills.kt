@@ -3,14 +3,16 @@ package verification
 import dev.sebastiano.spectre.recording.LinuxNativeScreenshotter
 import java.awt.Color
 import java.awt.Graphics
-import java.awt.Graphics2D
 import java.awt.GraphicsEnvironment
+import java.awt.Point
 import java.awt.Rectangle
 import java.awt.Toolkit
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import java.time.Instant
+import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 import javax.swing.JFrame
 import javax.swing.JPanel
@@ -20,120 +22,426 @@ import javax.swing.SwingUtilities
 object PublicWaylandRegionStills {
     private val artifacts = Path.of(requireNotNull(System.getenv("SMOKE_ARTIFACTS")))
     private val receipts = artifacts.resolve("region-java-receipts.jsonl")
-    private val firstLayout = Rectangle(137, 91, 311, 173)
-    private val secondLayout = Rectangle(604, 277, 229, 191)
+    private val stages = artifacts.resolve("region-stage-boundaries.jsonl")
+    private val first = Rectangle(137, 91, 311, 173)
+    private val second = Rectangle(604, 277, 229, 191)
+    private val cyan = Rectangle(169, 153, 18, 18)
+    private val magenta = Rectangle(627, 368, 18, 18)
     private val red = Color(220, 25, 25)
     private val green = Color(20, 210, 40)
+    private const val title = "Spectre region calibration"
 
     @JvmStatic
     fun main(args: Array<String>) {
+        stage("process-start")
         check(System.getenv("XDG_SESSION_TYPE") == "wayland")
-        val bounds = GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice
-            .defaultConfiguration.bounds
-        val transform = GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice
-            .defaultConfiguration.defaultTransform
-        check(bounds.x == 0 && bounds.y == 0 && bounds.width >= 1000 && bounds.height >= 600) {
-            "unexpected device bounds: $bounds"
-        }
-        check(transform.scaleX == 1.0 && transform.scaleY == 1.0) {
-            "fixture requires settled 1:1 AWT device pixels, got $transform"
-        }
+        val configuration =
+            GraphicsEnvironment.getLocalGraphicsEnvironment()
+                .defaultScreenDevice
+                .defaultConfiguration
+        val screen = configuration.bounds
+        val transform = configuration.defaultTransform
+        geometry(screen, transform.scaleX, transform.scaleY, null)
+        diagnostics("before-window")
+        check(screen.x == 0 && screen.y == 0 && screen.width >= 1000 && screen.height >= 600)
+        check(transform.scaleX == 1.0 && transform.scaleY == 1.0)
+
         val scene = Scene()
         lateinit var frame: JFrame
         SwingUtilities.invokeAndWait {
-            frame = JFrame("Spectre region calibration").apply {
-                isUndecorated = true
-                contentPane = scene
-                setBounds(bounds)
-                isVisible = true
-                toFront()
-            }
+            frame =
+                JFrame(title).apply {
+                    isUndecorated = true
+                    contentPane = scene
+                    setBounds(screen)
+                    isVisible = true
+                    toFront()
+                }
         }
         try {
-            render(scene, green = false)
             val origin = scene.locationOnScreen
-            val first = Rectangle(origin.x + firstLayout.x, origin.y + firstLayout.y,
-                firstLayout.width, firstLayout.height)
-            val second = Rectangle(origin.x + secondLayout.x, origin.y + secondLayout.y,
-                secondLayout.width, secondLayout.height)
-            val shared = LinuxNativeScreenshotter()
-            capture(shared, first, firstLayout, origin, "region-a-red.png", red, Color.CYAN, 40, 70)
-            capture(shared, second, secondLayout, origin, "region-b-red.png", red, Color.MAGENTA, 31, 99)
-
-            render(scene, green = true)
-            // A fresh public client must join the same held grant, while the old client remains valid.
-            capture(LinuxNativeScreenshotter(), first, firstLayout, origin, "region-a-green-fresh.png", green, Color.CYAN, 40, 70)
-            capture(shared, second, secondLayout, origin, "region-b-green-repeated.png", green, Color.MAGENTA, 31, 99)
-            check(red != green)
-            Files.writeString(
-                artifacts.resolve("region-app-geometry.json"),
-                """{"device":{"x":${bounds.x},"y":${bounds.y},"width":${bounds.width},"height":${bounds.height}},"sceneOrigin":{"x":${origin.x},"y":${origin.y}},"first":{"x":${first.x},"y":${first.y},"width":${first.width},"height":${first.height}},"second":{"x":${second.x},"y":${second.y},"width":${second.width},"height":${second.height}},"scaleX":${frame.graphicsConfiguration.defaultTransform.scaleX},"scaleY":${frame.graphicsConfiguration.defaultTransform.scaleY}}""" + "\n",
+            geometry(screen, transform.scaleX, transform.scaleY, origin)
+            stage("window-mapped")
+            val xid =
+                command(
+                        "fixture-xid.txt",
+                        "xdotool",
+                        "search",
+                        "--sync",
+                        "--onlyvisible",
+                        "--pid",
+                        ProcessHandle.current().pid().toString(),
+                        "--name",
+                        "^$title$",
+                    )
+                    .lineSequence()
+                    .map(String::trim)
+                    .first { it.matches(Regex("[0-9]+")) }
+            // XTEST on this attended Xwayland seat is normal input, not Robot or another portal.
+            command("seat-escape.txt", "xdotool", "key", "--clearmodifiers", "Escape")
+            command("seat-activate.txt", "xdotool", "windowactivate", "--sync", xid)
+            command("seat-focus.txt", "xdotool", "windowfocus", "--sync", xid)
+            val cursor = Point(screen.x + screen.width - 2, screen.y + screen.height - 2)
+            check(!move(first, origin).contains(cursor) && !move(second, origin).contains(cursor))
+            command(
+                "seat-cursor.txt",
+                "xdotool",
+                "mousemove",
+                cursor.x.toString(),
+                cursor.y.toString(),
             )
+            diagnostics("focused", xid)
+            val active = command("net-active-window.txt", "xprop", "-root", "_NET_ACTIVE_WINDOW")
+            val activeXid = Regex("0x([0-9a-fA-F]+)").find(active)?.groupValues?.get(1)?.toLong(16)
+            check(activeXid == xid.toLong()) { "fixture $xid is not active: $active" }
+
+            val shared = LinuxNativeScreenshotter()
+            phase(shared, scene, screen, origin, changed = false)
+            val heldBeforeFresh = helperPids("before-fresh")
+            val fresh = LinuxNativeScreenshotter()
+            phase(shared, scene, screen, origin, changed = true, fresh = fresh)
+            val heldAfterFresh = helperPids("after-fresh")
+            check(heldBeforeFresh.isNotEmpty() && heldBeforeFresh == heldAfterFresh) {
+                "held helper changed across fresh caller: $heldBeforeFresh -> $heldAfterFresh"
+            }
         } finally {
+            diagnostics("final")
             SwingUtilities.invokeAndWait { frame.dispose() }
+            stage("process-finish")
         }
     }
 
-    private fun render(scene: Scene, green: Boolean) {
+    private fun phase(
+        shared: LinuxNativeScreenshotter,
+        scene: Scene,
+        screen: Rectangle,
+        origin: Point,
+        changed: Boolean,
+        fresh: LinuxNativeScreenshotter? = null,
+    ) {
+        val phase = if (changed) "green" else "red"
         SwingUtilities.invokeAndWait {
-            scene.green = green
+            scene.changed = changed
             scene.paintImmediately(0, 0, scene.width, scene.height)
         }
-        // Flush the completed AWT/XWayland paint without asking Robot (and therefore a second
-        // Wayland screenshot portal) to inspect the screen.
         Toolkit.getDefaultToolkit().sync()
+        stage("$phase-paint-submitted")
+        val settled = settleFrame(shared, screen, origin, phase, if (changed) green else red)
+        val reference = settled.image
+        ImageIO.write(
+            reference,
+            "png",
+            artifacts.resolve("region-$phase-full-reference.png").toFile(),
+        )
+        receipt(
+            "region-$phase-full-reference.png",
+            "full-reference",
+            settled.started,
+            settled.ended,
+            screen,
+            reference,
+        )
+        stage("$phase-reference-retained")
+
+        val firstClient = fresh ?: shared
+        crop(
+            firstClient,
+            reference,
+            move(first, origin),
+            if (changed) "region-a-green-fresh.png" else "region-a-red.png",
+            Color.CYAN,
+            32,
+            62,
+        )
+        crop(
+            shared,
+            reference,
+            move(second, origin),
+            if (changed) "region-b-green-repeated.png" else "region-b-red.png",
+            Color.MAGENTA,
+            23,
+            91,
+        )
+        stage("$phase-regions-complete")
     }
 
-    private fun capture(client: LinuxNativeScreenshotter, region: Rectangle, layout: Rectangle,
-                        origin: java.awt.Point, name: String,
-                        base: Color, landmark: Color, landmarkX: Int, landmarkY: Int) {
-        val started = System.nanoTime()
-        val image = client.captureRegion(region)
-        val ended = System.nanoTime()
-        // Preserve the genuine public capture even when a following calibration assertion fails.
-        ImageIO.write(image, "png", artifacts.resolve(name).toFile())
-        check(image.width == region.width && image.height == region.height)
-        val observedInterior = Color(image.getRGB(80, 60))
-        val observedLandmark = Color(image.getRGB(landmarkX, landmarkY))
-        requireColor(image, landmarkX, landmarkY, landmark, "$name landmark")
-        requireColor(image, 80, 60, base, "$name interior")
-        // Offset negatives catch a stale crop from another origin; the landmarks are deliberately local.
-        check(!near(Color(image.getRGB(landmarkX + 70, landmarkY)), landmark))
-        check(!near(Color(image.getRGB(landmarkX, landmarkY + 45)), landmark))
-        val black = (0 until image.width step 7).sumOf { x ->
-            (0 until image.height step 7).count { y -> Color(image.getRGB(x, y)).let { it.red < 8 && it.green < 8 && it.blue < 8 } }
+    private fun settleFrame(
+        client: LinuxNativeScreenshotter,
+        screen: Rectangle,
+        origin: Point,
+        phase: String,
+        base: Color,
+    ): SettledFrame {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+        var attempt = 0
+        var last: BufferedImage? = null
+        var cyanBox: Rectangle? = null
+        var magentaBox: Rectangle? = null
+        while (System.nanoTime() < deadline) {
+            attempt++
+            val started = System.nanoTime()
+            val image = client.captureRegion(screen)
+            val ended = System.nanoTime()
+            last = image
+            val name = "region-$phase-settle-attempt-${attempt.toString().padStart(2, '0')}.png"
+            ImageIO.write(image, "png", artifacts.resolve(name).toFile())
+            receipt(name, "settle-attempt", started, ended, screen, image)
+            cyanBox = boundingBox(image, Color.CYAN)
+            magentaBox = boundingBox(image, Color.MAGENTA)
+            val expectedCyan = move(cyan, origin)
+            val expectedMagenta = move(magenta, origin)
+            val unchanged =
+                image.width == screen.width &&
+                    image.height == screen.height &&
+                    cyanBox == expectedCyan &&
+                    magentaBox == expectedMagenta &&
+                    isSolid(image, expectedCyan, Color.CYAN) &&
+                    isSolid(image, expectedMagenta, Color.MAGENTA) &&
+                    image.getRGB(origin.x + 80, origin.y + 60) == base.rgb
+            stage("$phase-frame-observed", "$name:UNCHANGED=$unchanged")
+            if (unchanged) return SettledFrame(image, started, ended)
+            Thread.sleep(200)
         }
-        check(black == 0) { "$name contains black calibration samples" }
-        Files.writeString(receipts,
-            """{"name":"$name","startedNs":$started,"endedNs":$ended,"sceneOrigin":{"x":${origin.x},"y":${origin.y}},"layout":{"x":${layout.x},"y":${layout.y},"width":${layout.width},"height":${layout.height}},"region":{"x":${region.x},"y":${region.y},"width":${image.width},"height":${image.height}},"expectedBase":${base.rgb},"expectedLandmark":${landmark.rgb},"observedInterior":{"red":${observedInterior.red},"green":${observedInterior.green},"blue":${observedInterior.blue}},"observedLandmark":{"red":${observedLandmark.red},"green":${observedLandmark.green},"blue":${observedLandmark.blue}}}""" + "\n",
-            StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+        val image = checkNotNull(last)
+        val complete = artifacts.resolve("region-$phase-settle-timeout-complete.png")
+        ImageIO.write(image, "png", complete.toFile())
+        diagnostics("$phase-timeout")
+        val nativeGeometry = "region-$phase-timeout-native-geometry.txt"
+        command(nativeGeometry, "xwininfo", "-root", "-stats", "-tree", required = false)
+        Files.writeString(
+            artifacts.resolve("region-$phase-settle-timeout.json"),
+            """{"nativeGeometry":"$nativeGeometry","completePng":"${complete.fileName}","cyanBox":${boxJson(cyanBox)},"magentaBox":${boxJson(magentaBox)},"cyanScaled":${scaledJson(cyanBox, screen)},"magentaScaled":${scaledJson(magentaBox, screen)}}
+""",
+        )
+        error("$phase compositor frame did not settle before deadline")
     }
 
-    private fun requireColor(image: BufferedImage, x: Int, y: Int, color: Color, label: String) {
-        check(near(Color(image.getRGB(x, y)), color)) { "$label mismatch at $x,$y" }
+    private fun crop(
+        client: LinuxNativeScreenshotter,
+        reference: BufferedImage,
+        request: Rectangle,
+        name: String,
+        color: Color,
+        markerX: Int,
+        markerY: Int,
+    ) {
+        val started = System.nanoTime()
+        val image = client.captureRegion(request)
+        val ended = System.nanoTime()
+        ImageIO.write(image, "png", artifacts.resolve(name).toFile())
+        receipt(name, "public-region", started, ended, request, image)
+        check(image.width == request.width && image.height == request.height)
+        for (y in 0 until image.height) for (x in 0 until image.width) {
+            val expected = reference.getRGB(request.x + x, request.y + y)
+            check(image.getRGB(x, y) == expected) {
+                "$name differs from retained full reference at $x,$y; crop=${image.getRGB(x, y)} reference=$expected"
+            }
+        }
+        solid(image, Rectangle(markerX, markerY, 18, 18), color, "$name marker")
+        check(image.getRGB(markerX + 70, markerY) != color.rgb)
+        check(image.getRGB(markerX, markerY + 45) != color.rgb)
     }
 
-    private fun near(actual: Color, expected: Color) =
-        kotlin.math.abs(actual.red - expected.red) < 20 &&
-            kotlin.math.abs(actual.green - expected.green) < 20 &&
-            kotlin.math.abs(actual.blue - expected.blue) < 20
+    private fun receipt(
+        name: String,
+        kind: String,
+        started: Long,
+        ended: Long,
+        request: Rectangle,
+        image: BufferedImage,
+    ) {
+        Files.writeString(
+            receipts,
+            """{"name":"$name","kind":"$kind","startedNs":$started,"endedNs":$ended,"request":{"x":${request.x},"y":${request.y},"width":${request.width},"height":${request.height}},"returned":{"width":${image.width},"height":${image.height}}}
+""",
+            StandardOpenOption.CREATE,
+            StandardOpenOption.APPEND,
+        )
+    }
+
+    private fun solid(image: BufferedImage, area: Rectangle, expected: Color, label: String) {
+        check(isSolid(image, area, expected)) {
+            "$label is not an exact solid ${area.width}x${area.height} box at $area"
+        }
+    }
+
+    private fun isSolid(image: BufferedImage, area: Rectangle, expected: Color): Boolean {
+        if (
+            area.x < 0 ||
+                area.y < 0 ||
+                area.x + area.width > image.width ||
+                area.y + area.height > image.height
+        )
+            return false
+        for (y in area.y until area.y + area.height) for (x in area.x until area.x + area.width) {
+            if (image.getRGB(x, y) != expected.rgb) return false
+        }
+        return true
+    }
+
+    private fun boundingBox(image: BufferedImage, color: Color): Rectangle? {
+        var minX = image.width
+        var minY = image.height
+        var maxX = -1
+        var maxY = -1
+        for (y in 0 until image.height) for (x in 0 until image.width) {
+            if (image.getRGB(x, y) == color.rgb) {
+                minX = minOf(minX, x)
+                minY = minOf(minY, y)
+                maxX = maxOf(maxX, x)
+                maxY = maxOf(maxY, y)
+            }
+        }
+        return if (maxX < 0) null else Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1)
+    }
+
+    private fun geometry(screen: Rectangle, sx: Double, sy: Double, origin: Point?) {
+        Files.writeString(
+            artifacts.resolve("region-app-geometry.json"),
+            """{"units":"AWT user-space pixels","device":{"x":${screen.x},"y":${screen.y},"width":${screen.width},"height":${screen.height}},"sceneOrigin":${origin?.let { "{\"x\":${it.x},\"y\":${it.y}}" } ?: "null"},"first":{"x":${first.x},"y":${first.y},"width":${first.width},"height":${first.height}},"second":{"x":${second.x},"y":${second.y},"width":${second.width},"height":${second.height}},"markers":{"cyan":{"x":${cyan.x},"y":${cyan.y},"width":18,"height":18},"magenta":{"x":${magenta.x},"y":${magenta.y},"width":18,"height":18}},"scaleX":$sx,"scaleY":$sy}
+""",
+        )
+    }
+
+    private fun diagnostics(label: String, xid: String? = null) {
+        val commands =
+            mutableListOf(
+                listOf("xrandr", "--current", "--verbose"),
+                listOf("xprop", "-root", "_NET_ACTIVE_WINDOW", "_NET_CURRENT_DESKTOP"),
+                listOf(
+                    "gdbus",
+                    "call",
+                    "--session",
+                    "--dest",
+                    "org.gnome.Mutter.DisplayConfig",
+                    "--object-path",
+                    "/org/gnome/Mutter/DisplayConfig",
+                    "--method",
+                    "org.gnome.Mutter.DisplayConfig.GetCurrentState",
+                ),
+                listOf(
+                    "gdbus",
+                    "call",
+                    "--session",
+                    "--dest",
+                    "org.freedesktop.DBus",
+                    "--object-path",
+                    "/org/freedesktop/DBus",
+                    "--method",
+                    "org.freedesktop.DBus.ListNames",
+                ),
+                listOf("gsettings", "get", "org.gnome.desktop.interface", "enable-animations"),
+                listOf("pw-dump"),
+                listOf("ps", "-eo", "pid,ppid,comm"),
+            )
+        if (xid != null) {
+            commands += listOf("xwininfo", "-id", xid, "-stats", "-tree")
+            commands +=
+                listOf(
+                    "xprop",
+                    "-id",
+                    xid,
+                    "_NET_WM_PID",
+                    "WM_CLASS",
+                    "_NET_WM_WINDOW_TYPE",
+                    "_NET_WM_STATE",
+                )
+        } else {
+            commands += listOf("xwininfo", "-root", "-stats", "-tree")
+        }
+        commands.forEachIndexed { index, parts ->
+            command(
+                "host-$label-$index-${parts.first()}.txt",
+                *parts.toTypedArray(),
+                required = false,
+            )
+        }
+    }
+
+    private fun helperPids(label: String): Set<String> =
+        command("helper-$label.txt", "ps", "-eo", "pid,ppid,comm", required = false)
+            .lineSequence()
+            .filter {
+                it.contains("spectre", ignoreCase = true) &&
+                    it.contains("helper", ignoreCase = true)
+            }
+            .map { it.trim().substringBefore(' ') }
+            .toSet()
+
+    private fun command(name: String, vararg args: String, required: Boolean = true): String {
+        stage("command-start", name)
+        val path = artifacts.resolve(name)
+        Files.writeString(path, "startedUtc=${Instant.now()}\n")
+        val process =
+            ProcessBuilder(*args)
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.appendTo(path.toFile()))
+                .start()
+        val finished = process.waitFor(15, TimeUnit.SECONDS)
+        if (!finished) {
+            process.destroyForcibly()
+            check(process.waitFor(5, TimeUnit.SECONDS)) {
+                "could not kill timed-out command for $name"
+            }
+        }
+        Files.writeString(
+            path,
+            "finished=$finished\nexit=${if (finished) process.exitValue() else "timeout"}\n",
+            StandardOpenOption.APPEND,
+        )
+        val output = sanitize(Files.readString(path))
+        Files.writeString(path, output)
+        stage("command-finish", name)
+        check(!required || (finished && process.exitValue() == 0)) { "command failed; see $name" }
+        return output
+    }
+
+    private fun sanitize(text: String): String =
+        text.replace(
+            Regex("(?i)(authorization|bearer|restore[_ -]?token)([\\\"=: ]+)[^\\s\\\",}]+"),
+            "$1$2<redacted>",
+        )
+
+    private fun stage(name: String, artifact: String? = null) {
+        Files.writeString(
+            stages,
+            """{"stage":"$name","monotonicNs":${System.nanoTime()},"utc":"${Instant.now()}"${artifact?.let { ",\"artifact\":\"$it\"" } ?: ""}}
+""",
+            StandardOpenOption.CREATE,
+            StandardOpenOption.APPEND,
+        )
+    }
+
+    private fun move(area: Rectangle, origin: Point) =
+        Rectangle(area.x + origin.x, area.y + origin.y, area.width, area.height)
+
+    private fun boxJson(box: Rectangle?) =
+        box?.let { "{\"x\":${it.x},\"y\":${it.y},\"width\":${it.width},\"height\":${it.height}}" }
+            ?: "null"
+
+    private fun scaledJson(box: Rectangle?, screen: Rectangle) =
+        box?.let {
+            "{\"x\":${it.x.toDouble() / screen.width},\"y\":${it.y.toDouble() / screen.height},\"width\":${it.width.toDouble() / screen.width},\"height\":${it.height.toDouble() / screen.height}}"
+        } ?: "null"
+
+    private data class SettledFrame(val image: BufferedImage, val started: Long, val ended: Long)
 
     private class Scene : JPanel() {
-        @Volatile var green = false
+        @Volatile var changed = false
+
         override fun paintComponent(graphics: Graphics) {
-            val g = graphics as Graphics2D
-            g.color = if (green) PublicWaylandRegionStills.green else red
-            g.fillRect(0, 0, width, height)
-            g.color = Color(245, 210, 20)
-            g.fillRect(0, 0, width, 29)
-            g.color = Color(35, 65, 230)
-            g.fillRect(0, 29, 23, height - 29)
-            g.color = Color.CYAN
-            g.fillRect(firstLayout.x + 32, firstLayout.y + 62, 18, 18)
-            g.color = Color.MAGENTA
-            g.fillRect(secondLayout.x + 23, secondLayout.y + 91, 18, 18)
-            g.color = Color(255, 130, 20)
-            g.fillRect(1000, 510, 73, 41)
+            graphics.color = if (changed) green else red
+            graphics.fillRect(0, 0, width, height)
+            graphics.color = Color(245, 210, 20)
+            graphics.fillRect(0, 0, width, 29)
+            graphics.color = Color(35, 65, 230)
+            graphics.fillRect(0, 29, 23, height - 29)
+            graphics.color = Color.CYAN
+            graphics.fillRect(cyan.x, cyan.y, cyan.width, cyan.height)
+            graphics.color = Color.MAGENTA
+            graphics.fillRect(magenta.x, magenta.y, magenta.width, magenta.height)
+            graphics.color = Color(255, 130, 20)
+            graphics.fillRect(1000, 510, 73, 41)
         }
     }
 }
