@@ -185,6 +185,21 @@ for needle in primary-button newsletter account-name disabled-button 'Save chang
 done
 grep -F -q '$limitLines[0] -ne $expectedError' "$script" || fail "Windows AccessKit cell must validate the typed diagnostic line without rejecting the CLI hint"
 
+# The AccessKit proof must select a unique private endpoint before any CLI call, without using
+# daemon status (which deliberately does not start a missing daemon). It must restore the exact
+# prior process value and only clean up when a real daemon socket proves this cell owns state.
+a11y_body="$(awk '/\$a11yStep = Invoke-Step -Id "a11y-accesskit-windows"/{p=1} p && /\[void\]\$results.Add\(\$a11yStep\)/{exit} p' "$script")"
+echo "$a11y_body" | grep -F -q '[Guid]::NewGuid()' || fail "Windows AccessKit cell must use a GUID-isolated daemon endpoint"
+echo "$a11y_body" | grep -F -q 'SPECTRE_DAEMON_SOCKET_DIR' || fail "Windows AccessKit cell must select the private daemon endpoint"
+if echo "$a11y_body" | grep -F -q '"daemon", "status"'; then
+  fail "Windows AccessKit cell must not run the non-starting daemon status command"
+fi
+echo "$a11y_body" | grep -F -q 'Get-ChildItem' || fail "Windows AccessKit cleanup must discover owned daemon sockets"
+echo "$a11y_body" | grep -F -q '"daemon", "kill"' || fail "Windows AccessKit cleanup must gracefully stop an owned daemon"
+echo "$a11y_body" | grep -F -q '$previousDaemonSocketDir' || fail "Windows AccessKit cell must preserve and restore the prior endpoint value"
+echo "$a11y_body" | grep -F -q '$actionError' || fail "Windows AccessKit cleanup must preserve the original cell failure"
+echo "$a11y_body" | grep -F -q '$cleanupErrors' || fail "Windows AccessKit cell must fail when cleanup alone fails"
+
 # --- Optional: parse with pwsh when present (macOS/Linux CI agents may have it) ---
 # Note: this is PowerShell Core parse, not Desktop 5.1; ASCII byte check is the 5.1 stand-in.
 if command -v pwsh >/dev/null 2>&1; then
