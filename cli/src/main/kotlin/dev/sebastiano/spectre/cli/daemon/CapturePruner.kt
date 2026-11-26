@@ -19,6 +19,7 @@ internal object CapturePruner {
         val deletedPaths: List<String>,
         val skippedLive: List<String>,
         val skippedExplicitOutDir: List<String>,
+        val failedPaths: List<String>,
     )
 
     fun prune(
@@ -46,6 +47,7 @@ internal object CapturePruner {
             deletedPaths = deleted,
             skippedLive = classified.skippedLive,
             skippedExplicitOutDir = classified.skippedExplicit,
+            failedPaths = toDelete.map { it.path }.filterNot(deleted::contains),
         )
     }
 

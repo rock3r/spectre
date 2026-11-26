@@ -68,9 +68,12 @@ internal sealed interface FfmpegBackend {
             checkNotWayland(defaultLinuxSessionEnvLookup)
             // X11's display name is conventionally read from the `DISPLAY` env var. Most desktop
             // sessions set it (`:0`, `:0.0`, `:1`, etc.); over SSH-without-X-forwarding it's
-            // unset. Fall back to `:0.0` so a misconfigured environment produces a clear
-            // ffmpeg-side "cannot open display" error rather than a confusing argv NPE.
-            val display = System.getenv("DISPLAY")?.takeIf { it.isNotBlank() } ?: ":0.0"
+            // unset. Never guess :0.0: it can name a real, unrelated display and silently record
+            // the wrong desktop (particularly in CI and nested X servers).
+            val display =
+                requireNotNull(System.getenv("DISPLAY")?.takeIf { it.isNotBlank() }) {
+                    "DISPLAY is unset; ffmpeg x11grab cannot identify the X11 display to record."
+                }
             return FfmpegCli.x11grabRegionCapture(ffmpegPath, region, output, options, display)
         }
     }
@@ -138,28 +141,29 @@ internal sealed interface FfmpegBackend {
             displayIsXwayland: (String) -> Boolean = ::defaultDisplayIsXwayland,
             waylandSocketExists: (Path) -> Boolean = ::isWaylandSocket,
         ): Boolean {
-            when (getenv("SPECTRE_CAPTURE_BACKEND")?.trim()?.lowercase()) {
-                "x11",
-                "xorg",
-                "xvfb" -> return false
-                "wayland",
-                "portal" -> return true
+            explicitLinuxSession(getenv)?.let {
+                return it
             }
             val display = getenv("DISPLAY")?.takeIf { it.isNotBlank() }
-            val sessionIsWayland = getenv("XDG_SESSION_TYPE")?.lowercase() == "wayland"
+            val sessionType = getenv("XDG_SESSION_TYPE")?.trim()?.lowercase()
+            val sessionIsWayland = sessionType == "wayland"
             val waylandDisplay = getenv("WAYLAND_DISPLAY")?.takeIf { it.isNotBlank() }
+            if (sessionType == "x11") return false
             if (display == null) {
                 if (sessionIsWayland || waylandDisplay != null) return true
-                val runtimeDir =
-                    getenv("XDG_RUNTIME_DIR")?.takeIf { it.isNotBlank() } ?: return false
-                return runtimeDirHasWaylandSocket(Path.of(runtimeDir))
+                val runtimeDir = getenv("XDG_RUNTIME_DIR")?.takeIf { it.isNotBlank() }
+                if (runtimeDir != null && runtimeDirHasWaylandSocket(Path.of(runtimeDir)))
+                    return true
+                unprovenLinuxSession(display)
             }
             if (displayIsXwayland(display)) return true
-            if (!sessionIsWayland && waylandDisplay == null) return false
             if (displayIsPureX11(display)) return false
+            if (!sessionIsWayland && waylandDisplay == null) unprovenLinuxSession(display)
             val socket =
-                resolveWaylandSocket(waylandDisplay, getenv("XDG_RUNTIME_DIR")) ?: return false
-            return runCatching { waylandSocketExists(socket) }.getOrDefault(false)
+                resolveWaylandSocket(waylandDisplay, getenv("XDG_RUNTIME_DIR"))
+                    ?: unprovenLinuxSession(display)
+            if (runCatching { waylandSocketExists(socket) }.getOrDefault(false)) return true
+            unprovenLinuxSession(display)
         }
 
         /**
@@ -358,6 +362,13 @@ internal sealed interface FfmpegBackend {
             getenv: (String) -> String?,
             displayIsXwayland: (String) -> Boolean = ::defaultDisplayIsXwayland,
         ) {
+            val display = getenv("DISPLAY")?.takeIf { it.isNotBlank() }
+            if (display != null && displayIsXwayland(display)) {
+                throw UnsupportedOperationException(
+                    "Refusing X11 capture because DISPLAY=$display is Xwayland; x11grab can " +
+                        "succeed while returning black frames. Use the Wayland backend instead."
+                )
+            }
             if (!detectWaylandSession(getenv, displayIsXwayland = displayIsXwayland)) return
             throw UnsupportedOperationException(
                 "ffmpeg's x11grab silently captures black frames on Wayland sessions even with " +
@@ -376,3 +387,21 @@ internal sealed interface FfmpegBackend {
         }
     }
 }
+
+private fun unprovenLinuxSession(display: String?): Nothing =
+    error(
+        "Spectre could not prove the Linux session type. " +
+            "DISPLAY=${display ?: "<unset>"}; XDG_SESSION_TYPE, WAYLAND_DISPLAY and " +
+            "the Wayland socket did not prove Wayland, while /proc and xdpyinfo did not " +
+            "prove Xorg or Xwayland. Set SPECTRE_CAPTURE_BACKEND=x11 or wayland explicitly."
+    )
+
+private fun explicitLinuxSession(getenv: (String) -> String?): Boolean? =
+    when (getenv("SPECTRE_CAPTURE_BACKEND")?.trim()?.lowercase()) {
+        "x11",
+        "xorg",
+        "xvfb" -> false
+        "wayland",
+        "portal" -> true
+        else -> null
+    }

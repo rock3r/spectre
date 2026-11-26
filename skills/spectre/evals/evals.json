@@ -118,7 +118,7 @@
       "assertions": [
         "Explains that xvfb-run hangs when Gradle spawns a long-lived background daemon holding display/stdio handles, and recommends passing --no-daemon",
         "Notes that Spectre under Xvfb still needs -Djava.awt.headless=false (real AWT toolkit against the virtual X framebuffer)",
-        "Explains that waitForVisualIdle falls back to Robot region capture when the native recording helper / GStreamer cannot run, whereas window-scoped stills (screenshot(windowIndex), screenshot(node), capture, and failure-artefact window captures) fail closed without GStreamer"
+        "Explains that waitForVisualIdle fails closed by default when the native recording helper / GStreamer cannot run, and that allowScreenRegionFallback=true explicitly opts into Robot region capture"
       ]
     },
     {

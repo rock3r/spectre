@@ -340,3 +340,12 @@ Capture and event handling depend on the IDE host:
   starts IntelliJ UI tests on macOS, Windows, and Linux.
 - [Spike gist](https://gist.github.com/rock3r/8e520bb3fe8fe5886367d5e22cefbab8)
   contains the original IDE-hosting design notes.
+
+### Synchronization before Compose loads
+
+An attached IntelliJ JVM can be reachable before its first Compose surface exists. Tree queries still
+return empty results during that bootstrap interval, but synchronization operations do not interpret
+that absence as success: `waitUntilGone`, `waitForIdle`, and `waitForVisualIdle` fail with “No Compose
+UI has loaded in the target JVM yet.” Open a Compose surface and retry. `waitForNode` instead spends
+its timeout waiting for Compose to load before it delegates the remaining time to the normal node
+wait.

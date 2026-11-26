@@ -5,7 +5,9 @@ import com.vanniktech.maven.publish.MavenPublishBaseExtension
 import com.vanniktech.maven.publish.SourcesJar
 import dev.detekt.gradle.Detekt
 import dev.detekt.gradle.extensions.DetektExtension
+import dev.sebastiano.spectre.build.NativeDesktopTestLease
 import dev.sebastiano.spectre.build.WindowsGraphicsCaptureHelperPackagingContract
+import dev.sebastiano.spectre.build.nativeDesktopTestTaskPaths
 import java.util.jar.JarFile
 import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
@@ -45,6 +47,20 @@ configure<DetektExtension> {
     parallel = true
     basePath.set(rootProject.layout.projectDirectory)
 }
+
+// A graphical login session is one physical resource even though Gradle sees independent
+// projects and worker JVMs. In particular, :core:test, :agent:test, and :cli:test can otherwise
+// run concurrent Compose/AWT fixtures which steal focus and pointer input from one another.
+// Keep the lease path-based and opt-in: headless Test tasks retain normal inter-project
+// parallelism, and max-workers is intentionally untouched. BuildService usage is understood by
+// Gradle's scheduler and is configuration-cache compatible.
+val nativeDesktopTestLease =
+    gradle.sharedServices.registerIfAbsent(
+        "nativeDesktopTestLease",
+        NativeDesktopTestLease::class,
+    ) {
+        maxParallelUsages.set(1)
+    }
 
 // Homebrew/Scoop package-manifest contracts (#283/#284/#400).
 //
@@ -225,6 +241,9 @@ val verifyWindowsCheckTimeout by
                 ".github/workflows/windows.yml",
                 ".github/workflows/validation-windows.yml",
                 ".github/scripts/dump-jvm-stacks.sh",
+                ".github/scripts/install-windows-app-runtime.ps1",
+                ".github/scripts/test-windows-helper-preflight.ps1",
+                ".github/scripts/windows-helper-preflight.ps1",
                 ".github/scripts/test-windows-check-timeout.sh",
             )
             .withPathSensitivity(PathSensitivity.RELATIVE)
@@ -292,6 +311,25 @@ val buildSrcUnitTests by
         outputs.upToDateWhen { false }
     }
 
+// Cross-platform fixture contracts stay in the normal check gate without building the Rust app.
+// Live native API reads belong to the headed validation lanes below.
+val verifyAccessKitFixture by
+    tasks.registering(Exec::class) {
+        group = "verification"
+        description = "Checks the private AccessKit fixture and per-OS golden contracts."
+        workingDir = rootProject.layout.projectDirectory.asFile
+        commandLine("python3", "-m", "unittest", "tests.test_accesskit_fixture")
+        onlyIf("Host with python3") {
+            runCatching { ProcessBuilder("python3", "--version").start().waitFor() == 0 }
+                .getOrDefault(false)
+        }
+        inputs.files(
+            "tests/test_accesskit_fixture.py",
+            fileTree("fixtures/accesskit") { exclude("target/**") },
+        )
+        outputs.upToDateWhen { false }
+    }
+
 // Both tasks launch nested Gradle builds that write buildSrc/build. Running them concurrently can
 // corrupt a cache restore or expose a partially compiled buildSrc classpath on clean CI workers.
 // #456: the seal-preservation script this task runs reads the packaged macOS zips under
@@ -316,6 +354,7 @@ tasks.named("check") {
         verifyIdeUiTestWorkflow,
         verifyReleaseSmokeScripts,
         buildSrcUnitTests,
+        verifyAccessKitFixture,
     )
 }
 
@@ -389,6 +428,9 @@ subprojects {
         file("$home/bin/$javaName").absolutePath
     }
     tasks.withType<Test>().configureEach {
+        if (path in nativeDesktopTestTaskPaths) {
+            usesService(nativeDesktopTestLease)
+        }
         if (matrixJavaHome.isPresent) {
             // Test.executable is a Property<String> on modern Gradle; setExecutable keeps
             // older accessors happy too.

@@ -52,14 +52,30 @@ public class SpectreCli(
     private val shutdownRequest: () -> DaemonResponse = { request(DaemonRequest.Shutdown) },
     private val output: Appendable = System.out,
     private val errorOutput: Appendable = System.err,
+    private val mcpRequest: (DaemonRequest) -> DaemonResponse = request,
 ) {
+    /**
+     * Source and binary compatible constructor retained for embedders from before MCP diagnostics.
+     */
+    public constructor(
+        request: (DaemonRequest) -> DaemonResponse,
+        shutdownRequest: () -> DaemonResponse,
+        output: Appendable,
+        errorOutput: Appendable,
+    ) : this(request, shutdownRequest, output, errorOutput, request)
+
     /** Creates a CLI client that auto-starts the per-user daemon when needed. */
     public constructor(
         output: Appendable = System.out,
         errorOutput: Appendable = System.err,
         socketPath: Path? = null,
     ) : this(
-        request = daemonRequest(socketPath),
+        request =
+            daemonRequest(
+                socketPath,
+                warningSink = { warning -> errorOutput.appendLine("warning: $warning") },
+            ),
+        mcpRequest = daemonRequest(socketPath, retainDiagnostics = true),
         shutdownRequest = daemonShutdownRequest(socketPath),
         output = output,
         errorOutput = errorOutput,
@@ -67,7 +83,7 @@ public class SpectreCli(
 
     /** Parses and executes one CLI invocation, returning zero when it succeeds. */
     public fun run(arguments: List<String>): Int {
-        val command = RootCommand(request, shutdownRequest, output, errorOutput)
+        val command = RootCommand(request, mcpRequest, shutdownRequest, output, errorOutput)
         return try {
             command.parse(versionFlagAsCommand(arguments))
             EXIT_SUCCESS
@@ -164,6 +180,7 @@ public class SpectreCli(
         val probe =
             RootCommand(
                 request = { error("usage probe must not contact the daemon") },
+                mcpRequest = { error("usage probe must not contact the daemon") },
                 shutdownRequest = { error("usage probe must not contact the daemon") },
                 output = StringBuilder(),
                 errorOutput = StringBuilder(),
@@ -237,6 +254,7 @@ private const val MINIMUM_JDK_FEATURE_VERSION: Int = 21
 
 private class RootCommand(
     request: (DaemonRequest) -> DaemonResponse,
+    mcpRequest: (DaemonRequest) -> DaemonResponse,
     shutdownRequest: () -> DaemonResponse,
     output: Appendable,
     errorOutput: Appendable,
@@ -271,7 +289,7 @@ private class RootCommand(
             PsCommand(request, output),
             DaemonCommand(request, shutdownRequest, output),
             InputLockCommand.default(output),
-            McpCommand(request),
+            McpCommand(mcpRequest),
             VersionCommand(output),
         )
         eagerOption(VERSION_FLAGS, help = "Print the Spectre CLI version and exit.") {
@@ -309,10 +327,12 @@ private class RootCommand(
         // Re-resolve per invocation: SpectreCli.run can be called repeatedly in one process, and a
         // --max-frame-bytes from an earlier call would otherwise leave this one silently requesting
         // a budget it never asked for — enough to fail the daemon handshake or boot a daemon on it.
-        FrameLimits.resetToEnvironment()
-        maxFrameBytes?.let { budget ->
+        val explicitBudget = maxFrameBytes
+        if (explicitBudget == null) {
+            FrameLimits.resetToEnvironment()
+        } else {
             try {
-                FrameLimits.configure(budget)
+                FrameLimits.configure(explicitBudget)
             } catch (exception: IllegalArgumentException) {
                 throw CliktError(exception.message ?: "invalid --max-frame-bytes", exception)
             }
@@ -588,6 +608,7 @@ private class RecordStopCommand(
             json,
             output,
             "Recording saved to",
+            recording.diagnostics ?: DaemonResponse.RecordingDiagnostics(),
         )
     }
 }
@@ -1141,6 +1162,9 @@ private class DetachCommand(
                 CLI_JSON.encodeToString(
                     DetachJson(
                         id = detached.sessionId,
+                        finalizedRecordingPath = detached.finalizedRecordingPath,
+                        diagnostics = detached.diagnostics,
+                        recordingError = detached.recordingError,
                         captureCount = detached.captureCount,
                         captureBytes = detached.captureBytes,
                         capturePaths = detached.capturePaths,
@@ -1151,6 +1175,12 @@ private class DetachCommand(
             )
         } else {
             output.append("Detached ${detached.sessionId}.")
+            detached.finalizedRecordingPath?.let { path ->
+                output.appendLine()
+                output.append("Finalized active recording: $path")
+                detached.diagnostics?.let { output.appendDiagnostics(it) }
+            }
+            detached.recordingError?.let { output.appendLine().append(it) }
             if (detached.captureCount > 0) {
                 output.appendLine()
                 output.append(
@@ -1192,10 +1222,24 @@ private class AttachCommand(
             }
         if (json) {
             output.append(
-                CLI_JSON.encodeToString(AttachJson(id = session.sessionId, pid = session.targetPid))
+                CLI_JSON.encodeToString(
+                    AttachJson(
+                        id = session.sessionId,
+                        pid = session.targetPid,
+                        sessionInfo = session.sessionInfo,
+                    )
+                )
             )
         } else {
-            output.append(humanSession(DaemonSessionSummary(session.sessionId, session.targetPid)))
+            output.append(
+                humanSession(
+                    DaemonSessionSummary(
+                        session.sessionId,
+                        session.targetPid,
+                        session.sessionInfo,
+                    )
+                )
+            )
         }
         output.appendLine()
     }
@@ -1253,13 +1297,33 @@ private class DaemonKillCommand(
     private val json: Boolean by option("--json").flag(default = false)
 
     override fun run() {
-        when (val response = shutdownRequest()) {
-            DaemonResponse.ShuttingDown -> Unit
-            is DaemonResponse.Error -> throw DaemonCommandException(response)
-            else -> error("Daemon returned an unexpected response to shutdown")
+        val recordings =
+            when (val response = shutdownRequest()) {
+                DaemonResponse.ShuttingDown -> emptyList()
+                is DaemonResponse.ShuttingDownWithRecordings -> response.recordings
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> error("Daemon returned an unexpected response to shutdown")
+            }
+        if (json) {
+            output.append(CLI_JSON.encodeToString(DaemonKillJson(recordings = recordings)))
+        } else {
+            output.append("Daemon stopped.")
+            recordings.forEach { recording ->
+                output.appendLine()
+                if (recording.error == null) {
+                    output.append(
+                        "Finalized active recording for ${recording.sessionId}: " +
+                            recording.outputPath
+                    )
+                    recording.diagnostics?.let { output.appendDiagnostics(it) }
+                } else {
+                    output.append(
+                        "Failed to finalize active recording for ${recording.sessionId} at " +
+                            "${recording.outputPath}: ${recording.error}"
+                    )
+                }
+            }
         }
-        if (json) output.append(CLI_JSON.encodeToString(DaemonKillJson()))
-        else output.append("Daemon stopped.")
         output.appendLine()
     }
 }
@@ -1272,8 +1336,11 @@ private class DaemonStatusCommand(
 
     override fun run() {
         val sessions =
-            (request(DaemonRequest.ListSessions) as? DaemonResponse.Sessions)?.sessions
-                ?: error("Daemon returned an unexpected response to list sessions")
+            when (val response = request(DaemonRequest.ListSessions)) {
+                is DaemonResponse.Sessions -> response.sessions
+                is DaemonResponse.Error -> throw DaemonCommandException(response)
+                else -> throw CliktError("Daemon returned an unexpected response to list sessions")
+            }
         if (json) {
             output.append(
                 CLI_JSON.encodeToString(
@@ -1298,7 +1365,13 @@ private data class DaemonStatusJson(
 )
 
 @Serializable
-private data class DaemonKillJson(val version: Int = JSON_VERSION, val stopped: Boolean = true)
+private data class DaemonKillJson(
+    val version: Int = JSON_VERSION,
+    val stopped: Boolean = true,
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val recordings: List<DaemonResponse.FinalizedRecording> = emptyList(),
+)
 
 /** [sessionId] repeats [id] under the key `record status --json` and MCP use (#560). */
 @Serializable
@@ -1311,12 +1384,16 @@ private data class AttachJson(
     val id: String,
     val sessionId: String = id,
     val pid: Long,
+    val sessionInfo: dev.sebastiano.spectre.cli.daemon.DaemonSessionInfo? = null,
 )
 
 @Serializable
 private data class DetachJson(
     val version: Int = JSON_VERSION,
     val id: String,
+    val finalizedRecordingPath: String? = null,
+    val diagnostics: DaemonResponse.RecordingDiagnostics? = null,
+    val recordingError: String? = null,
     val captureCount: Int = 0,
     val captureBytes: Long = 0L,
     val capturePaths: List<String> = emptyList(),
@@ -1344,9 +1421,6 @@ private data class CaptureJson(
     val captureDurationMs: Long,
     val skillHint: String = CaptureSessionReport.CAPTURE_SKILL_NAME,
 )
-
-@Serializable
-private data class RecordingJson(val version: Int = JSON_VERSION, val id: String, val path: String)
 
 @Serializable
 private data class WindowsJson(val version: Int = JSON_VERSION, val windows: List<WindowJson>)
@@ -1406,21 +1480,16 @@ private data class PsJson(val version: Int = JSON_VERSION, val processes: List<P
 private fun DaemonSessionJson(summary: DaemonSessionSummary): DaemonSessionJson =
     DaemonSessionJson(id = summary.sessionId, pid = summary.targetPid)
 
-private fun printRecording(
-    sessionId: String,
-    outputPath: String,
-    json: Boolean,
-    output: Appendable,
-    label: String,
-) {
-    if (json)
-        output.append(CLI_JSON.encodeToString(RecordingJson(id = sessionId, path = outputPath)))
-    else output.append("$label $outputPath.")
-    output.appendLine()
+private fun humanSession(summary: DaemonSessionSummary): String = buildString {
+    append("${summary.sessionId} (pid ${summary.targetPid})")
+    summary.sessionInfo?.let { info ->
+        append(
+            ", driver=${info.driverKind}, lease=${info.inputLeasePolicy}, " +
+                "core=${info.coreProvenance}@${info.coreVersion ?: "unversioned"}"
+        )
+        info.warnings.forEach { append("\nWarning: $it") }
+    }
 }
-
-private fun humanSession(summary: DaemonSessionSummary): String =
-    "${summary.sessionId} (pid ${summary.targetPid})"
 
 private fun PsProcessJson(summary: DaemonJvmProcessSummary): PsProcessJson =
     PsProcessJson(pid = summary.pid, displayName = summary.displayName)
@@ -1464,6 +1533,8 @@ private fun NodeJson(node: NodeSnapshotDto): NodeJson =
 internal fun daemonRequest(
     socketPath: Path?,
     attachPreflight: (DaemonRequest) -> String? = ::attachStartupPreflight,
+    warningSink: (String) -> Unit = {},
+    retainDiagnostics: Boolean = false,
 ): (DaemonRequest) -> DaemonResponse = daemonRequest@{ request ->
     val resolvedSocketPath = socketPath ?: DaemonEndpoint.defaultSocketPath()
     if (
@@ -1473,16 +1544,19 @@ internal fun daemonRequest(
         for (legacySocketPath in DaemonEndpoint.legacySocketPaths()) {
             if (!Files.exists(legacySocketPath)) continue
             try {
-                return@daemonRequest DaemonClient(legacySocketPath).use { client ->
-                    client.request(request)
-                }
+                return@daemonRequest DaemonClient(
+                        legacySocketPath,
+                        warningSink,
+                        retainDiagnostics,
+                    )
+                    .use { client -> client.request(request) }
             } catch (_: IOException) {
                 // A stale legacy socket must not prevent probing older endpoints or new
                 // startup.
             }
         }
     }
-    DaemonClient(resolvedSocketPath).use { client ->
+    DaemonClient(resolvedSocketPath, warningSink, retainDiagnostics).use { client ->
         if (request == DaemonRequest.ListSessions) {
             try {
                 client.requestIfPresent(request)
@@ -1556,13 +1630,13 @@ private const val EXIT_USAGE_FAILURE: Int = 2
 private const val EXIT_ATTACH_FAILURE: Int = 3
 private const val EXIT_TARGET_NOT_FOUND: Int = 4
 private const val EXIT_DAEMON_FAILURE: Int = 5
-private const val JSON_VERSION: Int = 1
+internal const val JSON_VERSION: Int = 1
 private const val JSON_FLAG: String = "--json"
 private const val VERSION_COMMAND: String = "version"
 private val VERSION_FLAGS: List<String> = listOf("--version", "-v")
 private val HUMAN_VERSION: String
     get() = "spectre ${SpectreBuildMetadata.version}"
-private val CLI_JSON: Json = Json { encodeDefaults = true }
+internal val CLI_JSON: Json = Json { encodeDefaults = true }
 
 internal class CliOutputException(cause: IOException) : IOException(cause.message, cause)
 

@@ -23,7 +23,6 @@ import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.application.pluginOrNull
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.server.request.receiveNullable
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -105,6 +104,10 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
     options("/{path...}") { call.respond(HttpStatusCode.NoContent) }
 
     get("/windows") {
+        if (!call.hasOnlyQueryParameters(emptySet())) {
+            respondInvalidSelector(call)
+            return@get
+        }
         automator.refreshWindows()
         val response =
             WindowsResponse(
@@ -119,24 +122,43 @@ private fun Route.spectreRoutes(automator: ComposeAutomator) {
 }
 
 private fun Route.pointerInputRoutes(automator: ComposeAutomator) {
+    clickInputRoutes(automator)
+    gestureInputRoutes(automator)
+}
+
+private fun Route.clickInputRoutes(automator: ComposeAutomator) {
     post("/click") {
+        if (!call.rejectQueryParameters()) return@post
         automator.refreshWindows()
-        val request = receiveOrRespond400<ClickRequest>(call, "ClickRequest") ?: return@post
+        val request =
+            receiveOrRespond400<ClickRequest>(call, "ClickRequest", ClickRequest.serializer())
+                ?: return@post
         val node = resolveNodeOrRespond(call, automator, request.nodeKey) ?: return@post
         respondInputVoid(call) { automator.click(node) }
     }
 
     post("/doubleClick") {
+        if (!call.rejectQueryParameters()) return@post
         automator.refreshWindows()
         val request =
-            receiveOrRespond400<DoubleClickRequest>(call, "DoubleClickRequest") ?: return@post
+            receiveOrRespond400<DoubleClickRequest>(
+                call,
+                "DoubleClickRequest",
+                DoubleClickRequest.serializer(),
+            ) ?: return@post
         val node = resolveNodeOrRespond(call, automator, request.nodeKey) ?: return@post
         respondInputVoid(call) { automator.doubleClick(node) }
     }
 
     post("/longClick") {
+        if (!call.rejectQueryParameters()) return@post
         automator.refreshWindows()
-        val request = receiveOrRespond400<LongClickRequest>(call, "LongClickRequest") ?: return@post
+        val request =
+            receiveOrRespond400<LongClickRequest>(
+                call,
+                "LongClickRequest",
+                LongClickRequest.serializer(),
+            ) ?: return@post
         if (request.holdForMs <= 0L) {
             respondInvalidSelector(call)
             return@post
@@ -144,17 +166,27 @@ private fun Route.pointerInputRoutes(automator: ComposeAutomator) {
         val node = resolveNodeOrRespond(call, automator, request.nodeKey) ?: return@post
         respondInputVoid(call) { automator.longClick(node, request.holdForMs.milliseconds) }
     }
+}
 
+private fun Route.gestureInputRoutes(automator: ComposeAutomator) {
     post("/swipe") {
+        if (!call.rejectQueryParameters()) return@post
         automator.refreshWindows()
-        val request = receiveOrRespond400<SwipeRequest>(call, "SwipeRequest") ?: return@post
+        val request =
+            receiveOrRespond400<SwipeRequest>(call, "SwipeRequest", SwipeRequest.serializer())
+                ?: return@post
         handleSwipePost(call, automator, request)
     }
 
     post("/scrollWheel") {
+        if (!call.rejectQueryParameters()) return@post
         automator.refreshWindows()
         val request =
-            receiveOrRespond400<ScrollWheelRequest>(call, "ScrollWheelRequest") ?: return@post
+            receiveOrRespond400<ScrollWheelRequest>(
+                call,
+                "ScrollWheelRequest",
+                ScrollWheelRequest.serializer(),
+            ) ?: return@post
         val node = resolveNodeOrRespond(call, automator, request.nodeKey) ?: return@post
         respondInputVoid(call) { automator.scrollWheel(node, request.wheelClicks) }
     }
@@ -162,7 +194,13 @@ private fun Route.pointerInputRoutes(automator: ComposeAutomator) {
 
 private fun Route.keyInputRoutes(automator: ComposeAutomator) {
     post("/pressKey") {
-        val request = receiveOrRespond400<PressKeyRequest>(call, "PressKeyRequest") ?: return@post
+        if (!call.rejectQueryParameters()) return@post
+        val request =
+            receiveOrRespond400<PressKeyRequest>(
+                call,
+                "PressKeyRequest",
+                PressKeyRequest.serializer(),
+            ) ?: return@post
         if (request.keyCode <= 0) {
             respondInvalidSelector(call)
             return@post
@@ -171,15 +209,25 @@ private fun Route.keyInputRoutes(automator: ComposeAutomator) {
     }
 
     post("/typeText") {
-        val request = receiveOrRespond400<TypeTextRequest>(call, "TypeTextRequest") ?: return@post
+        if (!call.rejectQueryParameters()) return@post
+        val request =
+            receiveOrRespond400<TypeTextRequest>(
+                call,
+                "TypeTextRequest",
+                TypeTextRequest.serializer(),
+            ) ?: return@post
         respondInputVoid(call) { automator.typeText(request.text) }
     }
 
     post("/clearAndTypeText") {
+        if (!call.rejectQueryParameters()) return@post
         automator.refreshWindows()
         val request =
-            receiveOrRespond400<ClearAndTypeTextRequest>(call, "ClearAndTypeTextRequest")
-                ?: return@post
+            receiveOrRespond400<ClearAndTypeTextRequest>(
+                call,
+                "ClearAndTypeTextRequest",
+                ClearAndTypeTextRequest.serializer(),
+            ) ?: return@post
         val node = resolveNodeOrRespond(call, automator, request.nodeKey) ?: return@post
         respondInputVoid(call) { automator.clearAndTypeText(node, request.text) }
     }
@@ -332,34 +380,3 @@ internal fun mapInputFailure(ex: Throwable): SpectreErrorCategory {
         else -> throw ex
     }
 }
-
-/**
- * Narrow decode-error mapping for `call.receive<T>()` (R4): Ktor's default response when
- * kotlinx-serialization fails to decode a request body (invalid JSON, missing required field) is
- * `400 Bad Request` with an empty body. That's a poor user experience — the client gets a 4xx but
- * no clue what request shape was expected. Wrap each `receive<T>()` so the response carries the
- * request type name; the type name is what the negative-contract tests pin.
- *
- * Scope is intentionally narrow: only `BadRequestException` (which `ContentTransformation` raises
- * on decode failures) is caught. Everything else propagates. Wrong Content-Type still surfaces as
- * `415 Unsupported Media Type` via Ktor's content-negotiation precheck — Ktor doesn't even get to
- * `receive<T>()` in that case.
- *
- * R5/F5a: the response body deliberately omits the underlying exception message. Decode exceptions
- * from kotlinx-serialization can quote fragments of the request body, which would reflect
- * attacker-controlled content back to the caller. The curated request-type name alone is enough for
- * diagnostics; serializer prose belongs in server-side logs, not on the wire.
- */
-private suspend inline fun <reified T : Any> receiveOrRespond400(
-    call: io.ktor.server.application.ApplicationCall,
-    requestTypeName: String,
-): T? =
-    try {
-        // Ktor 3.4 treats an empty body as untransformable for non-null types (415).
-        // Receive nullable so empty JSON keeps the same curated 400 as malformed JSON.
-        call.receiveNullable<T?>()
-            ?: throw io.ktor.server.plugins.BadRequestException("Empty request")
-    } catch (_: io.ktor.server.plugins.BadRequestException) {
-        call.respond(HttpStatusCode.BadRequest, "Could not decode $requestTypeName")
-        null
-    }

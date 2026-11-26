@@ -242,4 +242,46 @@ if "envelope flakes" not in between and "timed out" not in between.lower():
 print("OK validation verifier fails timeouts even when envelope flakes exist")
 PY
 
-echo "OK: Windows check hang diagnostics (#499) are wired"
+python3 - "$repo_root/.github/scripts/install-windows-app-runtime.ps1" "$windows_workflow" <<'PY'
+import pathlib
+import sys
+
+runtime_path = pathlib.Path(sys.argv[1])
+workflow_path = pathlib.Path(sys.argv[2])
+if not runtime_path.is_file():
+    sys.exit("missing install-windows-app-runtime.ps1")
+
+script = runtime_path.read_text()
+required = (
+    '$runtimeVersion = "1.8.260209005"',
+    'windowsappsdk/1.8/$runtimeVersion/windowsappruntimeinstall-x64.exe',
+    'Microsoft.WindowsAppRuntime.1.8_8wekyb3d8bbwe',
+    'Get-AuthenticodeSignature',
+    'Microsoft Corporation',
+    '& $installer --quiet',
+    'WaitForExit(10000)',
+    'CreateNoWindow = $true',
+    '$process.ExitCode -ne 2',
+    '-not [string]::IsNullOrEmpty($stdout)',
+    'Test-WindowsHelperPreflightStderr -Stderr $stderr',
+)
+missing = [item for item in required if item not in script]
+if missing:
+    sys.exit(f"runtime installation/preflight contract is incomplete: {missing}")
+if '$stderr -cne "target is required`r`n"' in script:
+    sys.exit("helper preflight must not require one exact platform newline/output form")
+if 'ConvertFrom-Json' in script:
+    sys.exit("malformed-request preflight must not expect JSON on stdout")
+
+workflow = workflow_path.read_text()
+for path in (
+    "install-windows-app-runtime.ps1",
+    "test-windows-helper-preflight.ps1",
+):
+    if path not in workflow:
+        sys.exit(f"windows-helper-tests does not run required helper script: {path}")
+
+print("OK Windows helper preflight enforces the shipping malformed-request protocol")
+PY
+
+echo "OK: Windows check diagnostics and helper runtime prerequisite are wired (#499, #721)"

@@ -20,7 +20,7 @@ internal object WaylandPortalPrecheck {
     fun ensureOnce() {
         if (!done.compareAndSet(false, true)) return
         run(
-            isApplicable = WaylandPortalAccess::isApplicable,
+            isApplicable = ::isProvenWayland,
             preflight = WaylandPortalAccess::preflight,
             getProperty = System::getProperty,
             setProperty = { key, value -> System.setProperty(key, value) },
@@ -28,6 +28,14 @@ internal object WaylandPortalPrecheck {
             warn = System.err::println,
         )
     }
+
+    /** Preflight must not initialize capture when this process has no proven display session. */
+    private fun isProvenWayland(): Boolean =
+        try {
+            WaylandPortalAccess.isApplicable()
+        } catch (_: IllegalStateException) {
+            false
+        }
 
     /**
      * [spec] with this JVM's consent prompt property forwarded as `SPECTRE_WAYLAND_CONSENT_PROMPT`.

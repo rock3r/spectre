@@ -85,6 +85,33 @@ class ScreenCaptureBackendTest {
     }
 
     @Test
+    fun `native window capture never probes the unrelated Robot permission owner`() {
+        assumeLiveAwtAvailable()
+        val frame = Frame("native-owner-test").apply { addNotify() }
+        var robotPermissionProbes = 0
+        val backend =
+            PlatformScreenCaptureBackend(
+                regionCapture = {
+                    robotPermissionProbes++
+                    error("native capture must not consult the JVM Robot permission owner")
+                },
+                nativeCapture = {
+                    // A naturally black SCK image is valid evidence from the signed helper.
+                    BufferedImage(8, 8, BufferedImage.TYPE_INT_ARGB)
+                },
+                nativeCaptureDisambiguatesTitles = { true },
+            )
+        try {
+            val capture = backend.captureWindow(tracked(frame), Rectangle(frame.bounds))
+
+            assertEquals(8, capture.image.width)
+            assertEquals(0, robotPermissionProbes)
+        } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
     fun `native client images crop in their client-window coordinate space`() {
         assumeLiveAwtAvailable()
         val frame =
@@ -343,12 +370,12 @@ class ScreenCaptureBackendTest {
         val first =
             Frame("same title").apply {
                 setBounds(10, 20, 100, 80)
-                addNotify()
+                isVisible = true
             }
         val second =
             Frame("same title").apply {
                 setBounds(120, 30, 100, 80)
-                addNotify()
+                isVisible = true
             }
         val backend =
             PlatformScreenCaptureBackend(
@@ -371,8 +398,8 @@ class ScreenCaptureBackendTest {
     @Test
     fun `disposed tracked frame fails before title-based native capture`() {
         assumeLiveAwtAvailable()
-        val target = Frame("same title").apply { addNotify() }
-        val other = Frame("same title").apply { addNotify() }
+        val target = Frame("same title").apply { isVisible = true }
+        val other = Frame("same title").apply { isVisible = true }
         val backend =
             PlatformScreenCaptureBackend(
                 regionCapture = { error("screen-region capture must not be used") },

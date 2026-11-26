@@ -88,6 +88,7 @@ public final class dev/sebastiano/spectre/core/BothBounds {
 public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public static final field Companion Ldev/sebastiano/spectre/core/ComposeAutomator$Companion;
 	public final fun allNodes ()Ljava/util/List;
+	public final fun bindInputLeaseOptions (Ldev/sebastiano/spectre/core/InputLeaseOptions;)Ljava/lang/AutoCloseable;
 	public final fun capture (I)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
 	public static synthetic fun capture$default (Ldev/sebastiano/spectre/core/ComposeAutomator;IILjava/lang/Object;)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
 	public final fun captureWithUntitledWindowStill (ILjava/lang/String;Ljava/awt/image/BufferedImage;Ljava/awt/Rectangle;)Ldev/sebastiano/spectre/core/capture/AtomicCapture;
@@ -107,6 +108,7 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public static synthetic fun findOneByText$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/String;ZILjava/lang/Object;)Ldev/sebastiano/spectre/core/AutomatorNode;
 	public final fun focusWindow (Ldev/sebastiano/spectre/core/AutomatorNode;)V
 	public final fun getInputCapabilities ()Ldev/sebastiano/spectre/core/InputCapabilities;
+	public final fun getInputLeasePolicy ()Ldev/sebastiano/spectre/core/InputLeasePolicy;
 	public final fun getWindows ()Ljava/util/List;
 	public final fun hasTag (Ljava/lang/String;)Z
 	public final fun hasText (Ldev/sebastiano/spectre/core/TextQuery;)Z
@@ -150,6 +152,8 @@ public final class dev/sebastiano/spectre/core/ComposeAutomator {
 	public static synthetic fun waitForNode-ck1zr5g$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/String;Ljava/lang/String;JJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun waitForVisualIdle-t_idYME (JIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun waitForVisualIdle-t_idYME$default (Ldev/sebastiano/spectre/core/ComposeAutomator;JIJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun waitForVisualIdle-w6K2E_k (JIJZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun waitForVisualIdle-w6K2E_k$default (Ldev/sebastiano/spectre/core/ComposeAutomator;JIJZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun waitUntil-jKevqZI (Ljava/lang/String;JJLkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun waitUntil-jKevqZI$default (Ldev/sebastiano/spectre/core/ComposeAutomator;Ljava/lang/String;JJLkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun waitUntilGone-ck1zr5g (Ljava/lang/String;Ljava/lang/String;JJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -284,6 +288,20 @@ public final class dev/sebastiano/spectre/core/InputLeasePolicy : java/lang/Enum
 public abstract interface annotation class dev/sebastiano/spectre/core/InternalSpectreApi : java/lang/annotation/Annotation {
 }
 
+public final class dev/sebastiano/spectre/core/MacOsTccDiagnostic : java/lang/Enum {
+	public static final field Denied Ldev/sebastiano/spectre/core/MacOsTccDiagnostic;
+	public static final field Inconclusive Ldev/sebastiano/spectre/core/MacOsTccDiagnostic;
+	public static final field Locked Ldev/sebastiano/spectre/core/MacOsTccDiagnostic;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/core/MacOsTccDiagnostic;
+	public static fun values ()[Ldev/sebastiano/spectre/core/MacOsTccDiagnostic;
+}
+
+public final class dev/sebastiano/spectre/core/MacOsTccDiagnosticException : java/lang/IllegalStateException {
+	public fun <init> (Ldev/sebastiano/spectre/core/MacOsTccDiagnostic;Ljava/lang/String;)V
+	public final fun getDiagnostic ()Ldev/sebastiano/spectre/core/MacOsTccDiagnostic;
+}
+
 public final class dev/sebastiano/spectre/core/NodeKey {
 	public static final field Companion Ldev/sebastiano/spectre/core/NodeKey$Companion;
 	public fun <init> (Ljava/lang/String;II)V
@@ -327,6 +345,7 @@ public final class dev/sebastiano/spectre/core/RobotDriver : java/lang/AutoClose
 	public fun close ()V
 	public final fun doubleClick (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun getInputCapabilities ()Ldev/sebastiano/spectre/core/InputCapabilities;
+	public final fun getInputLeasePolicy ()Ldev/sebastiano/spectre/core/InputLeasePolicy;
 	public final fun longClick-exY8QGI (IIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun longClick-exY8QGI$default (Ldev/sebastiano/spectre/core/RobotDriver;IIJLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun moveBy (IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -357,7 +376,9 @@ public final class dev/sebastiano/spectre/core/RobotDriverClickAndTypeKt {
 }
 
 public final class dev/sebastiano/spectre/core/ScreenCaptureBackendKt {
+	public static final fun isWaylandSession (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;)Z
 	public static final fun isWaylandSession (Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;)Z
+	public static synthetic fun isWaylandSession$default (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Z
 	public static synthetic fun isWaylandSession$default (Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Z
 }
 

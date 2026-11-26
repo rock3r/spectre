@@ -32,6 +32,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 public class AttachedAutomator
 internal constructor(
     public val pid: Long,
+    public val sessionInfo: AttachedSessionInfo =
+        AttachedSessionInfo("unknown", "unknown", "unknown", null),
     private val client: IpcClient,
     private val detacher: Runnable,
 ) : AutoCloseable {
@@ -218,7 +220,9 @@ internal constructor(
      * Window/surface targets (default, [windowIndex], or [surfaceId]) fail closed on the attach
      * path (#359): they would crop occlusion-prone desktop pixels rather than a native window
      * surface. Only [fullscreen] is supported, as an explicit whole-desktop capture mode whose PNG
-     * is screen-pixel sized rather than dp sized. Prefer in-process
+     * is screen-pixel sized rather than dp sized. The request fails if the target core is too old
+     * to provide device-scale pixels or if that PNG exceeds the configured IPC frame budget; it
+     * never silently returns logical resolution. Prefer in-process
      * `ComposeAutomator.screenshot(windowIndex)` with the recording native backend for
      * occlusion-safe window stills.
      *
@@ -455,6 +459,18 @@ internal constructor(
         timeoutMs: Long = 5_000,
         stableFrames: Int = 3,
         pollIntervalMs: Long = 16,
+    ): Unit = waitForVisualIdle(timeoutMs, stableFrames, pollIntervalMs, false)
+
+    /**
+     * Wait until visual frames are stable, optionally permitting occlusion-sensitive screen crops
+     * when the target cannot provide native window capture.
+     */
+    @Throws(IOException::class)
+    public fun waitForVisualIdle(
+        timeoutMs: Long = 5_000,
+        stableFrames: Int = 3,
+        pollIntervalMs: Long = 16,
+        allowScreenRegionFallback: Boolean,
     ) {
         val deadline = waitDeadlineFor(timeoutMs)
         val resp =
@@ -463,6 +479,7 @@ internal constructor(
                     timeoutMs = timeoutMs,
                     stableFrames = stableFrames,
                     pollIntervalMs = pollIntervalMs,
+                    allowScreenRegionFallback = allowScreenRegionFallback,
                 ),
                 deadlineEpochMs = deadline,
             )

@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.agent.runtime
 import dev.sebastiano.spectre.agent.AttachInputCoordination
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.AgentRequestHandler
+import dev.sebastiano.spectre.agent.transport.AgentSessionInfoDto
 import dev.sebastiano.spectre.agent.transport.FrameLimits
 import dev.sebastiano.spectre.agent.transport.IpcServer
 import java.lang.instrument.Instrumentation
@@ -93,6 +94,12 @@ public object SpectreAgent {
         val boundState = agentState.get()
         if (boundState != null) {
             if (!replacesBoundAgent(boundState.udsPath, requestedUdsPath)) {
+                requireCompatibleReentry(
+                    boundMaxFrameBytes = boundState.maxFrameBytes,
+                    boundInputCoordination = boundState.inputCoordination,
+                    requestedMaxFrameBytes = parsedArgs.maxFrameBytes,
+                    requestedInputCoordination = parsedArgs.inputCoordination,
+                )
                 System.err.println(
                     "[spectre-agent] already bootstrapped on this JVM; ignoring re-entry"
                 )
@@ -153,6 +160,7 @@ public object SpectreAgent {
                     udsPath = udsPath,
                     handler = handler,
                     onDetach = { publishedState.get()?.let(::onClientDetach) },
+                    sessionInfo = attached.sessionInfo,
                 )
 
             // Register the shutdown hook BEFORE publishing AgentState so a crash between here and
@@ -175,6 +183,8 @@ public object SpectreAgent {
                     udsPath = udsPath,
                     shutdownHook = shutdownHook,
                     targetInputResource = targetInputResource,
+                    maxFrameBytes = parsedArgs.maxFrameBytes,
+                    inputCoordination = parsedArgs.inputCoordination,
                 )
             publishedState.set(newState)
             if (!agentState.compareAndSet(null, newState)) {
@@ -277,6 +287,7 @@ public object SpectreAgent {
                 handler = connected.handler,
                 targetInputResource = connected.targetInputResource,
                 automator = connected.automator,
+                sessionInfo = connected.sessionInfo,
             )
         }
         System.err.println(
@@ -306,12 +317,17 @@ public object SpectreAgent {
                 throw missingCompose
             }
         val loader = bootstrap.classLoader
-        System.err.println("[spectre-agent] found Spectre via $loader")
+        val coreClass = Class.forName(COMPOSE_AUTOMATOR_FQN, false, loader)
+        val coreVersion = coreClass.`package`?.implementationVersion
+        System.err.println(
+            "[spectre-agent] Spectre core provenance=${bootstrap.provenance.name.lowercase()}, " +
+                "version=${coreVersion ?: "unknown"}, classloader=$loader"
+        )
 
         // Open AWT peer packages so core window-identity can resolve host HWND/NSWindow*/XID
         // for embedded ComposePanel surfaces (Compose windowHandle is 0 there). Best-effort:
         // failures are logged and identity falls back to null handles.
-        AwtPeerModuleOpener.openFor(loader, instrumentation)
+        val awtPeerWarning = AwtPeerModuleOpener.openFor(loader, instrumentation)
 
         val agentAutomator = createAutomatorReflectively(loader, inputCoordination)
         val automator = agentAutomator.instance
@@ -320,6 +336,14 @@ public object SpectreAgent {
             automator = automator,
             handler = ReflectiveAutomatorHandler(automator),
             targetInputResource = agentAutomator.targetInputResource,
+            sessionInfo =
+                AgentSessionInfoDto(
+                    driverKind = "synthetic",
+                    inputLeasePolicy = inputCoordination.leasePolicyName,
+                    coreProvenance = bootstrap.provenance.name.lowercase(),
+                    coreVersion = coreVersion,
+                    warnings = listOfNotNull(awtPeerWarning),
+                ),
         )
     }
 
@@ -361,9 +385,8 @@ public object SpectreAgent {
      * parameter only ever carries a choice the *attacher* made deliberately — nothing on this side
      * infers it from a failure, a timeout, or a property the target happens to carry.
      *
-     * Targets predating `InputLeasePolicy` still fall back to the no-argument driver, which was
-     * never coordinated; the opt-out is a no-op there rather than an error, since it asks for what
-     * that target already does.
+     * Targets must provide both `InputLeasePolicy` and `RobotDriver.synthetic(policy)`. Older
+     * shapes fail rather than silently switching to real OS input or dropping the requested policy.
      */
     internal fun createCoordinatedRobotDriverOrLegacyFallback(
         classLoader: ClassLoader,
@@ -371,6 +394,8 @@ public object SpectreAgent {
         inputCoordination: AttachInputCoordination = AttachInputCoordination.Required,
     ): Any =
         try {
+            val targetCoreVersion =
+                robotDriverClass.`package`?.implementationVersion ?: "unversioned"
             val policyClass = classLoader.loadClass(INPUT_LEASE_POLICY_FQN)
             val policyName = inputCoordination.leasePolicyName
             val policy =
@@ -385,18 +410,24 @@ public object SpectreAgent {
                 )
             }
             invokeSyntheticFactory(robotDriverClass, policy)
-                ?: robotDriverClass.getDeclaredConstructor(policyClass).newInstance(policy)
-        } catch (_: ClassNotFoundException) {
-            invokeSyntheticFactory(robotDriverClass, policy = null)
-                ?: robotDriverClass.getDeclaredConstructor().newInstance()
-        } catch (_: NoSuchMethodException) {
-            invokeSyntheticFactory(robotDriverClass, policy = null)
-                ?: robotDriverClass.getDeclaredConstructor().newInstance()
+                ?: error(
+                    "Target Spectre core does not provide RobotDriver.synthetic(InputLeasePolicy); " +
+                        "target core version=$targetCoreVersion; refusing to substitute real OS " +
+                        "input or discard InputLeasePolicy.$policyName"
+                )
+        } catch (ex: ClassNotFoundException) {
+            val targetCoreVersion =
+                robotDriverClass.`package`?.implementationVersion ?: "unversioned"
+            error(
+                "Target Spectre core does not provide InputLeasePolicy; refusing to substitute " +
+                    "the legacy real-OS RobotDriver (target core version=$targetCoreVersion; " +
+                    "${ex.message})"
+            )
         }
 
     /**
-     * Prefers `RobotDriver.Companion.synthetic(policy)` / `synthetic()` so attach defaults to
-     * synthetic AWT input. Falls back to `null` when the target core predates those factories.
+     * Resolves `RobotDriver.Companion.synthetic(policy)`. Returns `null` when the target core
+     * predates that exact factory so the caller can reject the incompatible core.
      */
     private fun invokeSyntheticFactory(robotDriverClass: Class<*>, policy: Any?): Any? {
         val companionField =
@@ -409,7 +440,7 @@ public object SpectreAgent {
             }
             if (withPolicy != null) return withPolicy.invoke(companion, policy)
         }
-        return methods.firstOrNull { method -> method.parameterCount == 0 }?.invoke(companion)
+        return null
     }
 
     private fun invokeWindowsCountReflectively(automator: Any): Int {
@@ -423,6 +454,21 @@ public object SpectreAgent {
         val getWindowsMethod = automator.javaClass.getMethod("getWindows")
         val windows = getWindowsMethod.invoke(automator) as List<*>
         return windows.size
+    }
+
+    internal fun requireCompatibleReentry(
+        boundMaxFrameBytes: Int?,
+        boundInputCoordination: AttachInputCoordination,
+        requestedMaxFrameBytes: Int?,
+        requestedInputCoordination: AttachInputCoordination,
+    ) {
+        check(boundMaxFrameBytes == requestedMaxFrameBytes) {
+            "Agent already uses maxFrameBytes=$boundMaxFrameBytes; requested $requestedMaxFrameBytes"
+        }
+        check(boundInputCoordination == requestedInputCoordination) {
+            "Agent already uses inputCoordination=${boundInputCoordination.wireValue}; requested " +
+                requestedInputCoordination.wireValue
+        }
     }
 
     private const val ROBOT_DRIVER_FQN = "dev.sebastiano.spectre.core.RobotDriver"
@@ -439,6 +485,7 @@ public object SpectreAgent {
         val handler: AgentRequestHandler,
         val targetInputResource: AutoCloseable?,
         val automator: Any?,
+        val sessionInfo: AgentSessionInfoDto? = null,
     )
 
     /** Single live agent state, swapped under [agentState] atomically. */
@@ -447,5 +494,7 @@ public object SpectreAgent {
         val udsPath: Path,
         val shutdownHook: Thread,
         val targetInputResource: AutoCloseable?,
+        val maxFrameBytes: Int?,
+        val inputCoordination: AttachInputCoordination,
     )
 }

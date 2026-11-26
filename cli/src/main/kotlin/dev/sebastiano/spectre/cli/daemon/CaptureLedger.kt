@@ -44,26 +44,36 @@ internal class CaptureLedger(private val ledgerFile: Path) {
         if (paths.isEmpty()) return
         withLedgerLock {
             if (!Files.isRegularFile(ledgerFile)) return@withLedgerLock
-            val remaining = readAllUnlocked().filterNot { it.path in paths }
+            val remaining = readLinesUnlocked().filterNot { it.entry?.path in paths }
             rewriteUnlocked(remaining)
         }
     }
 
     private fun readAllUnlocked(): List<CaptureLedgerEntry> {
+        return readLinesUnlocked().mapNotNull { it.entry }
+    }
+
+    private data class LedgerLine(val raw: String, val entry: CaptureLedgerEntry?)
+
+    private fun readLinesUnlocked(): List<LedgerLine> {
         if (!Files.isRegularFile(ledgerFile)) return emptyList()
-        return Files.readAllLines(ledgerFile, StandardCharsets.UTF_8).mapNotNull { line ->
+        return Files.readAllLines(ledgerFile, StandardCharsets.UTF_8).map { line ->
             val trimmed = line.trim()
-            if (trimmed.isEmpty()) return@mapNotNull null
-            runCatching { JSON.decodeFromString(CaptureLedgerEntry.serializer(), trimmed) }
-                .getOrNull()
+            LedgerLine(
+                line,
+                trimmed.takeIf(String::isNotEmpty)?.let {
+                    runCatching { JSON.decodeFromString(CaptureLedgerEntry.serializer(), it) }
+                        .getOrNull()
+                },
+            )
         }
     }
 
-    private fun rewriteUnlocked(entries: List<CaptureLedgerEntry>) {
+    private fun rewriteUnlocked(entries: List<LedgerLine>) {
         Files.createDirectories(ledgerFile.parent)
         val content = buildString {
-            entries.forEach { entry ->
-                append(JSON.encodeToString(entry))
+            entries.forEach { line ->
+                append(line.entry?.let(JSON::encodeToString) ?: line.raw)
                 append('\n')
             }
         }

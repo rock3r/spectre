@@ -12,7 +12,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 14)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 16)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -89,6 +89,16 @@ public object DaemonProtocol {
                 )
         }
 
+    /**
+     * Negotiates connection-wide configuration and diagnostics for every operation but shutdown.
+     */
+    internal fun clientHandshakeVersion(request: DaemonRequest): DaemonProtocolVersion =
+        if (request is DaemonRequest.Shutdown) minimumDaemonVersion(request) else CurrentVersion
+
+    /** Whether this negotiated client can decode operation-level diagnosed envelopes. */
+    internal fun supportsDiagnosedResponses(handshake: DaemonProtocolVersion): Boolean =
+        handshake.major == CurrentVersion.major && handshake.minor >= DIAGNOSTICS_INTRODUCED_MINOR
+
     /** Full-desktop recording needs a newer daemon than window recording. */
     private fun startRecordingVersion(
         request: DaemonRequest.StartRecording
@@ -148,6 +158,8 @@ public object DaemonProtocol {
      * before it rejects the new discriminator.
      */
     private const val FOCUS_WINDOW_INTRODUCED_MINOR: Int = 14
+    /** Configuration negotiation and diagnosed operation envelopes (#673). */
+    private const val DIAGNOSTICS_INTRODUCED_MINOR: Int = 15
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -161,8 +173,23 @@ public enum class VersionCompatibility {
 @OptIn(ExperimentalSpectreAgentApi::class)
 @Serializable
 public sealed interface DaemonRequest {
+    public sealed interface SessionRequest : DaemonRequest {
+        public val sessionId: String
+    }
+
     @Serializable
-    public data class Hello(public val clientVersion: DaemonProtocolVersion) : DaemonRequest
+    public data class Hello(
+        public val clientVersion: DaemonProtocolVersion,
+        public val configuration: Map<String, String?> = emptyMap(),
+    ) : DaemonRequest {
+        /** Older clients only recognize the original singleton shutdown acknowledgement. */
+        public var acceptsShutdownRecordings: Boolean = false
+            internal set
+
+        /** Diagnosed envelopes are an additive response shape and require explicit opt-in. */
+        public var acceptsDiagnosedResponses: Boolean = false
+            internal set
+    }
 
     @Serializable
     @SerialName("attach")
@@ -170,7 +197,7 @@ public sealed interface DaemonRequest {
 
     @Serializable
     @SerialName("detach")
-    public data class Detach(public val sessionId: String) : DaemonRequest
+    public data class Detach(public override val sessionId: String) : SessionRequest
 
     @Serializable @SerialName("listSessions") public data object ListSessions : DaemonRequest
 
@@ -180,39 +207,41 @@ public sealed interface DaemonRequest {
 
     @Serializable
     @SerialName("windows")
-    public data class Windows(public val sessionId: String) : DaemonRequest
+    public data class Windows(public override val sessionId: String) : SessionRequest
 
     @Serializable
     @SerialName("allNodes")
-    public data class AllNodes(public val sessionId: String) : DaemonRequest
+    public data class AllNodes(public override val sessionId: String) : SessionRequest
 
     @Serializable
     @SerialName("findByTestTag")
-    public data class FindByTestTag(public val sessionId: String, public val tag: String) :
-        DaemonRequest
+    public data class FindByTestTag(public override val sessionId: String, public val tag: String) :
+        SessionRequest
 
     @Serializable
     @SerialName("click")
-    public data class Click(public val sessionId: String, public val nodeKey: String) :
-        DaemonRequest
+    public data class Click(public override val sessionId: String, public val nodeKey: String) :
+        SessionRequest
 
     @Serializable
     @SerialName("doubleClick")
-    public data class DoubleClick(public val sessionId: String, public val nodeKey: String) :
-        DaemonRequest
+    public data class DoubleClick(
+        public override val sessionId: String,
+        public val nodeKey: String,
+    ) : SessionRequest
 
     @Serializable
     @SerialName("longClick")
     public data class LongClick(
-        public val sessionId: String,
+        public override val sessionId: String,
         public val nodeKey: String,
         public val holdForMs: Long = 500,
-    ) : DaemonRequest
+    ) : SessionRequest
 
     @Serializable
     @SerialName("swipe")
     public data class Swipe(
-        public val sessionId: String,
+        public override val sessionId: String,
         public val fromNodeKey: String? = null,
         public val toNodeKey: String? = null,
         public val startX: Int? = null,
@@ -221,23 +250,23 @@ public sealed interface DaemonRequest {
         public val endY: Int? = null,
         public val steps: Int = 12,
         public val durationMs: Long = 200,
-    ) : DaemonRequest
+    ) : SessionRequest
 
     @Serializable
     @SerialName("scrollWheel")
     public data class ScrollWheel(
-        public val sessionId: String,
+        public override val sessionId: String,
         public val nodeKey: String,
         public val wheelClicks: Int,
-    ) : DaemonRequest
+    ) : SessionRequest
 
     @Serializable
     @SerialName("pressKey")
     public data class PressKey(
-        public val sessionId: String,
+        public override val sessionId: String,
         public val keyCode: Int,
         public val modifiers: Int = 0,
-    ) : DaemonRequest
+    ) : SessionRequest
 
     /**
      * Raise and focus the window at [windowIndex] (the index `windows` reports) (#556).
@@ -247,43 +276,45 @@ public sealed interface DaemonRequest {
      */
     @Serializable
     @SerialName("focusWindow")
-    public data class FocusWindow(public val sessionId: String, public val windowIndex: Int = 0) :
-        DaemonRequest
+    public data class FocusWindow(
+        public override val sessionId: String,
+        public val windowIndex: Int = 0,
+    ) : SessionRequest
 
     @Serializable
     @SerialName("typeText")
-    public data class TypeText(public val sessionId: String, public val text: String) :
-        DaemonRequest
+    public data class TypeText(public override val sessionId: String, public val text: String) :
+        SessionRequest
 
     @Serializable
     @SerialName("findByText")
     public data class FindByText(
-        public val sessionId: String,
+        public override val sessionId: String,
         public val text: String,
         public val exact: Boolean = true,
-    ) : DaemonRequest
+    ) : SessionRequest
 
     @Serializable
     @SerialName("findByContentDescription")
     public data class FindByContentDescription(
-        public val sessionId: String,
+        public override val sessionId: String,
         public val description: String,
-    ) : DaemonRequest
+    ) : SessionRequest
 
     @Serializable
     @SerialName("findByRole")
-    public data class FindByRole(public val sessionId: String, public val role: String) :
-        DaemonRequest
+    public data class FindByRole(public override val sessionId: String, public val role: String) :
+        SessionRequest
 
     @Serializable
     @SerialName("waitForNode")
     public data class WaitForNode(
-        public val sessionId: String,
+        public override val sessionId: String,
         public val tag: String? = null,
         public val text: String? = null,
         public val timeoutMs: Long = 5_000,
         public val pollIntervalMs: Long = 100,
-    ) : DaemonRequest
+    ) : SessionRequest
 
     /**
      * Wait until **no** node matches [tag] and/or [text] (AND when both set) — the absence
@@ -297,21 +328,21 @@ public sealed interface DaemonRequest {
     @Serializable
     @SerialName("waitUntilGone")
     public data class WaitUntilGone(
-        public val sessionId: String,
+        public override val sessionId: String,
         public val tag: String? = null,
         public val text: String? = null,
         public val timeoutMs: Long = 5_000,
         public val pollIntervalMs: Long = 100,
-    ) : DaemonRequest
+    ) : SessionRequest
 
     @Serializable
     @SerialName("waitForVisualIdle")
     public data class WaitForVisualIdle(
-        public val sessionId: String,
+        public override val sessionId: String,
         public val timeoutMs: Long = 5_000,
         public val stableFrames: Int = 3,
         public val pollIntervalMs: Long = 16,
-    ) : DaemonRequest
+    ) : SessionRequest
 
     /**
      * Wait until a Compose Hot Reload settle chain completes (#211).
@@ -323,31 +354,31 @@ public sealed interface DaemonRequest {
     @Serializable
     @SerialName("waitForReloadSettled")
     public data class WaitForReloadSettled(
-        public val sessionId: String,
+        public override val sessionId: String,
         public val timeoutMs: Long = 60_000,
-    ) : DaemonRequest
+    ) : SessionRequest
 
     @Serializable
     @SerialName("screenshot")
     public data class Screenshot(
-        public val sessionId: String,
+        public override val sessionId: String,
         public val windowIndex: Int? = null,
         public val surfaceId: String? = null,
         public val fullscreen: Boolean = false,
-    ) : DaemonRequest
+    ) : SessionRequest
 
     @Serializable
     @SerialName("capture")
     public data class Capture(
-        public val sessionId: String,
+        public override val sessionId: String,
         public val windowIndex: Int = 0,
         public val outDir: String? = null,
-    ) : DaemonRequest
+    ) : SessionRequest
 
     @Serializable
     @SerialName("startRecording")
     public data class StartRecording(
-        public val sessionId: String,
+        public override val sessionId: String,
         /** Absolute path to the .mp4, or null to allocate under the capture root. */
         public val outputPath: String? = null,
         /** Tracked window index when [fullscreen] is false. Ignored when [fullscreen] is true. */
@@ -358,15 +389,15 @@ public sealed interface DaemonRequest {
          * with a non-default window target at the CLI/MCP layer.
          */
         public val fullscreen: Boolean = false,
-    ) : DaemonRequest
+    ) : SessionRequest
 
     @Serializable
     @SerialName("stopRecording")
-    public data class StopRecording(public val sessionId: String) : DaemonRequest
+    public data class StopRecording(public override val sessionId: String) : SessionRequest
 
     @Serializable
     @SerialName("recordingStatus")
-    public data class RecordingStatus(public val sessionId: String) : DaemonRequest
+    public data class RecordingStatus(public override val sessionId: String) : SessionRequest
 
     @Serializable @SerialName("shutdown") public data object Shutdown : DaemonRequest
 }
@@ -390,17 +421,32 @@ public sealed interface DaemonResponse {
         public val daemonVersion: DaemonProtocolVersion,
         public val maxFrameBytes: Int? = null,
         public val inputCoordination: String? = null,
+        public val configuration: Map<String, String?> = emptyMap(),
+        public val warnings: List<String> = emptyList(),
+    ) : DaemonResponse
+
+    /** Operation response plus warnings produced while serving only that request. */
+    @Serializable
+    @SerialName("diagnosed")
+    public data class Diagnosed(
+        public val response: DaemonResponse,
+        public val warnings: List<String>,
     ) : DaemonResponse
 
     @Serializable
     @SerialName("attached")
-    public data class Attached(public val sessionId: String, public val targetPid: Long) :
-        DaemonResponse
+    public data class Attached(
+        public val sessionId: String,
+        public val targetPid: Long,
+        public val sessionInfo: DaemonSessionInfo? = null,
+    ) : DaemonResponse
 
     @Serializable
     @SerialName("detached")
     public data class Detached(
         public val sessionId: String,
+        /** Recording finalized automatically while detaching, if one was active. */
+        public val finalizedRecordingPath: String? = null,
         /** Captures this session left on disk (existing directories only). */
         public val captureCount: Int = 0,
         public val captureBytes: Long = 0L,
@@ -409,7 +455,13 @@ public sealed interface DaemonResponse {
         public val pruneCommand: String? = null,
         /** Agent skill name that documents capture.json + jq workflows. */
         public val skillHint: String? = null,
-    ) : DaemonResponse
+    ) : DaemonResponse {
+        public var diagnostics: RecordingDiagnostics? = null
+            internal set
+
+        public var recordingError: String? = null
+            internal set
+    }
 
     @Serializable
     @SerialName("sessions")
@@ -479,11 +531,20 @@ public sealed interface DaemonResponse {
     ) : DaemonResponse
 
     @Serializable
+    public data class RecordingDiagnostics(
+        public val droppedFrames: Long? = null,
+        public val cropFixedAtStart: Boolean? = null,
+    )
+
+    @Serializable
     @SerialName("recordingStopped")
     public data class RecordingStopped(
         public val sessionId: String,
         public val outputPath: String,
-    ) : DaemonResponse
+    ) : DaemonResponse {
+        public var diagnostics: RecordingDiagnostics? = null
+            internal set
+    }
 
     @Serializable
     @SerialName("recordingStatus")
@@ -495,6 +556,21 @@ public sealed interface DaemonResponse {
     ) : DaemonResponse
 
     @Serializable @SerialName("shuttingDown") public data object ShuttingDown : DaemonResponse
+
+    @Serializable
+    @SerialName("shuttingDownWithRecordings")
+    public data class ShuttingDownWithRecordings(public val recordings: List<FinalizedRecording>) :
+        DaemonResponse
+
+    @Serializable
+    public data class FinalizedRecording(
+        public val sessionId: String,
+        public val outputPath: String,
+        public val error: String? = null,
+    ) {
+        public var diagnostics: RecordingDiagnostics? = null
+            internal set
+    }
 
     @Serializable
     @SerialName("error")
@@ -510,7 +586,20 @@ public sealed interface DaemonResponse {
 }
 
 @Serializable
-public data class DaemonSessionSummary(public val sessionId: String, public val targetPid: Long)
+public data class DaemonSessionSummary(
+    public val sessionId: String,
+    public val targetPid: Long,
+    public val sessionInfo: DaemonSessionInfo? = null,
+)
+
+@Serializable
+public data class DaemonSessionInfo(
+    public val driverKind: String,
+    public val inputLeasePolicy: String,
+    public val coreProvenance: String,
+    public val coreVersion: String? = null,
+    public val warnings: List<String> = emptyList(),
+)
 
 /** A JVM process that can be targeted through the local daemon. */
 @Serializable

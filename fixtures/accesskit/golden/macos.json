@@ -1,0 +1,10 @@
+{
+  "windowRole": "AXWindow",
+  "buttonRole": "AXButton",
+  "checkboxRole": "AXCheckBox",
+  "textRole": "AXTextField",
+  "textValue": "Ada Lovelace",
+  "popoverRole": "AXDialog",
+  "checkedState": "1",
+  "disabledState": "disabled"
+}

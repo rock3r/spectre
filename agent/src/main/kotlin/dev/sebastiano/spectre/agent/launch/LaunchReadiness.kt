@@ -6,6 +6,8 @@ import dev.sebastiano.spectre.agent.AttachOptions
 import dev.sebastiano.spectre.agent.AttachedAutomator
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.HotSpotAttachSocket
+import dev.sebastiano.spectre.agent.RemoteAttachFailure
+import dev.sebastiano.spectre.agent.RemoteAttachFailureKind
 import dev.sebastiano.spectre.agent.SpectreAgentException
 import dev.sebastiano.spectre.agent.SpectreAttachException
 import dev.sebastiano.spectre.agent.effectiveUdsPath
@@ -62,6 +64,7 @@ internal object LaunchReadiness {
         launchedPid: Long,
         gradleish: Boolean,
         nameFilter: String?,
+        launchMarker: String?,
         timeoutMs: Long,
         stdoutPath: Path,
         stderrPath: Path,
@@ -88,7 +91,13 @@ internal object LaunchReadiness {
             // Gradle-ish: keep discovering after the client exits. The app JVM is often a
             // daemon child (not a ProcessHandle descendant of ./gradlew); tasks that fork and
             // return still need the remaining stage budget to observe the app.
-            val pid = LaunchDescendantDiscovery.discoverAppJvm(launchedPid, nameFilter, clientStart)
+            val pid =
+                discoverOwnedAppJvm(
+                    clientPid = launchedPid,
+                    nameFilter = nameFilter,
+                    clientStart = clientStart,
+                    launchMarker = launchMarker,
+                )
             if (pid != null) return pid
             sleepQuietly(POLL_MS)
         }
@@ -136,7 +145,7 @@ internal object LaunchReadiness {
                     " Prefer a prod-like launch (java -jar / installDist) over ./gradlew when " +
                     "possible; for Gradle, ensure the app has started (cold daemon + compile " +
                     "can take >15s) and that --app-name matches the main class." +
-                    lastDiscoverySnapshot(launchedPid, nameFilter, clientStart),
+                    lastDiscoverySnapshot(launchedPid, nameFilter, launchMarker, clientStart),
         )
     }
 
@@ -215,7 +224,7 @@ internal object LaunchReadiness {
             // stack a full attachTimeoutMs UDS wait after the stage deadline.
             val options = attachOptions.copy(udsPath = udsPath, attachTimeoutMs = remainingMs)
             try {
-                return AgentAttach.attach(attachedPid, options)
+                return AgentAttach.attachLaunched(attachedPid, options, remainingMs)
             } catch (ex: AttachInterruptedException) {
                 Thread.currentThread().interrupt()
                 throw LaunchAgentBootstrapException(
@@ -327,8 +336,20 @@ internal object LaunchReadiness {
         ) {
             return false
         }
-        if (chain.any { it.javaClass.simpleName == "AttachNotSupportedException" }) return true
-        if (chain.any { it.javaClass.simpleName == "AgentLoadException" }) {
+        if (
+            chain.any {
+                (it as? RemoteAttachFailure)?.kind == RemoteAttachFailureKind.AttachNotSupported ||
+                    it.javaClass.simpleName == "AttachNotSupportedException"
+            }
+        ) {
+            return true
+        }
+        if (
+            chain.any {
+                (it as? RemoteAttachFailure)?.kind == RemoteAttachFailureKind.AgentLoad ||
+                    it.javaClass.simpleName == "AgentLoadException"
+            }
+        ) {
             // HotSpot: "Target VM did not respond" and "target process not responding".
             return "not respond" in lower ||
                 "no such process" in lower ||
@@ -504,6 +525,7 @@ internal object LaunchReadiness {
     private fun lastDiscoverySnapshot(
         launchedPid: Long,
         nameFilter: String?,
+        launchMarker: String?,
         clientStart: Instant,
     ): String {
         val captured = StringBuilder()
@@ -512,6 +534,11 @@ internal object LaunchReadiness {
                 clientPid = launchedPid,
                 nameFilter = nameFilter,
                 clientStart = clientStart,
+                ownsLaunch =
+                    launchMarker?.let { marker -> { pid -> hasLaunchMarker(pid, marker) } }
+                        ?: {
+                            true
+                        },
                 onDiagnostics = { captured.append(it.format()) },
             )
         }

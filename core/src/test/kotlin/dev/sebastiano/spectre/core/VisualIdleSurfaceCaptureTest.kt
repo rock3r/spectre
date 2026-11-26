@@ -139,6 +139,7 @@ class VisualIdleSurfaceCaptureTest {
                     windowBounds = Rectangle(0, 0, 100, 100),
                     frameInsets = Insets(0, 0, 0, 0),
                     nativeWindowCaptureAvailable = false,
+                    allowScreenRegionFallback = true,
                 )
             assertSame(regionImage, image)
             assertEquals(1, regionCalls)
@@ -185,6 +186,7 @@ class VisualIdleSurfaceCaptureTest {
                     windowBounds = Rectangle(frame.bounds),
                     frameInsets = Insets(0, 0, 0, 0),
                     nativeWindowCaptureAvailable = true,
+                    allowScreenRegionFallback = true,
                 )
             assertSame(regionImage, image)
             assertEquals(1, windowCalls)
@@ -289,12 +291,12 @@ class VisualIdleSurfaceCaptureTest {
         val frame =
             Frame("ambiguous-a").apply {
                 setBounds(0, 0, 80, 60)
-                addNotify()
+                isVisible = true
             }
         val twin =
             Frame("ambiguous-a").apply {
                 setBounds(100, 0, 80, 60)
-                addNotify()
+                isVisible = true
             }
         var regionCalls = 0
         val backend =
@@ -418,6 +420,7 @@ class VisualIdleSurfaceCaptureTest {
                     windowBounds = Rectangle(0, 0, 8, 8),
                     frameInsets = Insets(0, 0, 0, 0),
                     nativeWindowCaptureAvailable = false,
+                    allowScreenRegionFallback = true,
                 )
             assertSame(regionImage, image)
         } finally {

@@ -94,10 +94,10 @@ out of scope.
 | --- | --- | --- |
 | Move mouse / press keys | `RobotDriver.click`, `moveTo`, `moveBy`, `swipe`, `pressKey`, `scrollWheel` | In-process; trusted-local HTTP via `/spectre/click` |
 | Modify clipboard | `RobotDriver.pasteText` (save / set / paste / restore) | In-process |
-| Capture pixels | `RobotDriver.screenshot(region)` — **captures any rectangle of the virtual desktop**, not just the app under test; `AutoScreenshotter` for native/window-targeted still screenshots where available | In-process; trusted-local HTTP via `/spectre/screenshot` for `RobotDriver`; `AutoScreenshotter` is in-process only |
+| Capture pixels | `RobotDriver.screenshot(region)` — **captures any rectangle of the virtual desktop**, not just the app under test; `AutoScreenshotter` for native/window-targeted still screenshots where available | In-process; trusted-local HTTP via explicit `/spectre/screenshot?fullscreen=true` or node-targeted `/spectre/screenshot?nodeKey=…` for `RobotDriver`; `AutoScreenshotter` is in-process only |
 | Record video | `AutoRecorder`, native recorders, deprecated explicit `FfmpegRecorder`, `WaylandPortalRecorder` | In-process only |
 | Execute a helper binary | `HelperBinaryExtractor` (SCK), `WaylandHelperBinaryExtractor` | Local file system, JVM process |
-| Expose any of the above over HTTP | `installSpectreRoutes` mounts windows, nodes/`node`, tree/`printTree`, input verbs, and screenshot (full-frame or `?nodeKey=`) | Deployment bearer on every non-preflight request; **HTTPS required by default**; CORS denied unless exactly allowlisted |
+| Expose any of the above over HTTP | `installSpectreRoutes` mounts windows, nodes/`node`, tree/`printTree`, input verbs, and screenshot (explicit `?fullscreen=true` or `?nodeKey=`) | Deployment bearer on every non-preflight request; **HTTPS required by default**; CORS denied unless exactly allowlisted |
 | Expose any of the above over UDS | `:agent`'s `IpcServer` mounts the same surface plus detach over a Unix Domain Socket | **Unauthenticated** — owner-only filesystem access (POSIX mode 0600 on Linux/macOS, owner-only ACL on Windows/NTFS); same OS user only. Supported on Linux, macOS, and Windows (10 version 1803 / Server 2019+) |
 
 The HTTP exposure column is the most important one to internalise: possession of one deployment
@@ -162,8 +162,8 @@ These risks are accepted for the pre-1.0 release.
 - **Host-managed TLS.** Spectre enforces the request scheme and defaults its client to HTTPS, but
   certificate issuance, private-key storage, connector configuration, and trusted-proxy policy
   belong to the host deployment.
-- **Screenshot scope.** `RobotDriver.screenshot(region)` and full-frame HTTP `GET /screenshot` can
-  capture pixels from unrelated windows. Node-targeted HTTP stills (`GET /screenshot?nodeKey=`)
+- **Screenshot scope.** `RobotDriver.screenshot(region)` and explicit full-frame HTTP `GET /screenshot?fullscreen=true` can
+  capture pixels from unrelated windows. HTTP rejects an unscoped `GET /screenshot`; node-targeted stills (`GET /screenshot?nodeKey=`)
   narrow the request but do not constrain the full-frame / Robot region path.
 - **Recording output-path validation.** Spectre passes the caller-supplied output path
   through to ffmpeg, GStreamer, or the helpers without rejecting `/dev/`, `/proc/`, symlinks, or

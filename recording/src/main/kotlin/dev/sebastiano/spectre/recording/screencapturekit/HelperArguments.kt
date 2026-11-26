@@ -143,7 +143,7 @@ internal data class HelperArguments(
         add(if (captureCursor) "true" else "false")
         if (output != null) {
             add("--file-type")
-            add(fileTypeFor(output).cliValue)
+            add(fileTypeFor(output, mode).cliValue)
         }
         add("--discovery-timeout-ms")
         add(discoveryTimeoutMs.toString())
@@ -162,7 +162,7 @@ internal data class HelperArguments(
         /** Keeps one stream on the window and answers stills on stdin (#605). */
         const val STILLS_MODE: String = "stills"
 
-        private fun fileTypeFor(output: Path): RecordingFileType =
+        private fun fileTypeFor(output: Path, mode: String): RecordingFileType =
             when (
                 output.fileName
                     ?.toString()
@@ -170,7 +170,14 @@ internal data class HelperArguments(
                     ?.lowercase()
             ) {
                 "mp4" -> RecordingFileType.Mp4
-                else -> RecordingFileType.Mov
+                "mov" -> RecordingFileType.Mov
+                else -> {
+                    require(mode != "recording") {
+                        "ScreenCaptureKit recording output must use a .mp4 or .mov extension; " +
+                            "got $output."
+                    }
+                    RecordingFileType.Mov
+                }
             }
 
         private fun validateCrop(crop: Rectangle) {

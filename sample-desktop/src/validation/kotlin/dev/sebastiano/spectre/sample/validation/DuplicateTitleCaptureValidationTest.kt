@@ -38,9 +38,9 @@ import org.junit.jupiter.api.TestInstance
  * Windows and Linux X11 helpers find a titled window by its title, so a shared title used to make
  * every native still fail, and `waitForVisualIdle` reported every sample as unsampleable. Spectre
  * now selects such a window by its owner process and on-screen frame (#606) instead. It still fails
- * clearly when the frame is shared too. macOS is unchanged: its helper tells shared titles apart
- * itself. On GNOME Wayland, Spectre binds a Mutter window stream to the window itself (#642), so
- * neither the title nor the frame selects anything and the still is simply the window.
+ * clearly when the frame is shared too, including on macOS. On GNOME Wayland, Spectre binds a
+ * Mutter window stream to the window itself (#642), so neither the title nor the frame selects
+ * anything and the still is simply the window.
  *
  * Skips headless hosts and GitHub-hosted Windows (no interactive desktop for WGC).
  */
@@ -105,10 +105,6 @@ class DuplicateTitleCaptureValidationTest {
     @Test
     fun `a window that shares both its title and its frame still fails clearly`() {
         assumeFalse(
-            System.getProperty("os.name").orEmpty().contains("mac", ignoreCase = true),
-            "The macOS helper tells windows with the same title apart itself",
-        )
-        assumeFalse(
             isWaylandSession(),
             "Wayland binds a Mutter stream to the window itself; a shared frame selects nothing",
         )
@@ -126,6 +122,28 @@ class DuplicateTitleCaptureValidationTest {
             assertTrue(error.message.orEmpty().contains("frame"), error.message)
         } finally {
             onEdt { twinWindow.bounds = twinBounds }
+        }
+    }
+
+    @Test
+    fun `a hidden twin with the same title and frame does not obscure the owner`() {
+        val twinWindow = checkNotNull(twin)
+        val originalBounds = onEdt { Rectangle(twinWindow.bounds) }
+        val originalTitle = onEdt { ownerFrame().title }
+        try {
+            onEdt {
+                twinWindow.isVisible = false
+                twinWindow.bounds = Rectangle(ownerFrame().bounds)
+            }
+            assertTrue(isOwnerColourAtCentre(screenshotUntilPainted(ownerWindowIndex())))
+            assertTrue(
+                onEdt { ownerFrame().title == originalTitle && twinWindow.title == originalTitle }
+            )
+        } finally {
+            onEdt {
+                twinWindow.bounds = originalBounds
+                twinWindow.isVisible = true
+            }
         }
     }
 

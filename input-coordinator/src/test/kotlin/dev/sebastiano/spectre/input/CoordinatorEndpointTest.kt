@@ -78,6 +78,55 @@ class CoordinatorEndpointTest {
     }
 
     @Test
+    fun `missing base is resolved beneath its canonical existing ancestor`() {
+        val ownedDirectory = compactTemporaryDirectory()
+        val real = Files.createDirectory(ownedDirectory.resolve("r"))
+        val alias = ownedDirectory.resolve("alias")
+        try {
+            try {
+                alias.createSymbolicLinkPointingTo(real)
+            } catch (_: UnsupportedOperationException) {
+                return
+            } catch (_: FileSystemException) {
+                return
+            }
+
+            // Exercise canonicalisation directly: the endpoint name is irrelevant to this test,
+            // and appending it can exceed Windows' AF_UNIX limit when the user profile is long.
+            val resolved = canonicalizeProspectivePath(alias.resolve("n"))
+
+            assertEquals(real.toRealPath().resolve("n"), resolved)
+            assertFalse(resolved.startsWith(alias))
+        } finally {
+            Files.deleteIfExists(alias)
+            Files.deleteIfExists(real)
+            Files.deleteIfExists(ownedDirectory)
+        }
+    }
+
+    @Test
+    fun `dangling symlink base is not mistaken for a prospective component`() {
+        val ownedDirectory = compactTemporaryDirectory()
+        val link = ownedDirectory.resolve("dangling")
+        try {
+            try {
+                link.createSymbolicLinkPointingTo(ownedDirectory.resolve("absent"))
+            } catch (_: UnsupportedOperationException) {
+                return
+            } catch (_: FileSystemException) {
+                return
+            }
+
+            assertFailsWith<IOException> {
+                CoordinatorEndpointResolver.resolve(link, effectiveUserId = "501")
+            }
+        } finally {
+            Files.deleteIfExists(link)
+            Files.deleteIfExists(ownedDirectory)
+        }
+    }
+
+    @Test
     fun `owner-only directory is created with private POSIX permissions`() {
         val endpoint =
             CoordinatorEndpoint(
@@ -162,6 +211,18 @@ class CoordinatorEndpointTest {
             }
 
         assertTrue(failure.message.orEmpty().contains("owner-only"))
+    }
+
+    private fun compactTemporaryDirectory(): Path {
+        val compactRoot = Path.of("/tmp")
+        return if (
+            !System.getProperty("os.name").startsWith("Windows", ignoreCase = true) &&
+                Files.isDirectory(compactRoot)
+        ) {
+            Files.createTempDirectory(compactRoot, "s")
+        } else {
+            Files.createTempDirectory("s")
+        }
     }
 
     @Test

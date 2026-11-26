@@ -401,7 +401,7 @@ class ScreenshotGoldPathsTest {
                 display = ":113",
                 waylandDisplay = null,
                 sessionType = null,
-                captureBackend = null,
+                captureBackend = "x11",
             ),
         )
         assertEquals(
@@ -422,7 +422,7 @@ class ScreenshotGoldPathsTest {
                 display = ":113",
                 waylandDisplay = temp.resolve("missing-wl").toString(),
                 sessionType = "wayland",
-                captureBackend = null,
+                captureBackend = "x11",
             ),
         )
         assertEquals(

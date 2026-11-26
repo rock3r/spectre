@@ -36,23 +36,18 @@ This README describes implementation and packaging.
   only. Implements `Recorder` and `WindowRecorder`.
 - `screencapturekit.WindowRecorder` — interface for window-targeted backends. SCK is the
   macOS implementation; `windows.WindowsGraphicsCaptureRecorder` covers Windows, and
-  `LinuxX11Recorder`/`WaylandPortalWindowRecorder` cover Linux Xorg/Xvfb and Wayland.
+  `LinuxX11Recorder`/GNOME Mutter window streams cover Linux Xorg/Xvfb and Wayland.
 - `windows.WindowsGraphicsCaptureRecorder` — WGC + `MediaTranscoder` MP4 capture on Windows.
   Window mode follows the target window and captures its surface.
   Region and fullscreen modes record a fixed monitor rectangle.
   Both modes use the `spectre-recording-windows` runtime helper.
 - `FfmpegWindowRecorder` — deprecated legacy explicit `gdigrab title=` capture on Windows. Follows the
   window across moves and resizes; requires a non-blank exact title and `ffmpeg` on `PATH`.
-- `portal.WaylandPortalWindowRecorder` — Linux Wayland window-targeted capture via
-  `xdg-desktop-portal`'s `SourceType.WINDOW`. It captures only the selected window's pixels.
-  The crop stays fixed from `start()`. Moving or resizing the window can misalign output.
-  It requires `xprop` and a compositor publishing
-  `_GTK_FRAME_EXTENTS` (validated on GNOME/Mutter for GTK/XWayland windows; non-GTK toolkits
-  and other compositors may not publish it).
+- `portal.WaylandPortalWindowRecorder.start` refuses capture because the portal cannot verify which window was selected.
 
 ### Auto-routing
 - `AutoRecorder` selects from platform recorders and, when configured, Linux portal
-  recorders. On Wayland it selects a window or region portal recorder. It fails
+  recorders. On Wayland it selects a Mutter window stream or a portal region recorder. It fails
   if the required portal recorder is absent. macOS uses SCK for window and
   region capture. Windows uses Windows Graphics Capture for both. Linux Xorg/Xvfb
   uses the Linux helper. On macOS and Windows, a missing native helper or an
@@ -70,7 +65,7 @@ This README describes implementation and packaging.
   deprecated legacy escape hatches.
 - `./gradlew :recording:runWindowScreenshotSmoke` — manual cross-platform smoke for
   `AutoScreenshotter`. It writes a PNG on macOS, Windows, Linux Xorg/Xvfb, and Linux
-  Wayland. For Wayland window-source video, run `./gradlew :recording:runWaylandPortalWindowSmoke`.
+  Wayland. For GNOME window-source video, run `./gradlew :recording:runWaylandMutterWindowSmoke`.
 - `./gradlew :recording:runLinuxX11RecordingSmoke` — Linux Xorg/Xvfb helper smoke (CI uses
   `xvfb-run`). Records a region and a named window whose title includes `·`, asserts the
   window-mode MP4 matches the window dimensions, and checks that a
@@ -106,7 +101,7 @@ This README describes implementation and packaging.
 | Linux Xorg legacy explicit region capture (`x11grab`) | ✅ deprecated `FfmpegRecorder` |
 | Linux still screenshots (`ximagesrc` or portal/PipeWire) | ✅ `LinuxNativeScreenshotter` |
 | Linux Wayland region capture (xdg-desktop-portal) | ✅ `WaylandPortalRecorder` |
-| Linux Wayland window-targeted capture (xdg-desktop-portal `SourceType.WINDOW`) | ✅ `WaylandPortalWindowRecorder` (fixed crop at `start()` — moves and resizes during recording break alignment) |
+| `WaylandPortalWindowRecorder` | Refuses window capture because the portal cannot verify the selected window’s identity. |
 | Audio | ⏸ deferred — add when asked |
 | Notarization of the SCK helper | ✅ release workflow signs and notarizes the universal helper |
 

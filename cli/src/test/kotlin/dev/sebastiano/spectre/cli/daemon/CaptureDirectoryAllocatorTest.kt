@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.cli.daemon
 
 import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -9,6 +10,25 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class CaptureDirectoryAllocatorTest {
+    @Test
+    fun `does not chmod a caller-owned existing custom root`() {
+        val parent = Files.createTempDirectory("spectre-caller-root")
+        val root = Files.createDirectories(parent.resolve("custom/nested"))
+        runCatching {
+            Files.setPosixFilePermissions(root, PosixFilePermissions.fromString("rwxr-xr-x"))
+        }
+            .getOrElse {
+                return
+            }
+
+        CaptureDirectoryAllocator.allocate(root)
+
+        assertEquals(
+            PosixFilePermissions.fromString("rwxr-xr-x"),
+            Files.getPosixFilePermissions(root),
+        )
+    }
+
     @Test
     fun `allocates sequential NNNN-timestamp directories under the root`() {
         val root = Files.createTempDirectory("spectre-capture-root")

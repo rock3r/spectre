@@ -20,14 +20,15 @@ import kotlin.io.path.deleteIfExists
  * portal; they reuse the helper the test JVM (or `SPECTRE_WAYLAND_HELPER`) already started.
  */
 internal class WaylandSeatSocketAdapter(
-    private val socketPath: () -> Path? = ::liveWaylandSessionSocket
+    private val socketPath: () -> Path? = ::liveWaylandSessionSocket,
+    private val capture: ((Rectangle) -> VerifiedWaylandCapture)? = null,
 ) : RobotAdapter {
     private val sendLock = Any()
     private var inputChannel: SocketChannel? = null
     override val autoDelayMs: Int = 0
     override val requiresOffEdt: Boolean = true
     override val deliversRealOsInput: Boolean = true
-    override val needsSelectAllLineFallback: Boolean = true
+    override val supportsReliableSelectAll: Boolean = false
     override val shouldDrainAfterClipboardPaste: Boolean
         get() = true
 
@@ -62,31 +63,43 @@ internal class WaylandSeatSocketAdapter(
     override fun waitForIdle() = Unit
 
     override fun createScreenCapture(region: Rectangle): BufferedImage =
-        screenshotToLogicalSize(captureRaw(region), region)
+        captureRaw(region).let { screenshotToLogicalSize(it.image, region, it.verifiedCrop) }
 
     override fun createDeviceScaleScreenCapture(region: Rectangle): BufferedImage =
-        captureRaw(region)
+        captureRaw(region).verifiedImage()
 
-    private fun captureRaw(region: Rectangle): BufferedImage {
+    private fun captureRaw(region: Rectangle): VerifiedWaylandCapture {
+        capture?.let {
+            return it(region)
+        }
         val output = Files.createTempFile("spectre-wayland-seat-", ".png")
         try {
             val outputPath =
                 output.toAbsolutePath().toString().replace("\\", "\\\\").replace("\"", "\\\"")
-            send(
-                waylandScreenshotCommandJson(
-                    region = region,
-                    outputPath = outputPath,
-                    screenSize = awtDisplayBoundsContaining(region),
+            val reply =
+                send(
+                    waylandScreenshotCommandJson(
+                        region = region,
+                        outputPath = outputPath,
+                        screenSize = awtDisplayBoundsContaining(region),
+                    )
                 )
-            )
-            return ImageIO.read(output.toFile())
-                ?: error("Wayland session helper did not produce a readable PNG at $output")
+            val image =
+                ImageIO.read(output.toFile())
+                    ?: error("Wayland session helper did not produce a readable PNG at $output")
+            val verifiedCrop = waylandScreenshotCaptureRegion(reply)
+            check(image.width == verifiedCrop.width && image.height == verifiedCrop.height) {
+                "Wayland screenshot returned ${image.width}x${image.height}, but the helper " +
+                    "verified crop was ${verifiedCrop.width}x${verifiedCrop.height}; refusing a " +
+                    "clipped capture."
+            }
+            return VerifiedWaylandCapture(image, verifiedCrop)
         } finally {
             output.deleteIfExists()
         }
     }
 
-    private fun send(line: String) {
+    private fun send(line: String): String {
         val socket = socketPath() ?: startHelperFromEnv() ?: error(MISSING_WAYLAND_HELPER_MESSAGE)
         synchronized(sendLock) {
             val channel = openOrReuseInput(socket)
@@ -96,6 +109,7 @@ internal class WaylandSeatSocketAdapter(
                 if (reply.contains("\"event\":\"error\"")) {
                     error("spectre-wayland-helper session error: $reply")
                 }
+                return reply
             } catch (error: IOException) {
                 closeInputChannel()
                 throw error
@@ -123,6 +137,36 @@ internal class WaylandSeatSocketAdapter(
             inputChannel = null
         }
     }
+}
+
+internal data class VerifiedWaylandCapture(
+    val image: BufferedImage,
+    val verifiedCrop: Rectangle,
+) {
+    fun verifiedImage(): BufferedImage {
+        check(image.width == verifiedCrop.width && image.height == verifiedCrop.height) {
+            "Wayland screenshot returned ${image.width}x${image.height}, but the helper verified " +
+                "crop was ${verifiedCrop.width}x${verifiedCrop.height}; refusing a clipped capture."
+        }
+        return image
+    }
+}
+
+private val CAPTURE_REGION_PATTERN =
+    Regex(""""capture_region"\s*:\s*\[\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*]""")
+private const val CAPTURE_WIDTH_GROUP = 3
+private const val CAPTURE_HEIGHT_GROUP = 4
+
+internal fun waylandScreenshotCaptureRegion(reply: String): Rectangle {
+    val match =
+        CAPTURE_REGION_PATTERN.find(reply)
+            ?: error("Wayland screenshot helper did not report its verified capture_region: $reply")
+    return Rectangle(
+        match.groupValues[1].toInt(),
+        match.groupValues[2].toInt(),
+        match.groupValues[CAPTURE_WIDTH_GROUP].toInt(),
+        match.groupValues[CAPTURE_HEIGHT_GROUP].toInt(),
+    )
 }
 
 internal const val VERTICAL_SEAT_POINTER_AXIS: Int = 0

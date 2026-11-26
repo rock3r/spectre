@@ -11,6 +11,9 @@ class HostPlatformTest {
             assertFalse(HostPlatform.isWayland())
             return
         }
-        assertEquals(FfmpegBackend.detectWaylandSession(System::getenv), HostPlatform.isWayland())
+        val detected = runCatching { FfmpegBackend.detectWaylandSession(System::getenv) }
+        val platform = runCatching { HostPlatform.isWayland() }
+        assertEquals(detected.getOrNull(), platform.getOrNull())
+        assertEquals(detected.exceptionOrNull()?.message, platform.exceptionOrNull()?.message)
     }
 }

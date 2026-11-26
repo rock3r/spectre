@@ -9,19 +9,56 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.api.parallel.ResourceLock
+import org.junit.jupiter.api.parallel.Resources
 
 /** Linux session detection behind [isWaylandSession] (#397, #575, #607). */
 class WaylandSessionDetectionTest {
+    @Test
+    @ResourceLock(Resources.SYSTEM_PROPERTIES)
+    fun `non-Linux hosts never consult Linux session evidence`() {
+        val original = System.getProperty("os.name")
+        try {
+            for (osName in listOf("Windows 11", "Mac OS X")) {
+                System.setProperty("os.name", osName)
+                assertFalse(isWaylandSession(getenv = { null }), osName)
+                assertFalse(
+                    isWaylandSession(getenv = { error("unexpected Linux lookup: $it") }),
+                    osName,
+                )
+                assertFalse(isWaylandSession(), osName)
+            }
+        } finally {
+            System.setProperty("os.name", original)
+        }
+    }
+
+    @Test
+    fun `session detection rejects an unproven session instead of guessing X11`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                isWaylandSession(
+                    osName = "Linux",
+                    getenv = { null },
+                    runtimeDirHasWaylandSocket = { false },
+                    displayIsPureX11 = { false },
+                    displayIsXwayland = { false },
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("SPECTRE_CAPTURE_BACKEND"))
+    }
 
     @Test
     fun `Wayland detection recognizes a runtime-directory socket without DISPLAY`() {
         // SSH into a Wayland host: no DISPLAY, residual compositor socket → Wayland.
         assertTrue(
             isWaylandSession(
+                osName = "Linux",
                 getenv = { if (it == "XDG_RUNTIME_DIR") "/run/user/1000" else null },
                 runtimeDirHasWaylandSocket = { it == Path.of("/run/user/1000") },
             )
@@ -33,6 +70,7 @@ class WaylandSessionDetectionTest {
         // #397: Xvfb + leftover wayland-* under XDG_RUNTIME_DIR must not route to portal.
         assertFalse(
             isWaylandSession(
+                osName = "Linux",
                 getenv = { key ->
                     when (key) {
                         "DISPLAY" -> ":99"
@@ -41,7 +79,7 @@ class WaylandSessionDetectionTest {
                     }
                 },
                 runtimeDirHasWaylandSocket = { true },
-                displayIsPureX11 = { false },
+                displayIsPureX11 = { true },
                 displayIsXwayland = { false },
             )
         )
@@ -51,6 +89,7 @@ class WaylandSessionDetectionTest {
     fun `Wayland detection prefers pure X11 DISPLAY over inherited Wayland env`() {
         assertFalse(
             isWaylandSession(
+                osName = "Linux",
                 getenv = { key ->
                     when (key) {
                         "DISPLAY" -> ":99"
@@ -71,6 +110,7 @@ class WaylandSessionDetectionTest {
     fun `Wayland detection keeps portal routing for XWayland DISPLAY`() {
         assertTrue(
             isWaylandSession(
+                osName = "Linux",
                 getenv = { key ->
                     when (key) {
                         "DISPLAY" -> ":0"
@@ -90,6 +130,7 @@ class WaylandSessionDetectionTest {
     fun `Wayland detection honors SPECTRE_CAPTURE_BACKEND override`() {
         assertFalse(
             isWaylandSession(
+                osName = "Linux",
                 getenv = { key ->
                     when (key) {
                         "SPECTRE_CAPTURE_BACKEND" -> "x11"
@@ -97,11 +138,12 @@ class WaylandSessionDetectionTest {
                         "WAYLAND_DISPLAY" -> "wayland-0"
                         else -> null
                     }
-                }
+                },
             )
         )
         assertTrue(
             isWaylandSession(
+                osName = "Linux",
                 getenv = { key ->
                     when (key) {
                         "SPECTRE_CAPTURE_BACKEND" -> "wayland"
@@ -118,8 +160,14 @@ class WaylandSessionDetectionTest {
     fun `Wayland detection ignores an unreadable runtime directory`() {
         assertFalse(
             isWaylandSession(
-                getenv = { if (it == "XDG_RUNTIME_DIR") "/run/user/1000" else null },
-                runtimeDirHasWaylandSocket = { error("unreadable runtime directory") },
+                osName = "Linux",
+                getenv = { key ->
+                    if (key == "XDG_SESSION_TYPE") "x11"
+                    else if (key == "XDG_RUNTIME_DIR") "/run/user/1000" else null
+                },
+                runtimeDirHasWaylandSocket = {
+                    error("must not probe after explicit session type")
+                },
             )
         )
     }
@@ -131,6 +179,7 @@ class WaylandSessionDetectionTest {
         val probed = mutableListOf<Path>()
         assertFalse(
             isWaylandSession(
+                osName = "Linux",
                 getenv = { key ->
                     when (key) {
                         "DISPLAY" -> ":99"
@@ -141,7 +190,7 @@ class WaylandSessionDetectionTest {
                     }
                 },
                 runtimeDirHasWaylandSocket = { true },
-                displayIsPureX11 = { false },
+                displayIsPureX11 = { true },
                 displayIsXwayland = { false },
                 waylandSocketExists = { path ->
                     probed.add(path)
@@ -149,13 +198,14 @@ class WaylandSessionDetectionTest {
                 },
             )
         )
-        assertEquals(listOf(Path.of("/run/user/1000", "wayland-1")), probed)
+        assertTrue(probed.isEmpty(), "a proven X11 server needs no socket fallback")
     }
 
     @Test
     fun `Wayland detection keeps Wayland when the socket exists and the X server is unknown`() {
         assertTrue(
             isWaylandSession(
+                osName = "Linux",
                 getenv = { key ->
                     when (key) {
                         "DISPLAY" -> ":0"
@@ -175,6 +225,7 @@ class WaylandSessionDetectionTest {
     fun `Wayland detection trusts an Xwayland DISPLAY without probing further`() {
         assertTrue(
             isWaylandSession(
+                osName = "Linux",
                 getenv = { key ->
                     when (key) {
                         "DISPLAY" -> ":0"
@@ -199,6 +250,7 @@ class WaylandSessionDetectionTest {
         val probed = mutableListOf<Path>()
         assertTrue(
             isWaylandSession(
+                osName = "Linux",
                 getenv = { key ->
                     when (key) {
                         "DISPLAY" -> ":0"
@@ -221,9 +273,11 @@ class WaylandSessionDetectionTest {
     fun `Wayland detection treats a relative WAYLAND_DISPLAY without XDG_RUNTIME_DIR as X11`() {
         assertFalse(
             isWaylandSession(
+                osName = "Linux",
                 getenv = { key ->
                     when (key) {
                         "DISPLAY" -> ":99"
+                        "XDG_SESSION_TYPE" -> "x11"
                         "WAYLAND_DISPLAY" -> "wayland-0"
                         else -> null
                     }
@@ -236,10 +290,11 @@ class WaylandSessionDetectionTest {
     }
 
     @Test
-    fun `Wayland detection checks the default wayland-0 socket for session type alone`() {
+    fun `Wayland detection accepts the default wayland-0 socket for session type alone`() {
         val probed = mutableListOf<Path>()
-        assertFalse(
+        assertTrue(
             isWaylandSession(
+                osName = "Linux",
                 getenv = { key ->
                     when (key) {
                         "DISPLAY" -> ":99"
@@ -252,7 +307,7 @@ class WaylandSessionDetectionTest {
                 displayIsXwayland = { false },
                 waylandSocketExists = { path ->
                     probed.add(path)
-                    false
+                    true
                 },
             )
         )
@@ -263,8 +318,9 @@ class WaylandSessionDetectionTest {
     fun `Wayland detection without a Wayland signal probes only for Xwayland`() {
         assertFalse(
             isWaylandSession(
+                osName = "Linux",
                 getenv = { if (it == "DISPLAY") ":99" else null },
-                displayIsPureX11 = { error("no Wayland signal to disprove") },
+                displayIsPureX11 = { true },
                 displayIsXwayland = { false },
                 waylandSocketExists = { error("no Wayland signal to confirm") },
             )
@@ -278,6 +334,7 @@ class WaylandSessionDetectionTest {
         // capture is black and XTest input stalls there.
         assertTrue(
             isWaylandSession(
+                osName = "Linux",
                 getenv = { key ->
                     when (key) {
                         "DISPLAY" -> ":0"

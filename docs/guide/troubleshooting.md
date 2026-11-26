@@ -213,6 +213,14 @@ using it.
 
 `typeText` sends key press and release events without using the clipboard.
 It supports ASCII letters, digits, space, newline, and common US keyboard punctuation.
+For real OS input, text containing letters fails before dispatch if Caps Lock cannot be read;
+digits and punctuation do not require that check, and synthetic input has deterministic case.
+`clearAndTypeText` performs the same validation before deleting the existing value.
+It also refuses before dispatching any key when the backend cannot guarantee a reliable
+select-all chord. This currently applies to the Wayland portal and seat-socket helpers, whose
+separate key messages may drop Ctrl before A; the existing field contents remain untouched. Use an
+explicit field-state API where available, or select and edit through a backend that preserves
+modifier state. Other Wayland input operations remain available.
 For Unicode or large text, `pasteText` writes to the clipboard. It sends
 <kbd>Cmd</kbd>+<kbd>V</kbd> on macOS or <kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere.
 It waits for the paste, then restores the previous clipboard content.
@@ -241,8 +249,10 @@ Check these possible failures:
   Spectre polls the clipboard until it reads back the requested text before
   dispatching <kbd>Cmd</kbd>+<kbd>V</kbd>. If the environment has a clipboard
   manager or another process actively rewriting the clipboard, the poll can time
-  out and the paste lands stale. Disable clipboard managers in the test
-  environment.
+  out and Spectre throws before dispatching the paste shortcut. Disable clipboard managers in the
+  test environment. Clipboard save, read, and restore errors are also reported; when the paste
+  already failed, a restore error is attached as a suppressed exception so the primary failure is
+  preserved.
 - **`RobotDriver.headless()` throws on `typeText` and `pasteText`.** Every input,
   clipboard, and screenshot call throws `UnsupportedOperationException`.
   See [Driving input](interactions.md#real-vs-synthetic-input). For input, use
@@ -364,14 +374,14 @@ X11/Xvfb native stills read visible framebuffer pixels; keep the target frontmos
 usable pair across one-shot native still latency.
 
 `waitForVisualIdle()` samples **window-scoped** pixels for tracked Compose surfaces when
-`spectre-recording` is present **and the platform helper can actually run** (same native still
-path as `screenshot(windowIndex)`). Class presence is not enough: on Linux the helper needs
-`gst-launch-1.0` (with `ximagesrc`, `videoconvert`, and `pngenc` for X11/Xvfb stills). If
-recording is on the classpath and GStreamer is missing, Spectre falls back to Robot region
-capture of each surface rectangle so samples remain usable. Keep the
-target frontmost and unobscured in that fallback mode (Linux X11 region and some embedded
-cases still need visibility). For native window stills on Linux, install GStreamer and
-include `spectre-recording` with the platform helper on the test runtime classpath.
+native capture is available. Native capture is required by default: install GStreamer and the
+matching `spectre-recording-<os>` runtime helper, and use an interactive Windows desktop. The call
+fails immediately when a prerequisite probe fails. Only opt into occlusion-sensitive Robot crops
+with `waitForVisualIdle(allowScreenRegionFallback = true)`.
+
+Class presence is not enough: on Linux the helper needs `gst-launch-1.0` with `ximagesrc`,
+`videoconvert`, and `pngenc` for X11/Xvfb stills. Include `spectre-recording` with the platform
+helper on the test runtime classpath.
 
 On Windows, Spectre keeps one capture helper open per window while it takes stills of that
 window. It closes the helper after 2 s without a still. A visual-idle sample of a warm window
@@ -379,16 +389,13 @@ takes about 0.15 s, so three stable samples fit inside one blink of a text caret
 versions started a new helper for each still and took about 0.6 s per sample, so a focused
 text field could stop `waitForVisualIdle()` from settling.
 
-macOS does the same for a window that the capture helper can find again by the same selector: an
-untitled window, such as a Swing `JWindow` popup, by its frame, and a window with a unique title by
-that title. A warm still then takes about 35 to 65 ms. Earlier versions started a new
-ScreenCaptureKit capture for each still, which took about 1.4 s. A sample with two windows, such as
-an app window and an open popup, then ran out of its 2 s budget, and `waitForVisualIdle()` timed
-out with most samples unsampleable. A window whose title another window also contains still takes
-one-shot stills, because Spectre adds a different title suffix for each still to find it.
+macOS does the same for every window. Unique titles use an owner-scoped title selector; untitled
+windows and windows whose title is shared use their owner-scoped on-screen frame. A warm still then
+takes about 35 to 65 ms. Spectre never changes the application's title. If two windows share both
+title and frame, capture fails as ambiguous rather than guessing.
 
-Spectre stops every open stills session before it starts a recording or a one-shot still on
-macOS. Then only one capture helper holds a ScreenCaptureKit stream when the new capture starts.
+Spectre stops every open stills session before it starts a recording on macOS. Then only one
+capture helper holds a ScreenCaptureKit stream when the new capture starts.
 
 If every macOS capture fails with `timed out waiting for first recording frame` or
 `timed out waiting for the first stills frame`, and `waitForVisualIdle()` reports every sample as
@@ -521,8 +528,7 @@ If dialogs still appear:
 - A rejected token is cleared and retried once. A second failure is fatal; delete the
   token file only when re-consent is intended.
 
-- A "window picker" dialog (pick one window) comes from `WaylandPortalWindowRecorder`, which
-  you call directly. `AutoRecorder` and screenshots do not use it.
+- Explicit portal window requests fail before opening a picker because the grant cannot identify the requested window.
 
 If nobody answers a dialog that a capture opened within 60 seconds, or someone cancels it,
 Spectre does not ask again in the same JVM. Every later capture fails at once with an error
@@ -538,20 +544,35 @@ See [Linux Wayland consent](recording.md#linux-wayland-consent).
 
 ## "Linux Wayland window capture fails: could not bind a GNOME Mutter window stream"
 
-On Linux Wayland, Spectre captures a window through a GNOME Mutter window stream. Mutter
-records the window that has keyboard focus, so Spectre focuses the window for a moment the
-first time, and checks that the recorded window has the expected size. The error means the
-window did not get focus (for example a modal dialog held it), another window was recorded,
-the window is translucent, or the first capture ran on the AWT event dispatch thread.
+On Linux Wayland, Spectre captures a window through a GNOME Mutter window stream. Install the
+GNOME Shell extension bundled in the `spectre-recording-linux` jar, then enable it and start a new
+GNOME session. The installer selects GNOME Shell's legacy entry point on versions 42–44 and its
+ES-module entry point on versions 45–50:
 
-- Make sure the window can take focus, and that nothing else grabs focus at that moment. When
-  the window's own focus request is ignored, Spectre asks the window manager to activate the
-  window. If the message ends with "window-manager activation failed", that request could not be
-  sent; the text after it says why.
+```shell
+jar xf spectre-recording-linux-<version>.jar \
+  native/linux/gnome-shell-extension
+bash native/linux/gnome-shell-extension/install.sh
+gnome-extensions enable spectre-window-identity@sebastiano.dev
+```
+
+On a seated GNOME Wayland terminal (not SSH and not Xvfb), run the exact hard smoke below. It opens
+two same-title, same-size windows, keeps the blue decoy focused before and after binding, checks the
+covered red window's pixels, records it, and binds a third window. It must print `PASS`, open no
+Share dialog, and leave its evidence in `/tmp/spectre-mutter-window-smoke/`:
+
+```shell
+echo "$XDG_SESSION_TYPE $WAYLAND_DISPLAY $DISPLAY"
+gnome-extensions info spectre-window-identity@sebastiano.dev
+./gradlew --no-daemon :recording:runWaylandMutterWindowSmoke
+```
+
+Spectre resolves the JVM PID and exact Xwayland XID through that extension and passes the returned
+Mutter id to `RecordWindow`. It does not focus the window. The error means the extension is absent,
+the PID/XID was missing or ambiguous, the first frame did not match, or the window was translucent.
+
+- Confirm `gnome-extensions info spectre-window-identity@sebastiano.dev` reports `State: ENABLED`.
 - Translucent windows cannot be bound yet. Capture a screen region instead.
-- Popup windows (a `JWindow`, or any window that is not a `Frame` or `Dialog`) fail with an
-  `UnsupportedOperationException` that names [#640](https://github.com/rock3r/spectre/issues/640):
-  AWT keeps their keyboard focus on the owner frame. Capture the owner window or a region.
 - On a desktop other than GNOME there is no Mutter API, and window capture fails with an
   error. Use `screenshot(region)`, `startRegion`, or X11/Xvfb.
 
@@ -634,17 +655,24 @@ needs and throws on first use if either is denied:
   `pressKey(...)`, etc. and asks `System Events` (via `osascript`) for the active
   process. A "not allowed assistive access" denial throws with an actionable
   message naming the wrapping app to grant; an inconclusive probe (no `osascript`,
-  AppleEvents/Automation refusal, etc.) prints a one-shot stderr warning and
-  proceeds.
+  AppleEvents/Automation refusal, etc.) fails with an inconclusive diagnostic.
 - **Screen Recording** — required for `Robot.createScreenCapture` to return real
   pixels. Without it the call silently returns an all-black image. A locked
   screen can produce the same symptom, so the probe first checks whether macOS
   reports the console session as locked; if so, unlock the screen and retry. If
   the session is unlocked, the probe captures a small region near the screen
-  origin (which on macOS overlaps the menu bar) and treats an all-black result as
-  denial. False positives are rare; if the screen really is fully
-  black at the origin, switch to `RobotDriver.headless()` for tests or grant
-  Screen Recording to silence the probe.
+  origin (which on macOS overlaps the menu bar). An all-black result is
+  inconclusive rather than proof of denial because legitimate pixels can be
+  black too. A cached Robot grant is rechecked after an unexpectedly black Robot
+  capture, while a conclusively granted and unlocked state preserves naturally
+  black content.
+
+Native window stills use the separately signed ScreenCaptureKit helper. Its
+Screen Recording grant belongs to the helper app, not the target JVM or the app
+that launched that JVM. Spectre therefore never asks for or probes the JVM's
+Robot Screen Recording permission to validate a successful helper image,
+including a naturally black window. Helper permission diagnostics come from the
+helper's own preflight/capture result; lock status remains independent.
 
 Open System Settings → Privacy & Security. Grant Accessibility or Screen &
 System Audio Recording to the app that launched the JVM. It may be IntelliJ,
@@ -700,6 +728,20 @@ coordinator cannot be repaired, see
 
 The sample IntelliJ plugin module configures its sandbox JDK via the IntelliJ Platform
 Gradle plugin; the IDE's bundled JBR supplies that path.
+
+## Native accessibility in JVM applications on Windows
+
+Windows UI Automation (UIA) does not necessarily expose the application content of a JVM UI.
+In a live check of Spectre's Compose Desktop sample, the UIA control view contained eight
+window/chrome nodes (a `Window`, `Pane`, `TitleBar`, `MenuBar`, `MenuItem`, and system `Button`
+nodes), but it did not contain the content `Counter` or `Popup` controls. Spectre could still read
+the Compose semantics for those controls when attached to the sample process; that is a different
+source from native UIA.
+
+This is an observed result for that sample, not a claim about every Java application or JVM UI
+toolkit. The same UIA reader exposed application content in the AccessKit-based test application
+and in the stock Windows Character Map application. If a JVM application's native snapshot stops
+at window chrome, use Spectre's attached Compose semantics when the application supports it.
 
 ## Further help
 
