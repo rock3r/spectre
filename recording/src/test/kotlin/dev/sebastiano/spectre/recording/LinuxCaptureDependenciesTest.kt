@@ -187,10 +187,16 @@ class LinuxCaptureDependenciesTest {
     @Test
     fun `discarded probe output cannot fill the pipe and time out`() {
         if (!System.getProperty("os.name").contains("linux", ignoreCase = true)) return
-        val result = awaitGstProcess {
-            gstProbeBuilder("python3", "-c", "print('x' * 1_000_000)").start()
+
+        val stdoutResult = awaitGstProcess {
+            gstProbeBuilder("head", "-c", "1000000", "/dev/zero").start()
         }
-        assertEquals(true, result, "a 1MB inspect-sized report must not block waitFor")
+        assertEquals(true, stdoutResult, "a 1MB stdout report must not block waitFor")
+
+        val stderrResult = awaitGstProcess {
+            gstProbeBuilder("sh", "-c", "head -c 1000000 /dev/zero >&2").start()
+        }
+        assertEquals(true, stderrResult, "a 1MB stderr report must not block waitFor")
     }
 
     @Test
