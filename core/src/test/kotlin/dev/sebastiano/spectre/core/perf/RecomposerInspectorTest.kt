@@ -6,8 +6,10 @@ import androidx.compose.runtime.Recomposer
 import dev.sebastiano.spectre.core.InternalSpectreApi
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 /**
  * Unit-tests [RecomposerInspector] against a fake host-object hierarchy that mirrors the field
@@ -35,17 +37,22 @@ class RecomposerInspectorTest {
     }
 
     @Test
-    fun `returns null when host has no composePanel field`() {
-        val found = RecomposerInspector.findRecomposerInHostChain(Any())
-        assertNull(found)
+    fun `reports an incomplete inspection when host has no composePanel field`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                RecomposerInspector.findRecomposerInHostChain(Any())
+            }
+        assertTrue(error.message.orEmpty().contains("composePanel"))
+        assertTrue(error.message.orEmpty().contains("Compose"))
     }
 
     @Test
-    fun `returns null when any intermediate field is missing`() {
-        // Host stops at composePanel — no _composeContainer field beneath.
-        val brokenHost = FakeHostWithDeadEnd()
-        val found = RecomposerInspector.findRecomposerInHostChain(brokenHost)
-        assertNull(found)
+    fun `reports an incomplete inspection when an intermediate field is missing`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                RecomposerInspector.findRecomposerInHostChain(FakeHostWithDeadEnd())
+            }
+        assertTrue(error.message.orEmpty().contains("_composeContainer"))
     }
 
     @Test
@@ -55,11 +62,17 @@ class RecomposerInspectorTest {
     }
 
     @Test
-    fun `returns null when terminal field is not a Recomposer`() {
-        // Terminal slot holds a String, not a Recomposer — inspector must not blindly cast.
-        val host = FakeComposeWindowWithWrongTerminal()
-        val found = RecomposerInspector.findRecomposerInHostChain(host)
-        assertNull(found)
+    fun `reports an incomplete inspection when terminal field is not a Recomposer`() {
+        val error =
+            assertFailsWith<IllegalStateException> {
+                RecomposerInspector.findRecomposerInHostChain(FakeComposeWindowWithWrongTerminal())
+            }
+        assertTrue(error.message.orEmpty().contains("recomposer"))
+    }
+
+    @Test
+    fun `temporarily uninitialized valid host remains unresolved`() {
+        assertNull(RecomposerInspector.findRecomposerInHostChain(FakeUninitializedHost()))
     }
 }
 
@@ -85,6 +98,10 @@ private class FakeFrameRecomposer(@JvmField val recomposer: Recomposer)
 
 private class FakeHostWithDeadEnd {
     @JvmField val composePanel: Any = Any()
+}
+
+private class FakeUninitializedHost {
+    @JvmField val composePanel: Any? = null
 }
 
 private class FakeComposeWindowWithWrongTerminal {
