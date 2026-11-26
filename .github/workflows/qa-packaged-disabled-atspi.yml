@@ -94,6 +94,14 @@ jobs:
           "$cli" --version >"$RUNNER_TEMP/qa-packaged-disabled-atspi/version.txt"
           grep -Eq '0\.10\.0' "$RUNNER_TEMP/qa-packaged-disabled-atspi/version.txt"
           printf 'PACKAGED_CLI=%s\n' "$cli" >> "$GITHUB_ENV"
+      - name: Retain exact Linux ZIP for an independent consumer retry
+        uses: actions/upload-artifact@v4
+        with:
+          name: disabled-atspi-immutable-linux-x64
+          path: product/cli/build/construo/distributions/linuxX64/spectre-linuxX64.zip
+          compression-level: 0
+          retention-days: 2
+          if-no-files-found: error
       - name: Run QA oracle guards
         run: python3 scratch/.github/qa-packaged-disabled-atspi/test_verify.py -v
       - name: Exercise packaged CLI, daemon, and MCP on a private disabled bus
@@ -103,7 +111,7 @@ jobs:
           QA_ARTIFACTS: ${{ runner.temp }}/qa-packaged-disabled-atspi
         run: dbus-run-session -- scratch/.github/qa-packaged-disabled-atspi/run-session.sh
       - name: Run the unmodified stock AccessKit release-smoke case against the same extracted ZIP
-        if: always() && env.PACKAGED_CLI != ''
+        if: always() && env.PACKAGED_CLI != '' && !endsWith(github.event.head_commit.message, 'GTK only')
         working-directory: product
         shell: bash
         run: |

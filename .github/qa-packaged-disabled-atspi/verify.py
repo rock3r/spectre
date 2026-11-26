@@ -266,7 +266,7 @@ def main():
         omitted = record("cliOmittedFalse", run_call(base, env))
         assert_cli_disabled(omitted, "CLI omitted/false")
         positive = record("cliTrue", run_call(base + ["--allow-accessibility-enable"], env))
-        if positive.get("returnCode") != 0 or positive.get("stderr"):
+        if positive.get("returnCode") != 0 or positive.get("stderr", "").splitlines() != [f"notice: {NOTE}"]:
             raise AssertionError(f"CLI positive failed: {positive!r}")
         assert_transition(positive, True, "CLI true")
         tree = find_tree(json_documents(positive["stdout"]))
