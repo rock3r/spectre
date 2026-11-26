@@ -469,7 +469,9 @@ class AccessibilityHelperClientTest {
             if (blockOutputCloseUntilDestroy) {
                 object : ByteArrayOutputStream() {
                     override fun close() {
-                        destroyed.await()
+                        check(destroyed.await(3, TimeUnit.SECONDS)) {
+                            "Timed out waiting for process destruction before closing output pipe"
+                        }
                         super.close()
                     }
                 }
