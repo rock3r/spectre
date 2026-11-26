@@ -91,7 +91,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [capture]
+        mode: [public-window-crop]
         replica: [1]
 
     steps:

@@ -14,18 +14,8 @@ def receipt(phase, **fields):
     RECEIPTS.write_text(json.dumps(receipts, indent=2) + "\n")
 
 def run(command, **kwargs):
+    kwargs.setdefault("timeout", 30)
     return subprocess.run(command, check=True, **kwargs)
-
-def all_xids(pid):
-    # --all and the positional title are deliberate; title-only identity is never trusted.
-    found = subprocess.check_output(["xdotool", "search", "--all", "--name", TITLE], text=True).split()
-    unique = list(dict.fromkeys(found))
-    owned = []
-    for xid in unique:
-        owner = subprocess.run(["xdotool", "getwindowpid", xid], text=True, capture_output=True)
-        if owner.returncode == 0 and owner.stdout.strip() == str(pid): owned.append(xid)
-    if len(owned) != 1: raise RuntimeError(f"expected one independently PID-owned decoy XID; all={unique}, owned={owned}")
-    return unique, owned[0]
 
 def inspect(path, expected):
     image = Image.open(path).convert("RGB")
@@ -49,7 +39,7 @@ def inspect(path, expected):
 
 def decode_frames(movie, case):
     probe = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
-      "-show_entries", "stream=width,height,nb_read_frames,duration,avg_frame_rate", "-of", "json", movie], text=True))["streams"][0]
+      "-show_entries", "stream=width,height,nb_read_frames,duration,avg_frame_rate", "-of", "json", movie], text=True, timeout=30))["streams"][0]
     count = int(probe["nb_read_frames"])
     duration = float(probe["duration"])
     if (int(probe["width"]), int(probe["height"])) != (220, 140) or count < 3 or not (2.9 <= duration <= 4.5):
@@ -73,48 +63,57 @@ decoy_source = A / "CropBlueDecoy.java"
 decoy_source.write_text('''
 import java.awt.*; import javax.swing.*; import java.nio.file.*;
 class CropBlueDecoy { public static void main(String[] a) throws Exception {
+ Files.writeString(Path.of(a[0]), Long.toString(ProcessHandle.current().pid()));
+ Path reveal=Path.of(a[1]); while (!Files.exists(reveal)) Thread.sleep(25);
  SwingUtilities.invokeAndWait(() -> { JFrame f=new JFrame("Spectre public crop same-title");
- JPanel p=new JPanel(); p.setBackground(Color.BLUE); f.setContentPane(p); f.setBounds(200,200,480,320); f.setVisible(true); });
- Files.writeString(Path.of(a[0]), Long.toString(ProcessHandle.current().pid())); Thread.sleep(600000); } }
+ JPanel p=new JPanel(); p.setBackground(Color.BLUE); f.setContentPane(p); f.setBounds(200,200,480,320);
+ f.setType(Window.Type.NORMAL); f.setFocusableWindowState(true); f.setAutoRequestFocus(true); f.setAlwaysOnTop(true);
+ f.setVisible(true); f.toFront(); f.requestFocus(); }); Thread.sleep(600000); } }
 ''')
-decoy = subprocess.Popen([os.environ["JAVA_HOME"] + "/bin/java", str(decoy_source), str(A / "decoy.pid")], stdout=open(A / "decoy.stdout", "w"), stderr=open(A / "decoy.stderr", "w"))
+reveal = A / "reveal-blue-decoy"
+reveal.unlink(missing_ok=True)
+decoy = subprocess.Popen([os.environ["JAVA_HOME"] + "/bin/java", str(decoy_source), str(A / "decoy.pid"), str(reveal)], stdout=open(A / "decoy.stdout", "w"), stderr=open(A / "decoy.stderr", "w"))
 try:
     for _ in range(100):
         if (A / "decoy.pid").exists(): break
         if decoy.poll() is not None: raise RuntimeError("blue decoy exited")
         time.sleep(.1)
-    ids, xid = all_xids(decoy.pid)
-    run(["xdotool", "windowactivate", "--sync", xid]); run(["xdotool", "windowraise", xid])
-    (A / "decoy-identity.json").write_text(json.dumps({"pid": decoy.pid, "xid": int(xid), "deduplicatedTitleXids": list(map(int, ids))}, indent=2)+"\n")
-    receipt("decoy-identified", pid=decoy.pid, xid=int(xid))
-    env = os.environ.copy(); env.update(DECOY_PID=str(decoy.pid), DECOY_XID=xid,
+    receipt("decoy-helper-ready-hidden", pid=decoy.pid)
+    env = os.environ.copy(); env.update(DECOY_PID=str(decoy.pid), DECOY_REVEAL=str(reveal),
       SPECTRE_CROP_VERIFICATION_SOURCE=str(pathlib.Path(__file__).parents[1] / "verification/wayland-public-crop"))
     command = [str(R / "gradlew"), "--no-daemon", "-I", str(pathlib.Path(__file__).parents[1] / "verification/wayland-public-crop/build.init.gradle"),
       ":recording:runPublicWaylandCropProof", "--console=plain"]
     compile_command = [str(R / "gradlew"), "--no-daemon", "-I", str(pathlib.Path(__file__).parents[1] / "verification/wayland-public-crop/build.init.gradle"),
       ":recording:compileTestKotlin", "--console=plain"]
-    compile_result = subprocess.run(compile_command, cwd=R, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    compile_result = subprocess.run(compile_command, cwd=R, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
     (A / "crop-compile.stdout").write_text(compile_result.stdout); (A / "crop-compile.stderr").write_text(compile_result.stderr)
     receipt("actual-kotlin-test-source-compiled", command=compile_command, exitCode=compile_result.returncode,
       source=env["SPECTRE_CROP_VERIFICATION_SOURCE"])
     if compile_result.returncode: raise RuntimeError("public crop Kotlin test source did not compile")
-    result = subprocess.run(command, cwd=R, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result = subprocess.run(command, cwd=R, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
     (A / "crop-fixture.stdout").write_text(result.stdout); (A / "crop-fixture.stderr").write_text(result.stderr)
     receipt("fixture-finished", exitCode=result.returncode)
-    if result.returncode: raise RuntimeError("public crop fixture failed")
     evidence = {}
+    validation_errors = []
     for case in ("red-decorated", "green-undecorated"):
-        intended = json.loads((A / f"{case}-intended.json").read_text())
-        whole = Image.open(A / f"{case}-whole-public-still.png")
-        if whole.size != (intended["capturedWhole"]["width"], intended["capturedWhole"]["height"]):
-            raise RuntimeError(f"{case}: public whole still dimensions disagree with receipt")
-        if case.endswith("decorated") and not case.endswith("undecorated") and intended["contentInsets"]["top"] <= 0:
-            raise RuntimeError(f"{case}: decorated public still has no verified top-bar inset")
-        evidence[case] = {"wholePublicStill":{"dimensions":whole.size,"topBarInset":intended["contentInsets"]["top"]},
-          "referenceCropDerivedFromPublicStillNotNativeEndpoint": inspect(A / f"{case}-reference-crop-derived-from-public-still.png", case.split('-')[0]),
-          "genuinePublicAutoRecorderCrop": decode_frames(A / f"{case}-crop.mp4", case)}
+        try:
+            intended = json.loads((A / f"{case}-intended.json").read_text())
+            whole = Image.open(A / f"{case}-whole-public-still.png")
+            if whole.size != (intended["capturedWhole"]["width"], intended["capturedWhole"]["height"]):
+                raise RuntimeError(f"{case}: public whole still dimensions disagree with receipt")
+            if case == "red-decorated" and intended["contentInsets"]["top"] <= 0:
+                raise RuntimeError(f"{case}: decorated public still has no verified top-bar inset")
+            evidence[case] = {"wholePublicStill":{"dimensions":whole.size,"topBarInset":intended["contentInsets"]["top"]},
+              "referenceCropDerivedFromPublicStillNotNativeEndpoint": inspect(A / f"{case}-reference-crop-derived-from-public-still.png", case.split('-')[0]),
+              "genuinePublicAutoRecorderCrop": decode_frames(A / f"{case}-crop.mp4", case)}
+            receipt("case-artifacts-verified", case=case)
+        except Exception as error:
+            validation_errors.append(f"{case}: {error}")
+            receipt("case-artifacts-failed", case=case, actual=str(error))
     (A / "public-window-crop-evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
     receipt("artifacts-verified", cases=list(evidence))
+    if result.returncode or validation_errors:
+        raise RuntimeError(f"public crop fixture exit={result.returncode}; independent validation errors={validation_errors}")
 finally:
     if decoy.poll() is None:
         decoy.terminate()

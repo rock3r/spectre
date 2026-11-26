@@ -265,12 +265,21 @@ class PublicWindowCropContractTest(unittest.TestCase):
                          "reference-crop-derived-from-public-still",
                          "red-decorated", "green-undecorated"):
             self.assertIn(contract, fixture)
-        for contract in ('"--all", "--name", TITLE', 'getwindowpid', 'dict.fromkeys',
-                         '"first-frame-0"', 'count // 2', 'count - 1', 'ffprobe',
+        for contract in ('"first-frame-0"', 'count // 2', 'count - 1', 'ffprobe',
                          'public-window-crop-evidence.json', 'crop-orchestrator-receipts.json'):
             self.assertIn(contract, probe)
         self.assertIn(":recording:compileTestKotlin", probe)
         self.assertIn("motionAcrossSamples", probe)
+        for contract in ('DECOY_REVEAL', 'timeout=90', 'case-artifacts-verified',
+                         'case-artifacts-failed', 'independent validation errors'):
+            self.assertIn(contract, probe)
+        for contract in ('isAutoRequestFocus = false', 'focusableWindowState = false',
+                         '"--all", "--name", TITLE', 'getwindowpid', '_NET_ACTIVE_WINDOW', '_NET_CLIENT_LIST_STACKING',
+                         'waitFor(2, TimeUnit.SECONDS)', 'focusElapsedNs', 'expectedXid',
+                         'actualXid'):
+            self.assertIn(contract, fixture)
+        self.assertIn('setAlwaysOnTop(true)', probe)
+        self.assertNotIn('"windowactivate", "--sync"', fixture)
         self.assertNotIn("Files.size(movie) > 10_000", fixture)
         self.assertNotIn("gnome-cli-recording-live.py", probe)
         self.assertNotIn("PublicWaylandCliRecordingLive", probe + fixture)
