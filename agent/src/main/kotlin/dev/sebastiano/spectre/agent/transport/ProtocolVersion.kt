@@ -14,12 +14,14 @@ public object ProtocolVersion {
      *
      * v1: bare request/response frames after Hello. v2 (#200): operation envelopes with op ids,
      * cancel, and deadline budgets; long ops run off the accept thread. v3: bulk payloads
-     * (`pngBytes`, `captureJsonUtf8`) encode as CBOR byte strings rather than integer arrays.
+     * (`pngBytes`, `captureJsonUtf8`) encode as CBOR byte strings rather than integer arrays. v4:
+     * `waitForVisualIdle` fails closed unless screen-region fallback is explicitly requested.
      *
-     * v3 is a **representation** change, invisible to the type system: a library and a runtime jar
-     * from either side of it would otherwise pass the exact-match handshake and fail only when a
-     * screenshot came back in an encoding the peer does not speak. `AttachOptions.agentJarPath` and
-     * the runtime-jar system property make that pairing reachable, so it has to fail at Hello.
+     * v3 is a **representation** change and v4 is a behavioral safety change, both invisible to the
+     * type system. A library and runtime jar from either side would otherwise pass the exact-match
+     * handshake and fail late or silently use the old Robot region policy.
+     * `AttachOptions.agentJarPath` and the runtime-jar system property make those pairings
+     * reachable, so they must fail at Hello.
      */
-    public const val CURRENT: Int = 3
+    public const val CURRENT: Int = 4
 }

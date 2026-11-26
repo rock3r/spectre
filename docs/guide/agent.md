@@ -342,6 +342,10 @@ are available over the agent transport. `waitForIdle` runs a **fingerprint-only*
 agent's in-target automator (timeout / quiet / poll; absolute deadline on the wire like
 `waitForNode`). It does **not** observe idling resources registered on a different automator
 instance in the app. **Idling-resource registration** and `withTracing` remain in-process-only.
+Attached `waitForVisualIdle` is fail-closed by default and forwards
+`allowScreenRegionFallback`. If an older target exposes only the legacy three-argument method, the
+agent rejects the default request because that target may silently use a Robot crop; explicitly
+allow the fallback only when those occlusion-sensitive pixels are intentional.
 
 Each wait returns its **timeout message verbatim** with category `timeout`.
 `waitForIdle` names busy idling resources. `waitForVisualIdle` reports frame sample counts.
@@ -379,7 +383,7 @@ hierarchy.
 
 After the UDS connects, the first exchange is always:
 
-1. Client → `hello` with `protocolVersion` (currently `3` — `ProtocolVersion.CURRENT`)
+1. Client → `hello` with `protocolVersion` (currently `4` — `ProtocolVersion.CURRENT`)
 2. Runtime → `helloAck` with the same version, or `error` with category
    `protocolMismatch`
 
@@ -387,12 +391,19 @@ The experimental agent protocol requires an **exact version match**.
 A mismatch fails attach with `IOException` or `SpectreAgentException`.
 A future additive compatibility range would change `ProtocolVersion.CURRENT` and this guide.
 
-The protocol has three revisions. **v1** uses bare request and response frames after
+The protocol has four revisions. **v1** uses bare request and response frames after
 `hello`. **v2** (#200) adds operation envelopes with op ids, cancellation, and deadline
 budgets. **v3** encodes bulk `pngBytes` and `captureJsonUtf8` payloads as CBOR byte
 strings. Earlier peers expect integer arrays; the type system cannot detect this
 representation change. Peers therefore reject an incompatible version at `hello`,
 before a screenshot frame arrives.
+
+**v4** makes `waitForVisualIdle` require native window capture by default and carries the
+caller's explicit `allowScreenRegionFallback` choice. An attacher can select an older runtime jar
+with `AttachOptions.agentJarPath`; without the revision bump, that pairing could silently apply the
+old Robot screen-region behavior. Exact matching now rejects v3/v4 peers during `hello`, before any
+visual request or capture runs. Both the default fail-closed endpoint and the explicit fallback
+endpoint use v4.
 
 ### Unknown operations
 
