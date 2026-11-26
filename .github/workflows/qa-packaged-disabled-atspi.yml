@@ -9,11 +9,14 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   packaged-disabled-atspi:
     if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && (github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'Verify public disabled accessibility'))
     runs-on: ubuntu-24.04
+    env:
+      REUSE_STOCK_ZIP: ${{ startsWith(github.event.head_commit.message, 'Verify public disabled accessibility stock replay') }}
     timeout-minutes: 60
     steps:
       - name: Check out scratch QA without credentials
@@ -55,12 +58,52 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang pkg-config libdbus-1-dev libatspi2.0-dev libpipewire-0.3-dev libspa-0.2-dev libxkbcommon-x11-0 libgtk-3-0t64 gir1.2-gtk-3.0 python3-gi python3-pyatspi at-spi2-core dbus-x11 xvfb x11-utils openbox unzip xauth libxcursor-dev libx11-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev libgtk-3-dev
+      - name: Authenticate the successful product ZIP for a smoke-script-only replay
+        if: env.REUSE_STOCK_ZIP == 'true'
+        working-directory: product
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          original=028401bd37b7576b05196537aaeaf69ef8346575
+          git fetch --quiet --no-tags --depth=1 origin "$original"
+          if [[ "$PUBLIC_SHA" == "$original" ]]; then
+            patch="$RUNNER_TEMP/verified-stock-1053.diff"
+            base64 --decode "$GITHUB_WORKSPACE/scratch/.github/qa-packaged-disabled-atspi/stock-1053.diff.b64" > "$patch"
+            echo "bdc5b16cbbd3666ef2727f8139743a47cec4669eb9a846735c4c46872a7944d3  $patch" | sha256sum --check --strict
+            git apply --check --index "$patch"
+            git apply --index "$patch"
+            tree=$(git write-tree)
+            test "$tree" = e7fa72a41fce1cb30ea8ac80fe15d96469474cf4
+            printf '%s\n' "$tree" >"$RUNNER_TEMP/qa-packaged-disabled-atspi/stock-result-tree.txt"
+            git diff --cached --name-only "$original" >"$RUNNER_TEMP/qa-packaged-disabled-atspi/replay-source-changes.txt"
+          else
+            git diff --name-only "$original" "$PUBLIC_SHA" >"$RUNNER_TEMP/qa-packaged-disabled-atspi/replay-source-changes.txt"
+          fi
+          test -s "$RUNNER_TEMP/qa-packaged-disabled-atspi/replay-source-changes.txt"
+          while IFS= read -r changed; do
+            case "$changed" in
+              scripts/release-smoke.py|scripts/smoke_lib.py|scripts/mcp-stdio-smoke.py|.github/scripts/test-release-smoke-scripts.py|docs/*.md) ;;
+              *) echo "Package identity cannot be reused across change to: $changed" >&2; exit 1 ;;
+            esac
+          done < "$RUNNER_TEMP/qa-packaged-disabled-atspi/replay-source-changes.txt"
+          gh api repos/rock3r/spectre/actions/runs/45876346277 | jq -e '.conclusion == "success" and .head_sha == "6bf966a2358242ddb6f68136a156db6593d2148d"' >/dev/null
+          gh api repos/rock3r/spectre/actions/artifacts/15145104173 | jq -e '.workflow_run.id == 45876346277 and .expired == false and .digest == "sha256:05118071ef19d946ef26d95a2966997a57ad0ada7eb9c775f9d58f8d7d92f110"' >/dev/null
+          gh api repos/rock3r/spectre/actions/artifacts/15145104173/zip >"$RUNNER_TEMP/previous.zip"
+          echo "05118071ef19d946ef26d95a2966997a57ad0ada7eb9c775f9d58f8d7d92f110  $RUNNER_TEMP/previous.zip" | sha256sum --check --strict
+          destination=cli/build/construo/distributions/linuxX64
+          mkdir -p "$destination"
+          unzip -p "$RUNNER_TEMP/previous.zip" spectre-linuxX64.zip > "$destination/spectre-linuxX64.zip"
+          echo "c10c60fdb03e233563461084f6d68d35403c036d0fe3621e17d77bd5354569a7  $destination/spectre-linuxX64.zip" | sha256sum --check --strict
       - name: Build and extract the exact 0.10.0 Linux x64 Roast package
         working-directory: product
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon -PVERSION_NAME="$VERSION_NAME" :cli:packageLinuxX64 --console=plain
+          if [[ "$REUSE_STOCK_ZIP" != true ]]; then
+            ./gradlew --no-daemon -PVERSION_NAME="$VERSION_NAME" :cli:packageLinuxX64 --console=plain
+          fi
           zip=$(find cli/build/construo/distributions/linuxX64 -maxdepth 1 -type f -name '*.zip' -print -quit)
           test -n "$zip"
           unzip -q "$zip" -d "$RUNNER_TEMP/public-package"
@@ -95,6 +138,7 @@ jobs:
           grep -Eq '0\.10\.0' "$RUNNER_TEMP/qa-packaged-disabled-atspi/version.txt"
           printf 'PACKAGED_CLI=%s\n' "$cli" >> "$GITHUB_ENV"
       - name: Retain exact Linux ZIP for an independent consumer retry
+        if: env.REUSE_STOCK_ZIP != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: disabled-atspi-immutable-linux-x64
@@ -103,8 +147,10 @@ jobs:
           retention-days: 2
           if-no-files-found: error
       - name: Run QA oracle guards
+        if: env.REUSE_STOCK_ZIP != 'true'
         run: python3 scratch/.github/qa-packaged-disabled-atspi/test_verify.py -v
       - name: Exercise packaged CLI, daemon, and MCP on a private disabled bus
+        if: env.REUSE_STOCK_ZIP != 'true'
         shell: bash
         env:
           QA_DIR: ${{ github.workspace }}/scratch/.github/qa-packaged-disabled-atspi
