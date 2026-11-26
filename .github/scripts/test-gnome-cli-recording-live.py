@@ -81,7 +81,8 @@ class CliRecordingLiveContractTest(unittest.TestCase):
         ):
             self.assertIn(contract, FIXTURE)
         for contract in (
-            "ffprobe", "ffmpeg", "(.1, .5, .9)", 'coverage["blue"] >= .01',
+            "ffprobe", "ffmpeg", 'frame_indices = [0, frame_count // 2, frame_count - 1]',
+            'coverage["blue"] >= .01', "recordingWallSeconds", "streamDurationSeconds",
             "helperAliveAfterCaptures", "grantMarkerExists", "sessionSocketExists",
             "packagedJavaVersion", "portal-observations.jsonl", "tokenStored",
         ):
@@ -92,6 +93,40 @@ class CliRecordingLiveContractTest(unittest.TestCase):
         self.assertIn('env["DECOY_XID"] = xid', DRIVER)
         self.assertIn('System.getenv("DECOY_XID")', FIXTURE)
         self.assertNotIn('ProcessBuilder("xdotool", "search"', FIXTURE)
+
+    def test_focus_is_owned_before_activation_and_sampled_around_every_capture(self):
+        focus_body = FIXTURE.split("private fun focusDecoy", 1)[1].split(
+            "private fun requireColor", 1)[0]
+        self.assertIn('requireOwner(pid, xid, "$phase/pre-activation")', focus_body)
+        self.assertNotIn('requireActive(pid, xid, "$phase/pre-activation")', focus_body)
+        self.assertIn('"windowactivate", "--sync"', focus_body)
+        self.assertIn('"windowraise"', focus_body)
+        for phase in ("red-still-before", "red-still-after",
+                      "red-recording-before", "red-recording-during", "red-recording-after",
+                      "green-still-before", "green-still-after"):
+            self.assertIn(phase, FIXTURE)
+        self.assertIn('captureStill(red!!, decoyPid, decoyXid, "red-still")', FIXTURE)
+        self.assertIn('captureStill(green, decoyPid, decoyXid, "green-still")', FIXTURE)
+        self.assertIn('"$label-during"', FIXTURE)
+        self.assertIn("FocusMonitor", FIXTURE)
+
+    def test_warm_green_reuses_exact_identity_after_red_and_receipts_are_durable(self):
+        self.assertGreaterEqual(FIXTURE.count("window(TITLE"), 2)
+        self.assertRegex(FIXTURE, r"red!!?\.dispose\(\)")
+        self.assertIn("java-live-phase-receipts.jsonl", FIXTURE)
+        for field in ("expectedXid", "actualXid", "expectedPid", "actualPid",
+                      "geometry", "media", "monotonicNs"):
+            self.assertIn(field, FIXTURE)
+
+    def test_movie_validation_decodes_real_frames_and_does_not_mask_stills(self):
+        self.assertIn('"-count_frames"', DRIVER)
+        self.assertIn('"stream=width,height,duration,nb_read_frames"', DRIVER)
+        self.assertIn('frame_indices = [0, frame_count // 2, frame_count - 1]', DRIVER)
+        self.assertIn('f"select=eq(n\\\\,{frame_index})"', DRIVER)
+        self.assertIn("media_errors", DRIVER)
+        self.assertIn('receipt(receipts, "still-media-validation"', DRIVER)
+        self.assertIn('receipt(receipts, "movie-media-validation"', DRIVER)
+        self.assertIn("3.5", DRIVER)
 
     def test_observer_is_process_isolated_and_outputs_are_sanitized(self):
         self.assertIn('"--observe"', DRIVER)

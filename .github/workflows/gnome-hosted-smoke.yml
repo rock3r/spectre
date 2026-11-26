@@ -6,7 +6,7 @@ on:
       candidate_sha:
         description: Full SHA of the original release-candidate base checkout
         required: false
-        default: 7ececf7a7ac361d87417bb07108cc475f7cf890e
+        default: d38754b614d0a0561c9921d95abe5cb4fb0a5f96
   push:
     branches: [release-0.10/gnome-hosted-smoke]
     paths-ignore:
@@ -34,19 +34,21 @@ jobs:
       - name: Check out the release candidate
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.candidate_sha || '7ececf7a7ac361d87417bb07108cc475f7cf890e' }}
+          ref: ${{ inputs.candidate_sha || 'd38754b614d0a0561c9921d95abe5cb4fb0a5f96' }}
           persist-credentials: false
           path: candidate
 
-      - name: Apply pinned public Wayland candidate overlays
-        working-directory: smoke-tooling/.github/smoke-overlays
+      - name: Verify the immutable public GNOME candidate
+        working-directory: candidate
         run: |
-          sha256sum -c SHA256SUMS
-          while read -r digest overlay; do
-            git -C "$GITHUB_WORKSPACE/candidate" apply --3way --index "$PWD/$overlay"
-          done < SHA256SUMS
-          git -C "$GITHUB_WORKSPACE/candidate" diff --cached --check
-          test "$(git -C "$GITHUB_WORKSPACE/candidate" write-tree)" = 173d9f56978389110520e7a2b2ba61b6827c455c
+          test "$(git rev-parse HEAD)" = d38754b614d0a0561c9921d95abe5cb4fb0a5f96
+          test "$(git write-tree)" = 173d9f56978389110520e7a2b2ba61b6827c455c
+          test -z "$(git status --porcelain)"
+          patch="$GITHUB_WORKSPACE/smoke-tooling/.github/smoke-overlays/04-gnome-static-keepalive.patch"
+          printf '%s  %s\n' 47b045dbb8686dd4c5876f8313729c4991dd81a066481868a77ca34f96f0149b "$patch" | sha256sum -c -
+          git apply --index "$patch"
+          git diff --cached --check
+          test "$(git write-tree)" = d889d474eee688cbf3da4a141b3407777a313af8
 
       - name: Set up JDK 25
         uses: actions/setup-java@v5
@@ -64,7 +66,7 @@ jobs:
           ATSPI_REPO: unused
           FIXTURE_CHECKOUT: unused
           SMOKE_MODE: cli-recording-live
-          CANDIDATE_SHA: ${{ inputs.candidate_sha || '7ececf7a7ac361d87417bb07108cc475f7cf890e' }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || 'd38754b614d0a0561c9921d95abe5cb4fb0a5f96' }}
           SMOKE_ARTIFACTS: ${{ runner.temp }}/gnome-cli-recording-live
           SMOKE_REPO: ${{ github.workspace }}/candidate
           SMOKE_SESSION_SCRIPT: ${{ github.workspace }}/smoke-tooling/.github/scripts/gnome-hosted-smoke-session.sh
@@ -89,7 +91,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [public-window-crop]
+        mode: [capture]
         replica: [1]
 
     steps:
@@ -102,7 +104,7 @@ jobs:
       - name: Check out the release candidate
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.candidate_sha || '7ececf7a7ac361d87417bb07108cc475f7cf890e' }}
+          ref: ${{ inputs.candidate_sha || 'd38754b614d0a0561c9921d95abe5cb4fb0a5f96' }}
           persist-credentials: false
           path: candidate
 
@@ -131,17 +133,18 @@ jobs:
           persist-credentials: false
           path: fixture
 
-      - name: Apply pinned cloud candidate overlays
+      - name: Verify the immutable public GNOME candidate
         if: matrix.mode == 'capture' || matrix.mode == 'public-window-crop'
-        working-directory: smoke-tooling/.github/smoke-overlays
+        working-directory: candidate
         run: |
-          sha256sum -c SHA256SUMS
-          while read -r digest overlay; do
-            git -C "$GITHUB_WORKSPACE/candidate" apply --3way --index "$PWD/$overlay"
-          done < SHA256SUMS
-          git -C "$GITHUB_WORKSPACE/candidate" diff --cached --check
-          test "$(git -C "$GITHUB_WORKSPACE/candidate" write-tree)" = 173d9f56978389110520e7a2b2ba61b6827c455c
-          git -C "$GITHUB_WORKSPACE/candidate" diff --cached --stat
+          test "$(git rev-parse HEAD)" = d38754b614d0a0561c9921d95abe5cb4fb0a5f96
+          test "$(git write-tree)" = 173d9f56978389110520e7a2b2ba61b6827c455c
+          test -z "$(git status --porcelain)"
+          patch="$GITHUB_WORKSPACE/smoke-tooling/.github/smoke-overlays/04-gnome-static-keepalive.patch"
+          printf '%s  %s\n' 47b045dbb8686dd4c5876f8313729c4991dd81a066481868a77ca34f96f0149b "$patch" | sha256sum -c -
+          git apply --index "$patch"
+          git diff --cached --check
+          test "$(git write-tree)" = d889d474eee688cbf3da4a141b3407777a313af8
 
       - name: Apply standalone caller-owned window identity candidate
         if: matrix.mode == 'identity'
@@ -169,7 +172,7 @@ jobs:
           ATSPI_REPO: ${{ github.workspace }}/atspi-reader
           FIXTURE_CHECKOUT: ${{ github.workspace }}/fixture
           SMOKE_MODE: ${{ matrix.mode }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha || '7ececf7a7ac361d87417bb07108cc475f7cf890e' }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || 'd38754b614d0a0561c9921d95abe5cb4fb0a5f96' }}
           SMOKE_ARTIFACTS: ${{ runner.temp }}/gnome-hosted-smoke
           SMOKE_REPO: ${{ github.workspace }}/candidate
           SMOKE_SESSION_SCRIPT: ${{ github.workspace }}/smoke-tooling/.github/scripts/gnome-hosted-smoke-session.sh

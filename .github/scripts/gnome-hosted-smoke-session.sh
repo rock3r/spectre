@@ -94,6 +94,8 @@ if [[ "$SMOKE_MODE" == mutter-control || "$SMOKE_MODE" == geometry-calibration ]
   timeout 10s gdbus wait --session dev.sebastiano.Spectre.MutterControlVerification
 fi
 pw-cli info 0 >"$SMOKE_ARTIFACTS/pipewire-core.txt"
+gst-inspect-1.0 --version >"$SMOKE_ARTIFACTS/gstreamer-version.txt"
+gst-inspect-1.0 pipewiresrc >"$SMOKE_ARTIFACTS/gst-inspect-pipewiresrc.txt"
 
 # GTK4 portal dialogs expose their native Wayland tree only when the session's
 # accessibility bus is enabled. Do this before either grant, and wait for both

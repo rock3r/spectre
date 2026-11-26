@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import zipfile
+from datetime import datetime, timezone
 
 import dbus
 from gi.repository import GLib
@@ -121,7 +122,9 @@ def sanitized(text: str) -> str:
 
 def receipt(path: Path, phase: str, **facts: object) -> None:
     with path.open("a") as output:
-        output.write(json.dumps({"phase": phase, **facts}, sort_keys=True) + "\n")
+        output.write(json.dumps({"phase": phase, "monotonicNs": time.monotonic_ns(),
+                                 "timestampUtc": datetime.now(timezone.utc).isoformat(),
+                                 **facts}, sort_keys=True) + "\n")
 
 
 def main() -> None:
@@ -252,29 +255,73 @@ def main() -> None:
                 decoy.kill(); decoy.wait(timeout=5)
         decoy_log.close()
 
+    media_errors = []
+    stills = {}
+    try:
+        stills = {name: colors(artifacts / name)
+                  for name in ("red-covered.png", "green-covered.png")}
+        if (stills["red-covered.png"]["red"] <= .5 or
+                stills["green-covered.png"]["green"] <= .5):
+            raise RuntimeError(f"still coverage is not affirmative: {stills}")
+        if any(value["blue"] >= .01 for value in stills.values()):
+            raise RuntimeError(f"blue decoy leaked into stills: {stills}")
+        receipt(receipts, "still-media-validation", ok=True, media=stills)
+    except Exception as error:  # Keep the independent movie result even if either still is bad.
+        media_errors.append(f"stills: {error}")
+        receipt(receipts, "still-media-validation", ok=False, error=str(error), media=stills)
+
     frames = artifacts / "movie-frames"
     frames.mkdir()
     movie = artifacts / "red-covered.mp4"
-    duration = float(subprocess.check_output([
-        "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(movie)], text=True))
-    samples = [duration * fraction for fraction in (.1, .5, .9)]
+    duration = 0.0
     frame_evidence = []
-    for index, position in enumerate(samples):
-        frame = frames / f"frame-{index}.png"
-        subprocess.run(["ffmpeg", "-v", "error", "-ss", str(position), "-i", str(movie),
-                        "-frames:v", "1", "-y", str(frame)], check=True)
-        coverage = colors(frame)
-        if coverage["red"] <= .5 or coverage["blue"] >= .01:
-            raise RuntimeError(f"movie frame {index} has wrong coverage: {coverage}")
-        frame_evidence.append({"positionSeconds": position, "coverage": coverage})
-    stills = {name: colors(artifacts / name) for name in ("red-covered.png", "green-covered.png")}
-    if stills["red-covered.png"]["red"] <= .5 or stills["green-covered.png"]["green"] <= .5:
-        raise RuntimeError(f"still coverage is not affirmative: {stills}")
-    if any(value["blue"] >= .01 for value in stills.values()):
-        raise RuntimeError(f"blue decoy leaked into stills: {stills}")
+    stream = {}
+    java_evidence = json.loads((artifacts / "java-live-evidence.json").read_text())
+    recording_wall = float(java_evidence["recordingWallSeconds"])
+    elapsed_after_start = float(java_evidence["elapsedAfterStartReturnsSeconds"])
+    try:
+        probe = json.loads(subprocess.check_output([
+            "ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height,duration,nb_read_frames", "-of", "json",
+            str(movie)], text=True))
+        if len(probe.get("streams", [])) != 1:
+            raise RuntimeError(f"expected one decoded video stream: {probe}")
+        stream = probe["streams"][0]
+        duration = float(stream["duration"])
+        frame_count = int(stream["nb_read_frames"])
+        if stream.get("width") != 480 or stream.get("height") != 320 or frame_count < 3:
+            raise RuntimeError(f"invalid decoded stream geometry/count: {stream}")
+        frame_indices = [0, frame_count // 2, frame_count - 1]
+        for frame_index in frame_indices:
+            frame = frames / f"frame-{frame_index}.png"
+            subprocess.run([
+                "ffmpeg", "-v", "error", "-i", str(movie),
+                "-vf", f"select=eq(n\\,{frame_index})", "-frames:v", "1", "-vsync", "vfr",
+                "-y", str(frame),
+            ], check=True)
+            coverage = colors(frame)
+            if coverage["red"] <= .5 or coverage["blue"] >= .01:
+                raise RuntimeError(f"movie frame {frame_index} has wrong coverage: {coverage}")
+            frame_evidence.append({"frameIndex": frame_index, "coverage": coverage})
+        if elapsed_after_start < 3.5 or recording_wall < 3.5:
+            raise RuntimeError(f"recording wall interval was short: {java_evidence}")
+        if abs(duration - elapsed_after_start) > .75:
+            raise RuntimeError(
+                f"decoded stream duration {duration} is not close to wall {elapsed_after_start}")
+        receipt(receipts, "movie-media-validation", ok=True, media=str(movie.name),
+                stream=stream, decodedFrames=frame_evidence, recordingWallSeconds=recording_wall,
+                elapsedAfterStartReturnsSeconds=elapsed_after_start,
+                streamDurationSeconds=duration)
+    except Exception as error:  # Stills, especially warm green, remain independently evidenced.
+        media_errors.append(f"movie: {error}")
+        receipt(receipts, "movie-media-validation", ok=False, error=str(error), media=str(movie.name),
+                stream=stream, decodedFrames=frame_evidence, recordingWallSeconds=recording_wall,
+                elapsedAfterStartReturnsSeconds=elapsed_after_start,
+                streamDurationSeconds=duration)
     if not Path(f"/proc/{helper_pids[0]}").is_dir() or not socket.is_socket():
         raise RuntimeError("the CLI-started helper did not survive all captures")
-    receipt(receipts, "media-validation", helperAlive=True, sessionSocketExists=True)
+    receipt(receipts, "media-validation", ok=not media_errors, helperAlive=True,
+            sessionSocketExists=True, errors=media_errors)
 
     stop_watcher()
     atexit.unregister(stop_watcher)
@@ -299,8 +346,13 @@ def main() -> None:
                 "packagedLauncher": str(cli), "packagedRuntimeJava": str(runtime_java),
                 "packagedJavaVersion": (java_version.stderr or java_version.stdout).splitlines()[0],
                 "helperAliveAfterCaptures": True, "stills": stills,
-                "movieFrames": frame_evidence, "movieDurationSeconds": duration}
+                "movieFrames": frame_evidence, "movieDurationSeconds": duration,
+                "recordingWallSeconds": recording_wall,
+                "elapsedAfterStartReturnsSeconds": elapsed_after_start,
+                "mediaErrors": media_errors}
     (artifacts / "cli-recording-live-evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
+    if media_errors:
+        raise RuntimeError("; ".join(media_errors))
 
 
 if __name__ == "__main__":
