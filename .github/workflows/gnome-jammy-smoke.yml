@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [capture, cli-recording-live]
+        mode: [portal]
     timeout-minutes: 55
     steps:
       - name: Check out temporary workflow tooling

@@ -91,8 +91,10 @@ xdpyinfo >/dev/null
 dbus-update-activation-environment --systemd XDG_CURRENT_DESKTOP XDG_SESSION_TYPE WAYLAND_DISPLAY DISPLAY XAUTHORITY
 [[ -n "$WAYLAND_DISPLAY" ]] || { echo "Mutter did not create a Wayland socket" >&2; exit 1; }
 timeout 5s gdbus wait --session org.gnome.Mutter.ScreenCast
-gnome-extensions enable "$extension_uuid"
-gnome-extensions list --enabled | grep -Fx "$extension_uuid"
+if [[ "$SMOKE_MODE" != portal ]]; then
+  gnome-extensions enable "$extension_uuid"
+  gnome-extensions list --enabled | grep -Fx "$extension_uuid"
+fi
 if [[ "$SMOKE_MODE" == mutter-control || "$SMOKE_MODE" == geometry-calibration ]]; then
   timeout 10s gdbus wait --session dev.sebastiano.Spectre.MutterControlVerification
 fi
