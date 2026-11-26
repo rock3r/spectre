@@ -39,8 +39,8 @@ transport rows:
 | Platform | State | Evidence status |
 | --- | --- | --- |
 | macOS desktop (AX) | **Not yet CI-executed** | Packaged standalone PID/title and attached stdio MCP evidence exists; hosted-runner TCC execution does not. |
-| Windows desktop (UIA) | **Not yet CI-executed** | Packaged standalone PID/title and attached stdio MCP evidence exists; the Compose sample exposes only eight chrome nodes to UIA. |
-| Linux desktop (AT-SPI) | **Not yet CI-executed** | Cloud packaged AccessKit PID/title and public MCP evidence exists; seated GTK/Wayland and Java ATK remain under test. |
+| Windows desktop (UIA) | **Not yet CI-executed** | Packaged standalone PID/title and attached stdio MCP evidence exists; all public fixture assertions passed after installing a same-architecture Microsoft-signed Windows App Runtime 1.8.5 (the hosted CBS package alone was insufficient). The Compose sample exposes only eight chrome nodes to UIA. |
+| Linux desktop (AT-SPI) | **Not yet CI-executed** | Cloud packaged AccessKit PID/title and separately verified public MCP evidence exists. Native GNOME 46 confirmed 14 AccessKit nodes and canonical raw roles; GTK Zenity exposed 16 nodes, and an Xvfb Java ATK-wrapper sample exposed 31 OS nodes versus 22 Compose nodes. These are measured provider results, not a CI promotion. |
 
 Release smoke invokes the packaged `spectre a11y tree` command against the real native helper and
 the released `fixtures/accesskit/` fixture from the same checkout. A future green smoke result does not silently promote a

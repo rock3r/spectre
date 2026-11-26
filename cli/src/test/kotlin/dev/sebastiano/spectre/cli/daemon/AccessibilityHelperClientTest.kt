@@ -2,7 +2,6 @@ package dev.sebastiano.spectre.cli.daemon
 
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -14,6 +13,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.measureTime
+import org.junit.jupiter.api.io.TempDir
 
 class AccessibilityHelperClientTest {
     @Test
@@ -111,54 +111,66 @@ class AccessibilityHelperClientTest {
     }
 
     @Test
-    fun `real cross-platform helper and its descendant are forcibly bounded on timeout`() {
-        val childPid = Files.createTempFile("accessibility-child-", ".pid")
-        Files.delete(childPid)
-        val elapsed = measureTime {
-            assertFailsWith<IllegalStateException> {
-                fixtureClient("descendant", childPid.toString())
-                    .snapshot(request(timeoutMs = 2_000), Path.of("fixture"))
+    fun `real cross-platform helper and its descendant are forcibly bounded on timeout`(
+        @TempDir directory: Path
+    ) {
+        withReadyHelper(directory) { helper, child ->
+            val elapsed = measureTime {
+                val error =
+                    assertFailsWith<IllegalStateException> {
+                        exchangeWithHelper(helper, "{}", 2_000)
+                    }
+                assertEquals("Accessibility helper exceeded its 2000ms deadline", error.message)
             }
+            assertTrue(elapsed < 4.seconds, "helper took $elapsed to be reaped")
+            assertFalse(helper.isAlive, "helper survived timeout")
+            assertFalse(child.isAlive, "child survived timeout")
         }
-        assertTrue(elapsed < 4.seconds, "helper took $elapsed to be reaped")
-        val pid = awaitPid(childPid)
-        assertFalse(
-            ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false),
-            "child $pid survived",
-        )
     }
 
     @Test
-    fun `interruption still reaps descendants and preserves interrupt status`() {
-        val childPid = Files.createTempFile("accessibility-child-", ".pid")
-        Files.delete(childPid)
-        val caught = AtomicReference<Throwable>()
-        val interruptPreserved = AtomicBoolean()
-        val finished = CountDownLatch(1)
-        val worker = Thread {
-            try {
-                fixtureClient("descendant", childPid.toString())
-                    .snapshot(request(timeoutMs = 30_000), Path.of("fixture"))
-            } catch (throwable: Throwable) {
-                caught.set(throwable)
-                interruptPreserved.set(Thread.currentThread().isInterrupted)
-            } finally {
-                finished.countDown()
+    fun `interruption still reaps descendants and preserves interrupt status`(
+        @TempDir directory: Path
+    ) {
+        withReadyHelper(directory) { helper, child ->
+            val caught = AtomicReference<Throwable>()
+            val interruptPreserved = AtomicBoolean()
+            val worker = Thread {
+                try {
+                    exchangeWithHelper(helper, "{}", 30_000)
+                } catch (throwable: Throwable) {
+                    caught.set(throwable)
+                    interruptPreserved.set(Thread.currentThread().isInterrupted)
+                }
             }
+            worker.start()
+            try {
+                awaitFixture("helper to receive request") {
+                    Files.exists(directory.resolve("request-received"))
+                }
+            } finally {
+                worker.interrupt()
+            }
+            worker.join(2_000)
+            assertFalse(worker.isAlive, "interrupted helper cleanup was not bounded")
+            assertIs<InterruptedException>(caught.get())
+            assertTrue(interruptPreserved.get(), "interrupt status was not restored")
+            assertFalse(helper.isAlive, "helper survived interruption")
+            assertFalse(child.isAlive, "child survived interruption")
         }
-        worker.start()
-        val pid = awaitPid(childPid)
-        worker.interrupt()
-        assertTrue(
-            finished.await(2, TimeUnit.SECONDS),
-            "interrupted helper cleanup was not bounded",
-        )
-        assertIs<InterruptedException>(caught.get())
-        assertTrue(interruptPreserved.get(), "interrupt status was not restored")
-        assertFalse(
-            ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false),
-            "child $pid survived",
-        )
+    }
+
+    @Test
+    fun `deadline bounds a helper still starting up`() {
+        val elapsed = measureTime {
+            val error =
+                assertFailsWith<IllegalStateException> {
+                    AccessibilityHelperClient(command = { fixtureCommand("sleep") })
+                        .snapshot(request(timeoutMs = 2_000), Path.of("fixture"))
+                }
+            assertEquals("Accessibility helper exceeded its 2000ms deadline", error.message)
+        }
+        assertTrue(elapsed < 4.seconds, "helper startup took $elapsed")
     }
 
     @Test
@@ -169,32 +181,45 @@ class AccessibilityHelperClientTest {
         }
     }
 
-    private fun fixtureClient(vararg fixtureArgs: String): AccessibilityHelperClient =
-        AccessibilityHelperClient(
-            command = {
-                listOf(
-                    javaExecutable(),
-                    "-cp",
-                    System.getProperty("java.class.path"),
-                    AccessibilityHelperFixture::class.java.name,
-                    *fixtureArgs,
-                )
+    private fun withReadyHelper(directory: Path, test: (Process, ProcessHandle) -> Unit) {
+        val helper = ProcessBuilder(fixtureCommand("descendant", directory.toString())).start()
+        try {
+            awaitFixture("descendant startup") { Files.exists(directory.resolve("child-ready")) }
+            val pid = Files.readString(directory.resolve("child.pid")).toLong()
+            val child =
+                helper.children().use { children ->
+                    children.filter { it.pid() == pid }.findFirst().orElseThrow()
+                }
+            assertTrue(child.isAlive, "fixture child exited before request")
+            try {
+                test(helper, child)
+            } finally {
+                if (child.isAlive) child.destroyForcibly()
             }
+        } finally {
+            helper.descendants().use { descendants -> descendants.forEach { it.destroyForcibly() } }
+            helper.destroyForcibly()
+        }
+    }
+
+    private fun fixtureCommand(vararg args: String) =
+        listOf(
+            javaExecutable(),
+            "-cp",
+            System.getProperty("java.class.path"),
+            AccessibilityHelperFixture::class.java.name,
+            *args,
         )
 
     private fun request(timeoutMs: Long) =
         AccessibilitySnapshotRequest(Target.ProcessId(1), 1, 1, timeoutMs)
 
-    private fun awaitPid(path: Path): Long {
-        repeat(200) {
-            if (Files.exists(path)) {
-                Files.readString(path).trim().toLongOrNull()?.let { pid ->
-                    return pid
-                }
-            }
+    private fun awaitFixture(description: String, ready: () -> Boolean) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+        while (!ready()) {
+            check(System.nanoTime() < deadline) { "Timed out waiting for $description" }
             Thread.sleep(10)
         }
-        error("fixture did not publish descendant pid")
     }
 
     private fun javaExecutable(): String =

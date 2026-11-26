@@ -153,6 +153,8 @@ def assert_accessibility_snapshot(snapshot: Mapping[str, Any], system: str) -> N
         raise AssertionError(f"AccessKit fixture snapshot missing platform ids: {sorted(missing)}")
     if system != "Windows" and ids.count("repeated") != 3:
         raise AssertionError("AccessKit fixture snapshot must preserve all three repeated ids")
+    if system == "Linux" and "offscreen-button" not in ids:
+        raise AssertionError("Linux AccessKit snapshot must preserve the offscreen-button node")
     by_id = {node.get("id"): node for node in nodes if node.get("id") in required}
     fixture = by_id["fixture-window"]
     if not fixture["key"].startswith(f"{target_key}/"):
@@ -184,10 +186,10 @@ def assert_accessibility_snapshot(snapshot: Mapping[str, Any], system: str) -> N
         },
         "Linux": {
             "fixture-window": ("frame", "Spectre AccessKit Fixture"),
-            "primary-button": ("push button", "Save changes"),
+            "primary-button": ("button", "Save changes"),
             "newsletter": ("check box", "Receive updates"),
-            "account-name": ("text", "Account name"),
-            "disabled-button": ("push button", "Unavailable action"),
+            "account-name": ("entry", "Account name"),
+            "disabled-button": ("button", "Unavailable action"),
         },
         "Windows": {
             "fixture-window": ("Group", "Spectre AccessKit Fixture"),
@@ -213,7 +215,7 @@ def assert_accessibility_snapshot(snapshot: Mapping[str, Any], system: str) -> N
         raise AssertionError("macOS newsletter must preserve checked value '1'")
     if system == "Windows" and newsletter.get("value") != "on":
         raise AssertionError("Windows newsletter must preserve checked value 'on'")
-    if "disabled" not in by_id["disabled-button"].get("states", []):
+    if system != "Linux" and "disabled" not in by_id["disabled-button"].get("states", []):
         raise AssertionError("disabled-button must preserve its disabled state")
     expected_value = None if system == "Linux" else "Ada Lovelace"
     if by_id["account-name"].get("value") != expected_value:
@@ -225,6 +227,20 @@ def assert_accessibility_snapshot(snapshot: Mapping[str, Any], system: str) -> N
             not node.get("parentKey") for node in repeated
         ):
             raise AssertionError("repeated nodes need distinct keys and parent links")
+    if system == "Linux":
+        normalized_roles = {
+            "fixture-window": "window",
+            "primary-button": "button",
+            "newsletter": "checkbox",
+            "account-name": "entry",
+            "disabled-button": "button",
+        }
+        for node_id, role in normalized_roles.items():
+            if by_id[node_id].get("role") != role:
+                raise AssertionError(f"{node_id} must preserve normalized role {role!r}")
+        offscreen = next(node for node in nodes if node.get("id") == "offscreen-button")
+        if offscreen.get("onScreen") is not False:
+            raise AssertionError("Linux offscreen-button must remain explicitly off screen")
     if not all(isinstance(node.get("bounds"), dict) for node in by_id.values()):
         raise AssertionError("fixture nodes must contain bounds")
     if not all(isinstance(node.get("onScreen"), bool) for node in by_id.values()):

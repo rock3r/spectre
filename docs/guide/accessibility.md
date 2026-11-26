@@ -54,7 +54,7 @@ spectre a11y tree --pid 12345 | jq '.nodes[] | select(.id == "account-name") | {
 | OS | Permission and behaviour | Bounds |
 | --- | --- | --- |
 | macOS | The signed **Spectre Capture Helper.app** needs Accessibility permission in System Settings. A denial is reported as an error, not an empty tree; the helper never opens the prompt implicitly. | Global screen points. |
-| Windows | UI Automation normally needs no prompt. Integrity boundaries still apply: a normal process cannot inspect an elevated application. | Global screen pixels. |
+| Windows | UI Automation normally needs no prompt. The framework-dependent helper requires the .NET 8 Desktop Runtime and a same-architecture public Windows App Runtime 1.8 installation; the CBS system package alone is insufficient. Integrity boundaries still apply: a normal process cannot inspect an elevated application. | Global screen pixels. |
 | Linux | Spectre temporarily sets the session `org.a11y.Status.IsEnabled` value while it reads, then restores the previous value. The CLI prints a one-line notice when it enables the session; MCP includes the same notice in its result. This is necessary because AccessKit applications register with AT-SPI only while session accessibility is enabled. | Screen coordinates on X11. On GNOME Wayland, AccessKit bounds are **window-relative** and the output labels them as such. They must not be used as screen coordinates for input or crops. |
 
 Do not hide or discard the Linux enablement notice: it explains a session-wide accessibility state
@@ -66,7 +66,11 @@ change and whether restoration succeeded.
   through the native accessibility bridge. An attached Compose tree can therefore be richer than
   the OS tree. This command reports what the OS exposes; it does not synthesize missing nodes.
 - AccessKit text fields on Linux currently expose no readable value through AT-SPI. A field can be
-  present with role, name, bounds, and states while `value` remains `null`.
+  present as raw role `79` (`entry`) with name, bounds, and states while `value` remains `null`.
+- Do not infer whether an AccessKit button is enabled on Linux from the AT-SPI Action interface or
+  native state words. The fixture's disabled button and its enabled, offscreen peer both omit the
+  Action interface and expose the same state words. Spectre preserves both nodes without inventing
+  a disabled state that this provider does not expose.
 - GNOME Wayland does not provide a global window origin through this accessibility path. Obtain a
   trusted window origin separately before converting window-relative bounds.
 - Platform visibility flags are not trusted for scrolled content. Spectre derives `onScreen` from
@@ -82,16 +86,22 @@ proofs measured 20 nodes by PID and 20–21 nodes by title on macOS, 21 nodes/tw
 budget on every platform must fail with the typed `limit-reached` result and a two-node partial
 snapshot. These checks use the fixture's
 official platform roles: AX `AXWindow`/`AXButton`/`AXCheckBox`/`AXTextField`, UIA
-`Window`/`Button`/`CheckBox`/`Edit`, and AT-SPI `frame`/`button`/`check box`/`entry`.
+`Window`/`Button`/`CheckBox`/`Edit`, and AT-SPI raw role ids/names `23`/`frame`,
+`43`/`button`, `7`/`check box`, and `79`/`entry`. AccessKit's native D-Bus `GetRoleName` is
+unimplemented, but `GetRole` was independently verified in a native Wayland session with
+`DISPLAY` unset. Spectre validates these raw roles and normalised
+`window`/`button`/`checkbox`/`entry` roles; it does not relabel `entry` or infer a Linux disabled state.
 
 Attached capture cross-checks use a real PNG and the packaged stdio MCP path. The current sample
 measured 30 AX nodes versus 21 Compose nodes on macOS; on Windows it measured eight native UIA
 nodes (window chrome only) versus 21 Compose nodes. Earlier diagnostic probes found 35 nodes in
 macOS Calculator, 11 buttons in the original sample, and 313 nodes in Windows Character Map.
 Those applications are diagnostic references, not substitutes or fallbacks for the deterministic
-fixture. Linux cloud validation covers the real packaged AT-SPI helper and public MCP path. A
-seated GTK/Wayland run and the Java ATK bridge remain under test; do not generalise the cloud
-AccessKit result to either path.
+fixture. Linux cloud validation covers the real packaged AT-SPI helper and CLI path; the separate
+MCP smoke cell supplies the public MCP transport evidence. Native GNOME 46 evidence confirmed 14
+AccessKit nodes, a direct GTK Zenity probe exposed 16 nodes, and an Xvfb Java ATK-wrapper sample
+exposed 31 OS nodes for a 22-node Compose tree. These measurements establish provider integration,
+not semantic parity.
 
 There is no unsafe fallback: permission denial, missing native helpers, incomplete limit typing, a
 changed node count, or a broken parent chain fails the release cell rather than producing an empty
