@@ -73,15 +73,31 @@ def clean(value: str) -> str:
     return value[:200]
 
 
+def parent_indices(nodes) -> list[int | None]:
+    """Recover preorder parents without comparing unstable PyGObject wrappers."""
+    parents = []
+    stack = []
+    for index, node in enumerate(nodes):
+        while stack and stack[-1][1] == 0:
+            stack.pop()
+        parents.append(stack[-1][0] if stack else None)
+        if stack:
+            stack[-1][1] -= 1
+        child_count = int(getattr(node, "childCount", 0))
+        if child_count:
+            stack.append([index, child_count])
+    return parents
+
+
 def snapshot(nodes, pid: int) -> dict:
-    indexes = {id(node): index for index, node in enumerate(nodes)}
+    parents = parent_indices(nodes)
     return {
         "backend": BACKEND,
         "executable": "xdg-desktop-portal-gnome",
         "pid": pid,
         "nodes": [{
             "index": index,
-            "parent": indexes.get(id(node.parent)),
+            "parent": parents[index],
             "role": clean(node.getRoleName()),
             "name": clean(node.name),
             "states": state_names(node),
@@ -91,8 +107,11 @@ def snapshot(nodes, pid: int) -> dict:
 
 
 def facts(nodes) -> list[dict]:
-    return [{"role": clean(node.getRoleName()), "name": clean(node.name),
-             "states": state_names(node), "actions": actions(node)} for node in nodes]
+    parents = parent_indices(nodes)
+    return [{"index": index, "parent": parents[index],
+             "role": clean(node.getRoleName()), "name": clean(node.name),
+             "states": state_names(node), "actions": actions(node)}
+            for index, node in enumerate(nodes)]
 
 
 def save_snapshot(nodes, pid: int, artifact: Path, **extra) -> None:
@@ -111,6 +130,14 @@ def invoke(node, accepted=("click", "press", "activate", "toggle")) -> None:
                 if interface.getName(i).lower() in accepted]
     if len(matching) != 1 or not interface.doAction(matching[0]):
         fail(f"could not uniquely activate {node.getRoleName()} {node.name!r}; actions={actions(node)}")
+
+
+def expected_disappearance(error: BaseException) -> bool:
+    message = str(error).lower()
+    if isinstance(error, GLib.GError):
+        return ("atspi_error" in message and
+                any(text in message for text in ("no longer exists", "does not exist")))
+    return isinstance(error, (AttributeError, TypeError)) and "nonetype" in message
 
 
 def wait_for_dialog(pid: int, artifact: Path, timeout: float = 45):
@@ -145,11 +172,10 @@ def accept_dialog(pid: int, artifact: Path) -> dict:
     nodes, dialog = wait_for_dialog(pid, artifact)
     dialog_nodes = list(descendants(dialog))
     dialog_facts = facts(dialog_nodes)
-    matched_profile = semantics.profile(dialog_facts)
+    matched = semantics.selection(dialog_facts)
+    matched_profile = matched["profile"] if matched else None
     structure_counts = {
-        "shareButtons": sum(item["role"] == "push button" and
-                            semantics.folded(item["name"]) == "share"
-                            for item in dialog_facts),
+        "shareButtons": len(semantics.share_buttons(dialog_facts)),
         "remoteInteractionControls": len(semantics.remote_interaction_controls(dialog_facts)),
         "jammyMonitorRows": len(semantics.jammy_monitor_rows(dialog_facts)),
         "nobleSelectedSources": len(semantics.selected_noble_sources(dialog_facts)),
@@ -162,48 +188,35 @@ def accept_dialog(pid: int, artifact: Path) -> dict:
     # Never guess by coordinates or select a fixture window: MONITOR was the
     # only advertised source type. GNOME 46 auto-selects it; GNOME 42 exposes
     # the physical logical monitor as the sole non-virtual GtkListBox row.
-    shares = [node for node in dialog_nodes if node.getRoleName() == "push button"
-              and semantics.folded(node.name) == "share"]
-    remote_facts = semantics.remote_interaction_controls(dialog_facts)
-    remote_input = [node for node, item in zip(dialog_nodes, dialog_facts)
-                    if item in remote_facts]
-    if len(remote_input) != 1:
-        fail(f"expected the GNOME remote interaction control in the test VM; see {artifact}")
-    if "checked" not in state_names(remote_input[0]):
-        invoke(remote_input[0], accepted=("toggle",))
+    by_index = {item["index"]: node for node, item in zip(dialog_nodes, dialog_facts)}
+    share = by_index[matched["share"]]
+    remote_input = by_index[matched["interaction"]]
+    selected_source = by_index[matched["source"]]
+    if "checked" not in state_names(remote_input):
+        invoke(remote_input, accepted=("toggle",))
     deadline = time.monotonic() + 5
-    while "checked" not in state_names(remote_input[0]) and time.monotonic() < deadline:
+    while "checked" not in state_names(remote_input) and time.monotonic() < deadline:
         time.sleep(0.1)
-    if "checked" not in state_names(remote_input[0]):
+    if "checked" not in state_names(remote_input):
         fail("GNOME did not acknowledge the requested remote interaction")
-    if matched_profile == "gnome-46":
-        selected_sources = [node for node in dialog_nodes
-                            if node.getRoleName() in ("toggle button", "radio button")
-                            and set(state_names(node)) & {"checked", "selected", "pressed"}
-                            and semantics.folded(node.name) != "allow remote interaction"]
-    else:
-        candidates = semantics.jammy_monitor_rows(dialog_facts)
-        selected_sources = [node for node, item in zip(dialog_nodes, dialog_facts)
-                            if item in candidates]
-        if len(selected_sources) == 1 and "selected" not in state_names(selected_sources[0]):
-            invoke(selected_sources[0], accepted=("activate", "click", "press", "select"))
-            deadline = time.monotonic() + 5
-            while "selected" not in state_names(selected_sources[0]) and time.monotonic() < deadline:
-                time.sleep(0.1)
-    if len(selected_sources) != 1 or not (set(state_names(selected_sources[0])) &
-                                          {"checked", "selected", "pressed"}):
+    if not (set(state_names(selected_source)) & {"checked", "selected", "pressed"}):
         fail(f"expected one selected physical monitor for {matched_profile}; see {artifact}")
-    if len(shares) != 1 or "sensitive" not in state_names(shares[0]):
+    if "sensitive" not in state_names(share):
         fail(f"Share is not uniquely enabled after singular monitor selection; see {artifact}")
 
-    selected = {"profile": matched_profile, "role": selected_sources[0].getRoleName(),
-                "name": clean(selected_sources[0].name),
-                "states": state_names(selected_sources[0])}
-    invoke(shares[0])
+    selected = {"profile": matched_profile, "role": selected_source.getRoleName(),
+                "name": clean(selected_source.name), "states": state_names(selected_source)}
+    invoke(share, accepted=("click",))
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
-        if "showing" not in state_names(dialog):
-            return selected
+        try:
+            if "showing" not in state_names(dialog):
+                return selected
+        except (GLib.GError, AttributeError, TypeError) as error:
+            # A successful close can remove the remote AT-SPI object between polls.
+            if expected_disappearance(error):
+                return selected
+            raise
         time.sleep(0.1)
     fail(f"Share action did not close the portal dialog; see {artifact}")
 

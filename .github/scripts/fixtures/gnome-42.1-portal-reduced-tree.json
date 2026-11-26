@@ -1,0 +1,17 @@
+{
+  "sourceRun": 45745051498,
+  "nodes": [
+    {"index": 1, "parent": null, "role": "frame", "name": "Remote desktop", "states": ["modal", "sensitive", "showing", "visible"], "actions": ["window.close", "default.activate"]},
+    {"index": 10, "parent": 1, "role": "list", "name": "GtkListBox", "states": ["focusable", "sensitive", "visible"], "actions": []},
+    {"index": 11, "parent": 10, "role": "list item", "name": "MetaVendor", "states": ["focusable", "focused", "selectable", "selected", "sensitive", "visible"], "actions": []},
+    {"index": 14, "parent": 11, "role": "label", "name": "MetaVendor", "states": ["sensitive", "visible"], "actions": ["clipboard.copy", "selection.delete", "clipboard.paste", "link.open", "clipboard.cut", "link.copy", "menu.popup", "selection.select-all"]},
+    {"index": 17, "parent": 1, "role": "list", "name": "GtkListBox", "states": ["focusable", "sensitive", "visible"], "actions": []},
+    {"index": 18, "parent": 17, "role": "list item", "name": "Allow remote interaction", "states": ["focusable", "selectable", "sensitive", "visible"], "actions": []},
+    {"index": 21, "parent": 18, "role": "label", "name": "Allow remote interaction", "states": ["sensitive", "visible"], "actions": ["clipboard.copy", "selection.delete", "clipboard.paste", "link.open", "clipboard.cut", "link.copy", "menu.popup", "selection.select-all"]},
+    {"index": 23, "parent": 18, "role": "check box", "name": "GtkSwitch", "states": ["focusable", "sensitive", "visible"], "actions": ["toggle"]},
+    {"index": 32, "parent": 1, "role": "push button", "name": "_Cancel Cancel", "states": ["focusable", "sensitive", "visible"], "actions": ["click"]},
+    {"index": 33, "parent": 32, "role": "label", "name": "Cancel", "states": ["sensitive", "visible"], "actions": ["clipboard.copy"]},
+    {"index": 36, "parent": 1, "role": "push button", "name": "_Share Share", "states": ["focusable", "sensitive", "visible"], "actions": ["click"]},
+    {"index": 37, "parent": 36, "role": "label", "name": "Share", "states": ["sensitive", "visible"], "actions": ["clipboard.copy", "selection.delete", "clipboard.paste", "link.open", "clipboard.cut", "link.copy", "menu.popup", "selection.select-all"]}
+  ]
+}

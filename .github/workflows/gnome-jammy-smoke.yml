@@ -9,7 +9,7 @@ permissions:
   contents: read
 jobs:
   jammy-gnome:
-    name: Jammy stock portal / ${{ matrix.mode }}
+    name: Jammy native selected monitor / ${{ matrix.mode }}
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
