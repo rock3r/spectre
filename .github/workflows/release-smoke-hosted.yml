@@ -68,7 +68,7 @@ jobs:
           printf '%s\n' "$PHASE" > "$RUNNER_TEMP/release-smoke-identity/phase.txt"
 
       - name: Verify the cloud-authored rehearsal overlay and clean test tree
-        if: steps.control.outputs.phase == 'REHEARSAL' && steps.control.outputs.candidate_sha == '9dda1faa5ecfadb4a0762f2c9f421de9531ce726'
+        if: steps.control.outputs.phase == 'REHEARSAL' && steps.control.outputs.candidate_sha == '1466f436fc65a02d3f40a1c168bc41296e3eb319'
         working-directory: candidate
         shell: bash
         run: |
@@ -77,8 +77,8 @@ jobs:
           printf '%s' "$AWT_FIXTURE_PATCH_GZIP_BASE64" | base64 -d | gzip -dc > "$RUNNER_TEMP/awt-test-fixture.patch"
           git apply --index "$RUNNER_TEMP/awt-test-fixture.patch"
           git diff --cached --check
-          test "$(git write-tree)" = 3246b3f896f0efa621528898883c42f1f8d46e18
-          GIT_AUTHOR_DATE=2026-11-26T00:00:00Z GIT_COMMITTER_DATE=2026-11-26T00:00:00Z git -c user.name=Verification -c user.email=verification@localhost commit -m "Rehearse the four verified AWT test fixtures"
+          test "$(git write-tree)" = feaf5015e5e9bfc7264912b32e6eb6a85ccb1b45
+          GIT_AUTHOR_DATE=2026-11-26T00:00:00Z GIT_COMMITTER_DATE=2026-11-26T00:00:00Z git -c user.name=Verification -c user.email=verification@localhost commit -m "Rehearse the corrected AWT fixtures and Windows shell contract"
           test -z "$(git status --porcelain --untracked-files=all)"
           printf '%s\n' "$CANDIDATE_SHA" > "$RUNNER_TEMP/release-smoke-identity/original-sha.txt"
           git rev-parse HEAD > "$RUNNER_TEMP/release-smoke-identity/exact-sha.txt"
