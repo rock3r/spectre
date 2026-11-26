@@ -103,6 +103,42 @@ def decoy_xid(pid: int, title: str, artifacts: Path) -> str:
     return str(owned[0])
 
 
+def verify_overlap_and_stacking(blue_xid: str, blue_pid: int, title: str,
+                                artifacts: Path) -> int:
+    """Fail closed unless one other same-title client is fully covered by blue."""
+    found = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--name",
+                            f"^{re.escape(title)}$"], text=True, stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, check=True)
+    xids = list(dict.fromkeys(int(value) for value in found.stdout.splitlines()
+                              if value.isdecimal()))
+    windows = []
+    for xid in xids:
+        pid = int(subprocess.check_output(["xdotool", "getwindowpid", str(xid)], text=True))
+        geometry = subprocess.check_output(
+            ["xdotool", "getwindowgeometry", "--shell", str(xid)], text=True)
+        fields = dict(line.split("=", 1) for line in geometry.splitlines() if "=" in line)
+        windows.append({"xid": xid, "pid": pid, "x": int(fields["X"]),
+                        "y": int(fields["Y"]), "width": int(fields["WIDTH"]),
+                        "height": int(fields["HEIGHT"])})
+    blue = [window for window in windows
+            if window["xid"] == int(blue_xid) and window["pid"] == blue_pid]
+    targets = [window for window in windows if window["pid"] != blue_pid]
+    stacking_text = subprocess.check_output(
+        ["xprop", "-root", "_NET_CLIENT_LIST_STACKING"], text=True)
+    stacking = [int(value, 16) for value in re.findall(r"0x[0-9a-fA-F]+", stacking_text)]
+    ok = (len(blue) == 1 and len(targets) == 1 and
+          all(blue[0][key] == targets[0][key]
+              for key in ("x", "y", "width", "height")) and
+          blue[0]["xid"] in stacking and targets[0]["xid"] in stacking and
+          stacking.index(blue[0]["xid"]) > stacking.index(targets[0]["xid"]))
+    evidence = {"blueXid": int(blue_xid), "bluePid": blue_pid, "windows": windows,
+                "stacking": stacking, "verified": ok}
+    (artifacts / "decoy-overlap-stacking.json").write_text(json.dumps(evidence, indent=2) + "\n")
+    if not ok:
+        raise RuntimeError(f"blue did not uniquely cover and stack above target: {evidence}")
+    return targets[0]["pid"]
+
+
 def colors(path: Path) -> dict[str, float]:
     image = Image.open(path).convert("RGB")
     pixels = list(image.getdata())
@@ -217,26 +253,59 @@ def main() -> None:
     source = Path(__file__).parents[1] / "verification/wayland-cli-recording-live/BlueDecoy.java"
     subprocess.run(["javac", "-d", str(decoy_classes), str(source)], check=True)
     ready = artifacts / "decoy.pid"
+    reveal = artifacts / "decoy.reveal"
+    xid_file = artifacts / "decoy.xid"
+    green_ready = artifacts / "green-target.ready"
+    green_verified = artifacts / "green-target.verified"
     decoy_log = (artifacts / "decoy.stderr").open("w")
-    decoy = subprocess.Popen(["java", "-cp", str(decoy_classes), "verification.BlueDecoy", str(ready)],
+    decoy = subprocess.Popen(["java", "-cp", str(decoy_classes), "verification.BlueDecoy",
+                              str(ready), str(reveal)],
                              stdout=subprocess.DEVNULL, stderr=decoy_log)
     try:
         for _ in range(100):
             if ready.is_file(): break
             if decoy.poll() is not None: raise RuntimeError("blue decoy exited")
             time.sleep(.1)
-        xid = decoy_xid(decoy.pid, "Spectre governed same-title target", artifacts)
-        subprocess.run(["xdotool", "windowactivate", "--sync", xid], check=True)
-        subprocess.run(["xdotool", "windowraise", xid], check=True)
         env = os.environ.copy()
         env["DECOY_PID"] = str(decoy.pid)
-        env["DECOY_XID"] = xid
+        env["DECOY_REVEAL"] = str(reveal)
+        env["DECOY_XID_FILE"] = str(xid_file)
+        env["GREEN_TARGET_READY"] = str(green_ready)
+        env["GREEN_TARGET_VERIFIED"] = str(green_verified)
         env["SPECTRE_LIVE_VERIFICATION_SOURCE"] = str(source.parent)
-        run = subprocess.run([
+        live = subprocess.Popen([
             str(repo / "gradlew"), "--no-daemon", "-I",
             str(source.parent / "build.init.gradle"),
             ":recording:runPublicWaylandCliRecordingLive", "--console=plain"],
             cwd=repo, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        for _ in range(600):
+            if reveal.is_file(): break
+            if live.poll() is not None: raise RuntimeError("public recording process exited before target readiness")
+            time.sleep(.1)
+        else: raise RuntimeError("target readiness was not signalled within 60 seconds")
+        xid = decoy_xid(decoy.pid, "Spectre governed same-title target", artifacts)
+        target_pid = verify_overlap_and_stacking(
+            xid, decoy.pid, "Spectre governed same-title target", artifacts)
+        xid_file.write_text(xid + "\n")
+        for _ in range(1200):
+            if green_ready.is_file(): break
+            if live.poll() is not None: raise RuntimeError("public recording process exited before green reopen")
+            time.sleep(.1)
+        else: raise RuntimeError("green target was not reopened within 120 seconds")
+        reopened_pid = verify_overlap_and_stacking(
+            xid, decoy.pid, "Spectre governed same-title target", artifacts)
+        if reopened_pid != target_pid:
+            raise RuntimeError(f"target JVM changed across reopen: {target_pid} -> {reopened_pid}")
+        green_verified.write_text("verified\n")
+        try:
+            stdout, stderr = live.communicate(timeout=180)
+        except subprocess.TimeoutExpired:
+            live.terminate()
+            try: stdout, stderr = live.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                live.kill(); stdout, stderr = live.communicate(timeout=5)
+            raise RuntimeError("public recording live process exceeded 180 seconds")
+        run = subprocess.CompletedProcess(live.args, live.returncode, stdout, stderr)
         (artifacts / "public-recording-live.stdout").write_text(run.stdout)
         (artifacts / "public-recording-live.stderr").write_text(run.stderr)
         if run.returncode:
@@ -277,6 +346,8 @@ def main() -> None:
     frame_evidence = []
     stream = {}
     java_evidence = json.loads((artifacts / "java-live-evidence.json").read_text())
+    if int(java_evidence["targetPid"]) != target_pid:
+        raise RuntimeError(f"target PID changed: layout={target_pid}, Java={java_evidence['targetPid']}")
     recording_wall = float(java_evidence["recordingWallSeconds"])
     elapsed_after_start = float(java_evidence["elapsedAfterStartReturnsSeconds"])
     try:

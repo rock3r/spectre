@@ -15,6 +15,7 @@ WORKFLOW = (ROOT / ".github/workflows/gnome-hosted-smoke.yml").read_text()
 SESSION = (ROOT / ".github/scripts/gnome-hosted-smoke-session.sh").read_text()
 DRIVER = (ROOT / ".github/scripts/gnome-cli-recording-live.py").read_text()
 FIXTURE = (ROOT / ".github/verification/wayland-cli-recording-live/PublicWaylandCliRecordingLive.kt").read_text()
+DECOY = (ROOT / ".github/verification/wayland-cli-recording-live/BlueDecoy.java").read_text()
 
 
 def load_decoy_selector(artifacts):
@@ -56,8 +57,8 @@ class CliRecordingLiveContractTest(unittest.TestCase):
     def test_cell_is_separate_read_only_and_pinned(self):
         self.assertIn("public-wayland-cli-recording-live:", WORKFLOW)
         self.assertIn("permissions:\n  contents: read", WORKFLOW)
-        self.assertIn("sha256sum -c SHA256SUMS", WORKFLOW)
-        self.assertIn("7ececf7a7ac361d87417bb07108cc475f7cf890e", WORKFLOW)
+        self.assertIn("sha256sum -c -", WORKFLOW)
+        self.assertIn("d38754b614d0a0561c9921d95abe5cb4fb0a5f96", WORKFLOW)
         self.assertNotIn("git push", WORKFLOW)
 
     def test_installed_cli_and_real_portal_are_used_once(self):
@@ -90,8 +91,8 @@ class CliRecordingLiveContractTest(unittest.TestCase):
         self.assertIn('"--all", "--onlyvisible", "--pid", str(pid)', DRIVER)
         self.assertIn('"--name", pattern', DRIVER)
         self.assertIn('"xprop", "-id", str(xid), "_NET_WM_PID"', DRIVER)
-        self.assertIn('env["DECOY_XID"] = xid', DRIVER)
-        self.assertIn('System.getenv("DECOY_XID")', FIXTURE)
+        self.assertIn('env["DECOY_XID_FILE"]', DRIVER)
+        self.assertIn('System.getenv("DECOY_XID_FILE")', FIXTURE)
         self.assertNotIn('ProcessBuilder("xdotool", "search"', FIXTURE)
 
     def test_focus_is_owned_before_activation_and_sampled_around_every_capture(self):
@@ -99,8 +100,10 @@ class CliRecordingLiveContractTest(unittest.TestCase):
             "private fun requireColor", 1)[0]
         self.assertIn('requireOwner(pid, xid, "$phase/pre-activation")', focus_body)
         self.assertNotIn('requireActive(pid, xid, "$phase/pre-activation")', focus_body)
-        self.assertIn('"windowactivate", "--sync"', focus_body)
-        self.assertIn('"windowraise"', focus_body)
+        self.assertNotIn('"--sync"', focus_body)
+        self.assertIn("if (activeXid() == xid)", focus_body)
+        self.assertIn('"mousemove", "--window"', focus_body)
+        self.assertIn("ownerPid(actualXid)", FIXTURE)
         for phase in ("red-still-before", "red-still-after",
                       "red-recording-before", "red-recording-during", "red-recording-after",
                       "green-still-before", "green-still-after"):
@@ -117,6 +120,19 @@ class CliRecordingLiveContractTest(unittest.TestCase):
         for field in ("expectedXid", "actualXid", "expectedPid", "actualPid",
                       "geometry", "media", "monotonicNs"):
             self.assertIn(field, FIXTURE)
+        self.assertIn("StandardOpenOption.SYNC", FIXTURE)
+        self.assertIn('"$phase-failure"', FIXTURE)
+
+    def test_non_focus_stealing_targets_and_delayed_always_on_top_blue_fixture(self):
+        self.assertGreaterEqual(FIXTURE.count("isAutoRequestFocus = false"), 1)
+        self.assertGreaterEqual(FIXTURE.count("setFocusableWindowState(false)"), 1)
+        self.assertIn("TARGET_X", FIXTURE)
+        self.assertNotIn("window(TITLE, Color.GREEN, 500, 100)", FIXTURE)
+        self.assertIn("setAlwaysOnTop(true)", DECOY)
+        self.assertIn("setType(Window.Type.NORMAL)", DECOY)
+        self.assertLess(DECOY.index("Files.exists(reveal)"), DECOY.index("setVisible(true)"))
+        self.assertIn('env["DECOY_REVEAL"]', DRIVER)
+        self.assertNotIn('"windowactivate", "--sync"', DRIVER)
 
     def test_movie_validation_decodes_real_frames_and_does_not_mask_stills(self):
         self.assertIn('"-count_frames"', DRIVER)
