@@ -1,5 +1,7 @@
 package dev.sebastiano.spectre.agent.launch
 
+import com.sun.tools.attach.AgentLoadException
+import com.sun.tools.attach.AttachNotSupportedException
 import dev.sebastiano.spectre.agent.AgentAttach
 import dev.sebastiano.spectre.agent.AttachInterruptedException
 import dev.sebastiano.spectre.agent.AttachOptions
@@ -222,7 +224,7 @@ internal object LaunchReadiness {
             // stack a full attachTimeoutMs UDS wait after the stage deadline.
             val options = attachOptions.copy(udsPath = udsPath, attachTimeoutMs = remainingMs)
             try {
-                return AgentAttach.attach(attachedPid, options)
+                return AgentAttach.attachLaunched(attachedPid, options, remainingMs)
             } catch (ex: AttachInterruptedException) {
                 Thread.currentThread().interrupt()
                 throw LaunchAgentBootstrapException(
@@ -334,8 +336,8 @@ internal object LaunchReadiness {
         ) {
             return false
         }
-        if (chain.any { it.javaClass.simpleName == "AttachNotSupportedException" }) return true
-        if (chain.any { it.javaClass.simpleName == "AgentLoadException" }) {
+        if (chain.any { it is AttachNotSupportedException }) return true
+        if (chain.any { it is AgentLoadException }) {
             // HotSpot: "Target VM did not respond" and "target process not responding".
             return "not respond" in lower ||
                 "no such process" in lower ||
