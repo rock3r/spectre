@@ -148,7 +148,30 @@ jobs:
       - name: Run the complete committed release smoke under forced Xvfb
         working-directory: candidate
         shell: bash
-        run: python3 scripts/release-smoke.py --version 0.10.0 --display-mode xvfb
+        run: |
+          set -eu
+          python3 scripts/release-smoke.py --version 0.10.0 --display-mode xvfb &
+          smoke_pid=$!
+          (
+            for delay in 300 240 240 240 100; do
+              sleep "$delay"
+              kill -0 "$smoke_pid" 2>/dev/null || break
+              stamp=$(date -u +%H%M%S)
+              evidence="$RUNNER_TEMP/release-smoke-identity"
+              jcmd -l | grep -E 'GradleWorkerMain|GradleDaemon' > "$evidence/java-test-processes-$stamp.txt" || true
+              while read -r child_pid command; do
+                case "$command" in
+                  *GradleWorkerMain*|*GradleDaemon*)
+                    timeout 20s jcmd "$child_pid" Thread.print -l > "$evidence/java-threads-$stamp-$child_pid.txt" 2>&1 &
+                    ;;
+                esac
+              done < "$evidence/java-test-processes-$stamp.txt"
+              wait || true
+            done
+          ) &
+          sampler_pid=$!
+          trap 'kill "$sampler_pid" 2>/dev/null || true' EXIT
+          wait "$smoke_pid"
 
       - name: Upload release-smoke reports and original per-step logs
         if: always()
