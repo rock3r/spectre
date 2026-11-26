@@ -106,6 +106,23 @@ if [[ "$SMOKE_MODE" == portal || "$SMOKE_MODE" == capture ]]; then
   timeout 15s gdbus wait --session --activate org.freedesktop.impl.portal.desktop.gnome
 fi
 
+if [[ "$SMOKE_MODE" == cli-recording-live ]]; then
+  gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
+    --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled '<true>'
+  timeout 15s gdbus wait --session --activate org.freedesktop.portal.Desktop
+  timeout 15s gdbus wait --session --activate org.freedesktop.impl.portal.desktop.gnome
+  cd "$SMOKE_REPO"
+  ./gradlew --no-daemon :cli:installDist --console=plain \
+    2>&1 | tee "$SMOKE_ARTIFACTS/install-cli-distribution.log"
+  export SPECTRE_WAYLAND_SESSION_FOREGROUND=0
+  export SPECTRE_WAYLAND_SESSION_DIR="$XDG_RUNTIME_DIR/spectre-cli-live-session"
+  export SPECTRE_WAYLAND_RESTORE_TOKEN_DIR="$XDG_RUNTIME_DIR/spectre-cli-live-tokens"
+  mkdir -m 0700 "$SPECTRE_WAYLAND_SESSION_DIR" "$SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"
+  /usr/bin/python3 "$(dirname "$0")/gnome-cli-recording-live.py" \
+    2> >(tee "$SMOKE_ARTIFACTS/cli-recording-live.stderr" >&2)
+  exit 0
+fi
+
 if [[ "$SMOKE_MODE" == portal ]]; then
   /usr/bin/python3 "$(dirname "$0")/gnome-portal-dialog-warmup.py" \
     --mode portal --artifacts "$SMOKE_ARTIFACTS" \

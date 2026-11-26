@@ -18,6 +18,68 @@ permissions:
   contents: read
 
 jobs:
+  public-wayland-cli-recording-live:
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Check out temporary workflow tooling
+        uses: actions/checkout@v6
+        with:
+          path: smoke-tooling
+          persist-credentials: false
+
+      - name: Check out the release candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.candidate_sha || '7ececf7a7ac361d87417bb07108cc475f7cf890e' }}
+          persist-credentials: false
+          path: candidate
+
+      - name: Apply pinned public Wayland candidate overlays
+        working-directory: smoke-tooling/.github/smoke-overlays
+        run: |
+          sha256sum -c SHA256SUMS
+          while read -r digest overlay; do
+            git -C "$GITHUB_WORKSPACE/candidate" apply --3way --index "$PWD/$overlay"
+          done < SHA256SUMS
+          git -C "$GITHUB_WORKSPACE/candidate" diff --cached --check
+          test "$(git -C "$GITHUB_WORKSPACE/candidate" write-tree)" = 832a2a3a87b3d99025e5b31cb8e3761b4bc3c580
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          build-root-directory: candidate
+
+      - name: Run installed CLI and public recording API on the attended GNOME seat
+        env:
+          ATSPI_REPO: unused
+          FIXTURE_CHECKOUT: unused
+          SMOKE_MODE: cli-recording-live
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || '7ececf7a7ac361d87417bb07108cc475f7cf890e' }}
+          SMOKE_ARTIFACTS: ${{ runner.temp }}/gnome-cli-recording-live
+          SMOKE_REPO: ${{ github.workspace }}/candidate
+          SMOKE_SESSION_SCRIPT: ${{ github.workspace }}/smoke-tooling/.github/scripts/gnome-hosted-smoke-session.sh
+        run: |
+          export SMOKE_USER="$(id -un)" RUST_BIN="$(dirname "$(command -v cargo)")"
+          sudo --preserve-env=ATSPI_REPO,FIXTURE_CHECKOUT,SMOKE_MODE,SMOKE_USER,RUST_BIN,CANDIDATE_SHA,JAVA_HOME,SMOKE_ARTIFACTS,SMOKE_REPO,SMOKE_SESSION_SCRIPT .github/scripts/gnome-hosted-smoke.sh
+        working-directory: smoke-tooling
+
+      - name: Upload CLI and recording live evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gnome-cli-recording-live-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gnome-cli-recording-live/
+          if-no-files-found: error
+          retention-days: 7
+
   gnome-mutter-window-identity:
     if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke'
     runs-on: ubuntu-24.04

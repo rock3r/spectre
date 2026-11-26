@@ -1,0 +1,16 @@
+allprojects { candidate ->
+    if (candidate.path == ':recording') {
+        candidate.plugins.withId('org.jetbrains.kotlin.jvm') {
+            candidate.kotlin.sourceSets.test.kotlin.srcDir(
+                System.getenv('SPECTRE_LIVE_VERIFICATION_SOURCE'))
+            candidate.tasks.register('runPublicWaylandCliRecordingLive', JavaExec) {
+                group = 'verification'
+                description = 'Runs the temporary public-API-only GNOME live verification.'
+                classpath = candidate.sourceSets.test.runtimeClasspath
+                mainClass = 'verification.PublicWaylandCliRecordingLive'
+                standardOutput = System.out
+                errorOutput = System.err
+            }
+        }
+    }
+}
