@@ -4,6 +4,7 @@ import dev.sebastiano.spectre.agent.AtomicCaptureResult
 import dev.sebastiano.spectre.agent.AttachedAutomator
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
+import dev.sebastiano.spectre.agent.transport.WindowIdentityDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import dev.sebastiano.spectre.recording.RecordingResult
 import java.io.IOException
@@ -17,6 +18,18 @@ internal interface DaemonSessionAutomator : AutoCloseable {
         get() = null
 
     @Throws(IOException::class) fun windows(): List<WindowSummaryDto>
+
+    @Throws(IOException::class)
+    fun windowIdentities(windowIndex: Int? = null): List<WindowIdentityDto> =
+        throw UnsupportedOperationException("agent runtime lacks window identity capability")
+
+    @Throws(IOException::class)
+    fun beginWindowChangeCapture(): Long =
+        throw UnsupportedOperationException("agent runtime lacks atomic accessibility capability")
+
+    @Throws(IOException::class)
+    fun endWindowChangeCapture(token: Long): Long =
+        throw UnsupportedOperationException("agent runtime lacks atomic accessibility capability")
 
     @Throws(IOException::class) fun allNodes(): List<NodeSnapshotDto>
 
@@ -136,6 +149,14 @@ internal class AttachedDaemonSession(
                 warnings = it.warnings,
             )
         }
+
+    override fun windowIdentities(windowIndex: Int?): List<WindowIdentityDto> =
+        delegate.windowIdentities(windowIndex)
+
+    override fun beginWindowChangeCapture(): Long = delegate.beginWindowChangeCapture()
+
+    override fun endWindowChangeCapture(token: Long): Long = delegate.endWindowChangeCapture(token)
+
     private val recording =
         DaemonSessionRecording(
             delegate = delegate,

@@ -778,6 +778,7 @@ internal fun writeCapture(
     liveSessionIds: Set<String>,
     accessibilityHandler: AccessibilityDaemonHandler,
     sessionTarget: ((Int) -> SessionAccessibilityTarget?)? = null,
+    verifyAccessibilityTarget: (() -> DaemonResponse?)? = null,
 ): DaemonResponse {
     if (request.source == DaemonCaptureSource.Compose) {
         return CaptureArtifactStore.write(
@@ -797,17 +798,20 @@ internal fun writeCapture(
             accessibilityHandler.handle(treeRequest) { _, index -> resolver(index) }
         } ?: accessibilityHandler.handle(treeRequest)
     return when (tree) {
-        is DaemonResponse.AccessibilitySnapshotResult ->
-            CaptureArtifactStore.writeAccessibility(
-                sessionId = request.sessionId,
-                windowIndex = request.windowIndex,
-                pngBytes = automator.capture(request.windowIndex).pngBytes,
-                snapshot = tree.snapshot,
-                outDir = request.outDir,
-                liveSessionIds = liveSessionIds,
-            )
+        is DaemonResponse.AccessibilitySnapshotResult -> {
+            val pngBytes = automator.capture(request.windowIndex).pngBytes
+            verifyAccessibilityTarget?.invoke()
+                ?: CaptureArtifactStore.writeAccessibility(
+                    sessionId = request.sessionId,
+                    windowIndex = request.windowIndex,
+                    pngBytes = pngBytes,
+                    snapshot = tree.snapshot,
+                    outDir = request.outDir,
+                    liveSessionIds = liveSessionIds,
+                )
+        }
         is DaemonResponse.AccessibilityErrorResult,
-        is DaemonResponse.Error -> tree
+        is DaemonResponse.Error -> verifyAccessibilityTarget?.invoke() ?: tree
         else -> error("unexpected accessibility response")
     }
 }

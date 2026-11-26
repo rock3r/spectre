@@ -631,6 +631,9 @@ class IpcRoundTripTest {
                     captureDurationMs = 0,
                 )
             is AgentRequest.WindowIdentity -> AgentResponse.WindowIdentities(emptyList())
+            AgentRequest.BeginWindowChangeCapture -> AgentResponse.WindowChangeCapture(1, 0)
+            is AgentRequest.EndWindowChangeCapture ->
+                AgentResponse.WindowChangeCapture(request.token, 0)
             AgentRequest.Detach -> AgentResponse.Detached
             is AgentRequest.Hello ->
                 AgentResponse.HelloAck(protocolVersion = ProtocolVersion.CURRENT)

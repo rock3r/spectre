@@ -61,7 +61,12 @@ internal class DeferredAutomatorHandler(
                 closed = true
                 connected.also { connected = null }
             }
+        toClose?.handler?.connectionClosed()
         toClose?.targetInputResource?.close()
+    }
+
+    override fun connectionClosed() {
+        connected?.handler?.connectionClosed()
     }
 
     private fun connectedOrNull(): ConnectedAutomator? {
@@ -104,6 +109,9 @@ internal class DeferredAutomatorHandler(
             is AgentRequest.FindByContentDescription,
             is AgentRequest.FindByRole -> AgentResponse.Nodes(emptyList())
             is AgentRequest.WindowIdentity -> AgentResponse.WindowIdentities(emptyList())
+            AgentRequest.BeginWindowChangeCapture,
+            is AgentRequest.EndWindowChangeCapture ->
+                errorResponse(AgentErrorCategory.InternalError, NO_COMPOSE_YET)
             AgentRequest.PrintTree -> AgentResponse.TreeDump("")
             is AgentRequest.WaitUntilGone,
             is AgentRequest.WaitForIdle,
