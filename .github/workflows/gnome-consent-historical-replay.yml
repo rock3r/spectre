@@ -36,9 +36,9 @@ jobs:
           gh api repos/${{ github.repository }}/actions/runs/45835317389 > "$RUNNER_TEMP/replay/run.json"
           gh api repos/${{ github.repository }}/actions/jobs/139962588421 > "$RUNNER_TEMP/replay/job.json"
           gh api repos/${{ github.repository }}/actions/artifacts/15126133382 > "$RUNNER_TEMP/replay/artifact.json"
-          jq -e '.id == 45835317389 && .head_sha == "b662adbc11fcb8c8ed02b60e953a58d46854da08"' "$RUNNER_TEMP/replay/run.json"
-          jq -e '.id == 139962588421 && .run_id == 45835317389' "$RUNNER_TEMP/replay/job.json"
-          jq -e '.id == 15126133382 && .workflow_run.id == 45835317389 && .expired == false' "$RUNNER_TEMP/replay/artifact.json"
+          jq -e '.id == 45835317389 and .head_sha == "b662adbc11fcb8c8ed02b60e953a58d46854da08"' "$RUNNER_TEMP/replay/run.json"
+          jq -e '.id == 139962588421 and .run_id == 45835317389' "$RUNNER_TEMP/replay/job.json"
+          jq -e '.id == 15126133382 and .workflow_run.id == 45835317389 and .expired == false' "$RUNNER_TEMP/replay/artifact.json"
           gh api repos/${{ github.repository }}/actions/artifacts/15126133382/zip > "$RUNNER_TEMP/artifact.zip"
           sha256sum "$RUNNER_TEMP/artifact.zip" > "$RUNNER_TEMP/replay/artifact-zip.sha256"
           test "$(cut -d' ' -f1 "$RUNNER_TEMP/replay/artifact-zip.sha256")" = 6ef045e27ed3d9fbfb143221ed03d346397a3cfd5ef025dc3aa19c68afd3fe49
