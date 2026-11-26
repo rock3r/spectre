@@ -277,7 +277,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: aa8d5b2731f42886356e563c3e40c64807f1ae1b
+          ref: bd60a28580dd77a76cd334677f122f628a9d6dc7
           persist-credentials: false
       - uses: actions/setup-java@v5
         with:
@@ -290,15 +290,32 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "8.0.x"
+      - name: Apply the cloud Windows launch deadline fix to exact main
+        shell: bash
+        env:
+          WINDOWS_PATCH: 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
+        run: |
+          set -euo pipefail
+          printf '%s' "$WINDOWS_PATCH" | base64 -d | gzip -dc > "$RUNNER_TEMP/windows-launch.diff"
+          git apply --index "$RUNNER_TEMP/windows-launch.diff"
+          test "$(git write-tree)" = 5430a3b57f750ba8c700a0ec83b5ed13915d6842
+      - name: Verify healthy launches and process boundaries
+        if: matrix.replica == 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :agent:test --tests '*LaunchAndAttachIntegrationTest' --tests '*BoundedAttachOperationTest' --rerun --console=plain
+          mkdir -p "$RUNNER_TEMP/healthy-launch-results"
+          cp agent/build/test-results/test/TEST-*{LaunchAndAttachIntegrationTest,BoundedAttachOperationTest}.xml "$RUNNER_TEMP/healthy-launch-results/"
       - name: Run the official full gate with its normal parallel workload
-        if: startsWith(github.event.head_commit.message, 'Diagnose Windows full')
+        if: matrix.replica == 2
         timeout-minutes: 40
         run: ./gradlew check
       - name: Repeated native Windows short-launch classification
-        if: "!startsWith(github.event.head_commit.message, 'Diagnose Windows full')"
+        if: matrix.replica == 1
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = aa8d5b2731f42886356e563c3e40c64807f1ae1b
+          test "$(git rev-parse HEAD)" = bd60a28580dd77a76cd334677f122f628a9d6dc7
           cat > "$RUNNER_TEMP/replay-short-launch.py" <<'PYTHON'
           import os
           import json
@@ -355,13 +372,14 @@ jobs:
           name: short-java-exit-windows-${{ matrix.replica }}
           path: |
             ${{ runner.temp }}/short-launch-receipts
+            ${{ runner.temp }}/healthy-launch-results
             agent/build/test-results/test/TEST-*LaunchAndAttachIntegrationTest.xml
             **/build/test-results/**/TEST-*.xml
           if-no-files-found: error
           retention-days: 7
 
   reader-throughput:
-    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && startsWith(github.event.head_commit.message, 'Benchmark AT-SPI')
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && (startsWith(github.event.head_commit.message, 'Benchmark AT-SPI') || startsWith(github.event.head_commit.message, 'Diagnose Windows pipe'))
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -405,7 +423,32 @@ jobs:
         run: |
           set -euo pipefail
           lscpu > "$RUNNER_TEMP/atspi-results/cpu.txt"
-          dbus-run-session -- xvfb-run -a python3 "$RUNNER_TEMP/benchmark.py" --fixture "$GITHUB_WORKSPACE/fixture/fixtures/accesskit/target/release/spectre-accesskit-fixture" --helper "$GITHUB_WORKSPACE/product/recording/native/linux/target/release/spectre-wayland-helper" --timeouts 750,5000 --calls 5 | tee "$RUNNER_TEMP/atspi-results/latencies.jsonl"
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import os
+          p = Path(os.environ["RUNNER_TEMP"]) / "benchmark.py"
+          s = p.read_text()
+          first = 'if candidate and (candidate.get("ok") or "register with AT-SPI" not in message):'
+          assert first in s
+          s = s.replace(first, 'if candidate and candidate.get("ok") and len(candidate["snapshot"]["nodes"]) == 1544:')
+          hook = 'def percentile95(values):'
+          auditor = """original_request = request
+          capture_dir = Path(os.environ['RUNNER_TEMP']) / 'atspi-results'
+          def request(*args, **kwargs):
+              elapsed, response, error = original_request(*args, **kwargs)
+              if response and response.get('ok'):
+                  nodes = response['snapshot']['nodes']
+                  fields = ('key', 'parentKey', 'id', 'role', 'platformRole', 'name', 'value', 'states', 'actions', 'bounds')
+                  raw = [{field: n.get(field) for field in fields} for n in nodes]
+                  with (capture_dir / 'fields.jsonl').open('a') as output:
+                      output.write(json.dumps(raw, sort_keys=True) + chr(10))
+              return elapsed, response, error
+
+          """
+          assert hook in s
+          p.write_text(s.replace(hook, auditor + hook))
+          PYTHON
+          dbus-run-session -- xvfb-run -a bash -c 'set -e; gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled "<true>"; exec "$@"' bash python3 "$RUNNER_TEMP/benchmark.py" --fixture "$GITHUB_WORKSPACE/fixture/fixtures/accesskit/target/release/spectre-accesskit-fixture" --helper "$GITHUB_WORKSPACE/product/recording/native/linux/target/release/spectre-wayland-helper" --timeouts 750,5000 --calls 5 | tee "$RUNNER_TEMP/atspi-results/latencies.jsonl"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
