@@ -532,8 +532,20 @@ internal sealed interface AgentResponse {
     @Serializable
     @SerialName("helloAck")
     // No default — see [AgentRequest.Hello] (must be on the wire for exact-match).
-    data class HelloAck(val protocolVersion: Int) : AgentResponse
+    data class HelloAck(
+        val protocolVersion: Int,
+        val sessionInfo: AgentSessionInfoDto? = null,
+    ) : AgentResponse
 }
+
+@Serializable
+internal data class AgentSessionInfoDto(
+    val driverKind: String,
+    val inputLeasePolicy: String,
+    val coreProvenance: String,
+    val coreVersion: String? = null,
+    val warnings: List<String> = emptyList(),
+)
 
 /**
  * Compact summary of one tracked window — the only window-level data the agent transport exposes.

@@ -7,13 +7,13 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * `FrameLimits` reads `SPECTRE_MAX_FRAME_BYTES` in its own static initializer, so a JVM that starts
- * with the variable set takes a code path no in-process test can reach — the class is already
- * initialized by then. A field ordering slip there once made the class fail to load on exactly the
- * machines that configured the override, so this spawns a real JVM to cover it.
+ * `FrameLimits` reads `SPECTRE_MAX_FRAME_BYTES` from the process environment. A field ordering slip
+ * there once made the class fail to load on exactly the machines that configured the override, so
+ * this spawns a real JVM to cover startup and explicit-priority combinations.
  */
 class FrameLimitsEnvTest {
 
@@ -28,19 +28,31 @@ class FrameLimitsEnvTest {
     }
 
     @Test
-    fun `an unparseable override still boots on the default`() {
-        assertEquals("budget=$DEFAULT_MAX_FRAME_BYTES", runProbe(override = "banana"))
+    fun `an unparseable override fails process startup`() {
+        val error = assertFailsWith<AssertionError> { runProbe(override = "banana") }
+        assertTrue(error.message!!.contains(FrameLimits.ENV_VAR))
     }
 
     @Test
-    fun `an override above the ceiling is clamped rather than refused`() {
-        assertEquals("budget=$MAX_FRAME_BYTES_CEILING", runProbe(override = "1G"))
+    fun `an override above the ceiling fails process startup`() {
+        val error = assertFailsWith<AssertionError> { runProbe(override = "1G") }
+        assertTrue(error.message!!.contains(FrameLimits.ENV_VAR))
     }
 
-    private fun runProbe(override: String?): String {
+    @Test
+    fun `an explicit budget takes priority over a malformed environment`() {
+        assertEquals(
+            "budget=${128 * 1024 * 1024}",
+            runProbe(override = "banana", explicit = "128MiB"),
+        )
+    }
+
+    private fun runProbe(override: String?, explicit: String? = null): String {
         val java = java.nio.file.Path.of(System.getProperty("java.home"), "bin", "java").toString()
-        val builder =
-            ProcessBuilder(java, "-cp", System.getProperty("java.class.path"), PROBE_MAIN_CLASS)
+        val command =
+            mutableListOf(java, "-cp", System.getProperty("java.class.path"), PROBE_MAIN_CLASS)
+        explicit?.let(command::add)
+        val builder = ProcessBuilder(command)
         builder.redirectErrorStream(true)
         if (override == null) {
             builder.environment().remove(FrameLimits.ENV_VAR)

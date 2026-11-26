@@ -12,6 +12,9 @@ import java.time.Clock
 @OptIn(ExperimentalSpectreAgentApi::class)
 @Suppress("TooManyFunctions") // Session surface grows with transport parity (#203).
 internal interface DaemonSessionAutomator : AutoCloseable {
+    val sessionInfo: DaemonSessionInfo?
+        get() = null
+
     @Throws(IOException::class) fun windows(): List<WindowSummaryDto>
 
     @Throws(IOException::class) fun allNodes(): List<NodeSnapshotDto>
@@ -122,6 +125,16 @@ internal class AttachedDaemonSession(
     clock: Clock = Clock.systemUTC(),
     ledger: CaptureLedger = CaptureLifecycle.ledger(),
 ) : DaemonSessionAutomator {
+    override val sessionInfo: DaemonSessionInfo =
+        delegate.sessionInfo.let {
+            DaemonSessionInfo(
+                driverKind = it.driverKind,
+                inputLeasePolicy = it.inputLeasePolicy,
+                coreProvenance = it.coreProvenance,
+                coreVersion = it.coreVersion,
+                warnings = it.warnings,
+            )
+        }
     private val recording =
         DaemonSessionRecording(
             delegate = delegate,
