@@ -118,9 +118,9 @@ jobs:
         working-directory: atspi-reader
         run: |
           patch="$GITHUB_WORKSPACE/smoke-tooling/.github/reader-overlays/716-b1-cached-owner.patch"
-          printf '%s  %s\n' 4c9a0bc47b2ab891a90ce90adb73e10e5a226e6143d13b4c791f98855a969edd "$patch" | sha256sum -c -
+          printf '%s  %s\n' cab57af2307d18bc456123534f5dafc01086cd9dcfbff9f023c9d291004de503 "$patch" | sha256sum -c -
           git apply --index "$patch"
-          test "$(git write-tree)" = aeb2ad047bcf2a8c6b8d082a8ad94bd39c1f8d3c
+          test "$(git write-tree)" = 93dcbb2ae2302e04ca0a3f316b1a90b669cef7fe
 
       - name: Check out native accessibility fixture
         if: matrix.mode == 'accessibility' || matrix.mode == 'atspi-ownership' || matrix.mode == 'atspi-distinct-content'

@@ -1,5 +1,5 @@
 diff --git a/recording/native/linux/src/accessibility.rs b/recording/native/linux/src/accessibility.rs
-index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be008e55904 100644
+index 596b071a88de84de52353ca7cef9ee8a974fe227..5f5b0b51e697b58fa37d89afdcf9bd0b1b9b38e1 100644
 --- a/recording/native/linux/src/accessibility.rs
 +++ b/recording/native/linux/src/accessibility.rs
 @@ -16,11 +16,33 @@ use std::time::{Duration, Instant};
@@ -36,7 +36,20 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
  
  #[derive(Debug, Deserialize)]
  #[serde(rename_all = "camelCase")]
-@@ -178,7 +200,7 @@ type CaptureError = (&'static str, String, Option<Snapshot>);
+@@ -155,7 +177,11 @@ fn validate(r: &Request) -> Result<()> {
+ }
+ 
+ fn capture(request: Request) -> Response {
+-    match capture_inner(&request) {
++    response_from_result(capture_inner(&request))
++}
++
++fn response_from_result(result: std::result::Result<Snapshot, CaptureError>) -> Response {
++    match result {
+         Ok(snapshot) => Response {
+             ok: true,
+             snapshot: Some(snapshot),
+@@ -178,7 +204,7 @@ type CaptureError = (&'static str, String, Option<Snapshot>);
  fn capture_inner(request: &Request) -> std::result::Result<Snapshot, CaptureError> {
      let deadline = Instant::now() + Duration::from_millis(request.timeout_ms);
      let session = Connection::new_session().map_err(|e| timed_err(deadline, e))?;
@@ -45,7 +58,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
      let enabled: bool = get_property(&status, "org.a11y.Status", "IsEnabled")
          .map_err(|e| timed_err(deadline, e))?;
      if !enabled && !request.allow_accessibility_enable {
-@@ -191,31 +213,50 @@ fn capture_inner(request: &Request) -> std::result::Result<Snapshot, CaptureErro
+@@ -191,31 +217,57 @@ fn capture_inner(request: &Request) -> std::result::Result<Snapshot, CaptureErro
  
      let changed = !enabled;
      if changed {
@@ -54,9 +67,9 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
 +        let enable_deadline = deadline
 +            .checked_sub(STATUS_RESTORE_BUDGET)
 +            .unwrap_or(deadline);
-+        return with_status_restoration(
-+            || {
-+                let status = fresh_status_proxy(&session, enable_deadline)?;
++        return with_prepared_status_restoration(
++            || fresh_status_proxy(&session, enable_deadline),
++            |status| {
 +                set_property(&status, "org.a11y.Status", "IsEnabled", true)
 +                    .map_err(|error| timed_err(enable_deadline, error))
 +            },
@@ -89,6 +102,16 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
 +    capture_with_status(request, deadline, &session, changed)
 +}
 +
++fn with_prepared_status_restoration<P>(
++    prepare: impl FnOnce() -> std::result::Result<P, CaptureError>,
++    enable: impl FnOnce(P) -> std::result::Result<(), CaptureError>,
++    work: impl FnOnce() -> std::result::Result<Snapshot, CaptureError>,
++    restore: impl FnOnce() -> std::result::Result<(), String>,
++) -> std::result::Result<Snapshot, CaptureError> {
++    let prepared = prepare()?;
++    with_status_restoration(|| enable(prepared), work, restore)
++}
++
 +fn restore_status(session: &Connection) -> std::result::Result<(), String> {
 +    let restore_status =
 +        session.with_proxy("org.a11y.Bus", "/org/a11y/bus", STATUS_RESTORE_TIMEOUT);
@@ -103,24 +126,21 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
 +    work: impl FnOnce() -> std::result::Result<Snapshot, CaptureError>,
 +    restore: impl FnOnce() -> std::result::Result<(), String>,
 +) -> std::result::Result<Snapshot, CaptureError> {
-+    // The setter may have applied true even when its response was lost. Once it was attempted,
-+    // restoration and readback are mandatory on every exit path.
 +    let result = enable().and_then(|()| work());
 +    if let Err(restore_error) = restore() {
 +        let outcome = match &result {
 +            Ok(_) => "snapshot succeeded".to_string(),
 +            Err((code, message, _)) => format!("snapshot failed with {code}: {message}"),
 +        };
-+        let partial = result.ok();
 +        return Err((
 +            "restore-failed",
 +            format!("failed to restore org.a11y.Status.IsEnabled after {outcome}: {restore_error}"),
-+            partial,
++            None,
 +        ));
      }
      result
  }
-@@ -223,9 +264,10 @@ fn capture_inner(request: &Request) -> std::result::Result<Snapshot, CaptureErro
+@@ -223,9 +275,10 @@ fn capture_inner(request: &Request) -> std::result::Result<Snapshot, CaptureErro
  fn capture_with_status(
      request: &Request,
      deadline: Instant,
@@ -132,7 +152,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
      let (address,): (String,) = status
          .method_call("org.a11y.Bus", "GetAddress", ())
          .map_err(|e| timed_err(deadline, e))?;
-@@ -252,9 +294,33 @@ fn capture_with_status(
+@@ -252,9 +305,33 @@ fn capture_with_status(
              Vec::new()
          },
      };
@@ -168,7 +188,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
      let window_bounds = root_data.bounds.clone().ok_or_else(|| {
          err(
              "no-accessibility-tree",
-@@ -268,17 +334,31 @@ fn capture_with_status(
+@@ -268,17 +345,31 @@ fn capture_with_status(
          bounds_space,
      });
      let root_key = format!("w0/{}", segment(root_data.id.as_deref(), 0, false));
@@ -211,7 +231,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
      Ok(snapshot)
  }
  
-@@ -292,6 +372,244 @@ struct NodeData {
+@@ -292,6 +383,309 @@ struct NodeData {
      value: Option<String>,
      bounds: Option<Rect>,
      children: Vec<Address>,
@@ -394,13 +414,11 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
 +                .collect::<Vec<_>>()
 +        });
 +        for (path, extras) in results {
-+            let (id, bounds, value) = extras?;
++            let extras = extras?;
 +            let node = nodes
 +                .get_mut(&path)
 +                .context("provider cache object disappeared")?;
-+            node.id = id;
-+            node.bounds = bounds;
-+            node.value = value;
++            apply_cached_extras(node, extras);
 +        }
 +    }
 +    Ok(())
@@ -411,52 +429,119 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
 +    address: &Address,
 +    has_text: bool,
 +    deadline: Instant,
-+) -> Result<(Option<String>, Option<Rect>, Option<String>)> {
-+    let proxy = bus.with_proxy(&address.bus, address.path.clone(), remaining(deadline));
-+    let attributes = proxy
-+        .method_call::<(HashMap<String, String>,), _, _, _>(
-+            "org.a11y.atspi.Accessible",
-+            "GetAttributes",
-+            (),
-+        )
-+        .ok()
-+        .map(|value| value.0)
-+        .unwrap_or_default();
-+    let bounds = proxy
-+        .method_call::<((i32, i32, i32, i32),), _, _, _>(
-+            "org.a11y.atspi.Component",
-+            "GetExtents",
-+            (0u32,),
-+        )
-+        .ok()
-+        .map(|value| Rect {
-+            x: value.0 .0,
-+            y: value.0 .1,
-+            width: value.0 .2,
-+            height: value.0 .3,
-+        });
++) -> Result<CachedExtras> {
++    let attributes = optional_cached_call(deadline, || {
++        let proxy = bus.with_proxy(
++            &address.bus,
++            address.path.clone(),
++            call_timeout_anyhow(deadline)?,
++        );
++        proxy
++            .method_call::<(HashMap<String, String>,), _, _, _>(
++                "org.a11y.atspi.Accessible",
++                "GetAttributes",
++                (),
++            )
++            .map(|value| value.0)
++            .map_err(Into::into)
++    })?
++    .unwrap_or_default();
++    let bounds = optional_cached_call(deadline, || {
++        let proxy = bus.with_proxy(
++            &address.bus,
++            address.path.clone(),
++            call_timeout_anyhow(deadline)?,
++        );
++        proxy
++            .method_call::<((i32, i32, i32, i32),), _, _, _>(
++                "org.a11y.atspi.Component",
++                "GetExtents",
++                (0u32,),
++            )
++            .map(|value| Rect {
++                x: value.0 .0,
++                y: value.0 .1,
++                width: value.0 .2,
++                height: value.0 .3,
++            })
++            .map_err(Into::into)
++    })?;
++    let provider_role_name = optional_cached_call(deadline, || {
++        let proxy = bus.with_proxy(
++            &address.bus,
++            address.path.clone(),
++            call_timeout_anyhow(deadline)?,
++        );
++        proxy
++            .method_call::<(String,), _, _, _>("org.a11y.atspi.Accessible", "GetRoleName", ())
++            .map(|value| value.0)
++            .map_err(Into::into)
++    })?;
 +    let value = has_text
 +        .then(|| {
-+            proxy
-+                .method_call::<(String,), _, _, _>("org.a11y.atspi.Text", "GetText", (0i32, -1i32))
-+                .ok()
-+                .map(|value| value.0)
-+                .filter(|value| !value.is_empty())
++            optional_cached_call(deadline, || {
++                let proxy = bus.with_proxy(
++                    &address.bus,
++                    address.path.clone(),
++                    call_timeout_anyhow(deadline)?,
++                );
++                proxy
++                    .method_call::<(String,), _, _, _>(
++                        "org.a11y.atspi.Text",
++                        "GetText",
++                        (0i32, -1i32),
++                    )
++                    .map(|value| value.0)
++                    .map_err(Into::into)
++            })
 +        })
-+        .flatten();
-+    Ok((
-+        attributes
++        .transpose()?
++        .flatten()
++        .filter(|value| !value.is_empty());
++    Ok(CachedExtras {
++        id: attributes
 +            .get("id")
 +            .or_else(|| attributes.get("accessible_id"))
 +            .cloned()
 +            .filter(|value| !value.is_empty()),
 +        bounds,
 +        value,
-+    ))
++        provider_role_name: provider_role_name.filter(|value| !value.is_empty()),
++    })
++}
++
++struct CachedExtras {
++    id: Option<String>,
++    bounds: Option<Rect>,
++    value: Option<String>,
++    provider_role_name: Option<String>,
++}
++
++fn apply_cached_extras(node: &mut NodeData, extras: CachedExtras) {
++    node.id = extras.id;
++    node.bounds = extras.bounds;
++    node.value = extras.value;
++    if let Some(provider_role_name) = extras.provider_role_name {
++        node.platform_role = Some(provider_role_name);
++    }
++}
++
++fn optional_cached_call<T>(
++    deadline: Instant,
++    call: impl FnOnce() -> Result<T>,
++) -> Result<Option<T>> {
++    if Instant::now() >= deadline {
++        anyhow::bail!("deadline exceeded before cached AT-SPI enrichment call")
++    }
++    match call() {
++        Ok(value) => Ok(Some(value)),
++        Err(error) if is_timeout_error(&error) || Instant::now() >= deadline => Err(error),
++        Err(_) => Ok(None),
++    }
  }
  
  fn find_window(
-@@ -369,10 +687,12 @@ fn find_window(
+@@ -369,10 +763,12 @@ fn find_window(
                  match &request.target {
                      Target::ProcessId { .. } => return Ok(window),
                      Target::WindowTitle { value, .. } => {
@@ -473,7 +558,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
                          }
                      }
                      Target::WindowId { .. } => unreachable!(),
-@@ -475,8 +795,12 @@ fn is_transient_registration_error(error: &anyhow::Error) -> bool {
+@@ -475,8 +871,12 @@ fn is_transient_registration_error(error: &anyhow::Error) -> bool {
  }
  
  fn is_transient_selected_root_error(error: &anyhow::Error) -> bool {
@@ -488,7 +573,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
  }
  
  fn retry_selected_root_read<T>(
-@@ -561,20 +885,33 @@ fn connection_pid(
+@@ -561,20 +961,32 @@ fn connection_pid(
      }
  }
  
@@ -504,8 +589,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
      deadline: Instant,
 -) -> std::result::Result<Option<String>, CaptureError> {
 +) -> std::result::Result<TitleRead, CaptureError> {
-+    let timeout = call_timeout(deadline)?;
-+    let proxy = bus.with_proxy(&window.bus, window.path.clone(), timeout);
++    let proxy = bus.with_proxy(&window.bus, window.path.clone(), call_timeout(deadline)?);
      match proxy.method_call::<(Variant<String>,), _, _, _>(
          "org.freedesktop.DBus.Properties",
          "Get",
@@ -526,7 +610,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
  fn optional_find_read<T>(
      deadline: Instant,
      error: dbus::Error,
-@@ -599,6 +936,89 @@ fn parse_window_id(id: &str) -> Option<Address> {
+@@ -599,6 +1011,89 @@ fn parse_window_id(id: &str) -> Option<Address> {
      })
  }
  
@@ -616,7 +700,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
  #[allow(clippy::too_many_arguments)]
  fn walk(
      bus: &Arc<SyncConnection>,
-@@ -789,20 +1209,23 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
+@@ -789,20 +1284,23 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
                  .unwrap_or_default()
              });
              let role = scope.spawn(|| {
@@ -650,7 +734,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
              });
              let children_result = scope.spawn(|| children(bus, a, deadline));
              let state_words = scope.spawn(|| {
-@@ -869,17 +1292,17 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
+@@ -869,17 +1367,17 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
      } else {
          None
      };
@@ -672,7 +756,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
      })
  }
  
-@@ -926,6 +1349,51 @@ fn property_string_sync(p: &Proxy<&SyncConnection>, interface: &str, name: &str)
+@@ -926,6 +1424,53 @@ fn property_string_sync(p: &Proxy<&SyncConnection>, interface: &str, name: &str)
          .ok()?;
      Some(value.0)
  }
@@ -701,18 +785,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
 +    match call() {
 +        Ok(value) => Ok(Some(value)),
 +        Err(error) => {
-+            let timed_out = Instant::now() >= deadline
-+                || error
-+                    .downcast_ref::<dbus::Error>()
-+                    .and_then(dbus::Error::name)
-+                    .is_some_and(|name| {
-+                        matches!(
-+                            name,
-+                            "org.freedesktop.DBus.Error.NoReply"
-+                                | "org.freedesktop.DBus.Error.Timeout"
-+                                | "org.freedesktop.DBus.Error.TimedOut"
-+                        )
-+                    });
++            let timed_out = Instant::now() >= deadline || is_timeout_error(&error);
 +            if timed_out {
 +                Err(error)
 +            } else {
@@ -721,10 +794,41 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
 +        }
 +    }
 +}
++fn is_timeout_error(error: &anyhow::Error) -> bool {
++    error
++        .downcast_ref::<dbus::Error>()
++        .and_then(dbus::Error::name)
++        .is_some_and(|name| {
++            matches!(
++                name,
++                "org.freedesktop.DBus.Error.NoReply"
++                    | "org.freedesktop.DBus.Error.Timeout"
++                    | "org.freedesktop.DBus.Error.TimedOut"
++            )
++        })
++}
  fn remaining(deadline: Instant) -> Duration {
      deadline
          .saturating_duration_since(Instant::now())
-@@ -1367,7 +1835,8 @@ mod tests {
+@@ -934,16 +1479,7 @@ fn remaining(deadline: Instant) -> Duration {
+ fn timed_err(deadline: Instant, error: impl Into<anyhow::Error>) -> CaptureError {
+     let error = error.into();
+     // libdbus uses millisecond timeouts and can report expiration before the Rust deadline.
+-    let dbus_timeout = matches!(
+-        error
+-            .downcast_ref::<dbus::Error>()
+-            .and_then(dbus::Error::name),
+-        Some(
+-            "org.freedesktop.DBus.Error.NoReply"
+-                | "org.freedesktop.DBus.Error.Timeout"
+-                | "org.freedesktop.DBus.Error.TimedOut"
+-        )
+-    );
++    let dbus_timeout = is_timeout_error(&error);
+     if dbus_timeout || Instant::now() >= deadline {
+         ("timeout", "accessibility snapshot timed out".into(), None)
+     } else {
+@@ -1367,7 +1903,8 @@ mod tests {
                  Err(anyhow::Error::new(dbus::Error::new_custom(
                      "org.freedesktop.DBus.Error.UnknownInterface",
                      "No such interface 'org.a11y.atspi.Accessible'",
@@ -734,7 +838,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
              } else {
                  Ok(42)
              }
-@@ -1384,11 +1853,18 @@ mod tests {
+@@ -1384,11 +1921,18 @@ mod tests {
                  "org.freedesktop.DBus.Error.AccessDenied",
                  "org.a11y.atspi.Accessible",
              ),
@@ -754,7 +858,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
              });
              assert!(result.is_err());
              assert_eq!(calls, 1);
-@@ -1423,6 +1899,64 @@ mod tests {
+@@ -1423,6 +1967,144 @@ mod tests {
          assert!(restore_result(true, Err("read failed".into())).is_err());
      }
  
@@ -816,10 +920,90 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
 +        ));
 +    }
 +
++    #[test]
++    fn preparation_failure_does_not_arm_restoration() {
++        use std::cell::Cell;
++        let enable_calls = Cell::new(0);
++        let restore_calls = Cell::new(0);
++        let result = with_prepared_status_restoration(
++            || Err::<(), _>(("timeout", "initial status read timed out".into(), None)),
++            |()| {
++                enable_calls.set(enable_calls.get() + 1);
++                Ok(())
++            },
++            || panic!("capture must not run"),
++            || {
++                restore_calls.set(restore_calls.get() + 1);
++                Ok(())
++            },
++        );
++        assert_eq!(result.unwrap_err().0, "timeout");
++        assert_eq!(enable_calls.get(), 0);
++        assert_eq!(restore_calls.get(), 0);
++    }
++
++    #[test]
++    fn attempted_enable_with_lost_reply_is_restored() {
++        use std::cell::Cell;
++        let restore_calls = Cell::new(0);
++        let result = with_prepared_status_restoration(
++            || Ok(()),
++            |()| Err(("timeout", "enable reply was lost".into(), None)),
++            || panic!("capture must not run"),
++            || {
++                restore_calls.set(restore_calls.get() + 1);
++                Ok(())
++            },
++        );
++        assert_eq!(result.unwrap_err().0, "timeout");
++        assert_eq!(restore_calls.get(), 1);
++    }
++
++    #[test]
++    fn restore_failure_wire_never_contains_a_partial_snapshot() {
++        let successful_capture = with_status_restoration(
++            || Ok(()),
++            || Ok(empty_snapshot()),
++            || Err("readback failed".into()),
++        );
++        let failed_capture = with_status_restoration(
++            || Ok(()),
++            || {
++                Err((
++                    "timeout",
++                    "capture timed out".into(),
++                    Some(empty_snapshot()),
++                ))
++            },
++            || Err("readback failed".into()),
++        );
++
++        for result in [successful_capture, failed_capture] {
++            let encoded = serde_json::to_value(response_from_result(result)).unwrap();
++            assert_eq!(encoded["ok"], false);
++            assert_eq!(encoded["error"]["code"], "restore-failed");
++            assert!(encoded["error"]["message"]
++                .as_str()
++                .unwrap()
++                .contains("readback failed"));
++            assert!(
++                encoded["error"].get("partialSnapshot").is_none(),
++                "{encoded}"
++            );
++            assert!(encoded.get("snapshot").is_none(), "{encoded}");
++        }
++    }
++
++    #[test]
++    fn cleanup_budget_fits_the_daemon_grace_period() {
++        assert_eq!(STATUS_RESTORE_BUDGET, STATUS_RESTORE_TIMEOUT * 2);
++        assert!(STATUS_RESTORE_BUDGET < Duration::from_millis(250));
++    }
++
      #[test]
      fn unknown_interface_is_transient_only_during_registration() {
          let unknown = anyhow::Error::new(dbus::Error::new_custom(
-@@ -1503,6 +2037,57 @@ mod tests {
+@@ -1503,6 +2185,173 @@ mod tests {
          assert!(parse_window_id("org.example.App|/window/7").is_none());
          assert!(parse_window_id(":1.42|not-a-path").is_none());
      }
@@ -873,6 +1057,122 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..705774dbc82e16284f83c637817e8be0
 +        assert_eq!(data.states, ["sensitive", "visible"]);
 +        assert_eq!(data.children[0].path, child_a.1);
 +        assert_eq!(data.children[1].path, child_b.1);
++    }
++
++    #[test]
++    fn cached_enrichment_preserves_provider_role_name_and_numeric_normalization() {
++        let selected = Address {
++            bus: ":1.42".into(),
++            path: "/window/7".into(),
++        };
++        let mut item = cached_item(
++            cache_ref(":1.42", "/window/7"),
++            cache_ref(":1.42", ATSPI_ROOT),
++            0,
++            0,
++        );
++        item.7 = 39;
++        let mut tree = cache_tree(&selected, vec![item]).unwrap();
++        let panel = tree.get_mut("/window/7").unwrap();
++
++        apply_cached_extras(
++            panel,
++            CachedExtras {
++                id: None,
++                bounds: None,
++                value: None,
++                provider_role_name: Some("generic".into()),
++            },
++        );
++
++        assert_eq!(panel.platform_role.as_deref(), Some("generic"));
++        assert_eq!(
++            panel.raw_role.and_then(normalize_raw_role).as_deref(),
++            Some("panel")
++        );
++    }
++
++    #[test]
++    fn cached_enrichment_keeps_known_provider_name_for_unknown_numeric_role() {
++        let mut unknown = NodeData {
++            id: None,
++            raw_role: Some(10_000),
++            platform_role: None,
++            name: None,
++            states: vec![],
++            value: None,
++            bounds: None,
++            children: vec![],
++            interfaces: vec![],
++        };
++
++        apply_cached_extras(
++            &mut unknown,
++            CachedExtras {
++                id: None,
++                bounds: None,
++                value: None,
++                provider_role_name: Some("custom widget".into()),
++            },
++        );
++
++        assert_eq!(unknown.platform_role.as_deref(), Some("custom widget"));
++        assert_eq!(unknown.raw_role.and_then(normalize_raw_role), None);
++    }
++
++    #[test]
++    fn cached_enrichment_falls_back_when_provider_role_name_is_unsupported() {
++        let mut entry = NodeData {
++            id: None,
++            raw_role: Some(79),
++            platform_role: role_name(79).map(str::to_owned),
++            name: None,
++            states: vec![],
++            value: None,
++            bounds: None,
++            children: vec![],
++            interfaces: vec![],
++        };
++
++        apply_cached_extras(
++            &mut entry,
++            CachedExtras {
++                id: None,
++                bounds: None,
++                value: None,
++                provider_role_name: None,
++            },
++        );
++
++        assert_eq!(entry.platform_role.as_deref(), Some("entry"));
++        assert_eq!(
++            entry.raw_role.and_then(normalize_raw_role).as_deref(),
++            Some("entry")
++        );
++    }
++
++    #[test]
++    fn cached_optional_reads_check_deadline_and_preserve_timeout_errors() {
++        let called = std::cell::Cell::new(false);
++        let result = optional_cached_call::<u32>(Instant::now(), || {
++            called.set(true);
++            Ok(7)
++        });
++        assert!(result.is_err());
++        assert!(!called.get());
++
++        let deadline = Instant::now() + Duration::from_secs(30);
++        let unsupported = dbus::Error::new_custom(
++            "org.freedesktop.DBus.Error.UnknownMethod",
++            "GetRoleName is not implemented",
++        );
++        assert_eq!(
++            optional_cached_call::<String>(deadline, || Err(unsupported.into())).unwrap(),
++            None
++        );
++        let error =
++            dbus::Error::new_custom("org.freedesktop.DBus.Error.NoReply", "provider timed out");
++        assert!(optional_cached_call::<u32>(deadline, || Err(error.into())).is_err());
 +    }
      #[test]
      fn window_title_target_deserializes() {
