@@ -28,6 +28,7 @@ public final class dev/sebastiano/spectre/server/HttpComposeAutomator : java/lan
 	public final fun printTree (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun screenshot (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun screenshot (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun screenshot (ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun scrollWheel (Ljava/lang/String;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun swipe (IIIIIJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun swipe (Ljava/lang/String;Ljava/lang/String;IJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
