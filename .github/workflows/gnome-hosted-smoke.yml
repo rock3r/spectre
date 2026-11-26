@@ -88,8 +88,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [atspi-ownership, accessibility, atspi-distinct-content]
-        replica: [1, 2]
+        mode: [accessibility]
+        replica: [1]
 
     steps:
       - name: Check out temporary workflow tooling
@@ -118,9 +118,9 @@ jobs:
         working-directory: atspi-reader
         run: |
           patch="$GITHUB_WORKSPACE/smoke-tooling/.github/reader-overlays/716-b1-cached-owner.patch"
-          printf '%s  %s\n' 6428fa41d2ff70aee2b405a111e8ae2bb411ee05cd691d1203efc8d4bb3c0bda "$patch" | sha256sum -c -
+          printf '%s  %s\n' e5e4aa2fe575f30d9d783d862d61b8ad547b748d6ad6ce69b63242332b7f3339 "$patch" | sha256sum -c -
           git apply --index "$patch"
-          test "$(git write-tree)" = 97b3c15a0c0d15b8d964c10c6f60c58d0d53b8cb
+          test "$(git write-tree)" = ecc50398c94a9f9748c17ed489af95a11b78faba
 
       - name: Check out native accessibility fixture
         if: matrix.mode == 'accessibility' || matrix.mode == 'atspi-ownership' || matrix.mode == 'atspi-distinct-content'

@@ -1,5 +1,5 @@
 diff --git a/recording/native/linux/src/accessibility.rs b/recording/native/linux/src/accessibility.rs
-index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b1861724ce6a48c 100644
+index 596b071a..c8a8a7a6 100644
 --- a/recording/native/linux/src/accessibility.rs
 +++ b/recording/native/linux/src/accessibility.rs
 @@ -7,6 +7,7 @@
@@ -266,7 +266,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
      Ok(snapshot)
  }
  
-@@ -292,6 +408,493 @@ struct NodeData {
+@@ -292,6 +408,512 @@ struct NodeData {
      value: Option<String>,
      bounds: Option<Rect>,
      children: Vec<Address>,
@@ -436,11 +436,36 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
 +    maximum_depth: usize,
 +    deadline: Instant,
 +) -> Result<()> {
++    let (ordered, _) =
++        cached_enrichment_order(nodes, root_path, maximum_node_count, maximum_depth)?;
++    let extras = read_cached_extras(bus, owner, &ordered, deadline)?;
++    for (path, extra) in extras {
++        let node = nodes
++            .get_mut(&path)
++            .context("provider cache object disappeared")?;
++        apply_cached_extras(node, extra);
++    }
++    Ok(())
++}
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++enum CachedTraversalEnd {
++    Natural,
++    DepthLimit,
++    NodeLimit,
++}
++
++fn cached_enrichment_order(
++    nodes: &HashMap<String, NodeData>,
++    root_path: &str,
++    maximum_node_count: usize,
++    maximum_depth: usize,
++) -> Result<(Vec<(String, bool)>, CachedTraversalEnd)> {
 +    let mut ordered = Vec::new();
 +    let mut pending = vec![(root_path.to_string(), 0usize)];
 +    while let Some((path, depth)) = pending.pop() {
-+        if ordered.len() >= maximum_node_count.saturating_add(1) {
-+            break;
++        if ordered.len() >= maximum_node_count {
++            return Ok((ordered, CachedTraversalEnd::NodeLimit));
 +        }
 +        let node = nodes
 +            .get(&path)
@@ -451,23 +476,17 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
 +                .iter()
 +                .any(|interface| interface.ends_with(".Text")),
 +        ));
-+        if depth < maximum_depth {
-+            pending.extend(
-+                node.children
-+                    .iter()
-+                    .rev()
-+                    .map(|child| (child.path.to_string(), depth + 1)),
-+            );
++        if depth >= maximum_depth && !node.children.is_empty() {
++            return Ok((ordered, CachedTraversalEnd::DepthLimit));
 +        }
++        pending.extend(
++            node.children
++                .iter()
++                .rev()
++                .map(|child| (child.path.to_string(), depth + 1)),
++        );
 +    }
-+    let extras = read_cached_extras(bus, owner, &ordered, deadline)?;
-+    for (path, extra) in extras {
-+        let node = nodes
-+            .get_mut(&path)
-+            .context("provider cache object disappeared")?;
-+        apply_cached_extras(node, extra);
-+    }
-+    Ok(())
++    Ok((ordered, CachedTraversalEnd::Natural))
 +}
 +
 +fn read_cached_extras(
@@ -760,7 +779,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
  }
  
  fn find_window(
-@@ -369,10 +972,12 @@ fn find_window(
+@@ -369,10 +991,12 @@ fn find_window(
                  match &request.target {
                      Target::ProcessId { .. } => return Ok(window),
                      Target::WindowTitle { value, .. } => {
@@ -777,7 +796,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
                          }
                      }
                      Target::WindowId { .. } => unreachable!(),
-@@ -475,8 +1080,12 @@ fn is_transient_registration_error(error: &anyhow::Error) -> bool {
+@@ -475,8 +1099,12 @@ fn is_transient_registration_error(error: &anyhow::Error) -> bool {
  }
  
  fn is_transient_selected_root_error(error: &anyhow::Error) -> bool {
@@ -792,7 +811,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
  }
  
  fn retry_selected_root_read<T>(
-@@ -561,20 +1170,32 @@ fn connection_pid(
+@@ -561,20 +1189,32 @@ fn connection_pid(
      }
  }
  
@@ -829,10 +848,29 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
  fn optional_find_read<T>(
      deadline: Instant,
      error: dbus::Error,
-@@ -599,6 +1220,89 @@ fn parse_window_id(id: &str) -> Option<Address> {
-     })
- }
- 
+@@ -586,17 +1226,100 @@ fn optional_find_read<T>(
+         // Providers can disappear between registry enumeration and an individual read.
+         Ok(None)
+     }
+-}
+-
+-fn parse_window_id(id: &str) -> Option<Address> {
+-    let (bus, path) = id.split_once('|')?;
+-    if !bus.starts_with(':') || !path.starts_with('/') || bus.contains('|') {
+-        return None;
++}
++
++fn parse_window_id(id: &str) -> Option<Address> {
++    let (bus, path) = id.split_once('|')?;
++    if !bus.starts_with(':') || !path.starts_with('/') || bus.contains('|') {
++        return None;
++    }
++    Some(Address {
++        bus: bus.to_string(),
++        path: dbus::Path::new(path.to_string()).ok()?.into_static(),
++    })
++}
++
 +#[allow(clippy::too_many_arguments)]
 +fn walk_cached(
 +    nodes: &mut HashMap<String, NodeData>,
@@ -912,14 +950,16 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
 +    }
 +    if children_truncated {
 +        return node_limit_error(request.maximum_node_count, snapshot);
-+    }
+     }
+-    Some(Address {
+-        bus: bus.to_string(),
+-        path: dbus::Path::new(path.to_string()).ok()?.into_static(),
+-    })
 +    Ok(())
-+}
-+
+ }
+ 
  #[allow(clippy::too_many_arguments)]
- fn walk(
-     bus: &Arc<SyncConnection>,
-@@ -789,20 +1493,23 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
+@@ -789,20 +1512,23 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
                  .unwrap_or_default()
              });
              let role = scope.spawn(|| {
@@ -953,7 +993,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
              });
              let children_result = scope.spawn(|| children(bus, a, deadline));
              let state_words = scope.spawn(|| {
-@@ -869,17 +1576,17 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
+@@ -869,17 +1595,17 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
      } else {
          None
      };
@@ -975,7 +1015,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
      })
  }
  
-@@ -926,6 +1633,63 @@ fn property_string_sync(p: &Proxy<&SyncConnection>, interface: &str, name: &str)
+@@ -926,6 +1652,63 @@ fn property_string_sync(p: &Proxy<&SyncConnection>, interface: &str, name: &str)
          .ok()?;
      Some(value.0)
  }
@@ -1039,7 +1079,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
  fn remaining(deadline: Instant) -> Duration {
      deadline
          .saturating_duration_since(Instant::now())
-@@ -934,16 +1698,7 @@ fn remaining(deadline: Instant) -> Duration {
+@@ -934,16 +1717,7 @@ fn remaining(deadline: Instant) -> Duration {
  fn timed_err(deadline: Instant, error: impl Into<anyhow::Error>) -> CaptureError {
      let error = error.into();
      // libdbus uses millisecond timeouts and can report expiration before the Rust deadline.
@@ -1057,7 +1097,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
      if dbus_timeout || Instant::now() >= deadline {
          ("timeout", "accessibility snapshot timed out".into(), None)
      } else {
-@@ -1367,7 +2122,8 @@ mod tests {
+@@ -1367,7 +2141,8 @@ mod tests {
                  Err(anyhow::Error::new(dbus::Error::new_custom(
                      "org.freedesktop.DBus.Error.UnknownInterface",
                      "No such interface 'org.a11y.atspi.Accessible'",
@@ -1067,7 +1107,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
              } else {
                  Ok(42)
              }
-@@ -1384,11 +2140,18 @@ mod tests {
+@@ -1384,11 +2159,18 @@ mod tests {
                  "org.freedesktop.DBus.Error.AccessDenied",
                  "org.a11y.atspi.Accessible",
              ),
@@ -1087,7 +1127,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
              });
              assert!(result.is_err());
              assert_eq!(calls, 1);
-@@ -1423,6 +2186,144 @@ mod tests {
+@@ -1423,6 +2205,144 @@ mod tests {
          assert!(restore_result(true, Err("read failed".into())).is_err());
      }
  
@@ -1232,7 +1272,144 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b186172
      #[test]
      fn unknown_interface_is_transient_only_during_registration() {
          let unknown = anyhow::Error::new(dbus::Error::new_custom(
-@@ -1503,6 +2404,291 @@ mod tests {
+@@ -1470,6 +2390,136 @@ mod tests {
+         assert!(validate(&r).is_err());
+     }
+     #[test]
++    fn cached_enrichment_stops_at_first_depth_boundary() {
++        let root_path = "/root".to_string();
++        let first_path = "/first".to_string();
++        let missing_later_path = "/later".to_string();
++        let grandchild_path = "/grandchild".to_string();
++        let address = |path: &str| Address {
++            bus: ":1.42".into(),
++            path: path.to_string().into(),
++        };
++        let node = |children: Vec<Address>| NodeData {
++            id: None,
++            raw_role: None,
++            platform_role: None,
++            name: None,
++            states: vec![],
++            value: None,
++            bounds: None,
++            children,
++            interfaces: vec![],
++        };
++        let nodes = HashMap::from([
++            (
++                root_path.clone(),
++                node(vec![address(&first_path), address(&missing_later_path)]),
++            ),
++            (first_path.clone(), node(vec![address(&grandchild_path)])),
++        ]);
++
++        // The absent later sibling instruments a provider call that would fail (or hang). It is
++        // deliberately unreachable because walking stops as soon as the first child proves the
++        // depth limit.
++        let (selected, end) = cached_enrichment_order(&nodes, &root_path, 10, 1).unwrap();
++        assert_eq!(
++            selected,
++            vec![(root_path.clone(), false), (first_path, false)]
++        );
++        assert_eq!(end, CachedTraversalEnd::DepthLimit);
++
++        let (selected, end) = cached_enrichment_order(&nodes, &root_path, 1, 10).unwrap();
++        assert_eq!(selected, vec![(root_path.clone(), false)]);
++        assert_eq!(end, CachedTraversalEnd::NodeLimit);
++
++        let leaf_path = "/leaf".to_string();
++        let leaves = HashMap::from([(leaf_path.clone(), node(vec![]))]);
++        let (selected, end) = cached_enrichment_order(&leaves, &leaf_path, 1, 0).unwrap();
++        assert_eq!(selected, vec![(leaf_path, false)]);
++        assert_eq!(end, CachedTraversalEnd::Natural);
++    }
++
++    #[test]
++    fn cached_walk_reports_depth_limit_with_the_selected_prefix() {
++        let address = |path: &str| Address {
++            bus: ":1.42".into(),
++            path: path.to_string().into(),
++        };
++        let data = |id: &str, children: Vec<Address>| NodeData {
++            id: Some(id.into()),
++            raw_role: None,
++            platform_role: None,
++            name: None,
++            states: vec![],
++            value: None,
++            bounds: None,
++            children,
++            interfaces: vec![],
++        };
++        let mut root = data("root", vec![address("/first"), address("/later")]);
++        let mut nodes = HashMap::from([
++            (
++                "/first".into(),
++                data("repeated", vec![address("/grandchild")]),
++            ),
++            ("/later".into(), data("repeated", vec![])),
++        ]);
++        let mut request = request();
++        request.maximum_depth = 1;
++        request.maximum_node_count = 10;
++        let mut snapshot = empty_snapshot();
++        let result = walk_cached(
++            &mut nodes,
++            root.clone(),
++            "w0/root".into(),
++            None,
++            0,
++            &request,
++            Instant::now() + Duration::from_secs(1),
++            &Rect {
++                x: 0,
++                y: 0,
++                width: 1,
++                height: 1,
++            },
++            &mut snapshot,
++        );
++        let (code, message, partial) = result.unwrap_err();
++        assert_eq!(code, "limit-reached");
++        assert_eq!(message, "maximumDepth 1 reached");
++        let partial = partial.unwrap();
++        assert_eq!(
++            partial
++                .nodes
++                .iter()
++                .map(|node| node.key.as_str())
++                .collect::<Vec<_>>(),
++            ["w0/root", "w0/root/0"]
++        );
++
++        root.children.clear();
++        request.maximum_depth = 0;
++        let mut snapshot = empty_snapshot();
++        assert!(walk_cached(
++            &mut HashMap::new(),
++            root,
++            "w0/root".into(),
++            None,
++            0,
++            &request,
++            Instant::now() + Duration::from_secs(1),
++            &Rect {
++                x: 0,
++                y: 0,
++                width: 1,
++                height: 1
++            },
++            &mut snapshot,
++        )
++        .is_ok());
++        assert_eq!(snapshot.nodes.len(), 1);
++    }
++    #[test]
+     fn rejects_process_target_outside_linux_pid_range() {
+         let request: Request = serde_json::from_str(
+             r#"{"target":{"type":"process-id","value":2147483648},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#,
+@@ -1503,6 +2553,291 @@ mod tests {
          assert!(parse_window_id("org.example.App|/window/7").is_none());
          assert!(parse_window_id(":1.42|not-a-path").is_none());
      }
