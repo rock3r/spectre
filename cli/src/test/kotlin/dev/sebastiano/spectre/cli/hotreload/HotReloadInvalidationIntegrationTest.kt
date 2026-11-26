@@ -38,7 +38,8 @@ class HotReloadInvalidationIntegrationTest {
         val server = startOrchestrationServer()
         val port = server.port.getBlocking(15.seconds).getOrThrow()
         val appScope = applicationScope()
-        val appJob = startAckingApplicationClient(port, appScope)
+        val appReady = CountDownLatch(1)
+        val appJob = startAckingApplicationClient(port, appScope, appReady)
         val session = HotReloadSession.forPort(port)
         val fired = AtomicBoolean(false)
         val latch = CountDownLatch(1)
@@ -47,6 +48,7 @@ class HotReloadInvalidationIntegrationTest {
             latch.countDown()
         }
         try {
+            assertTrue(appReady.await(10, TimeUnit.SECONDS), "Application client did not connect")
             awaitConnected(session)
             val request = OrchestrationMessage.ReloadClassesRequest()
             server sendBlocking request
@@ -78,8 +80,15 @@ class HotReloadInvalidationIntegrationTest {
         val server = startOrchestrationServer()
         val port = server.port.getBlocking(15.seconds).getOrThrow()
         val appScope = applicationScope()
-        val appJob = startAckingApplicationClient(port, appScope)
-        val session = HotReloadSession.forPort(port)
+        val appReady = CountDownLatch(1)
+        val appJob = startAckingApplicationClient(port, appScope, appReady)
+        val waiterSubscribed = CountDownLatch(1)
+        val session =
+            HotReloadSession(
+                    portProvider = { port },
+                    onLifecycleSubscribedForTesting = { waiterSubscribed.countDown() },
+                )
+                .also { it.start() }
         val listenerFired = AtomicBoolean(false)
         val listenerLatch = CountDownLatch(1)
         session.setReloadSettledListener {
@@ -87,6 +96,7 @@ class HotReloadInvalidationIntegrationTest {
             listenerLatch.countDown()
         }
         try {
+            assertTrue(appReady.await(10, TimeUnit.SECONDS), "Application client did not connect")
             awaitConnected(session)
             val outcomeRef = AtomicReference<ReloadSettleOutcome?>(null)
             val waitLatch = CountDownLatch(1)
@@ -98,8 +108,10 @@ class HotReloadInvalidationIntegrationTest {
                     "concurrent-settle-wait",
                 )
                 .start()
-            // Subscribe before broadcasting so the fan-out waiter is armed.
-            Thread.sleep(200)
+            assertTrue(
+                waiterSubscribed.await(10, TimeUnit.SECONDS),
+                "settle waiter did not subscribe",
+            )
 
             val request = OrchestrationMessage.ReloadClassesRequest()
             server sendBlocking request
@@ -139,10 +151,15 @@ class HotReloadInvalidationIntegrationTest {
         assertTrue(session.isConnected, "Tooling client did not connect")
     }
 
-    private fun startAckingApplicationClient(port: Int, scope: CoroutineScope): Job = scope.launch {
+    private fun startAckingApplicationClient(
+        port: Int,
+        scope: CoroutineScope,
+        ready: CountDownLatch,
+    ): Job = scope.launch {
         val client =
             connectOrchestrationClient(OrchestrationClientRole.Application, port).getOrThrow()
         val channel = client.asChannel()
+        ready.countDown()
         try {
             while (true) {
                 val message = channel.receiveCatching().getOrNull() ?: break
