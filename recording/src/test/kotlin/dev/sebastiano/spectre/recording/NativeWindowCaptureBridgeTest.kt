@@ -136,14 +136,16 @@ class NativeWindowCaptureBridgeTest {
     fun `untitled JWindow host is captured by its frame`() {
         assumeLiveAwtAvailable()
         val owner = Frame("bridge owner")
-        val popup = JWindow(owner).apply { setBounds(40, 50, 300, 200) }
+        val popupBounds = Rectangle(40, 50, 300, 200)
+        val popup = JWindow(owner).apply { bounds = popupBounds }
         popup.isVisible = true
 
         try {
+            stabilizeMappedAwtFrames(popup to popupBounds)
             val target = NativeWindowCaptureBridge.captureTargetFor(popup)
 
             val framed = assertIs<FramedWindow>(target, "a JWindow has no title to select it by")
-            assertEquals(Rectangle(40, 50, 300, 200), framed.logicalFrame)
+            assertEquals(popupBounds, framed.logicalFrame)
         } finally {
             popup.dispose()
             owner.dispose()
@@ -153,10 +155,12 @@ class NativeWindowCaptureBridgeTest {
     @Test
     fun `untitled Frame host is captured by its frame`() {
         assumeLiveAwtAvailable()
-        val frame = Frame().apply { setBounds(41, 52, 303, 204) }
+        val frameBounds = Rectangle(41, 52, 303, 204)
+        val frame = Frame().apply { bounds = frameBounds }
         frame.isVisible = true
 
         try {
+            stabilizeMappedAwtFrames(frame to frameBounds)
             val target =
                 NativeWindowCaptureBridge.captureTargetFor(
                     frame,
@@ -165,7 +169,7 @@ class NativeWindowCaptureBridgeTest {
                 )
 
             val framed = assertIs<FramedWindow>(target, "an empty title cannot select a Frame")
-            assertEquals(Rectangle(41, 52, 303, 204), framed.logicalFrame)
+            assertEquals(frameBounds, framed.logicalFrame)
             assertEquals("", frame.title, "selecting the Frame must not stamp a temporary title")
         } finally {
             frame.dispose()
@@ -176,10 +180,12 @@ class NativeWindowCaptureBridgeTest {
     fun `untitled Dialog host is captured by its client frame on X11`() {
         assumeLiveAwtAvailable()
         val owner = Frame("dialog owner").apply { isVisible = true }
-        val dialog = Dialog(owner).apply { setBounds(43, 54, 305, 206) }
+        val dialogBounds = Rectangle(43, 54, 305, 206)
+        val dialog = Dialog(owner).apply { bounds = dialogBounds }
         dialog.isVisible = true
 
         try {
+            stabilizeMappedAwtFrames(dialog to dialogBounds)
             val target =
                 NativeWindowCaptureBridge.captureTargetFor(
                     dialog,
@@ -191,10 +197,10 @@ class NativeWindowCaptureBridgeTest {
             val insets = dialog.insets
             assertEquals(
                 Rectangle(
-                    43 + insets.left,
-                    54 + insets.top,
-                    305 - insets.left - insets.right,
-                    206 - insets.top - insets.bottom,
+                    dialogBounds.x + insets.left,
+                    dialogBounds.y + insets.top,
+                    dialogBounds.width - insets.left - insets.right,
+                    dialogBounds.height - insets.top - insets.bottom,
                 ),
                 framed.logicalFrame,
             )
@@ -228,8 +234,11 @@ class NativeWindowCaptureBridgeTest {
         val twin = Frame("bridge shared title").apply { setBounds(400, 50, 300, 200) }
         frame.isVisible = true
         twin.isVisible = true
+        val frameBounds = Rectangle(40, 50, 300, 200)
+        val twinBounds = Rectangle(400, 50, 300, 200)
 
         try {
+            stabilizeMappedAwtFrames(frame to frameBounds, twin to twinBounds)
             val target =
                 NativeWindowCaptureBridge.captureTargetFor(
                     frame,
@@ -238,7 +247,7 @@ class NativeWindowCaptureBridgeTest {
                 )
 
             val framed = assertIs<FramedWindow>(target, "a shared title cannot select one window")
-            assertEquals(Rectangle(40, 50, 300, 200), framed.logicalFrame)
+            assertEquals(frameBounds, framed.logicalFrame)
         } finally {
             frame.dispose()
             twin.dispose()
@@ -253,8 +262,11 @@ class NativeWindowCaptureBridgeTest {
         val twin = Frame("bridge client area").apply { setBounds(400, 50, 300, 200) }
         frame.isVisible = true
         twin.isVisible = true
+        val frameBounds = Rectangle(40, 50, 300, 200)
+        val twinBounds = Rectangle(400, 50, 300, 200)
 
         try {
+            stabilizeMappedAwtFrames(frame to frameBounds, twin to twinBounds)
             val insets = frame.insets
             val target =
                 NativeWindowCaptureBridge.captureTargetFor(
@@ -266,10 +278,10 @@ class NativeWindowCaptureBridgeTest {
             val framed = assertIs<FramedWindow>(target)
             assertEquals(
                 Rectangle(
-                    40 + insets.left,
-                    50 + insets.top,
-                    300 - insets.left - insets.right,
-                    200 - insets.top - insets.bottom,
+                    frameBounds.x + insets.left,
+                    frameBounds.y + insets.top,
+                    frameBounds.width - insets.left - insets.right,
+                    frameBounds.height - insets.top - insets.bottom,
                 ),
                 framed.logicalFrame,
             )
