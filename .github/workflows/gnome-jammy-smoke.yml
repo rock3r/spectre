@@ -74,7 +74,7 @@ jobs:
           SMOKE_SESSION_SCRIPT: ${{ github.workspace }}/smoke-tooling/.github/scripts/gnome-hosted-smoke-session.sh
         run: |
           export SMOKE_USER="$(id -un)" RUST_BIN="$(dirname "$(command -v cargo)")"
-          sudo --preserve-env=ATSPI_REPO,FIXTURE_CHECKOUT,SMOKE_MODE,SMOKE_USER,RUST_BIN,CANDIDATE_SHA,JAVA_HOME,SMOKE_ARTIFACTS,SMOKE_REPO,SMOKE_SESSION_SCRIPT .github/scripts/gnome-hosted-smoke.sh
+          sudo --preserve-env=ATSPI_REPO,FIXTURE_CHECKOUT,SMOKE_MODE,SMOKE_USER,RUST_BIN,CANDIDATE_SHA,JAVA_HOME,SMOKE_ARTIFACTS,SMOKE_REPO,SMOKE_SESSION_SCRIPT .github/scripts/gnome-hosted-smoke.sh "$JAVA_HOME"
         working-directory: smoke-tooling
 
       - name: Record Jammy distribution and component versions

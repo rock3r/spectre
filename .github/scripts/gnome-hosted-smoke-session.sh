@@ -8,7 +8,7 @@ set -Eeuo pipefail
 export XDG_SESSION_TYPE=wayland
 export XDG_CURRENT_DESKTOP=GNOME
 export XDG_SESSION_DESKTOP=gnome
-export JAVA_HOME="${SMOKE_JAVA_HOME:?}"
+export JAVA_HOME="${2:-${SMOKE_JAVA_HOME:?}}"
 export PATH="$JAVA_HOME/bin:$PATH"
 export GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.java.home=$JAVA_HOME"
 {
@@ -19,7 +19,7 @@ export GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.java.home=$JAVA_HOME"
   java -version
 } > "$SMOKE_ARTIFACTS/session-java-version.log" 2>&1
 if [[ "${1:-}" != --inside-dbus ]]; then
-  exec dbus-run-session -- "$0" --inside-dbus
+  exec dbus-run-session -- "$0" --inside-dbus "$JAVA_HOME"
 fi
 
 session_diagnostics() {

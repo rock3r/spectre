@@ -14,6 +14,8 @@ set -Eeuo pipefail
 : "${SMOKE_SESSION_SCRIPT:?}"
 
 readonly SMOKE_USER
+selected_jdk=${1:-$JAVA_HOME}
+[[ -x "$selected_jdk/bin/java" ]]
 mkdir -p "$SMOKE_ARTIFACTS"
 chmod 0777 "$SMOKE_ARTIFACTS"
 
@@ -64,12 +66,12 @@ systemd-run \
   --wait --collect --pipe --service-type=simple --property=TimeoutStartSec=45min --property=TimeoutStopSec=45min \
   --uid="$SMOKE_USER" --property=PAMName=login \
   --setenv="HOME=$SMOKE_HOME" \
-  --setenv="SMOKE_JAVA_HOME=$JAVA_HOME" \
-  --setenv="PATH=$RUST_BIN:$JAVA_HOME/bin:/usr/local/bin:/usr/bin:/bin" \
+  --setenv="SMOKE_JAVA_HOME=$selected_jdk" \
+  --setenv="PATH=$RUST_BIN:$selected_jdk/bin:/usr/local/bin:/usr/bin:/bin" \
   --setenv="SMOKE_ARTIFACTS=$SMOKE_ARTIFACTS" \
   --setenv="SMOKE_REPO=$SMOKE_REPO" \
   --setenv="SMOKE_MODE=$SMOKE_MODE" \
   --setenv="CANDIDATE_SHA=$CANDIDATE_SHA" \
   --setenv="ATSPI_REPO=$ATSPI_REPO" \
   --setenv="FIXTURE_CHECKOUT=$FIXTURE_CHECKOUT" \
-  "$SMOKE_SESSION_SCRIPT"
+  "$SMOKE_SESSION_SCRIPT" --outside-dbus "$selected_jdk"
