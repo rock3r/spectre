@@ -65,6 +65,9 @@ on:
       - ".github/workflows/windows.yml"
       - ".github/scripts/dump-jvm-stacks.sh"
       - ".github/scripts/test-windows-check-timeout.sh"
+      - ".github/scripts/install-windows-app-runtime.ps1"
+      - ".github/scripts/test-windows-helper-preflight.ps1"
+      - ".github/scripts/windows-helper-preflight.ps1"
   push:
     branches:
       - main
@@ -99,6 +102,9 @@ on:
       - ".github/workflows/windows.yml"
       - ".github/scripts/dump-jvm-stacks.sh"
       - ".github/scripts/test-windows-check-timeout.sh"
+      - ".github/scripts/install-windows-app-runtime.ps1"
+      - ".github/scripts/test-windows-helper-preflight.ps1"
+      - ".github/scripts/windows-helper-preflight.ps1"
 
 permissions:
   contents: read
@@ -134,6 +140,16 @@ jobs:
         run: |
           dotnet publish recording/native/windows/SpectreWindowCapture.csproj -c Release -r win-x64 --self-contained false -o "$env:RUNNER_TEMP\spectre-helper"
           cargo build --locked --release --manifest-path "$env:RUNNER_TEMP\accesskit-fixture\fixtures\accesskit\Cargo.toml"
+
+      - name: Test Windows helper preflight validation
+        shell: pwsh
+        run: .github/scripts/test-windows-helper-preflight.ps1
+
+      - name: Install Windows App Runtime and preflight helper
+        shell: pwsh
+        run: |
+          .github/scripts/install-windows-app-runtime.ps1 `
+            -Helper "$env:RUNNER_TEMP\spectre-helper\SpectreWindowCapture.exe"
 
       - name: Read the live AccessKit fixture through UI Automation
         shell: pwsh
