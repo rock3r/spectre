@@ -9,9 +9,13 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
     <WindowsAppSdkUndockedRegFreeWinRTInitialize>true</WindowsAppSdkUndockedRegFreeWinRTInitialize>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <DefaultLanguage>en-US</DefaultLanguage>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
+    <Using Include="System.IO" />
     <Compile Include="Program.cs" />
     <Compile Include="CompressedWindowRecorder.cs" />
     <Compile Include="Options.cs" />
@@ -20,6 +24,8 @@
     <Compile Include="WindowFrameMatch.cs" />
     <Compile Include="SampleClock.cs" />
     <Compile Include="StillsProtocol.cs" />
+    <Compile Include="AccessibilitySnapshot.cs" />
+    <Compile Include="WindowsUiaTreeReader.cs" />
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260209005" />
   </ItemGroup>

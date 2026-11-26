@@ -123,6 +123,11 @@ class AwtInputDeliveryWitnessTest {
                 osName.contains("mac", ignoreCase = true),
             "wheel backend fixture is for Linux and macOS",
         )
+        val robot = Robot()
+        // Keep the initial pointer outside the fixture before it is mapped. This also prevents the
+        // X event thread from racing Swing validation while MouseEvent is initialized.
+        robot.mouseMove(0, 0)
+        robot.waitForIdle()
         val (frame, target) =
             onEdt {
                 val target = JPanel()
@@ -143,7 +148,6 @@ class AwtInputDeliveryWitnessTest {
                     Point(it.x + target.width / 2, it.y + target.height / 2)
                 }
             }
-            val robot = Robot()
             establishNativePointerReadiness(frame, target, expected, robot)
 
             val wheelDeliveries = AtomicInteger()
@@ -273,6 +277,12 @@ class AwtInputDeliveryWitnessTest {
         try {
             robot.mouseMove(approach.x, approach.y)
             robot.waitForIdle()
+            waitForNativePointer(approach)
+            val approachDeadline =
+                System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(INPUT_WITNESS_WAIT_MS)
+            while (motionPositions.isEmpty() && System.nanoTime() < approachDeadline) {
+                Thread.sleep(10)
+            }
             robot.mouseMove(expected.x, expected.y)
             robot.waitForIdle()
             val ready = arrivedAtExpected.await(INPUT_WITNESS_WAIT_MS, TimeUnit.MILLISECONDS)
@@ -286,6 +296,17 @@ class AwtInputDeliveryWitnessTest {
         } finally {
             onEdt { target.removeMouseMotionListener(listener) }
         }
+    }
+
+    private fun waitForNativePointer(expected: Point) {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(INPUT_WITNESS_WAIT_MS)
+        while (System.nanoTime() < deadline) {
+            if (MouseInfo.getPointerInfo()?.location?.isNear(expected) == true) return
+            Thread.sleep(10)
+        }
+        error(
+            "native pointer did not reach $expected; actual=${MouseInfo.getPointerInfo()?.location}"
+        )
     }
 
     private fun wheelDiagnostic(
@@ -322,6 +343,13 @@ class AwtInputDeliveryWitnessTest {
     )
 
     private companion object {
+        init {
+            // Initialize MouseEvent before any fixture maps a native window. On X11 the native
+            // event thread can otherwise initialize it concurrently with Swing validation and
+            // deadlock on the AWT lock/class-initialization lock pair.
+            MouseEvent(Panel(), MouseEvent.MOUSE_MOVED, 0, 0, 0, 0, 0, false)
+        }
+
         const val INPUT_WITNESS_WAIT_MS = 2_000L
         const val NO_EVENT_WAIT_MS = 50L
         const val DRAIN_WAIT_MS = 500L
