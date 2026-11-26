@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${FIXTURE_CHECKOUT:?point FIXTURE_CHECKOUT at a separate feature/accesskit-fixture checkout}"
+: "${FIXTURE_CHECKOUT:?point FIXTURE_CHECKOUT at the checkout containing fixtures/accesskit}"
 helper=${SPECTRE_HELPER:-target/debug/spectre-wayland-helper}
 fixture="$FIXTURE_CHECKOUT/fixtures/accesskit/target/debug/spectre-accesskit-fixture"
 log=${RUNNER_TEMP:-/tmp}/spectre-accesskit-fixture-helper.log

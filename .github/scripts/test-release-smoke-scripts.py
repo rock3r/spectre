@@ -2,6 +2,7 @@
 """Contract tests for release-smoke orchestration, report schema, and MCP stdio."""
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import os
@@ -14,6 +15,7 @@ import time
 import unittest
 import unittest.mock
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 MCP_SMOKE = ROOT / "scripts" / "mcp-stdio-smoke.py"
@@ -254,6 +256,9 @@ class SmokeLibSchemaTest(unittest.TestCase):
             "input-coord-forced-recovery",
             "input-coord-junit-pertest",
             "input-coord-headed-robot",
+            "a11y-accesskit-macos",
+            "a11y-accesskit-windows",
+            "a11y-accesskit-linux",
         }
         self.assertEqual(expected, set(smoke_lib.REQUIRED_SCENARIO_IDS))
         self.assertLess(
@@ -261,6 +266,75 @@ class SmokeLibSchemaTest(unittest.TestCase):
             smoke_lib.REQUIRED_SCENARIO_IDS.index("check"),
             "macos-tcc must run before ./gradlew check so missing TCC fails in seconds",
         )
+
+    def test_accesskit_snapshot_contract_matches_real_linux_roles(self):
+        nodes = [
+            {"key": "w0/fixture-window", "parentKey": None, "id": "fixture-window", "name": "Spectre AccessKit Fixture", "role": "window", "platformRole": "frame", "states": [], "value": None, "bounds": {"x": 0, "y": 0, "width": 640, "height": 480}, "onScreen": True},
+            {"key": "w0/fixture-window/primary-button", "parentKey": "w0/fixture-window", "id": "primary-button", "name": "Save changes", "role": "button", "platformRole": "button", "states": ["focusable"], "value": None, "bounds": {"x": 10, "y": 20, "width": 100, "height": 30}, "onScreen": True},
+            {"key": "w0/fixture-window/newsletter", "parentKey": "w0/fixture-window", "id": "newsletter", "name": "Receive updates", "role": "checkbox", "platformRole": "check box", "states": ["checked"], "value": None, "bounds": {"x": 10, "y": 70, "width": 100, "height": 30}, "onScreen": True},
+            {"key": "w0/fixture-window/account-name", "parentKey": "w0/fixture-window", "id": "account-name", "name": "Account name", "role": "entry", "platformRole": "entry", "states": ["focusable"], "value": None, "bounds": {"x": 10, "y": 120, "width": 100, "height": 30}, "onScreen": True},
+            {"key": "w0/fixture-window/disabled-button", "parentKey": "w0/fixture-window", "id": "disabled-button", "name": "Unavailable action", "role": "button", "platformRole": "button", "states": [], "value": None, "bounds": {"x": 10, "y": 400, "width": 100, "height": 30}, "onScreen": True},
+            {"key": "w0/fixture-window/offscreen-button", "parentKey": "w0/fixture-window", "id": "offscreen-button", "name": "Offscreen action", "role": "button", "platformRole": "button", "states": [], "value": None, "bounds": {"x": 10, "y": 900, "width": 100, "height": 30}, "onScreen": False},
+            {"key": "w0/fixture-window/4", "parentKey": "w0/fixture-window", "id": "group-a", "name": "First group"},
+            {"key": "w0/fixture-window/5", "parentKey": "w0/fixture-window", "id": "group-b", "name": "Second group"},
+            {"key": "w0/fixture-window/4/repeated", "parentKey": "w0/fixture-window/4", "id": "repeated", "name": "Repeated in first group"},
+            {"key": "w0/fixture-window/5/0", "parentKey": "w0/fixture-window/5", "id": "repeated", "name": "Repeated sibling one"},
+            {"key": "w0/fixture-window/5/1", "parentKey": "w0/fixture-window/5", "id": "repeated", "name": "Repeated sibling two"},
+        ]
+        snapshot = {"schemaVersion": 2, "source": "os-accessibility", "windows": [{"key": "w0", "title": "Spectre AccessKit Fixture", "bounds": {"x": 0, "y": 0, "width": 640, "height": 480}, "boundsSpace": "screen"}], "nodes": nodes, "notes": []}
+        smoke_lib.assert_accessibility_snapshot(snapshot, system="Linux")
+        with self.assertRaisesRegex(AssertionError, "parentKey"):
+            smoke_lib.assert_accessibility_snapshot({**snapshot, "nodes": [nodes[0], {**nodes[1], "parentKey": "missing"}, *nodes[2:]]}, system="Linux")
+        with self.assertRaisesRegex(AssertionError, "schemaVersion 2"):
+            smoke_lib.assert_accessibility_snapshot(
+                {"schemaVersion": 1, "source": "os-accessibility", "nodes": nodes}, system="Linux"
+            )
+        with self.assertRaisesRegex(AssertionError, "all three repeated"):
+            smoke_lib.assert_accessibility_snapshot(
+                {**snapshot, "nodes": nodes[:-1]}, system="Linux"
+            )
+
+    def test_accesskit_snapshot_contract_matches_real_macos_shape(self):
+        nodes = [
+            {"key": "w0", "parentKey": None, "id": None, "name": "Spectre AccessKit Fixture", "platformRole": "AXWindow", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window", "parentKey": "w0", "id": "fixture-window", "name": None, "platformRole": "AXGroup", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/primary-button", "parentKey": "w0/fixture-window", "id": "primary-button", "name": "Save changes", "platformRole": "AXButton", "states": [], "value": None, "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/newsletter", "parentKey": "w0/fixture-window", "id": "newsletter", "name": "Receive updates", "platformRole": "AXCheckBox", "states": ["checked"], "value": "1", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/account-name", "parentKey": "w0/fixture-window", "id": "account-name", "name": "Account name", "platformRole": "AXTextField", "states": [], "value": "Ada Lovelace", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/disabled-button", "parentKey": "w0/fixture-window", "id": "disabled-button", "name": "Unavailable action", "platformRole": "AXButton", "states": ["disabled"], "value": None, "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/a/repeated", "parentKey": "w0/fixture-window", "id": "repeated", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/b/repeated", "parentKey": "w0/fixture-window", "id": "repeated", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/c/repeated", "parentKey": "w0/fixture-window", "id": "repeated", "bounds": {}, "onScreen": True},
+        ]
+        snapshot = {"schemaVersion": 2, "source": "os-accessibility", "windows": [{"key": "w0", "title": "Spectre AccessKit Fixture", "boundsSpace": "screen"}], "nodes": nodes}
+        smoke_lib.assert_accessibility_snapshot(snapshot, system="Darwin")
+
+    def test_accessibility_limit_contract_uses_cli_exit_five_and_separate_streams(self):
+        partial = {"schemaVersion": 2, "source": "os-accessibility", "nodes": [{}, {}]}
+        completed = SimpleNamespace(
+            returncode=5,
+            stdout=json.dumps(partial),
+            stderr=(
+                "Spectre daemon error: LimitReached: maximumNodeCount 2 reached\n"
+                'Hint: run "spectre guide traps" or "spectre guide --search <words>".\n'
+            ),
+        )
+        smoke_lib.assert_accessibility_limit_result(completed, maximum_node_count=2)
+
+    def test_accesskit_snapshot_contract_matches_real_windows_controls(self):
+        nodes = [
+            {"key": "w0", "parentKey": None, "id": None, "name": "Spectre AccessKit Fixture", "platformRole": "Window", "states": [], "value": None, "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window", "parentKey": "w0", "id": "fixture-window", "name": "Spectre AccessKit Fixture", "platformRole": "Group", "states": [], "value": None, "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/primary-button", "parentKey": "w0/fixture-window", "id": "primary-button", "name": "Save changes", "platformRole": "Button", "states": [], "value": None, "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/newsletter", "parentKey": "w0/fixture-window", "id": "newsletter", "name": "Receive updates", "platformRole": "CheckBox", "states": ["checked"], "value": "on", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/account-name", "parentKey": "w0/fixture-window", "id": "account-name", "name": "Account name", "platformRole": "Edit", "states": [], "value": "Ada Lovelace", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/disabled-button", "parentKey": "w0/fixture-window", "id": "disabled-button", "name": "Unavailable action", "platformRole": "Button", "states": ["disabled"], "value": None, "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/a/repeated", "parentKey": "w0/fixture-window", "id": "repeated", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/b/repeated", "parentKey": "w0/fixture-window", "id": "repeated", "bounds": {}, "onScreen": True},
+            {"key": "w0/fixture-window/c/repeated", "parentKey": "w0/fixture-window", "id": "repeated", "bounds": {}, "onScreen": True},
+        ]
+        snapshot = {"schemaVersion": 2, "source": "os-accessibility", "windows": [{"key": "w0", "title": "Spectre AccessKit Fixture", "boundsSpace": "screen"}], "nodes": nodes}
+        smoke_lib.assert_accessibility_snapshot(snapshot, system="Windows")
 
     def test_pointer_move_api_skip_reason_when_verbs_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1144,6 +1218,154 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
         # release-smoke inserts scripts/ on sys.path for smoke_lib.
         spec.loader.exec_module(module)
         cls.rs = module
+
+    def test_accesskit_ready_line_requires_positive_fixture_pid(self):
+        self.assertEqual(4242, self.rs._accesskit_fixture_pid("SPECTRE_ACCESSKIT_FIXTURE_READY pid=4242"))
+        for line in ("SPECTRE_ACCESSKIT_FIXTURE_READY", "SPECTRE_ACCESSKIT_FIXTURE_READY pid=0", "SPECTRE_ACCESSKIT_FIXTURE_READY pid=oops"):
+            with self.subTest(line=line), self.assertRaises(ValueError):
+                self.rs._accesskit_fixture_pid(line)
+
+    def test_accesskit_fixture_uses_xvfb_on_headless_linux(self):
+        with (
+            unittest.mock.patch.object(self.rs.platform, "system", return_value="Linux"),
+            unittest.mock.patch.object(self.rs, "xvfb_prefix", return_value=["xvfb-run", "-a"]),
+            unittest.mock.patch.object(self.rs, "_private_linux_dbus", return_value=contextlib.nullcontext({})),
+            unittest.mock.patch.object(self.rs.Path, "is_file", return_value=True),
+            unittest.mock.patch.object(self.rs.subprocess, "run"),
+            unittest.mock.patch.object(self.rs.subprocess, "Popen", side_effect=RuntimeError("fixture command captured")) as popen,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "fixture command captured"):
+                self.rs._accesskit_cli_smoke(Path("/tmp/spectre"))
+        self.assertEqual(["xvfb-run", "-a"], popen.call_args.args[0][:2])
+
+    def test_accesskit_private_daemon_environment_is_owner_only_and_short(self):
+        with self.rs._private_daemon_environment() as environment:
+            directory = Path(environment["SPECTRE_DAEMON_SOCKET_DIR"])
+            if os.name == "posix":
+                self.assertEqual(Path("/tmp"), directory.parent)
+                self.assertLess(len(str(directory)), 40)
+                self.assertEqual(0o700, directory.stat().st_mode & 0o777)
+            else:
+                self.assertEqual(Path(tempfile.gettempdir()), directory.parent)
+        self.assertFalse(directory.exists())
+
+    def test_linux_accessibility_state_is_restored_after_failure(self):
+        changes = []
+        with unittest.mock.patch.object(self.rs, "_linux_accessibility_enabled", return_value=False), unittest.mock.patch.object(self.rs, "_set_linux_accessibility_enabled", side_effect=lambda enabled, env: changes.append((enabled, env))):
+            with self.assertRaisesRegex(RuntimeError, "fixture failed"):
+                with self.rs._linux_accessibility_for_smoke({"BUS": "private"}):
+                    raise RuntimeError("fixture failed")
+        self.assertEqual([(True, {"BUS": "private"}), (False, {"BUS": "private"})], changes)
+
+    def test_linux_accessibility_already_enabled_is_not_changed(self):
+        with unittest.mock.patch.object(self.rs, "_linux_accessibility_enabled", return_value=True), unittest.mock.patch.object(self.rs, "_set_linux_accessibility_enabled") as setter:
+            with self.rs._linux_accessibility_for_smoke({}):
+                pass
+        setter.assert_not_called()
+
+    def test_accesskit_ready_wait_is_bounded_for_partial_line(self):
+        process = subprocess.Popen([sys.executable, "-c", "import sys,time;sys.stdout.write('partial');sys.stdout.flush();time.sleep(5)"], stdout=subprocess.PIPE, text=True, start_new_session=True)
+        try:
+            started = time.monotonic()
+            with self.assertRaises(TimeoutError):
+                self.rs._wait_for_accesskit_ready(process, timeout=0.1)
+            self.assertLess(time.monotonic() - started, 1.0)
+        finally:
+            self.rs._terminate_owned_process(process)
+
+    @unittest.skipUnless(os.name == "posix" and hasattr(os, "killpg"), "requires POSIX process groups")
+    def test_terminate_owned_process_kills_descendant_after_wrapper_exits(self):
+        unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import subprocess,sys; child=subprocess.Popen([sys.executable,'-c','import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print(\"ready\", flush=True); time.sleep(30)'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True); child.stdout.readline(); print(child.pid, flush=True)"],
+            stdout=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            assert process.stdout is not None
+            self.assertGreater(int(process.stdout.readline()), 0)
+            process.wait(timeout=2)
+            started = time.monotonic()
+            self.rs._terminate_owned_process(process)
+            self.assertLess(time.monotonic() - started, 2.0)
+            deadline = time.monotonic() + 0.5
+            while time.monotonic() < deadline and self.rs._process_group_has_live_members(process.pid):
+                time.sleep(0.01)
+            self.assertFalse(self.rs._process_group_has_live_members(process.pid))
+            self.assertIsNone(unrelated.poll(), "cleanup must not kill an unrelated process group")
+        finally:
+            unrelated.terminate()
+            unrelated.wait(timeout=2)
+
+    def test_process_group_parser_accepts_proc_comm_with_spaces(self):
+        proc = unittest.mock.Mock()
+        proc.is_dir.return_value = True
+        stat_path = unittest.mock.Mock()
+        stat_path.read_text.return_value = "123 (comm with spaces) S 1 456 456 0"
+        proc.glob.return_value = [stat_path]
+        with (
+            unittest.mock.patch.object(self.rs.platform, "system", return_value="Linux"),
+            unittest.mock.patch.object(self.rs, "Path", return_value=proc),
+        ):
+            self.assertTrue(self.rs._process_group_has_live_members(456))
+
+    def test_darwin_permission_denied_with_only_zombies_is_not_live(self):
+        denied = PermissionError("denied")
+        with (
+            unittest.mock.patch.object(self.rs.platform, "system", return_value="Darwin"),
+            unittest.mock.patch.object(self.rs.os, "killpg", side_effect=denied, create=True),
+            unittest.mock.patch.object(self.rs, "_darwin_process_group_states", return_value=["Z"]),
+        ):
+            self.assertFalse(self.rs._process_group_has_live_members(456))
+
+    def test_darwin_permission_denied_with_live_member_preserves_error(self):
+        denied = PermissionError("denied")
+        with (
+            unittest.mock.patch.object(self.rs.platform, "system", return_value="Darwin"),
+            unittest.mock.patch.object(self.rs.os, "killpg", side_effect=denied, create=True),
+            unittest.mock.patch.object(self.rs, "_darwin_process_group_states", return_value=["S"]),
+        ):
+            with self.assertRaises(PermissionError) as raised:
+                self.rs._process_group_has_live_members(456)
+        self.assertIs(denied, raised.exception)
+
+    def test_darwin_empty_snapshot_then_missing_group_is_not_live(self):
+        denied = PermissionError("denied")
+        with (
+            unittest.mock.patch.object(self.rs.platform, "system", return_value="Darwin"),
+            unittest.mock.patch.object(self.rs.os, "killpg", side_effect=[denied, ProcessLookupError()], create=True),
+            unittest.mock.patch.object(self.rs, "_darwin_process_group_states", return_value=[]),
+        ):
+            self.assertFalse(self.rs._process_group_has_live_members(456))
+
+    def test_darwin_empty_snapshot_with_persistent_denial_preserves_error(self):
+        denied = PermissionError("denied")
+        with (
+            unittest.mock.patch.object(self.rs.platform, "system", return_value="Darwin"),
+            unittest.mock.patch.object(self.rs.os, "killpg", side_effect=[denied, PermissionError("still denied")], create=True),
+            unittest.mock.patch.object(self.rs, "_darwin_process_group_states", return_value=[]),
+        ):
+            with self.assertRaises(PermissionError) as raised:
+                self.rs._process_group_has_live_members(456)
+        self.assertIs(denied, raised.exception)
+
+    def test_private_daemon_cleanup_runs_when_fixture_cleanup_throws(self):
+        order = []
+        process = unittest.mock.Mock(pid=123, stdout=None)
+        with (
+            unittest.mock.patch.object(self.rs.platform, "system", return_value="Darwin"),
+            unittest.mock.patch.object(self.rs, "xvfb_prefix", return_value=[]),
+            unittest.mock.patch.object(self.rs, "_private_daemon_environment", return_value=contextlib.nullcontext({"SPECTRE_DAEMON_SOCKET_DIR": "/tmp/private"})),
+            unittest.mock.patch.object(self.rs.Path, "is_file", return_value=True),
+            unittest.mock.patch.object(self.rs.subprocess, "Popen", return_value=process),
+            unittest.mock.patch.object(self.rs, "_wait_for_accesskit_ready", side_effect=RuntimeError("readiness failed")),
+            unittest.mock.patch.object(self.rs, "_terminate_owned_process", side_effect=RuntimeError("cleanup failed")),
+            unittest.mock.patch.object(self.rs.subprocess, "run", side_effect=lambda command, **kwargs: order.append(command) or unittest.mock.Mock(returncode=0, stdout="", stderr="")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+                self.rs._accesskit_cli_smoke(Path("/tmp/spectre"))
+        self.assertIn([str(Path("/tmp/spectre")), "daemon", "kill"], order)
 
     def test_maven_local_version_is_release_shaped_smoke_coord(self):
         self.assertEqual("0.5.0-rc.smoke", self.rs._maven_local_version("0.5.0"))

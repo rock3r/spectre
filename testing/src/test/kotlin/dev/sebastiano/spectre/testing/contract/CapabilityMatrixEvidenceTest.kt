@@ -205,6 +205,25 @@ class CapabilityMatrixEvidenceTest {
         )
     }
 
+    @Test
+    fun `accessibility tree records an honest cell for every native OS`() {
+        for (platform in
+            listOf(
+                PlatformPrerequisite.MacOsDesktop,
+                PlatformPrerequisite.WindowsDesktop,
+                PlatformPrerequisite.LinuxDesktop,
+            )) {
+            val cell =
+                CapabilityMatrix.cell(
+                    AutomatorOperation.AccessibilityTree,
+                    AutomatorTransport.Cli,
+                    platform,
+                ) ?: error("Missing accessibility tree CLI cell for $platform")
+            assertEquals(CellState.NotYetCiExecuted, cell.state)
+            assertTrue(cell.rationale?.contains("not yet", ignoreCase = true) == true)
+        }
+    }
+
     private companion object {
         // Tests run with module dir as cwd (testing/), so repo root is parent.
         val root: Path = Path.of("..").toAbsolutePath().normalize()

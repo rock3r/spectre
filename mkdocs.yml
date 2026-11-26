@@ -106,6 +106,7 @@ nav:
       - Capability matrix: guide/capability-matrix.md
       - CLI: guide/cli.md
       - Atomic capture: guide/capture.md
+      - Accessibility tree: guide/accessibility.md
       - Compose Hot Reload: guide/hot-reload.md
       - IntelliJ-hosted Compose: guide/intellij.md
       - Troubleshooting: guide/troubleshooting.md

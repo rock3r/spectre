@@ -176,6 +176,15 @@ fi
 grep -F -q 'macos-tcc' "$script" || fail "Windows runner missing macos-tcc required scenario id"
 grep -F -q 'does not use macOS Screen Recording / Accessibility TCC' "$script" || fail "Windows macos-tcc hard n/a reason missing"
 
+# The real entrypoint must resolve cargo.exe before passing it to Invoke-Native, which only
+# accepts literal paths, and must fail closed on the stable Mattone controls and typed limit line.
+grep -F -q 'Get-Command -Name "cargo.exe" -CommandType Application' "$script" || fail "Windows AccessKit cell must resolve cargo.exe as an Application"
+grep -F -q '$cargo.Source' "$script" || grep -F -q '$cargo.Path' "$script" || fail "Windows AccessKit cell must pass cargo's resolved literal path"
+for needle in primary-button newsletter account-name disabled-button 'Save changes' 'Receive updates' 'Ada Lovelace' 'Unavailable action' CheckBox Edit checked disabled; do
+  grep -F -q "$needle" "$script" || fail "Windows AccessKit cell missing stable control assertion: $needle"
+done
+grep -F -q '$limitLines[0] -ne $expectedError' "$script" || fail "Windows AccessKit cell must validate the typed diagnostic line without rejecting the CLI hint"
+
 # --- Optional: parse with pwsh when present (macOS/Linux CI agents may have it) ---
 # Note: this is PowerShell Core parse, not Desktop 5.1; ASCII byte check is the 5.1 stand-in.
 if command -v pwsh >/dev/null 2>&1; then
