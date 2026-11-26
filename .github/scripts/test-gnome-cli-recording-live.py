@@ -47,6 +47,7 @@ class CliRecordingLiveContractTest(unittest.TestCase):
         self.assertIn('\"--observe\"', DRIVER)
         self.assertNotIn("threading", DRIVER)
         self.assertIn("def expected_disappearance", DRIVER)
+        self.assertIn("portal.semantics.profile", DRIVER)
         self.assertIn('\"kind\": \"sample\"', DRIVER)
         self.assertIn('\"kind\": \"transient-removed-node\"', DRIVER)
         self.assertNotIn('\"pickerCount\": None', DRIVER)

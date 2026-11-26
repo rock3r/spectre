@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Grant the GNOME 46 RemoteDesktop portal through its real GTK dialog.
+"""Grant the GNOME 42 or 46 RemoteDesktop portal through its real GTK dialog.
 
 This is verification-VM tooling, not a portal mock. ``--mode portal`` proves
 public D-Bus flow with a tiny client. ``--mode helper`` starts the candidate's
@@ -22,6 +22,7 @@ import dbus
 from dbus.mainloop.glib import DBusGMainLoop
 from gi.repository import GLib
 import pyatspi
+import gnome_portal_dialog_semantics as semantics
 
 PORTAL = "org.freedesktop.portal.Desktop"
 PORTAL_PATH = "/org/freedesktop/portal/desktop"
@@ -89,6 +90,18 @@ def snapshot(nodes, pid: int) -> dict:
     }
 
 
+def facts(nodes) -> list[dict]:
+    return [{"role": clean(node.getRoleName()), "name": clean(node.name),
+             "states": state_names(node), "actions": actions(node)} for node in nodes]
+
+
+def save_snapshot(nodes, pid: int, artifact: Path, **extra) -> None:
+    tree = snapshot(nodes, pid)
+    tree.update(extra)
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(json.dumps(tree, indent=2, sort_keys=True) + "\n")
+
+
 def invoke(node, accepted=("click", "press", "activate", "toggle")) -> None:
     try:
         interface = node.queryAction()
@@ -100,43 +113,60 @@ def invoke(node, accepted=("click", "press", "activate", "toggle")) -> None:
         fail(f"could not uniquely activate {node.getRoleName()} {node.name!r}; actions={actions(node)}")
 
 
-def wait_for_dialog(pid: int, timeout: float = 45):
+def wait_for_dialog(pid: int, artifact: Path, timeout: float = 45):
     deadline = time.monotonic() + timeout
     last = "portal application absent from AT-SPI"
+    last_nodes = []
+    last_counts = {"applications": 0, "matchingDialogs": 0}
     while time.monotonic() < deadline:
         apps = [app for app in pyatspi.Registry.getDesktop(0) if app.get_process_id() == pid]
+        last_counts["applications"] = len(apps)
         if len(apps) == 1:
             nodes = list(descendants(apps[0]))
+            last_nodes = nodes
             dialogs = [node for node in nodes
-                       if node.name == TITLE and node.getRoleName() in ("dialog", "frame")]
+                       if semantics.is_dialog(node.getRoleName(), node.name)]
+            last_counts["matchingDialogs"] = len(dialogs)
             if len(dialogs) == 1:
                 return nodes, dialogs[0]
-            last = f"found {len(dialogs)} {TITLE!r} dialog/frame nodes"
+            last = f"found {len(dialogs)} case-folded {TITLE!r} dialog/frame nodes"
         elif len(apps) > 1:
-            fail(f"backend PID {pid} owns {len(apps)} AT-SPI applications")
+            last_nodes = [node for app in apps for node in descendants(app)]
+            last = f"backend PID owns {len(apps)} AT-SPI applications (expected exactly one)"
         time.sleep(0.2)
-    fail(f"timed out waiting for native GTK dialog from PID {pid}: {last}")
+    save_snapshot(last_nodes, pid, artifact, timedOut=True, counts=last_counts,
+                  relevantTitles=[{"role": clean(node.getRoleName()), "name": clean(node.name)}
+                                  for node in last_nodes if clean(node.name)])
+    fail(f"timed out waiting for native GTK dialog from PID {pid}: {last}; "
+         f"complete sanitized backend subtree and counts saved at {artifact}")
 
 
 def accept_dialog(pid: int, artifact: Path) -> dict:
-    nodes, dialog = wait_for_dialog(pid)
-    tree = snapshot(nodes, pid)
-    artifact.parent.mkdir(parents=True, exist_ok=True)
-    artifact.write_text(json.dumps(tree, indent=2, sort_keys=True) + "\n")
+    nodes, dialog = wait_for_dialog(pid, artifact)
+    dialog_nodes = list(descendants(dialog))
+    dialog_facts = facts(dialog_nodes)
+    matched_profile = semantics.profile(dialog_facts)
+    structure_counts = {
+        "shareButtons": sum(item["role"] == "push button" and
+                            semantics.folded(item["name"]) == "share"
+                            for item in dialog_facts),
+        "remoteInteractionControls": len(semantics.remote_interaction_controls(dialog_facts)),
+        "jammyMonitorRows": len(semantics.jammy_monitor_rows(dialog_facts)),
+        "nobleSelectedSources": len(semantics.selected_noble_sources(dialog_facts)),
+    }
+    save_snapshot(nodes, pid, artifact, matchedProfile=matched_profile,
+                  matchingDialogCount=1, structureCounts=structure_counts)
+    if matched_profile is None:
+        fail(f"native dialog did not uniquely match GNOME 42 or GNOME 46; see {artifact}")
 
-    # GNOME 46 auto-selects its only monitor. Never guess by coordinates or
-    # select a fixture window: MONITOR was the only advertised source type.
-    selected_sources = [node for node in nodes
-                        if node.getRoleName() in ("toggle button", "radio button")
-                        and set(state_names(node)) & {"checked", "selected", "pressed"}
-                        and node.name != "Allow Remote Interaction"]
-    shares = [node for node in nodes
-              if node.name == "Share" and node.getRoleName() == "push button"]
-    if len(selected_sources) != 1 or len(shares) != 1:
-        fail("unexpected GNOME 46 monitor/share structure; complete sanitized tree saved at "
-             f"{artifact} (selected sources={len(selected_sources)}, Share={len(shares)})")
-    remote_input = [node for node in nodes if node.getRoleName() == "check box"
-                    and node.name == "Allow Remote Interaction"]
+    # Never guess by coordinates or select a fixture window: MONITOR was the
+    # only advertised source type. GNOME 46 auto-selects it; GNOME 42 exposes
+    # the physical logical monitor as the sole non-virtual GtkListBox row.
+    shares = [node for node in dialog_nodes if node.getRoleName() == "push button"
+              and semantics.folded(node.name) == "share"]
+    remote_facts = semantics.remote_interaction_controls(dialog_facts)
+    remote_input = [node for node, item in zip(dialog_nodes, dialog_facts)
+                    if item in remote_facts]
     if len(remote_input) != 1:
         fail(f"expected the GNOME remote interaction control in the test VM; see {artifact}")
     if "checked" not in state_names(remote_input[0]):
@@ -146,10 +176,27 @@ def accept_dialog(pid: int, artifact: Path) -> dict:
         time.sleep(0.1)
     if "checked" not in state_names(remote_input[0]):
         fail("GNOME did not acknowledge the requested remote interaction")
-    if "sensitive" not in state_names(shares[0]):
-        fail(f"Share is not enabled after singular monitor auto-selection; see {artifact}")
+    if matched_profile == "gnome-46":
+        selected_sources = [node for node in dialog_nodes
+                            if node.getRoleName() in ("toggle button", "radio button")
+                            and set(state_names(node)) & {"checked", "selected", "pressed"}
+                            and semantics.folded(node.name) != "allow remote interaction"]
+    else:
+        candidates = semantics.jammy_monitor_rows(dialog_facts)
+        selected_sources = [node for node, item in zip(dialog_nodes, dialog_facts)
+                            if item in candidates]
+        if len(selected_sources) == 1 and "selected" not in state_names(selected_sources[0]):
+            invoke(selected_sources[0], accepted=("activate", "click", "press", "select"))
+            deadline = time.monotonic() + 5
+            while "selected" not in state_names(selected_sources[0]) and time.monotonic() < deadline:
+                time.sleep(0.1)
+    if len(selected_sources) != 1 or not (set(state_names(selected_sources[0])) &
+                                          {"checked", "selected", "pressed"}):
+        fail(f"expected one selected physical monitor for {matched_profile}; see {artifact}")
+    if len(shares) != 1 or "sensitive" not in state_names(shares[0]):
+        fail(f"Share is not uniquely enabled after singular monitor selection; see {artifact}")
 
-    selected = {"role": selected_sources[0].getRoleName(),
+    selected = {"profile": matched_profile, "role": selected_sources[0].getRoleName(),
                 "name": clean(selected_sources[0].name),
                 "states": state_names(selected_sources[0])}
     invoke(shares[0])

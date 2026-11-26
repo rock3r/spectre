@@ -58,18 +58,21 @@ def expected_disappearance(error: BaseException) -> bool:
 
 
 def dialog_count(root) -> int:
-    """Count real matching nodes; abort this sample if any traversed node disappears."""
+    """Count only complete GNOME 42/46 pickers; reject title-only lookalikes."""
     count = 0
     pending = [root]
     while pending:
         node = pending.pop()
         if node is None:
             raise AttributeError("NoneType AT-SPI node disappeared")
-        name = node.name
-        role = node.getRoleName()
-        if name == portal.TITLE and role in ("dialog", "frame"):
-            count += 1
-        pending.extend(list(node))
+        children = list(node)
+        if portal.semantics.is_dialog(node.getRoleName(), node.name):
+            dialog_nodes = list(portal.descendants(node))
+            if portal.semantics.profile(portal.facts(dialog_nodes)) is not None:
+                count += 1
+            # The dialog subtree has already been consumed and cannot contain a second picker.
+            continue
+        pending.extend(children)
     return count
 
 
