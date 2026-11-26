@@ -377,6 +377,46 @@ jobs:
             # Each matrix row runs on its own native CPU, including Intel without Rosetta.
             "$published_launcher" --version
             "$published_launcher" --help >/dev/null
+
+            # Exercise helper extraction through the archived CLI's real JVM. Hosted runners
+            # normally have no Screen Recording grant, so explicit denial is a valid result.
+            helper_smoke="$workspace/helper-smoke"
+            helper_dir="$helper_smoke/helper-dir"
+            permission_json="$helper_smoke/permissions.json"
+            mkdir -p "$helper_dir"
+            set +e
+            SPECTRE_AOT=off \
+              JAVA_TOOL_OPTIONS="-Dspectre.recording.screencapturekit.helperDir=$helper_dir" \
+              "$published_launcher" permissions check --json >"$permission_json"
+            permission_exit=$?
+            set -e
+            materialized_app="$helper_dir/SpectreCaptureHelper.app"
+            materialized_helper="$materialized_app/Contents/MacOS/spectre-screencapture"
+            python3 - "$permission_json" "$materialized_helper" "$permission_exit" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          result = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          exit_code = int(sys.argv[3])
+          assert exit_code in (0, 1), f"unexpected permissions exit {exit_code}: {result}"
+          assert result["platform"] == "macos", result
+          assert result["binary"] == str(pathlib.Path(sys.argv[2])), result
+          assert result["granted"] is (exit_code == 0), result
+          PY
+            test -f "$materialized_helper"
+            test -x "$materialized_helper"
+
+            # Both app trees must contain only plain directories/files and be byte-identical.
+            trusted_app="$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app"
+            if find "$trusted_app" "$materialized_app" ! -type d ! -type f -print -quit | grep -q .; then
+              echo "Helper app contains a symlink or other non-regular entry" >&2
+              exit 1
+            fi
+            diff -rq "$trusted_app" "$materialized_app"
+            codesign --verify --deep --strict --verbose=4 "$materialized_app"
+            xcrun stapler validate "$materialized_app"
+            spctl --assess --type execute --verbose=4 "$materialized_app"
             # Launching restores executable modes in place; prove that this final mutation did
             # not invalidate either the nested code seal or the stapled notarisation ticket.
             codesign --verify --deep --strict --verbose=4 "$published_app"
