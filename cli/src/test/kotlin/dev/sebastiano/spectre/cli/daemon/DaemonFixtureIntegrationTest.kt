@@ -18,11 +18,13 @@ import io.modelcontextprotocol.kotlin.sdk.types.Implementation
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import java.awt.GraphicsEnvironment
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -55,6 +57,106 @@ import org.junit.jupiter.api.condition.OS
  */
 @EnabledOnOs(OS.LINUX, OS.MAC, OS.WINDOWS)
 class DaemonFixtureIntegrationTest {
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    fun `packaged CLI and MCP capture an attached JVM through private AT-SPI consent`() {
+        assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a Compose Desktop display")
+        val executable = System.getProperty("spectre.cli.distributionExecutable")
+        assumeTrue(!executable.isNullOrBlank(), "Requires the installable packaged executable")
+        assumeTrue(
+            System.getenv("GSETTINGS_BACKEND") == "memory",
+            "Requires the release smoke's isolated GSettings backend",
+        )
+        val busAddress = System.getenv("DBUS_SESSION_BUS_ADDRESS").orEmpty()
+        val busPath =
+            Regex("(?:^|;)unix:path=([^,;]+)")
+                .find(busAddress)
+                ?.groupValues
+                ?.get(1)
+                ?.let(Paths::get)
+        assumeTrue(busPath != null && Files.exists(busPath), "Requires an existing private D-Bus")
+        val busDirectory = requireNotNull(busPath).parent
+        val socketDirectory =
+            System.getenv("SPECTRE_DAEMON_SOCKET_DIR")?.takeIf(String::isNotBlank)?.let(Paths::get)
+        assumeTrue(
+            socketDirectory != null && Files.isDirectory(socketDirectory),
+            "Requires the release smoke's private daemon socket directory",
+        )
+        val privateSocketDirectory = requireNotNull(socketDirectory)
+        val ownerProbe = Files.createTempFile("spectre-owner-probe-", ".tmp")
+        try {
+            val owner = Files.getOwner(ownerProbe)
+            assumeTrue(
+                Files.getOwner(busDirectory) == owner,
+                "Private D-Bus must be owned by the test user",
+            )
+            assumeTrue(
+                Files.getPosixFilePermissions(busDirectory) ==
+                    PosixFilePermissions.fromString("rwx------"),
+                "Private D-Bus directory must have mode 0700",
+            )
+            assumeTrue(
+                Files.getOwner(privateSocketDirectory) == owner,
+                "Daemon socket directory must be owned by the test user",
+            )
+            assumeTrue(
+                Files.getPosixFilePermissions(privateSocketDirectory) ==
+                    PosixFilePermissions.fromString("rwx------"),
+                "Daemon socket directory must have mode 0700",
+            )
+        } finally {
+            Files.deleteIfExists(ownerProbe)
+        }
+        val atkWrapper = Paths.get("/usr/share/java/java-atk-wrapper.jar")
+        assertTrue(
+            Files.isRegularFile(atkWrapper),
+            "Real Java ATK wrapper provider is not installed",
+        )
+
+        spawnComposeFixture(mapOf("SPECTRE_FIXTURE_ATSPI" to "true")).use { fixture ->
+            val workingDirectory = Paths.get(System.getProperty("user.dir"))
+            val root =
+                if (Files.isRegularFile(workingDirectory.resolve("scripts/mcp-stdio-smoke.py"))) {
+                    workingDirectory
+                } else {
+                    requireNotNull(workingDirectory.parent)
+                }
+            val script = root.resolve("scripts/mcp-stdio-smoke.py")
+            assertTrue(Files.isRegularFile(script), "MCP smoke script not found at $script")
+            val outputFile = Files.createTempFile("spectre-attached-a11y-", ".log")
+            try {
+                val process =
+                    ProcessBuilder(
+                            "python3",
+                            script.toString(),
+                            "--expected-version",
+                            System.getProperty("spectre.project.version"),
+                            "--attach-pid",
+                            fixture.pid.toString(),
+                            "--accessibility-pid",
+                            fixture.pid.toString(),
+                            "--accessibility-capture",
+                            "--",
+                            executable,
+                        )
+                        .apply {
+                            environment()["SPECTRE_DAEMON_SOCKET_DIR"] =
+                                privateSocketDirectory.toString()
+                        }
+                        .redirectErrorStream(true)
+                        .redirectOutput(outputFile.toFile())
+                        .start()
+                val completed = process.waitFor(180, TimeUnit.SECONDS)
+                if (!completed) process.destroyForcibly()
+                val output = Files.readString(outputFile)
+                assertTrue(completed, "combined capture smoke timed out: $output")
+                assertEquals(0, process.exitValue(), output)
+            } finally {
+                Files.deleteIfExists(outputFile)
+            }
+        }
+    }
+
     @Test
     fun `MCP stdio drives a Compose fixture through attach tree click and inline screenshot`() =
         runBlocking {
@@ -629,17 +731,33 @@ private fun spawnComposeFixtureOnce(environment: Map<String, String>): FixturePr
         if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "java.exe"
         else "java"
     val javaBin = Paths.get(System.getProperty("java.home"), "bin", javaExe).toString()
-    val process =
-        ProcessBuilder(
-                javaBin,
+    val atSpi = environment["SPECTRE_FIXTURE_ATSPI"].toBoolean()
+    val classPath =
+        if (atSpi) {
+            "/usr/share/java/java-atk-wrapper.jar${File.pathSeparator}" +
+                System.getProperty("java.class.path")
+        } else {
+            System.getProperty("java.class.path")
+        }
+    val command = buildList {
+        add(javaBin)
+        if (atSpi) {
+            add("-Djavax.accessibility.assistive_technologies=org.GNOME.Accessibility.AtkWrapper")
+        }
+        addAll(
+            listOf(
                 "-cp",
-                System.getProperty("java.class.path"),
+                classPath,
                 "-XX:+EnableDynamicAgentLoading",
                 "-Djava.awt.headless=false",
                 "-Dcompose.application.configure.swing.globals=true",
                 "-Dapple.awt.UIElement=false",
                 "dev.sebastiano.spectre.agent.fixture.ComposeFixtureMainKt",
             )
+        )
+    }
+    val process =
+        ProcessBuilder(command)
             .redirectErrorStream(true)
             .apply { environment().putAll(environment) }
             .start()
