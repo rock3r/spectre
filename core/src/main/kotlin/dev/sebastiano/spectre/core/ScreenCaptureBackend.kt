@@ -278,6 +278,48 @@ internal fun nativeWindowCaptureFor(classLoader: ClassLoader): ((Window) -> Buff
     }
 }
 
+internal fun nativeScreenRegionCaptureFor(
+    classLoader: ClassLoader
+): ((Rectangle) -> BufferedImage)? {
+    val bridge =
+        try {
+            Class.forName(NATIVE_WINDOW_CAPTURE_BRIDGE, false, classLoader)
+        } catch (_: ClassNotFoundException) {
+            return null
+        }
+    val capture =
+        try {
+            bridge.getMethod("captureScreenRegion", Rectangle::class.java)
+        } catch (_: NoSuchMethodException) {
+            return null
+        }
+    return { region ->
+        try {
+            capture.invoke(null, region) as BufferedImage
+        } catch (e: InvocationTargetException) {
+            val cause = e.cause ?: e
+            if (cause is RuntimeException) throw cause
+            throw IllegalStateException("Native screen-region capture bridge failed", cause)
+        }
+    }
+}
+
+internal fun BufferedImage.scaledTo(width: Int, height: Int): BufferedImage {
+    if (this.width == width && this.height == height) return this
+    val scaled = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+    val graphics = scaled.createGraphics()
+    try {
+        graphics.drawImage(this, 0, 0, width, height, null)
+    } finally {
+        graphics.dispose()
+    }
+    return scaled
+}
+
+internal fun macOsRegionCaptureUnavailable(): String =
+    "macOS screen-region capture requires spectre-recording and spectre-recording-macos " +
+        "on the runtime classpath."
+
 private val Window.title: String?
     get() =
         when (this) {

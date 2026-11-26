@@ -22,6 +22,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.io.TempDir
 
 /**
  * #605: every macOS window still used to start a new helper and a new ScreenCaptureKit capture,
@@ -30,6 +31,7 @@ import kotlin.test.assertTrue
  * `--mode stills` helper per window and asks it for each still.
  */
 class ScreenCaptureKitStillSessionsTest {
+    @TempDir lateinit var tempDir: Path
 
     @Test
     fun `repeated stills of an untitled window reuse one helper and one permission check`() {
@@ -252,7 +254,7 @@ class ScreenCaptureKitStillSessionsTest {
             envLookup = { null },
             sysPropLookup = { null },
             materialLocator = { helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf()) },
-            targetDirProvider = { Path.of("/tmp") },
+            targetDirProvider = { tempDir },
         )
 }
 

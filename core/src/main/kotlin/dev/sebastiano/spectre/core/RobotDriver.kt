@@ -31,6 +31,9 @@ internal constructor(
     private val clipboard: ClipboardAdapter = SystemClipboardAdapter(),
     private val tccGuard: MacOsTccGuard = defaultTccGuardFor(robot, robot),
     private val screenCapture: ScreenCaptureAdapter = robot,
+    private val nativeRegionCapture: ((Rectangle) -> BufferedImage)? =
+        nativeScreenRegionCaptureFor(RobotDriver::class.java.classLoader),
+    private val isMacOs: () -> Boolean = ::detectMacOs,
     inputLeasePolicy: InputLeasePolicy = InputLeasePolicy.Off,
     inputLeaseCoordinator: InputLeaseCoordinator = ProductionInputLeaseCoordinator(),
     inputCapabilities: InputCapabilities? = null,
@@ -53,7 +56,7 @@ internal constructor(
 
     /** Whether callers may use a platform capture backend instead of this driver's adapter. */
     internal val allowsPlatformCapture: Boolean
-        get() = screenCapture !== HeadlessThrowingScreenCaptureAdapter
+        get() = screenCapture.gatesMacOsScreenRecordingTcc
 
     // Public surface: the no-argument constructor is the explicit real-OS opt-in
     // (fresh AWT Robot + system clipboard). `ComposeAutomator.inProcess()` defaults to
@@ -433,15 +436,10 @@ internal constructor(
      *   Wide-gamut display profiles can amplify this further. Use a small per-channel tolerance for
      *   any equality-style assertion.
      *
-     * On macOS, the underlying `java.awt.Robot.createScreenCapture` requires the wrapping process
-     * to hold Screen Recording TCC permission. Without it the call returns silently with an
-     * all-black image rather than throwing; a locked console session can produce the same symptom.
-     * The default [RobotDriver] guards against this: on the first `screenshot` call from a Mac, it
-     * checks whether the console is locked, then probes Screen Recording TCC and throws
-     * [IllegalStateException] with an actionable remediation message if capture is blocked. Stable
-     * probe outcomes are cached, so subsequent calls have no extra cost; locked-screen outcomes are
-     * deliberately not cached so unlocking can recover in the same JVM. Use [headless] to opt out
-     * entirely.
+     * On macOS this method uses Spectre's ScreenCaptureKit helper, not
+     * `java.awt.Robot.createScreenCapture`. Screen Recording permission therefore belongs to the
+     * helper instead of the JVM, and the helper's preflight fails without triggering the legacy
+     * CoreGraphics prompt. Add `spectre-recording` and `spectre-recording-macos` at runtime.
      *
      * On Linux, captures work against X11 (real Xorg or XWayland-bridged X clients) but not against
      * native Wayland surfaces — Wayland's security model forbids cross-process framebuffer reads.
@@ -459,18 +457,22 @@ internal constructor(
      *
      * ## Trust boundary
      *
-     * `region` is passed through to `java.awt.Robot.createScreenCapture` unchanged. It is **not**
-     * constrained to the app under test: any rectangle the JVM can see — including other
-     * applications, sensitive on-screen content, and unrelated windows — is fair game. With `region
-     * = null` the capture covers the **entire virtual desktop**. Treat the returned pixels as
-     * OS-visible content rather than as a slice of the test surface. A narrower per-window /
-     * per-node screenshot API is tracked under #96. See
+     * `region` is passed to the platform screen-capture backend unchanged. It is **not**
+     * constrained to the app under test: any rectangle the capture helper or JVM can see —
+     * including other applications, sensitive on-screen content, and unrelated windows — is fair
+     * game. With `region = null` the capture covers the **entire virtual desktop**. Treat the
+     * returned pixels as OS-visible content rather than as a slice of the test surface. A narrower
+     * per-window / per-node screenshot API is tracked under #96. See
      * [the published security notes](https://spectre.sebastiano.dev/SECURITY/) for the full
      * exposure model.
      */
     public fun screenshot(region: Rectangle? = null): BufferedImage {
-        tccGuard.requireScreenRecording()
         val captureRegion = region ?: screenCapture.defaultScreenshotRegion()
+        if (isMacOs() && allowsPlatformCapture) {
+            val native = requireNotNull(nativeRegionCapture) { macOsRegionCaptureUnavailable() }
+            return native(captureRegion).scaledTo(captureRegion.width, captureRegion.height)
+        }
+        tccGuard.requireScreenRecording()
         return screenCapture.createScreenCapture(captureRegion)
     }
 
@@ -489,17 +491,19 @@ internal constructor(
      * asserting on pixels addressed by screen coordinates, since the 1:1 mapping is what makes
      * `boundsOnScreen` usable as an image offset without a density conversion.
      *
-     * **Mixed-density desktops.** `java.awt.Robot` derives one capture scale from the display under
-     * the *centre* of [region], not per display, so a rectangle spanning monitors of different
-     * densities is captured at the centre display's scale: parts on lower-density displays are
-     * upscaled, and — when the centre lands on the lower-density monitor — the higher-density parts
-     * are downsampled. Single-display captures are unaffected. Window-scoped stills use their
-     * native capture backend and fail closed when it is unavailable; they do not substitute this
-     * Robot capture. See [highestResolutionVariant].
+     * On macOS, display-scoped ScreenCaptureKit captures are combined at the scale of the display
+     * under the region's centre, preserving the prior mixed-density sizing contract. Other
+     * platforms retain Robot's equivalent behaviour. Window-scoped stills use their native capture
+     * backend and fail closed when it is unavailable; they do not substitute this region capture.
+     * See [highestResolutionVariant].
      */
     public fun screenshotAtDeviceScale(region: Rectangle? = null): BufferedImage {
-        tccGuard.requireScreenRecording()
         val captureRegion = region ?: screenCapture.defaultScreenshotRegion()
+        if (isMacOs() && allowsPlatformCapture) {
+            val native = requireNotNull(nativeRegionCapture) { macOsRegionCaptureUnavailable() }
+            return native(captureRegion)
+        }
+        tccGuard.requireScreenRecording()
         return screenCapture.createDeviceScaleScreenCapture(captureRegion)
     }
 

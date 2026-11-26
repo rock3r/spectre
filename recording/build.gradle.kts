@@ -61,6 +61,9 @@ val useStubMacHelperForTesting = providers.gradleProperty("stubMacHelperForTesti
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    providers.systemProperty("spectre.test.nativeMacCapture").orNull?.let { value ->
+        systemProperty("spectre.test.nativeMacCapture", value)
+    }
     if (useStubMacHelperForTesting) {
         systemProperty("spectre.test.stubMacHelperForTesting", "true")
     }
