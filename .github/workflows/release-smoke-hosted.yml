@@ -112,6 +112,10 @@ jobs:
           set -eu
           if [[ ${1-} != -a ]]; then exec /usr/bin/xvfb-run "$@"; fi
           shift
+          if [[ -n ${DBUS_SESSION_BUS_ADDRESS:-} ]]; then
+            # The packaged fixture and its CLI must share the release harness's own bus.
+            exec /usr/bin/xvfb-run -a x11-smoke-session "$@"
+          fi
           exec /usr/bin/xvfb-run -a dbus-run-session -- x11-smoke-session "$@"
           LAUNCHER
           cat > "$RUNNER_TEMP/x11-session-tools/x11-smoke-session" <<'SESSION'
@@ -124,8 +128,8 @@ jobs:
             if xprop -root _NET_SUPPORTING_WM_CHECK | grep -q 'window id'; then break; fi
             sleep 0.05
           done
-          xprop -root _NET_SUPPORTING_WM_CHECK | grep 'window id'
-          gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.a11y.Bus.GetAddress
+          xprop -root _NET_SUPPORTING_WM_CHECK | grep 'window id' >/dev/null
+          gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.a11y.Bus.GetAddress >/dev/null
           "$@"
           SESSION
           chmod +x "$RUNNER_TEMP/x11-session-tools/"*
