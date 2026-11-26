@@ -138,9 +138,9 @@
       "prompt": "On Ubuntu GNOME Wayland, my JUnit test passes `RobotDriver(java.awt.Robot())` for real mouse hover and also calls `AutoRecorder().startWindow(...)`. Input never arrives, and capture immediately fails mentioning `spectre permissions request`. Should my `@BeforeEach` retry `spectre permissions request`? How do I fix both?",
       "assertions": [
         "Tells the user NOT to retry or invoke spectre permissions request from JUnit (JUnit runs never open the portal consent dialog)",
-        "Instructs a human at the machine to run spectre permissions request once to store the long-lived Wayland portal grant",
+        "Instructs a human at the machine to run spectre permissions request to start a live helper session, noting that a portal restore token is optional and restoration is not guaranteed",
         "Replaces RobotDriver(java.awt.Robot()) with the no-argument RobotDriver(), explaining that passing a raw java.awt.Robot bypasses Spectre's Wayland portal session and goes through Xwayland",
-        "Shows AutoRecorder().startWindow(window.asTitledWindow(), ...) wrapped in try { ... } finally { handle.stop() } and notes GNOME Mutter window-stream limits (GNOME only; untitled JWindow popups unsupported)"
+        "Shows AutoRecorder().startWindow(window.asTitledWindow(), ...) wrapped in try { ... } finally { handle.stop() } and notes GNOME Mutter window-stream limits (GNOME only; the identity extension must bind the exact PID/XID)"
       ]
     },
     {

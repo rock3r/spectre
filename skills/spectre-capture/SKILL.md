@@ -128,7 +128,9 @@ diff -u \
 
 ## Workflow (`capture → act → capture → diff`) and key lifetime
 
-1. **Settle the UI first** (`waitForIdle`/`waitForVisualIdle` or app-level wait); `capture` does not auto-idle. Visual idle requires native window capture unless the caller explicitly opts into `allowScreenRegionFallback = true` and accepts occlusion-sensitive desktop pixels.
+1. **Settle the UI first** (`waitForIdle`/`waitForVisualIdle` or app-level wait); `capture` does not auto-idle. Visual
+   idle requires native window capture unless the caller explicitly opts into `allowScreenRegionFallback = true` and
+   accepts occlusion-sensitive desktop pixels.
 2. **Capture before** (`spectre capture <session-id> --json`), locate a target by `id`/`testTag` via `jq`, resolve its
    current actionable key with `spectre find`, and act with that live key. Snapshot keys are structural evidence, not
    durable action handles.

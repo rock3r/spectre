@@ -158,7 +158,7 @@ IntelliJ EDT dispatchers, wrap waits in `withContext(Dispatchers.Default) { ... 
   window capture; use before screenshots or after animations. Missing helpers fail immediately.
   Use `allowScreenRegionFallback = true` only when occlusion-sensitive desktop crops are acceptable.
   Without that explicit fallback opt-in, an absent `:recording` module, a helper that cannot launch, missing Wayland
-  grants, or an unsupported Wayland `JWindow` popup (`#640`) fails fast instead of sampling desktop pixels.
+  grants, or a Wayland surface the GNOME identity extension cannot bind fails fast instead of sampling desktop pixels.
 
 ### Screenshots and atomic capture
 
@@ -168,8 +168,8 @@ capturing animated UI.
 
 | Call | Resolution | Backend and failure behaviour |
 |---|---|---|
-| `screenshot()`, `screenshot(region)` | 1 px per logical screen unit (`boundsOnScreen` maps 1:1) | `Robot` capture; no `:recording` needed |
-| `screenshotAtDeviceScale(region)` | Device pixels (2× Retina, 1× Xvfb) | `Robot` multi-resolution capture; derive scale as `image.width / bounds.width` for sub-dp pixel assertions |
+| `screenshot()`, `screenshot(region)` | 1 px per logical screen unit (`boundsOnScreen` maps 1:1) | macOS: ScreenCaptureKit (`spectre-recording` + `spectre-recording-macos`); Windows/Linux Xorg/Xvfb: `Robot` |
+| `screenshotAtDeviceScale(region)` | Device pixels (2× Retina, 1× Xvfb) | Same platform split; derive scale as `image.width / bounds.width` for sub-dp pixel assertions |
 | `screenshot(node)`, `screenshot(windowIndex)`, `capture(windowIndex)` | Device pixels | Native window backend (`:recording` + OS helper); **fails closed** — never falls back to a desktop crop |
 | `screenshotWindows(listOf(0, 1))` | Device pixels on union canvas | Painter's order (owner before popup); returns `CompositeScreenshot` (`composite` is `null` if any window fails) |
 
