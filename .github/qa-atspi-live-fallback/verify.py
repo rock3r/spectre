@@ -76,9 +76,15 @@ def assert_three_node_partial(response):
 def count_prefetch_observation(response, allow_native_failure=False):
     if not response["ok"] and response["error"]["code"] == "no-accessibility-tree":
         assert allow_native_failure, response
-        assert response["error"]["message"] == (
-            "failed to read an AT-SPI child: AT-SPI role reads failed"), response
-        return "native-role-read-failure"
+        diagnostic = response["error"]["message"]
+        observations = {
+            "failed to read an AT-SPI child: AT-SPI role reads failed":
+                "native-role-read-failure",
+            "failed to read an AT-SPI child: AT-SPI GetChildren failed":
+                "native-get-children-failure",
+        }
+        assert diagnostic in observations, response
+        return observations[diagnostic]
     assert_three_node_partial(response)
     return "typed-three-node-partial"
 
@@ -198,6 +204,8 @@ def main():
             # Public fe9 reads the late sibling before descending into the first subtree.
             late_calls = [call for call in own if call["path"] == LATE]
             assert late_calls, own
+            result["countPrefetchDiagnostic"] = (
+                None if response["ok"] else response["error"]["message"])
             if ready["lateMode"] == "error":
                 assert not response["ok"] and response["error"]["code"] == "no-accessibility-tree", response
                 assert any(call["outcome"] == "org.a11y.atspi.Error.NotAvailable"
