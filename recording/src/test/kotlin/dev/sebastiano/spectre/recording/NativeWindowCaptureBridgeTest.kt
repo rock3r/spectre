@@ -22,36 +22,7 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 
 class NativeWindowCaptureBridgeTest {
     @Test
-    fun `full desktop uses scale of display containing bounding rectangle center`() {
-        val displays =
-            listOf(
-                RegionDisplay(0, Rectangle(0, 0, 100, 50), 2.0, 2.0),
-                RegionDisplay(1, Rectangle(100, 0, 300, 100), 1.0, 1.0),
-            )
-
-        val image = composeScreenRegionOrDesktop(null, displays, ::captureSolidRegion)
-
-        assertEquals(400, image.width)
-        assertEquals(100, image.height)
-    }
-
-    @Test
-    fun `full desktop falls back to primary scale when bounding rectangle center is a gap`() {
-        val displays =
-            listOf(
-                RegionDisplay(0, Rectangle(0, 0, 100, 100), 2.0, 2.0),
-                RegionDisplay(1, Rectangle(300, 0, 100, 100), 1.0, 1.0),
-            )
-
-        val image = composeScreenRegionOrDesktop(null, displays, ::captureSolidRegion)
-
-        assertEquals(800, image.width)
-        assertEquals(200, image.height)
-        assertEquals(0, image.getRGB(400, 100), "physical gaps use transparent black padding")
-    }
-
-    @Test
-    fun `full desktop permits gaps and pads them transparently`() {
+    fun `full desktop uses inferred center scale and pads gaps transparently`() {
         val displays =
             listOf(
                 RegionDisplay(0, Rectangle(-100, 0, 100, 100), 2.0, 2.0),
@@ -60,7 +31,7 @@ class NativeWindowCaptureBridgeTest {
         val calls = mutableListOf<Pair<Rectangle, Int>>()
 
         val image =
-            composeFullDesktop(displays, 1.0, 1.0) { local, index ->
+            composeScreenRegionOrDesktop(null, displays) { local, index ->
                 calls += Rectangle(local) to index
                 val scale = displays[index].scaleX.toInt()
                 BufferedImage(
@@ -91,6 +62,21 @@ class NativeWindowCaptureBridgeTest {
     }
 
     @Test
+    fun `full desktop falls back to primary scale when bounding rectangle center is a gap`() {
+        val displays =
+            listOf(
+                RegionDisplay(0, Rectangle(0, 0, 100, 100), 2.0, 2.0),
+                RegionDisplay(1, Rectangle(300, 0, 100, 100), 1.0, 1.0),
+            )
+
+        val image = composeScreenRegionOrDesktop(null, displays, ::captureSolidRegion)
+
+        assertEquals(800, image.width)
+        assertEquals(200, image.height)
+        assertEquals(0, image.getRGB(400, 100), "physical gaps use transparent black padding")
+    }
+
+    @Test
     fun `explicit full desktop bounding rectangle remains strict`() {
         val displays =
             listOf(
@@ -99,7 +85,7 @@ class NativeWindowCaptureBridgeTest {
             )
 
         assertFailsWith<IllegalArgumentException> {
-            composeScreenRegion(Rectangle(-100, 0, 200, 100), displays, 1.0, 1.0) { _, _ ->
+            composeScreenRegionOrDesktop(Rectangle(-100, 0, 200, 100), displays) { _, _ ->
                 error("strict coverage must fail before capture")
             }
         }

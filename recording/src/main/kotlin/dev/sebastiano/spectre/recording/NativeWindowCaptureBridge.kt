@@ -236,29 +236,6 @@ internal fun composeScreenRegionOrDesktop(
     )
 }
 
-/**
- * Captures every real display and uses transparent black for points in their bounding rectangle
- * that belong to no display. Padding is exclusive to the null/full-desktop contract: an explicit
- * rectangle with identical bounds still goes through strict coverage validation below.
- */
-internal fun composeFullDesktop(
-    displays: List<RegionDisplay>,
-    outputScaleX: Double,
-    outputScaleY: Double,
-    capture: (Rectangle, Int) -> BufferedImage,
-): BufferedImage {
-    require(displays.isNotEmpty()) { "macOS ScreenCaptureKit found no displays to capture" }
-    val bounds = displays.map { it.bounds }.reduce(Rectangle::union)
-    return composeScreenRegion(
-        bounds,
-        displays,
-        outputScaleX,
-        outputScaleY,
-        requireCompleteCoverage = false,
-        capture = capture,
-    )
-}
-
 /** Combines display-local SCK captures only after proving that they cover the whole request. */
 internal fun composeScreenRegion(
     region: Rectangle,
