@@ -31,7 +31,7 @@ internal constructor(
     private val clipboard: ClipboardAdapter = SystemClipboardAdapter(),
     internal val tccGuard: MacOsTccGuard = defaultTccGuardFor(robot, robot),
     private val screenCapture: ScreenCaptureAdapter = robot,
-    private val nativeRegionCapture: ((Rectangle) -> BufferedImage)? =
+    private val nativeRegionCapture: ((Rectangle?) -> BufferedImage)? =
         nativeScreenRegionCaptureFor(RobotDriver::class.java.classLoader),
     private val isMacOs: () -> Boolean = ::detectMacOs,
     inputLeasePolicy: InputLeasePolicy = InputLeasePolicy.Off,
@@ -476,7 +476,7 @@ internal constructor(
         val captureRegion = region ?: screenCapture.defaultScreenshotRegion()
         if (isMacOs() && usesNativeMacOsRegionCapture) {
             val native = requireNotNull(nativeRegionCapture) { macOsRegionCaptureUnavailable() }
-            return native(captureRegion).scaledTo(captureRegion.width, captureRegion.height)
+            return native(region).scaledTo(captureRegion.width, captureRegion.height)
         }
         tccGuard.requireScreenRecording()
         return screenCapture.createScreenCapture(captureRegion).also(tccGuard::validateCapture)
@@ -507,7 +507,7 @@ internal constructor(
         val captureRegion = region ?: screenCapture.defaultScreenshotRegion()
         if (isMacOs() && usesNativeMacOsRegionCapture) {
             val native = requireNotNull(nativeRegionCapture) { macOsRegionCaptureUnavailable() }
-            return native(captureRegion)
+            return native(region)
         }
         tccGuard.requireScreenRecording()
         return screenCapture

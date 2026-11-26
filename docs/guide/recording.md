@@ -57,10 +57,12 @@ one pixel per AWT unit, while the latter preserves device pixels. A region that 
 captured one display at a time and combined at the centre display's scale. The runtime needs both
 `spectre-recording` and `spectre-recording-macos`.
 
-The requested rectangle must be completely covered by the current display layout; off-display
-edges and gaps fail instead of becoming transparent pixels. Point-to-pixel dimensions use the
-platform's nearest-pixel rounding (at most half a device pixel), and every helper image must match
-that rounded size before Spectre scales it into the combined image.
+An explicitly requested rectangle must be completely covered by the current display layout;
+off-display edges and gaps fail instead of becoming transparent pixels. The no-argument APIs are
+the deliberate exception: they capture every display in the full virtual-desktop bounding box and
+fill physical gaps between displays with deterministic transparent-black pixels. Point-to-pixel
+dimensions use the platform's nearest-pixel rounding (at most half a device pixel), and every
+helper image must match that rounded size before Spectre scales it into the combined image.
 
 Region stills are one-shot captures and can take a second or more on macOS. Before each one,
 Spectre stops open window-stills sessions so a stuck `replayd` cannot leave two ScreenCaptureKit

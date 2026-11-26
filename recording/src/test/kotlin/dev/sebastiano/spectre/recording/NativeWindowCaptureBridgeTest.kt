@@ -22,6 +22,61 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 
 class NativeWindowCaptureBridgeTest {
     @Test
+    fun `full desktop permits gaps and pads them transparently`() {
+        val displays =
+            listOf(
+                RegionDisplay(0, Rectangle(-100, 0, 100, 100), 2.0, 2.0),
+                RegionDisplay(1, Rectangle(0, 25, 100, 50), 1.0, 1.0),
+            )
+        val calls = mutableListOf<Pair<Rectangle, Int>>()
+
+        val image =
+            composeFullDesktop(displays, 1.0, 1.0) { local, index ->
+                calls += Rectangle(local) to index
+                val scale = displays[index].scaleX.toInt()
+                BufferedImage(
+                        local.width * scale,
+                        local.height * scale,
+                        BufferedImage.TYPE_INT_ARGB,
+                    )
+                    .apply {
+                        val graphics = createGraphics()
+                        try {
+                            graphics.color = if (index == 0) Color.RED else Color.BLUE
+                            graphics.fillRect(0, 0, width, height)
+                        } finally {
+                            graphics.dispose()
+                        }
+                    }
+            }
+
+        assertEquals(
+            listOf(Rectangle(0, 0, 100, 100) to 0, Rectangle(0, 0, 100, 50) to 1),
+            calls,
+        )
+        assertEquals(200, image.width)
+        assertEquals(100, image.height)
+        assertEquals(Color.RED.rgb, image.getRGB(25, 10))
+        assertEquals(Color.BLUE.rgb, image.getRGB(150, 50))
+        assertEquals(0, image.getRGB(150, 10), "physical gaps use transparent black padding")
+    }
+
+    @Test
+    fun `explicit full desktop bounding rectangle remains strict`() {
+        val displays =
+            listOf(
+                RegionDisplay(0, Rectangle(-100, 0, 100, 100), 1.0, 1.0),
+                RegionDisplay(1, Rectangle(0, 25, 100, 50), 1.0, 1.0),
+            )
+
+        assertFailsWith<IllegalArgumentException> {
+            composeScreenRegion(Rectangle(-100, 0, 200, 100), displays, 1.0, 1.0) { _, _ ->
+                error("strict coverage must fail before capture")
+            }
+        }
+    }
+
+    @Test
     fun `vertical mixed-scale displays are composed in desktop coordinates`() {
         val displays =
             listOf(

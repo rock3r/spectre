@@ -87,10 +87,16 @@ internal object NativeWindowCaptureBridge {
     internal fun captureWindow(window: Window): BufferedImage =
         withCaptureLock(window) { screenshotter.captureWindow(captureTargetFor(window)) }
 
-    /** macOS screen-region still entry point loaded reflectively by core. */
+    /** Legacy explicit-region entry point retained for older core/recording pairings. */
     @JvmStatic
     @JvmName("captureScreenRegion")
-    internal fun captureScreenRegion(region: Rectangle): BufferedImage {
+    internal fun captureScreenRegion(region: Rectangle): BufferedImage =
+        captureScreenRegionOrDesktop(region)
+
+    /** Nullable full-desktop entry point loaded reflectively by current core. */
+    @JvmStatic
+    @JvmName("captureScreenRegionOrDesktop")
+    internal fun captureScreenRegionOrDesktop(region: Rectangle?): BufferedImage {
         val environment = GraphicsEnvironment.getLocalGraphicsEnvironment()
         val primary = environment.defaultScreenDevice
         val devices =
@@ -101,11 +107,6 @@ internal object NativeWindowCaptureBridge {
                     { it.defaultConfiguration.bounds.y },
                 )
             )
-        val center = java.awt.Point(region.x + region.width / 2, region.y + region.height / 2)
-        val target =
-            devices
-                .firstOrNull { it.defaultConfiguration.bounds.contains(center) }
-                ?.defaultConfiguration ?: primary.defaultConfiguration
         val screenshotter = ScreenCaptureKitScreenshotter()
         val displays =
             uniqueRegionDisplays(
@@ -119,14 +120,30 @@ internal object NativeWindowCaptureBridge {
                     )
                 }
             )
-        return composeScreenRegion(
-            region = region,
-            displays = displays,
-            outputScaleX = target.defaultTransform.scaleX,
-            outputScaleY = target.defaultTransform.scaleY,
-        ) { local, index ->
+        val capture: (Rectangle, Int) -> BufferedImage = { local, index ->
             screenshotter.captureRegion(local, index)
         }
+        if (region == null) {
+            val target = primary.defaultConfiguration
+            return composeFullDesktop(
+                displays,
+                target.defaultTransform.scaleX,
+                target.defaultTransform.scaleY,
+                capture,
+            )
+        }
+        val center = java.awt.Point(region.x + region.width / 2, region.y + region.height / 2)
+        val target =
+            devices
+                .firstOrNull { it.defaultConfiguration.bounds.contains(center) }
+                ?.defaultConfiguration ?: primary.defaultConfiguration
+        return composeScreenRegion(
+            region,
+            displays,
+            target.defaultTransform.scaleX,
+            target.defaultTransform.scaleY,
+            capture = capture,
+        )
     }
 
     /**
@@ -215,12 +232,36 @@ internal fun uniqueRegionDisplays(displays: List<RegionDisplay>): List<RegionDis
         .distinctBy { it.bounds }
         .mapIndexed { index, display -> display.copy(captureIndex = index) }
 
+/**
+ * Captures every real display and uses transparent black for points in their bounding rectangle
+ * that belong to no display. Padding is exclusive to the null/full-desktop contract: an explicit
+ * rectangle with identical bounds still goes through strict coverage validation below.
+ */
+internal fun composeFullDesktop(
+    displays: List<RegionDisplay>,
+    outputScaleX: Double,
+    outputScaleY: Double,
+    capture: (Rectangle, Int) -> BufferedImage,
+): BufferedImage {
+    require(displays.isNotEmpty()) { "macOS ScreenCaptureKit found no displays to capture" }
+    val bounds = displays.map { it.bounds }.reduce(Rectangle::union)
+    return composeScreenRegion(
+        bounds,
+        displays,
+        outputScaleX,
+        outputScaleY,
+        requireCompleteCoverage = false,
+        capture = capture,
+    )
+}
+
 /** Combines display-local SCK captures only after proving that they cover the whole request. */
 internal fun composeScreenRegion(
     region: Rectangle,
     displays: List<RegionDisplay>,
     outputScaleX: Double,
     outputScaleY: Double,
+    requireCompleteCoverage: Boolean = true,
     capture: (Rectangle, Int) -> BufferedImage,
 ): BufferedImage {
     require(region.width > 0 && region.height > 0) { "Capture region must be non-empty: $region" }
@@ -230,7 +271,7 @@ internal fun composeScreenRegion(
     }
     val uncovered = Area(region)
     parts.forEach { (_, part) -> uncovered.subtract(Area(part)) }
-    require(uncovered.isEmpty) {
+    require(!requireCompleteCoverage || uncovered.isEmpty) {
         "macOS ScreenCaptureKit displays do not cover requested region $region; " +
             "uncovered rectangle ${uncovered.bounds}"
     }
