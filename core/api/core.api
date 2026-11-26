@@ -288,6 +288,20 @@ public final class dev/sebastiano/spectre/core/InputLeasePolicy : java/lang/Enum
 public abstract interface annotation class dev/sebastiano/spectre/core/InternalSpectreApi : java/lang/annotation/Annotation {
 }
 
+public final class dev/sebastiano/spectre/core/MacOsTccDiagnostic : java/lang/Enum {
+	public static final field Denied Ldev/sebastiano/spectre/core/MacOsTccDiagnostic;
+	public static final field Inconclusive Ldev/sebastiano/spectre/core/MacOsTccDiagnostic;
+	public static final field Locked Ldev/sebastiano/spectre/core/MacOsTccDiagnostic;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/sebastiano/spectre/core/MacOsTccDiagnostic;
+	public static fun values ()[Ldev/sebastiano/spectre/core/MacOsTccDiagnostic;
+}
+
+public final class dev/sebastiano/spectre/core/MacOsTccDiagnosticException : java/lang/IllegalStateException {
+	public fun <init> (Ldev/sebastiano/spectre/core/MacOsTccDiagnostic;Ljava/lang/String;)V
+	public final fun getDiagnostic ()Ldev/sebastiano/spectre/core/MacOsTccDiagnostic;
+}
+
 public final class dev/sebastiano/spectre/core/NodeKey {
 	public static final field Companion Ldev/sebastiano/spectre/core/NodeKey$Companion;
 	public fun <init> (Ljava/lang/String;II)V
