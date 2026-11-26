@@ -338,25 +338,33 @@ def _private_linux_dbus(required: bool):
     daemon_environment = os.environ.copy()
     daemon_environment.pop("AT_SPI_BUS_ADDRESS", None)
     daemon_environment["GSETTINGS_BACKEND"] = "memory"
-    process = subprocess.Popen(
-        ["dbus-daemon", "--session", "--nofork", "--print-address=1"],
-        cwd=ROOT,
-        env=daemon_environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        start_new_session=True,
-    )
-    try:
-        address = _read_process_line(process, timeout=10).strip()
-        if not address:
-            raise RuntimeError("private D-Bus daemon emitted no session address")
-        yield {
-            "DBUS_SESSION_BUS_ADDRESS": address,
-            "GSETTINGS_BACKEND": "memory",
-        }
-    finally:
-        _terminate_owned_process(process)
+    with tempfile.TemporaryDirectory(dir="/tmp", prefix="sp-bus-") as socket_directory:
+        socket_path = Path(socket_directory) / "bus"
+        process = subprocess.Popen(
+            [
+                "dbus-daemon",
+                "--session",
+                "--nofork",
+                "--print-address=1",
+                f"--address=unix:path={socket_path}",
+            ],
+            cwd=ROOT,
+            env=daemon_environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            address = _read_process_line(process, timeout=10).strip()
+            if not address:
+                raise RuntimeError("private D-Bus daemon emitted no session address")
+            yield {
+                "DBUS_SESSION_BUS_ADDRESS": address,
+                "GSETTINGS_BACKEND": "memory",
+            }
+        finally:
+            _terminate_owned_process(process)
 
 
 def _linux_accessibility_enabled(env: dict[str, str]) -> bool:
