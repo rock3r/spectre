@@ -151,6 +151,22 @@ class DaemonAccessibilityTreeTest {
         assertEquals(AccessibilityErrorCode.TargetNotFound, failure.error.code)
     }
 
+    @Test
+    fun `mismatched partial error is rejected before reaching daemon output`() {
+        val partial =
+            """{"schemaVersion":2,"source":"os-accessibility","capturedAt":"now","windows":[],"nodes":[],"notes":[]}"""
+        val fixture =
+            fixture(
+                output =
+                    """{"ok":false,"error":{"code":"permission-missing","message":"denied","partialSnapshot":$partial}}"""
+            )
+
+        val response = fixture.registry.handle(DaemonRequest.AccessibilityTree(processId = 42))
+
+        val failure = assertIs<DaemonResponse.Error>(response)
+        assertEquals(DaemonErrorCode.OperationFailed, failure.code)
+    }
+
     private fun fixture(
         output: String =
             """{"ok":true,"snapshot":{"schemaVersion":2,"source":"os-accessibility",

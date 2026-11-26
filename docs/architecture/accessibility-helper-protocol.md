@@ -91,11 +91,11 @@ null, not omitted. A failed optional read stays null; readers do not invent zero
 value, or a disabled state. When bounds are null, `onScreen` is null too. Node order is window order
 followed by pre-order traversal.
 
-On Linux, `platformRole` uses the provider’s `GetRoleName` result when available and the
-AT-SPI role name for a known numeric ID otherwise. The reader reports `disabled` when a
-nonempty state set lacks both `enabled` and `sensitive`. Some AccessKit buttons expose both
-flags even when the application disables them. Their application-level disability cannot be
-determined from those flags or from the absence of an Action interface.
+On Linux, `platformRole` uses the provider's `GetRoleName` result when available and the AT-SPI
+role name for a known numeric ID otherwise. The reader reports `disabled` when a nonempty state set
+lacks both `enabled` and `sensitive`. Some AccessKit buttons expose both flags even when the
+application disables them. Their application-level disability cannot be determined from those
+flags or from the absence of an Action interface.
 
 ## Errors and partial results
 
@@ -116,7 +116,9 @@ failure to restore a Linux accessibility-bus change visible rather than relegati
 `limit-reached` must include the valid pre-order partial snapshot at the exact limit; `timeout` may
 include one. Partial snapshots obey the same unique-key, parent-before-child, window-reference, and
 coordinate-space invariants as complete snapshots. Other errors omit or set `partialSnapshot` to
-null. A structured error is still a valid protocol response and the helper exits zero. Invalid
+null. Callers must preserve an unrecognised future error code, including its raw code, as a
+structured failure rather than treating it as success. A structured error is still a valid
+protocol response and the helper exits zero. Invalid
 requests, corrupt output, and helper crashes use a non-zero exit and are daemon/helper integration
 failures rather than target errors.
 

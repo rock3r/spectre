@@ -31,7 +31,7 @@ dbus-run-session -- xvfb-run -a fixtures/accesskit/run-linux.sh
 ```
 
 Linux needs
-`xvfb at-spi2-core python3-gi python3-pyatspi gir1.2-atspi-2.0 libxkbcommon-x11-0`.
+`xvfb at-spi2-core python3-gi python3-pyatspi gir1.2-atspi-2.0 libxkbcommon-x11-0 libxcursor1`.
 The runner verifies both the reader-style session enable/restore path and an actual
 `accessibility-disabled` refusal while `org.a11y.Status.IsEnabled` is false.
 
