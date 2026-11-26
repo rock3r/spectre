@@ -338,7 +338,8 @@ def _private_linux_dbus(required: bool):
     daemon_environment = os.environ.copy()
     daemon_environment.pop("AT_SPI_BUS_ADDRESS", None)
     daemon_environment["GSETTINGS_BACKEND"] = "memory"
-    with tempfile.TemporaryDirectory(dir="/tmp", prefix="sp-bus-") as socket_directory:
+    parent = "/tmp" if os.name == "posix" else None
+    with tempfile.TemporaryDirectory(dir=parent, prefix="sp-bus-") as socket_directory:
         socket_path = Path(socket_directory) / "bus"
         process = subprocess.Popen(
             [
