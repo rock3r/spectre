@@ -32,6 +32,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 public class AttachedAutomator
 internal constructor(
     public val pid: Long,
+    public val sessionInfo: AttachedSessionInfo =
+        AttachedSessionInfo("unknown", "unknown", "unknown", null),
     private val client: IpcClient,
     private val detacher: Runnable,
 ) : AutoCloseable {

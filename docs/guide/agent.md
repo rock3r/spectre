@@ -116,6 +116,9 @@ dependencies {
    **only when the attacher cwd is inside a Spectre source checkout** (detected via monorepo
    markers). Published consumers should use options 1–3; the fallback is a Spectre-dev convenience.
 
+The first two sources are explicit requests. If either names a path that is not a regular file,
+attach fails and reports that path; it does not continue to classpath or checkout discovery.
+
 With `runtimeOnly(...)`, Gradle lists the runtime jar in the attacher's `java.class.path`.
 Spectre passes that physical path to `VirtualMachine.loadAgent(...)`.
 Attacher code does not call runtime classes directly. The target does not declare
@@ -152,12 +155,17 @@ After attach, methods such as `windows()`, `findByTestTag(...)`, `click(...)`, a
 `screenshot()` send CBOR requests through the socket. The target runs them against its
 in-process automator and returns DTOs or bytes.
 
-The attacher makes a best-effort attempt to start the experimental input coordinator.
-Read-only attach still works if startup fails. Current core selects
-`InputLeasePolicy.Required` on `RobotDriver.synthetic()`.
-Clipboard paste, and real OS input when enabled, then fail if coordination remains unavailable.
-An older preinstalled core without `InputLeasePolicy` or `synthetic()` uses the legacy
-no-argument `RobotDriver` without coordination.
+The attacher starts the experimental input coordinator, and current core selects
+`InputLeasePolicy.Required` on `RobotDriver.synthetic()`. A target core that does not expose both
+`InputLeasePolicy` and `RobotDriver.synthetic(policy)` is rejected. Spectre never substitutes the
+legacy real-OS driver or drops the requested lease policy.
+
+Every successful attach negotiates session information through the agent handshake. `spectre
+attach` and the MCP `attach` tool report the actual driver kind, lease policy, core provenance
+(`preinstalled` or `injected`), manifest version, and warnings. A missing manifest version is
+reported as absent rather than being confused with an unknown/older transport. Warnings include a
+failed coordinator startup and failed AWT peer-module opens, the latter meaning native handles for
+embedded panels may be unavailable.
 
 ### Injection without preinstalled core
 
@@ -490,7 +498,9 @@ spectre --max-frame-bytes 256MiB capture <session-id>
 ```
 
 The flag takes precedence over the environment variable.
-Both accept values up to the 512 MiB read ceiling.
+Both accept values from 1 MiB through the 512 MiB read ceiling. Invalid, undersized, and oversized
+environment values fail at startup just like invalid `--max-frame-bytes` values; they are never
+ignored or clamped.
 
 Propagation matters, because three processes are involved:
 

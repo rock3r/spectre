@@ -335,6 +335,7 @@ internal constructor(
                 return@synchronized DaemonResponse.Attached(
                     sessionId = session.summary.sessionId,
                     targetPid = session.summary.targetPid,
+                    sessionInfo = session.summary.sessionInfo,
                 )
             }
             // Another detach may have started after we waited; re-check under the monitor.
@@ -373,7 +374,7 @@ internal constructor(
         (hotReload as? HotReloadSession)?.start()
         val session =
             DaemonSession(
-                summary = sessionSummaryFor(targetPid),
+                summary = sessionSummaryFor(targetPid, attached.sessionInfo),
                 automator = attached,
                 hotReloadSession = hotReload,
                 keyGuard = keyGuard,
@@ -382,6 +383,7 @@ internal constructor(
         return DaemonResponse.Attached(
             sessionId = session.summary.sessionId,
             targetPid = session.summary.targetPid,
+            sessionInfo = session.summary.sessionInfo,
         )
     }
 
@@ -779,8 +781,15 @@ private fun awaitCountDownLatch(timeoutMs: Long, latch: () -> CountDownLatch?): 
     }
 }
 
-private fun sessionSummaryFor(targetPid: Long): DaemonSessionSummary =
-    DaemonSessionSummary(sessionId = "pid-$targetPid", targetPid = targetPid)
+private fun sessionSummaryFor(
+    targetPid: Long,
+    sessionInfo: DaemonSessionInfo? = null,
+): DaemonSessionSummary =
+    DaemonSessionSummary(
+        sessionId = "pid-$targetPid",
+        targetPid = targetPid,
+        sessionInfo = sessionInfo,
+    )
 
 private fun RecordingResult.toDiagnostics(): DaemonResponse.RecordingDiagnostics =
     DaemonResponse.RecordingDiagnostics(droppedFrames, cropFixedAtStart)
