@@ -151,6 +151,28 @@ jobs:
           done
           xprop -root _NET_SUPPORTING_WM_CHECK | grep 'window id' >/dev/null
           gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.a11y.Bus.GetAddress >/dev/null
+          if [[ " $* " == *" check "* ]]; then
+            (
+              while :; do
+                printf 'sample %s DISPLAY=%s\n' "$(date -u +%FT%T.%3NZ)" "$DISPLAY"
+                focus=$(xdotool getwindowfocus 2>/dev/null || true)
+                printf 'focus xid=%s\n' "$focus"
+                xdotool getmouselocation 2>/dev/null || true
+                while read -r xid; do
+                  details=$(xprop -id "$xid" _NET_WM_PID WM_NAME 2>/dev/null | tr '\n' ' ')
+                  pid=$(xdotool getwindowpid "$xid" 2>/dev/null || true)
+                  if [[ "$pid" =~ ^[0-9]+$ ]]; then
+                    printf 'xid=%s %s ppid=%s cwd=%s ' "$xid" "$details" "$(ps -o ppid= -p "$pid")" "$(readlink "/proc/$pid/cwd")"
+                    xdotool getwindowgeometry "$xid" 2>/dev/null | tr '\n' ' ' || true
+                    echo
+                  fi
+                done < <(xdotool search --onlyvisible --name '.' 2>/dev/null || true)
+                sleep 0.3
+              done
+            ) > "$RUNNER_TEMP/release-smoke-identity/x11-window-owners.txt" 2>&1 &
+            observer=$!
+            trap 'kill "$observer" "$wm_pid" 2>/dev/null || true' EXIT
+          fi
           "$@"
           SESSION
           chmod +x "$RUNNER_TEMP/x11-session-tools/"*
