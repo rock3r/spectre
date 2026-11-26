@@ -1,0 +1,453 @@
+diff --git a/recording/native/linux/src/accessibility.rs b/recording/native/linux/src/accessibility.rs
+index aa9aa3b2e7fdcdbb73a2f7b2ecb3a8db1fbd746b..596b071a88de84de52353ca7cef9ee8a974fe227 100644
+--- a/recording/native/linux/src/accessibility.rs
++++ b/recording/native/linux/src/accessibility.rs
+@@ -1,46 +1,47 @@
+ //! Native AT-SPI2 accessibility snapshot reader.
+ //!
+ //! This deliberately talks to AT-SPI over D-Bus rather than shelling out to the Python fixture
+ //! probe.  The session status is guarded so a setting enabled by this invocation is restored on
+ //! every return path, including timeout and D-Bus errors.
+ 
+ use anyhow::{Context, Result};
+ use dbus::arg::{RefArg, Variant};
+ use dbus::blocking::{Connection, Proxy, SyncConnection};
+ use serde::{Deserialize, Serialize};
+ use std::collections::HashMap;
+ use std::io::{Read, Write};
+ use std::sync::Arc;
+ use std::time::{Duration, Instant};
+ 
+ const CALL_TIMEOUT: Duration = Duration::from_millis(750);
+ // Keep cleanup inside the JVM client's 250 ms post-deadline grace period.
+ const STATUS_RESTORE_TIMEOUT: Duration = Duration::from_millis(100);
+ // AT-SPI has no registration-complete signal after IsEnabled changes.
+ const REGISTRY_SETTLE_TIME: Duration = Duration::from_millis(300);
+ const REGISTRY_POLL_TIME: Duration = Duration::from_millis(20);
++const ROOT_READ_ATTEMPTS: usize = 3;
+ const ATSPI_ROOT: &str = "/org/a11y/atspi/accessible/root";
+ 
+ #[derive(Debug, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ struct Request {
+     target: Target,
+     maximum_depth: usize,
+     maximum_node_count: usize,
+     timeout_ms: u64,
+     #[serde(default)]
+     allow_accessibility_enable: bool,
+ }
+ 
+ #[derive(Debug, Deserialize)]
+ #[serde(tag = "type", rename_all = "kebab-case")]
+ enum Target {
+     ProcessId {
+         value: u32,
+     },
+     WindowId {
+         value: String,
+     },
+     WindowTitle {
+         value: String,
+         #[serde(default, rename = "processId")]
+@@ -230,51 +231,52 @@ fn capture_with_status(
+         .map_err(|e| timed_err(deadline, e))?;
+     check_deadline(deadline, None)?;
+     let bus = Arc::new(SyncConnection::new_address(&address).map_err(|e| timed_err(deadline, e))?);
+     let window_address = find_window(&bus, request, deadline, changed)?;
+     let bounds_space = if std::env::var("XDG_SESSION_TYPE")
+         .map(|v| v.eq_ignore_ascii_case("wayland"))
+         .unwrap_or(false)
+     {
+         "window"
+     } else {
+         "screen"
+     };
+     let mut snapshot = Snapshot {
+         schema_version: 2,
+         source: "os-accessibility",
+         captured_at: now(),
+         windows: Vec::new(),
+         nodes: Vec::new(),
+         notes: if changed {
+             vec!["enabled Linux accessibility for this snapshot; restored the previous setting afterwards".into()]
+         } else {
+             Vec::new()
+         },
+     };
+     let root_data =
+-        read_node(&bus, &window_address, deadline).map_err(|e| timed_err(deadline, e))?;
++        retry_selected_root_read(deadline, || read_node(&bus, &window_address, deadline))
++            .map_err(|e| timed_err(deadline, e))?;
+     let window_bounds = root_data.bounds.clone().ok_or_else(|| {
+         err(
+             "no-accessibility-tree",
+             "the target window did not provide required AT-SPI Component extents",
+         )
+     })?;
+     snapshot.windows.push(Window {
+         key: "w0".into(),
+         title: root_data.name.clone(),
+         bounds: window_bounds.clone(),
+         bounds_space,
+     });
+     let root_key = format!("w0/{}", segment(root_data.id.as_deref(), 0, false));
+     walk(
+         &bus,
+         root_data,
+         root_key,
+         None,
+         0,
+         request,
+         deadline,
+         &window_bounds,
+         &mut snapshot,
+     )?;
+     Ok(snapshot)
+@@ -360,133 +362,166 @@ fn find_window(
+                 Err(error) if is_transient_registration_error(&error) => {
+                     traversal_authoritative = false;
+                     continue;
+                 }
+                 Err(error) => return Err(timed_err(deadline, error)),
+             };
+             for window in windows {
+                 match &request.target {
+                     Target::ProcessId { .. } => return Ok(window),
+                     Target::WindowTitle { value, .. } => {
+                         let p =
+                             bus.with_proxy(&window.bus, window.path.clone(), remaining(deadline));
+                         if find_window_title(&p, deadline)?.as_deref() == Some(value) {
+                             title_matches.push(window);
+                         }
+                     }
+                     Target::WindowId { .. } => unreachable!(),
+                 }
+             }
+         }
+         completed_authoritative_traversal |= traversal_authoritative;
+         if let Target::WindowTitle { value, .. } = &request.target {
+             match unscoped_title_decision(
+                 title_matches,
+                 settle_unscoped_title,
++                traversal_authoritative,
+                 unique_title_seen,
+                 Instant::now(),
+             ) {
+                 TitleDecision::Accept(window) => return Ok(window),
+                 TitleDecision::Ambiguous(count) => {
+                     return Err((
+                         "target-not-found",
+                         format!(
+                             "window title {value:?} is ambiguous across {count} AT-SPI window roots owned by the requested process"
+                         ),
+                         None,
+                     ));
+                 }
+                 TitleDecision::Retry(seen) => unique_title_seen = seen,
+             }
+         }
+         if Instant::now() >= deadline {
+             break;
+         }
+         std::thread::sleep(REGISTRY_POLL_TIME.min(remaining(deadline)));
+     }
+     Err(find_window_expired(request))
+ }
+ 
+ enum TitleDecision {
+     Accept(Address),
+     Ambiguous(usize),
+     Retry(Option<(Address, Instant)>),
+ }
+ 
+ fn unscoped_title_decision(
+     mut matches: Vec<Address>,
+     settle: bool,
++    traversal_authoritative: bool,
+     previous: Option<(Address, Instant)>,
+     now: Instant,
+ ) -> TitleDecision {
++    if matches.len() > 1 {
++        return TitleDecision::Ambiguous(matches.len());
++    }
++    if !traversal_authoritative {
++        return TitleDecision::Retry(None);
++    }
+     match matches.len() {
+-        count if count > 1 => TitleDecision::Ambiguous(count),
+         1 if !settle => TitleDecision::Accept(matches.remove(0)),
+         1 => {
+             let candidate = matches.remove(0);
+             match previous {
+                 Some((previous_candidate, seen))
+                     if previous_candidate.bus == candidate.bus
+                         && previous_candidate.path == candidate.path
+                         && now.saturating_duration_since(seen) >= REGISTRY_SETTLE_TIME =>
+                 {
+                     TitleDecision::Accept(candidate)
+                 }
+                 Some((previous_candidate, seen))
+                     if previous_candidate.bus == candidate.bus
+                         && previous_candidate.path == candidate.path =>
+                 {
+                     TitleDecision::Retry(Some((candidate, seen)))
+                 }
+                 _ => TitleDecision::Retry(Some((candidate, now))),
+             }
+         }
+         _ => TitleDecision::Retry(None),
+     }
+ }
+ 
+ fn should_start_registry_round(
+     now: Instant,
+     deadline: Instant,
+     owner_scoped: bool,
+     completed_authoritative_traversal: bool,
+ ) -> bool {
+     if now >= deadline {
+         return false;
+     }
+     !owner_scoped
+         || !completed_authoritative_traversal
+         || deadline.saturating_duration_since(now) > REGISTRY_POLL_TIME
+ }
+ 
+ fn is_transient_registration_error(error: &anyhow::Error) -> bool {
+     error
+         .downcast_ref::<dbus::Error>()
+         .and_then(dbus::Error::name)
+         .is_some_and(|name| name == "org.freedesktop.DBus.Error.UnknownInterface")
+ }
+ 
++fn is_transient_selected_root_error(error: &anyhow::Error) -> bool {
++    is_transient_registration_error(error)
++        && error.to_string().contains("org.a11y.atspi.Accessible")
++}
++
++fn retry_selected_root_read<T>(
++    deadline: Instant,
++    mut read: impl FnMut() -> Result<T>,
++) -> Result<T> {
++    for attempt in 0..ROOT_READ_ATTEMPTS {
++        if Instant::now() >= deadline {
++            anyhow::bail!("deadline exceeded while reading the selected AT-SPI root")
++        }
++        match read() {
++            Ok(value) => return Ok(value),
++            Err(error)
++                if attempt + 1 < ROOT_READ_ATTEMPTS && is_transient_selected_root_error(&error) =>
++            {
++                std::thread::sleep(REGISTRY_POLL_TIME.min(remaining(deadline)));
++            }
++            Err(error) => return Err(error),
++        }
++    }
++    unreachable!()
++}
++
+ fn restore_result(
+     set_succeeded: bool,
+     readback: std::result::Result<bool, String>,
+ ) -> std::result::Result<(), String> {
+     match readback {
+         Ok(false) => Ok(()),
+         Ok(true) => Err("IsEnabled remained true after the restore attempt".into()),
+         Err(error) if set_succeeded => Err(format!("could not confirm restored state: {error}")),
+         Err(error) => Err(format!(
+             "restore call and state confirmation failed: {error}"
+         )),
+     }
+ }
+ 
+ fn find_window_expired(request: &Request) -> CaptureError {
+     let description = match &request.target {
+         Target::ProcessId { value } => format!("process {value}"),
+         Target::WindowTitle {
+             value,
+             process_id: Some(pid),
+         } => format!("window title {value:?} owned by process {pid}"),
+         Target::WindowTitle {
+             value,
+             process_id: None,
+         } => format!("window title {value:?}"),
+@@ -1223,81 +1258,176 @@ mod tests {
+         );
+     }
+     #[test]
+     fn sensitive_buttons_preserve_the_provider_state_words() {
+         // GNOME GTK button and AccessKit Save changes, respectively.
+         assert_eq!(
+             decode_states(&[1124075520, 0]),
+             ["focusable", "sensitive", "showing", "visible"]
+         );
+         assert_eq!(
+             decode_states(&[1124075776, 0]),
+             ["enabled", "focusable", "sensitive", "showing", "visible"]
+         );
+         assert!(decode_states(&[]).is_empty());
+         assert_eq!(decode_states(&[0, 0]), ["disabled"]);
+     }
+ 
+     #[test]
+     fn newly_enabled_unscoped_title_waits_for_a_stable_registry() {
+         let candidate = Address {
+             bus: ":1.7".into(),
+             path: "/window/1".into(),
+         };
+         let first_seen = Instant::now();
+         assert!(
+-            matches!(unscoped_title_decision(vec![candidate.clone()], true, Some((candidate.clone(), first_seen)), first_seen + REGISTRY_SETTLE_TIME / 2), TitleDecision::Retry(Some((_, seen))) if seen == first_seen)
++            matches!(unscoped_title_decision(vec![candidate.clone()], true, true, Some((candidate.clone(), first_seen)), first_seen + REGISTRY_SETTLE_TIME / 2), TitleDecision::Retry(Some((_, seen))) if seen == first_seen)
+         );
+         assert!(matches!(
+             unscoped_title_decision(
+                 vec![candidate.clone()],
+                 true,
++                true,
+                 Some((candidate, first_seen)),
+                 first_seen + REGISTRY_SETTLE_TIME
+             ),
+             TitleDecision::Accept(_)
+         ));
+     }
+ 
+     #[test]
+     fn late_second_unscoped_title_is_rejected_during_settling() {
+         let matches = vec![
+             Address {
+                 bus: ":1.7".into(),
+                 path: "/window/1".into(),
+             },
+             Address {
+                 bus: ":1.8".into(),
+                 path: "/window/1".into(),
+             },
+         ];
+         assert!(matches!(
+-            unscoped_title_decision(matches, true, None, Instant::now()),
++            unscoped_title_decision(matches, true, false, None, Instant::now()),
+             TitleDecision::Ambiguous(2)
+         ));
+     }
+ 
++    #[test]
++    fn incomplete_title_scan_clears_singleton_stability_before_later_ambiguity() {
++        let candidate = Address {
++            bus: ":1.7".into(),
++            path: "/window/1".into(),
++        };
++        let first_seen = Instant::now() - REGISTRY_SETTLE_TIME;
++        assert!(matches!(
++            unscoped_title_decision(
++                vec![candidate.clone()],
++                true,
++                false,
++                Some((candidate, first_seen)),
++                Instant::now()
++            ),
++            TitleDecision::Retry(None)
++        ));
++
++        let matches = vec![
++            Address {
++                bus: ":1.7".into(),
++                path: "/window/1".into(),
++            },
++            Address {
++                bus: ":1.8".into(),
++                path: "/window/1".into(),
++            },
++        ];
++        assert!(matches!(
++            unscoped_title_decision(matches, true, true, None, Instant::now()),
++            TitleDecision::Ambiguous(2)
++        ));
++    }
++
++    #[test]
++    fn complete_singleton_title_scan_can_be_accepted() {
++        let candidate = Address {
++            bus: ":1.7".into(),
++            path: "/window/1".into(),
++        };
++        assert!(matches!(
++            unscoped_title_decision(vec![candidate], false, true, None, Instant::now()),
++            TitleDecision::Accept(_)
++        ));
++    }
++
++    #[test]
++    fn selected_root_retries_only_accessible_unknown_interface() {
++        let mut calls = 0;
++        let result = retry_selected_root_read(Instant::now() + Duration::from_secs(1), || {
++            calls += 1;
++            if calls == 1 {
++                Err(anyhow::Error::new(dbus::Error::new_custom(
++                    "org.freedesktop.DBus.Error.UnknownInterface",
++                    "No such interface 'org.a11y.atspi.Accessible'",
++                )))
++            } else {
++                Ok(42)
++            }
++        });
++        assert_eq!(result.unwrap(), 42);
++        assert_eq!(calls, 2);
++
++        for (name, message) in [
++            (
++                "org.freedesktop.DBus.Error.UnknownInterface",
++                "org.a11y.atspi.Component",
++            ),
++            (
++                "org.freedesktop.DBus.Error.AccessDenied",
++                "org.a11y.atspi.Accessible",
++            ),
++        ] {
++            let mut calls = 0;
++            let result = retry_selected_root_read(Instant::now() + Duration::from_secs(1), || {
++                calls += 1;
++                Err::<(), _>(anyhow::Error::new(dbus::Error::new_custom(name, message)))
++            });
++            assert!(result.is_err());
++            assert_eq!(calls, 1);
++        }
++    }
++
++    #[test]
++    fn selected_root_retry_respects_expired_deadline() {
++        let mut calls = 0;
++        let result = retry_selected_root_read(Instant::now(), || {
++            calls += 1;
++            Ok(())
++        });
++        assert!(result.is_err());
++        assert_eq!(calls, 0);
++    }
++
+     #[test]
+     fn completed_owner_scan_does_not_begin_a_dbus_round_at_the_deadline_edge() {
+         let now = Instant::now();
+         let deadline = now + REGISTRY_POLL_TIME;
+         assert!(!should_start_registry_round(now, deadline, true, true));
+         assert!(should_start_registry_round(now, deadline, true, false));
+         assert!(should_start_registry_round(now, deadline, false, true));
+     }
+ 
+     #[test]
+     fn restore_requires_confirmed_readback() {
+         assert_eq!(restore_result(true, Ok(false)), Ok(()));
+         assert_eq!(restore_result(false, Ok(false)), Ok(()));
+         assert!(restore_result(false, Ok(true)).is_err());
+         assert!(restore_result(true, Err("read failed".into())).is_err());
+     }
+ 
+     #[test]
+     fn unknown_interface_is_transient_only_during_registration() {
+         let unknown = anyhow::Error::new(dbus::Error::new_custom(
+             "org.freedesktop.DBus.Error.UnknownInterface",
+             "not registered yet",
+         ));
+         let denied = anyhow::Error::new(dbus::Error::new_custom(
+             "org.freedesktop.DBus.Error.AccessDenied",
