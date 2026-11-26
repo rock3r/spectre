@@ -25,6 +25,7 @@ struct DisplayPixelDimensions: Equatable {
 struct DisplayDimensionResolver {
     let bounds: (CGDirectDisplayID) -> CGRect
     let modePixels: (CGDirectDisplayID) -> CGSize?
+    let rotation: (CGDirectDisplayID) -> Double
     let screenScale: (CGDirectDisplayID) -> CGFloat?
 
     init(
@@ -33,6 +34,7 @@ struct DisplayDimensionResolver {
             guard let mode = CGDisplayCopyDisplayMode(displayID) else { return nil }
             return CGSize(width: CGFloat(mode.pixelWidth), height: CGFloat(mode.pixelHeight))
         },
+        rotation: @escaping (CGDirectDisplayID) -> Double = CGDisplayRotation,
         screenScale: @escaping (CGDirectDisplayID) -> CGFloat? = { displayID in
             NSScreen.screens.first { screen in
                 (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
@@ -42,6 +44,7 @@ struct DisplayDimensionResolver {
     ) {
         self.bounds = bounds
         self.modePixels = modePixels
+        self.rotation = rotation
         self.screenScale = screenScale
     }
 
@@ -51,6 +54,9 @@ struct DisplayDimensionResolver {
             throw CLIError(code: 5, message: "display \(displayID) has invalid logical bounds")
         }
         if let pixels = modePixels(displayID), pixels.width > 0, pixels.height > 0 {
+            if abs(rotation(displayID).truncatingRemainder(dividingBy: 180)) == 90 {
+                return DisplayPixelDimensions(width: Int(pixels.height), height: Int(pixels.width))
+            }
             return DisplayPixelDimensions(width: Int(pixels.width), height: Int(pixels.height))
         }
         if let scale = screenScale(displayID), scale > 0 {
