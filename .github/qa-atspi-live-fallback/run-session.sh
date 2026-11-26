@@ -5,7 +5,7 @@ qa=${QA_ROOT:-$(cd "$(dirname "$0")" && pwd)}
 mkdir -p "$ARTIFACTS"
 
 run_provider() {
-  local label=$1 mode=$2 helper=$3 expect=$4
+  local label=$1 mode=$2 helper=$3 expect=$4 compare_helper=${5:-}
   local ready="$ARTIFACTS/$label-ready.json" journal="$ARTIFACTS/$label-provider.jsonl"
   rm -f "$ready" "$journal"
   # The custom provider owns the GTK window's accessibility identity. Prevent GTK's
@@ -21,8 +21,17 @@ run_provider() {
     "destination='$owner'" "sender='$owner'" >"$ARTIFACTS/$label-wire.log" 2>&1 &
   monitor=$!
   sleep .2
-  /usr/bin/python3 "$qa/verify.py" --helper "$helper" --ready "$ready" --journal "$journal" \
-    --artifacts "$ARTIFACTS" --label "$label" --expect "$expect" | tee "$ARTIFACTS/$label-final.stdout"
+  printf '%s\n' "$label" > "$ARTIFACTS/earliest-failure.pending"
+  sha256sum "$helper" > "$ARTIFACTS/$label-helper.sha256"
+  compare_args=()
+  if [[ -n $compare_helper ]]; then
+    compare_args=(--compare-helper "$compare_helper")
+    sha256sum "$compare_helper" > "$ARTIFACTS/$label-compare-helper.sha256"
+  fi
+  timeout --signal=KILL 150s /usr/bin/python3 "$qa/verify.py" --helper "$helper" "${compare_args[@]}" \
+    --ready "$ready" --journal "$journal" --artifacts "$ARTIFACTS" \
+    --label "$label" --expect "$expect" | tee "$ARTIFACTS/$label-final.stdout"
+  rm -f "$ARTIFACTS/earliest-failure.pending"
   kill "$monitor" "$provider" 2>/dev/null || true
   wait "$monitor" 2>/dev/null || true; wait "$provider" 2>/dev/null || true
   # Prove that the native reader itself (not only the independent raw probe) made
@@ -43,4 +52,14 @@ if [[ -n ${CORRECTED_HELPER:-} ]]; then
   run_provider corrected-normal-full normal "$CORRECTED_HELPER" full
   run_provider corrected-error-depth1 error "$CORRECTED_HELPER" cutoff
   run_provider corrected-slow-depth1 slow "$CORRECTED_HELPER" cutoff
+  # maximumNodeCount=3 must descend into the first subtree and never touch the
+  # root's late sibling, including when that sibling is poisoned or slow.
+  run_provider public-fe9-normal-count3 normal "$PREFETCH_HELPER" count-prefetch
+  run_provider public-fe9-error-count3 error "$PREFETCH_HELPER" count-prefetch
+  run_provider public-fe9-slow-count3 slow "$PREFETCH_HELPER" count-prefetch
+  run_provider corrected-normal-count3 normal "$CORRECTED_HELPER" count-cutoff
+  run_provider corrected-error-count3 error "$CORRECTED_HELPER" count-cutoff
+  run_provider corrected-slow-count3 slow "$CORRECTED_HELPER" count-cutoff
+  # Ten independent complete reads share this one real, uncached provider PID.
+  run_provider old-vs-corrected-five-each normal "$PREFETCH_HELPER" comparison "$CORRECTED_HELPER"
 fi
