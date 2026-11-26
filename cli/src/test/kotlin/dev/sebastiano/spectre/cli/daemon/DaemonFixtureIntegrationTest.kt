@@ -726,6 +726,32 @@ private fun spawnComposeFixture(environment: Map<String, String> = emptyMap()): 
     error(lastError ?: "Compose fixture failed to start")
 }
 
+private fun atkWrapperLibraryPath(): String {
+    val process =
+        ProcessBuilder("dpkg-query", "--listfiles", "libatk-wrapper-java-jni")
+            .redirectErrorStream(true)
+            .start()
+    val packageFiles = process.inputStream.bufferedReader().use { it.readText() }
+    check(process.waitFor() == 0) { "Could not list libatk-wrapper-java-jni files: $packageFiles" }
+    val library =
+        checkNotNull(
+            packageFiles
+                .lineSequence()
+                .map(Paths::get)
+                .singleOrNull {
+                    it.isAbsolute && it.fileName?.toString() == "libatk-wrapper.so" &&
+                        Files.isRegularFile(it)
+                }
+        ) {
+            "Expected one installed libatk-wrapper.so in libatk-wrapper-java-jni: $packageFiles"
+        }
+    return listOfNotNull(
+            library.parent.toString(),
+            System.getProperty("java.library.path")?.takeIf(String::isNotEmpty),
+        )
+        .joinToString(File.pathSeparator)
+}
+
 private fun spawnComposeFixtureOnce(environment: Map<String, String>): FixtureProcess {
     val javaExe =
         if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "java.exe"
@@ -743,6 +769,7 @@ private fun spawnComposeFixtureOnce(environment: Map<String, String>): FixturePr
         add(javaBin)
         if (atSpi) {
             add("-Djavax.accessibility.assistive_technologies=org.GNOME.Accessibility.AtkWrapper")
+            add("-Djava.library.path=${atkWrapperLibraryPath()}")
         }
         addAll(
             listOf(
@@ -763,10 +790,17 @@ private fun spawnComposeFixtureOnce(environment: Map<String, String>): FixturePr
             .start()
     val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
     val ready = CountDownLatch(1)
+    val recentOutput = ArrayDeque<String>()
     val drainer =
         Thread({
                 try {
                     generateSequence(reader::readLine).forEach { line ->
+                        synchronized(recentOutput) {
+                            if (recentOutput.size == FIXTURE_OUTPUT_MAX_LINES) {
+                                recentOutput.removeFirst()
+                            }
+                            recentOutput.addLast(line.takeLast(FIXTURE_OUTPUT_MAX_LINE_LENGTH))
+                        }
                         if (line.startsWith(READY_SENTINEL)) ready.countDown()
                     }
                 } catch (_: java.io.IOException) {}
@@ -775,18 +809,22 @@ private fun spawnComposeFixtureOnce(environment: Map<String, String>): FixturePr
                 isDaemon = true
                 start()
             }
+    val fixture = FixtureProcess(process, reader, drainer)
+    fun startupOutput(): String {
+        fixture.close()
+        return synchronized(recentOutput) { recentOutput.joinToString("\n") }
+    }
+
     check(ready.await(FIXTURE_READY_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-        process.destroyForcibly()
-        "Compose fixture did not emit $READY_SENTINEL"
+        "Compose fixture did not emit $READY_SENTINEL. Recent child output:\n${startupOutput()}"
     }
     // READY is printed before the JVM is always attachable; give the target a short settle
     // window so VirtualMachine.attach is less likely to race (macOS CI flakes).
     Thread.sleep(FIXTURE_ATTACH_SETTLE_MS)
     check(process.isAlive) {
-        process.destroyForcibly()
-        "Compose fixture exited immediately after $READY_SENTINEL"
+        "Compose fixture exited immediately after $READY_SENTINEL. Recent child output:\n${startupOutput()}"
     }
-    return FixtureProcess(process, reader, drainer)
+    return fixture
 }
 
 private fun runCliBinary(daemonUser: String, vararg arguments: String): CliBinaryResult {
@@ -1232,6 +1270,8 @@ private fun ByteArray.startsWith(prefix: ByteArray): Boolean =
     size >= prefix.size && prefix.indices.all { this[it] == prefix[it] }
 
 private const val FIXTURE_READY_TIMEOUT_SECONDS: Long = 30
+private const val FIXTURE_OUTPUT_MAX_LINES: Int = 40
+private const val FIXTURE_OUTPUT_MAX_LINE_LENGTH: Int = 1_000
 private const val FIXTURE_STOP_TIMEOUT_SECONDS: Long = 2
 private const val DRAINER_JOIN_TIMEOUT_MILLIS: Long = 500
 private const val CLI_PROCESS_TIMEOUT_SECONDS: Long = 30
