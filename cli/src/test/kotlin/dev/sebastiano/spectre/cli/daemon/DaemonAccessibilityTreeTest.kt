@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.cli.daemon
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.RectDto
+import dev.sebastiano.spectre.agent.transport.WindowIdentityDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
@@ -10,6 +11,8 @@ import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -19,6 +22,120 @@ import kotlin.test.assertTrue
 import org.junit.jupiter.api.io.TempDir
 
 class DaemonAccessibilityTreeTest {
+    @OptIn(ExperimentalSpectreAgentApi::class)
+    @Test
+    fun `attached tree rejects title ABA during native helper without returning its payload`() {
+        val observedTitles = mutableListOf("A")
+        val endCalls = AtomicInteger()
+        val fixture =
+            fixture(
+                output =
+                    """
+                    {
+                      "ok": true,
+                      "snapshot": {
+                        "schemaVersion": 2,
+                        "source": "os-accessibility",
+                        "capturedAt": "now",
+                        "windows": [],
+                        "nodes": [],
+                        "notes": ["B marker"]
+                      }
+                    }
+                    """
+                        .trimIndent(),
+                automator =
+                    TestDaemonSessionAutomator(
+                        windowsResult = { listOf(window(0, observedTitles.last())) },
+                        windowIdentitiesResult = { listOf(identity(0, observedTitles.last())) },
+                        endWindowChangeCaptureResult = {
+                            endCalls.incrementAndGet()
+                            1L
+                        },
+                    ),
+                helperAction = {
+                    observedTitles += "B"
+                    observedTitles += "A"
+                },
+            )
+        fixture.registry.handle(DaemonRequest.Attach(44))
+
+        val response =
+            fixture.registry.handle(DaemonRequest.AccessibilityTree(sessionId = "pid-44"))
+
+        val failure = assertIs<DaemonResponse.AccessibilityErrorResult>(response)
+        assertEquals(AccessibilityErrorCode.TargetNotFound, failure.error.code)
+        assertTrue(failure.error.message.contains("changed"))
+        assertEquals(listOf("A", "B", "A"), observedTitles)
+        assertEquals(1, endCalls.get())
+    }
+
+    @OptIn(ExperimentalSpectreAgentApi::class)
+    @Test
+    fun `attached tree with stable target succeeds and ends guard exactly once`() {
+        val endCalls = AtomicInteger()
+        val fixture =
+            fixture(
+                automator =
+                    TestDaemonSessionAutomator(
+                        windowsResult = { listOf(window(0, "A")) },
+                        windowIdentitiesResult = { listOf(identity(0, "A")) },
+                        endWindowChangeCaptureResult = {
+                            endCalls.incrementAndGet()
+                            0L
+                        },
+                    )
+            )
+        fixture.registry.handle(DaemonRequest.Attach(44))
+
+        val response =
+            fixture.registry.handle(DaemonRequest.AccessibilityTree(sessionId = "pid-44"))
+
+        assertIs<DaemonResponse.AccessibilitySnapshotResult>(response)
+        assertEquals(1, endCalls.get())
+    }
+
+    @OptIn(ExperimentalSpectreAgentApi::class)
+    @Test
+    fun `accessibility capture rejects change after native tree and writes no artifacts`(
+        @TempDir out: Path
+    ) {
+        val pixelsCaptured = AtomicBoolean()
+        val endCalls = AtomicInteger()
+        val fixture =
+            fixture(
+                automator =
+                    TestDaemonSessionAutomator(
+                        windowsResult = { listOf(window(0, "A")) },
+                        windowIdentitiesResult = { listOf(identity(0, "A")) },
+                        captureResult = { index ->
+                            pixelsCaptured.set(true)
+                            TestDaemonSessionAutomator().capture(index)
+                        },
+                        endWindowChangeCaptureResult = {
+                            endCalls.incrementAndGet()
+                            if (pixelsCaptured.get()) 1L else 0L
+                        },
+                    )
+            )
+        fixture.registry.handle(DaemonRequest.Attach(44))
+
+        val response =
+            fixture.registry.handle(
+                DaemonRequest.Capture(
+                    "pid-44",
+                    outDir = out.toString(),
+                    source = DaemonCaptureSource.Accessibility,
+                )
+            )
+
+        val failure = assertIs<DaemonResponse.AccessibilityErrorResult>(response)
+        assertEquals(AccessibilityErrorCode.TargetNotFound, failure.error.code)
+        assertTrue(pixelsCaptured.get(), "guard was not checked after native tree and pixels")
+        assertEquals(1, endCalls.get())
+        assertTrue(Files.list(out).use { it.findAny().isEmpty }, "capture artifacts were written")
+    }
+
     @Test
     fun `standalone accessibility accepts timeout above sixty seconds`() {
         val response =
@@ -276,6 +393,22 @@ class DaemonAccessibilityTreeTest {
 
     private fun window(index: Int, title: String) =
         WindowSummaryDto(index, "surface-$index", title, false, RectDto(0, 0, 10, 10))
+
+    @OptIn(ExperimentalSpectreAgentApi::class)
+    private fun identity(index: Int, title: String) =
+        WindowIdentityDto(
+            index = index,
+            surfaceId = "surface-$index",
+            title = title,
+            isPopup = false,
+            nativeHandle = 100L + index,
+            cropRequired = false,
+            windowBoundsOnScreen = RectDto(0, 0, 10, 10),
+            surfaceBoundsOnScreen = RectDto(0, 0, 10, 10),
+            surfaceBoundsInWindow = RectDto(0, 0, 10, 10),
+            scaleX = 1.0,
+            scaleY = 1.0,
+        )
 
     private class Fixture(
         val registry: DaemonSessionRegistry,

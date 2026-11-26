@@ -36,5 +36,6 @@ class WindowChangeCaptureTest {
 private fun <T> onEdt(block: () -> T): T {
     var value: T? = null
     SwingUtilities.invokeAndWait { value = block() }
-    @Suppress("UNCHECKED_CAST") return value as T
+    @Suppress("UNCHECKED_CAST")
+    return value as T
 }
