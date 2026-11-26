@@ -125,7 +125,7 @@ def _accesskit_fixture_pid(ready_line: str) -> int:
 
 @contextlib.contextmanager
 def _private_daemon_environment():
-    parent = None if platform.system() == "Windows" else "/tmp"
+    parent = "/tmp" if os.name == "posix" else None
     directory = Path(tempfile.mkdtemp(prefix="sp-a11y-", dir=parent))
     if os.name == "posix":
         directory.chmod(0o700)
