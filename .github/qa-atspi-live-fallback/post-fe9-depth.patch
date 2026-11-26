@@ -1,8 +1,8 @@
 diff --git a/recording/native/linux/src/accessibility.rs b/recording/native/linux/src/accessibility.rs
-index c8a8a7a686b861c94590a967f06e3b42f3aa1bc3..2b1dfa02b2b1eed1a9a8773be5b5902664b66aca 100644
+index c8a8a7a686b861c94590a967f06e3b42f3aa1bc3..9a8ecd3bdfbccbca394d818011515a23563ad744 100644
 --- a/recording/native/linux/src/accessibility.rs
 +++ b/recording/native/linux/src/accessibility.rs
-@@ -1311,166 +1311,177 @@ fn walk_cached(
+@@ -1311,166 +1311,180 @@ fn walk_cached(
              Some(key.clone()),
              depth + 1,
              request,
@@ -129,7 +129,9 @@ index c8a8a7a686b861c94590a967f06e3b42f3aa1bc3..2b1dfa02b2b1eed1a9a8773be5b59026
 -                }
 -            };
 -            child_data.push((child_address, child_data_result));
--        }
++        if snapshot.nodes.len() >= request.maximum_node_count {
++            return node_limit_error(request.maximum_node_count, snapshot);
+         }
 -    }
 -    let mut ids = HashMap::new();
 -    for (_, child) in &child_data {
@@ -237,7 +239,8 @@ index c8a8a7a686b861c94590a967f06e3b42f3aa1bc3..2b1dfa02b2b1eed1a9a8773be5b59026
      error: impl std::fmt::Display,
      deadline: Instant,
      snapshot: &mut Snapshot,
-@@ -2498,50 +2509,176 @@ mod tests {
+@@ -2497,50 +2511,240 @@ mod tests {
+             ["w0/root", "w0/root/0"]
          );
  
          root.children.clear();
@@ -262,35 +265,41 @@ index c8a8a7a686b861c94590a967f06e3b42f3aa1bc3..2b1dfa02b2b1eed1a9a8773be5b59026
          .is_ok());
          assert_eq!(snapshot.nodes.len(), 1);
      }
-     #[test]
-+    fn uncached_walk_stops_before_late_sibling_at_depth_boundary() {
-+        use std::sync::Mutex;
 +
-+        let address = |path: &str| Address {
++    fn test_address(path: &str) -> Address {
++        Address {
 +            bus: ":1.42".into(),
 +            path: path.to_string().into(),
-+        };
-+        let node = |id: &str, role: u32, children: Vec<Address>| NodeData {
++        }
++    }
++
++    fn test_node(id: &str, children: Vec<Address>) -> NodeData {
++        NodeData {
 +            id: Some(id.into()),
-+            raw_role: Some(role),
-+            platform_role: Some(format!("role-{role}")),
++            raw_role: None,
++            platform_role: None,
 +            name: Some(id.into()),
 +            states: vec![],
 +            value: None,
 +            bounds: None,
 +            children,
 +            interfaces: vec![],
-+        };
-+        let root = node(
++        }
++    }
++
++    #[test]
++    fn uncached_walk_stops_before_late_sibling_at_depth_boundary() {
++        use std::sync::Mutex;
++
++        let root = test_node(
 +            "root",
-+            68,
-+            vec![address("/first"), address("/late_failing")],
++            vec![test_address("/first"), test_address("/late_failing")],
 +        );
 +        let calls = Mutex::new(Vec::new());
 +        let read = |child: &Address, _| {
 +            calls.lock().unwrap().push(child.path.to_string());
 +            match child.path.to_string().as_str() {
-+                "/first" => Ok(node("first", 43, vec![address("/grandchild")])),
++                "/first" => Ok(test_node("first", vec![test_address("/grandchild")])),
 +                _ => anyhow::bail!("late sibling must not be requested"),
 +            }
 +        };
@@ -323,46 +332,97 @@ index c8a8a7a686b861c94590a967f06e3b42f3aa1bc3..2b1dfa02b2b1eed1a9a8773be5b59026
 +        let partial = partial.unwrap();
 +        assert_eq!(calls.into_inner().unwrap(), ["/first"]);
 +        assert_eq!(partial.nodes.len(), 2);
-+        assert_eq!(partial.nodes[1].platform_role.as_deref(), Some("role-43"));
 +        assert_eq!(partial.nodes[1].key, "w0/root/0");
 +    }
 +
 +    #[test]
-+    fn uncached_walk_preserves_complete_keys_and_deeper_boundary_order() {
-+        use std::sync::Mutex;
++    fn uncached_walk_checks_dynamic_node_budget_before_late_sibling_read() {
++        use std::sync::atomic::{AtomicUsize, Ordering};
 +
-+        let address = |path: &str| Address {
-+            bus: ":1.42".into(),
-+            path: path.to_string().into(),
++        let late_calls = AtomicUsize::new(0);
++        let read = |child: &Address, _| match child.path.to_string().as_str() {
++            "/branch" => Ok(test_node("branch", vec![test_address("/leaf")])),
++            "/leaf" => Ok(test_node("leaf", vec![])),
++            "/late_poison" => {
++                late_calls.fetch_add(1, Ordering::SeqCst);
++                anyhow::bail!("late poison must not be requested")
++            }
++            path => anyhow::bail!("unexpected read: {path}"),
 +        };
-+        let node = |id: &str, children: Vec<Address>| NodeData {
-+            id: Some(id.into()),
-+            raw_role: None,
-+            platform_role: None,
-+            name: None,
-+            states: vec![],
-+            value: None,
-+            bounds: None,
-+            children,
-+            interfaces: vec![],
-+        };
++        let mut request = request();
++        request.maximum_depth = 10;
++        request.maximum_node_count = 3;
++        let mut snapshot = empty_snapshot();
++        let result = walk_with_reader(
++            test_node(
++                "root",
++                vec![test_address("/branch"), test_address("/late_poison")],
++            ),
++            "w0/root".into(),
++            None,
++            0,
++            &request,
++            Instant::now() + Duration::from_secs(1),
++            &Rect {
++                x: 0,
++                y: 0,
++                width: 1,
++                height: 1,
++            },
++            &mut snapshot,
++            &read,
++        );
++
++        let (code, message, partial) = result.unwrap_err();
++        assert_eq!(
++            (code, message.as_str()),
++            ("limit-reached", "maximumNodeCount 3 reached")
++        );
++        assert_eq!(late_calls.load(Ordering::SeqCst), 0);
++        let partial = partial.unwrap();
++        assert_eq!(
++            partial
++                .nodes
++                .iter()
++                .map(|node| (node.key.as_str(), node.parent_key.as_deref()))
++                .collect::<Vec<_>>(),
++            [
++                ("w0/root", None),
++                ("w0/root/0", Some("w0/root")),
++                ("w0/root/0/leaf", Some("w0/root/0")),
++            ]
++        );
++    }
++
++    #[test]
++    fn uncached_walk_preserves_complete_mixed_tree_keys_and_parent_links() {
 +        let tree: HashMap<String, NodeData> = HashMap::from([
-+            ("/a".into(), node("same", vec![])),
-+            ("/b".into(), node("same", vec![])),
++            (
++                "/unique".into(),
++                test_node("unique", vec![test_address("/nested")]),
++            ),
++            ("/nested".into(), test_node("nested", vec![])),
++            ("/duplicate_a".into(), test_node("same", vec![])),
++            ("/duplicate_b".into(), test_node("same", vec![])),
 +        ]);
-+        let calls = Mutex::new(Vec::new());
-+        let read = |a: &Address, _| {
-+            calls.lock().unwrap().push(a.path.to_string());
-+            tree.get(&a.path.to_string())
++        let read = |address: &Address, _| {
++            tree.get(&address.path.to_string())
 +                .cloned()
 +                .ok_or_else(|| anyhow::anyhow!("unexpected read"))
 +        };
 +        let mut request = request();
-+        request.maximum_depth = 3;
++        request.maximum_depth = 10;
 +        request.maximum_node_count = 10;
 +        let mut snapshot = empty_snapshot();
 +        walk_with_reader(
-+            node("root", vec![address("/a"), address("/b")]),
++            test_node(
++                "root",
++                vec![
++                    test_address("/unique"),
++                    test_address("/duplicate_a"),
++                    test_address("/duplicate_b"),
++                ],
++            ),
 +            "w0/root".into(),
 +            None,
 +            0,
@@ -378,17 +438,24 @@ index c8a8a7a686b861c94590a967f06e3b42f3aa1bc3..2b1dfa02b2b1eed1a9a8773be5b59026
 +            &read,
 +        )
 +        .unwrap();
-+        assert_eq!(calls.into_inner().unwrap(), ["/a", "/b"]);
++
 +        assert_eq!(
 +            snapshot
 +                .nodes
 +                .iter()
-+                .map(|n| n.key.as_str())
++                .map(|node| (node.key.as_str(), node.parent_key.as_deref()))
 +                .collect::<Vec<_>>(),
-+            ["w0/root", "w0/root/0", "w0/root/1"]
++            [
++                ("w0/root", None),
++                ("w0/root/unique", Some("w0/root")),
++                ("w0/root/unique/nested", Some("w0/root/unique")),
++                ("w0/root/1", Some("w0/root")),
++                ("w0/root/2", Some("w0/root")),
++            ]
 +        );
 +    }
-+    #[test]
++
+     #[test]
      fn rejects_process_target_outside_linux_pid_range() {
          let request: Request = serde_json::from_str(
              r#"{"target":{"type":"process-id","value":2147483648},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#,
@@ -413,4 +480,3 @@ index c8a8a7a686b861c94590a967f06e3b42f3aa1bc3..2b1dfa02b2b1eed1a9a8773be5b59026
          // that a complete traversal also uses when a later sibling repeats the id.
          assert_eq!(child_segment(Some("repeated"), 0, false, true), "0");
          assert_eq!(child_segment(Some("repeated"), 0, true, false), "0");
-     }
