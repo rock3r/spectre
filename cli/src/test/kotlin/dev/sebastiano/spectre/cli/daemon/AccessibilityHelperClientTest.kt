@@ -1,10 +1,13 @@
 package dev.sebastiano.spectre.cli.daemon
 
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import java.util.stream.Stream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -307,6 +310,27 @@ class AccessibilityHelperClientTest {
     }
 
     @Test
+    fun `deadline failure retains an independently observable cleanup failure`() {
+        val helper = ControlledProcess(exitOnDestroy = false)
+
+        val error = assertFailsWith<IllegalStateException> { exchangeWithHelper(helper, "{}", 1) }
+
+        assertEquals("Accessibility helper exceeded its 1ms deadline", error.message)
+        assertEquals(1, error.suppressed.size)
+        assertEquals(
+            "Accessibility helper did not stop within its cleanup deadline",
+            error.suppressed.single().message,
+        )
+    }
+
+    @Test
+    fun `positive maximum timeout does not overflow deadline arithmetic`() {
+        val helper = ControlledProcess(exitOnDestroy = true, initiallyAlive = false)
+
+        assertEquals("response", exchangeWithHelper(helper, "{}", Long.MAX_VALUE))
+    }
+
+    @Test
     fun `real helper startup failure is reported`() {
         val missing = Files.createTempDirectory("missing-helper").resolve("does-not-exist")
         assertFailsWith<java.io.IOException> {
@@ -377,4 +401,42 @@ class AccessibilityHelperClientTest {
                 if (System.getProperty("os.name").startsWith("Windows")) "java.exe" else "java",
             )
             .toString()
+
+    private class ControlledProcess(
+        private val exitOnDestroy: Boolean,
+        initiallyAlive: Boolean = true,
+    ) : Process() {
+        private var alive = initiallyAlive
+
+        override fun getOutputStream() = ByteArrayOutputStream()
+
+        override fun getInputStream() = ByteArrayInputStream("response".toByteArray())
+
+        override fun getErrorStream() = ByteArrayInputStream(ByteArray(0))
+
+        override fun waitFor(): Int {
+            alive = false
+            return 0
+        }
+
+        override fun waitFor(timeout: Long, unit: TimeUnit) = !alive
+
+        override fun exitValue(): Int {
+            check(!alive)
+            return 0
+        }
+
+        override fun destroy() {
+            if (exitOnDestroy) alive = false
+        }
+
+        override fun destroyForcibly(): Process {
+            destroy()
+            return this
+        }
+
+        override fun isAlive() = alive
+
+        override fun descendants(): Stream<ProcessHandle> = Stream.empty()
+    }
 }
