@@ -35,7 +35,7 @@ class ProtocolCompatTest {
         // library with a runtime built on either side of the @ByteString or visual-capture-policy
         // changes. Those pairings would otherwise advertise the same version and pass the
         // exact-match handshake, then fail late or silently capture a Robot screen region.
-        assertEquals(4, ProtocolVersion.CURRENT, "bump this when wire behavior changes")
+        assertEquals(5, ProtocolVersion.CURRENT, "bump this when wire behavior changes")
     }
 
     private val udsPath: Path =

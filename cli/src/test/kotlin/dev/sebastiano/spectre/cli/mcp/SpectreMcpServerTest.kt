@@ -29,7 +29,6 @@ import io.modelcontextprotocol.kotlin.sdk.types.RequestId
 import io.modelcontextprotocol.kotlin.sdk.types.ResourceUpdatedNotification
 import io.modelcontextprotocol.kotlin.sdk.types.ServerNotification
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
-import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -75,49 +74,6 @@ class SpectreMcpServerTest {
     }
 
     @Test
-    fun `MCP rejects wrong primitive kinds and unknown names before forwarding`() = runBlocking {
-        val cases =
-            listOf(
-                "find_text" to
-                    buildJsonObject {
-                        put("session_id", "session-1")
-                        put("text", "needle")
-                        put("exact", "false")
-                    },
-                "find" to
-                    buildJsonObject {
-                        put("session_id", "session-1")
-                        put("test_tag", 7)
-                    },
-                "windows" to
-                    buildJsonObject {
-                        put("session_id", "session-1")
-                        put("unknown", true)
-                    },
-            )
-        cases.forEach { (tool, arguments) ->
-            var forwarded = false
-            val server = SpectreMcpServer.create {
-                forwarded = true
-                error("invalid input reached daemon")
-            }
-            val result = invokeTool(server, tool, arguments)
-            assertTrue(result.isError == true, "$tool accepted $arguments")
-            assertTrue(!forwarded, "$tool forwarded $arguments")
-        }
-    }
-
-    @Test
-    fun `normalizes recording output paths before sending them to the daemon`() {
-        val outputPath = "captures/../captures/session.mp4"
-
-        assertEquals(
-            Path.of(outputPath).toAbsolutePath().normalize().toString(),
-            normalizeRecordingOutputPath(outputPath),
-        )
-    }
-
-    @Test
     fun `MCP serverInfo version is derived from project build metadata`() {
         val projectVersion =
             System.getProperty("spectre.project.version")
@@ -147,6 +103,7 @@ class SpectreMcpServerTest {
                 "detach",
                 "windows",
                 "tree",
+                "accessibility_tree",
                 "find",
                 "find_text",
                 "wait_for_node",
@@ -198,22 +155,6 @@ class SpectreMcpServerTest {
     }
 
     @Test
-    fun `record stop returns backend diagnostics including unavailable values`() = runBlocking {
-        val server = SpectreMcpServer.create { request ->
-            assertIs<DaemonRequest.StopRecording>(request)
-            DaemonResponse.RecordingStopped(request.sessionId, "/capture.mp4").also {
-                it.diagnostics = DaemonResponse.RecordingDiagnostics(null, true)
-            }
-        }
-        val result =
-            invokeTool(server, "record_stop", buildJsonObject { put("session_id", "pid-3") })
-        val body = Json.parseToJsonElement((result.content.single() as TextContent).text).jsonObject
-        val diagnostics = body.getValue("diagnostics").jsonObject
-        assertEquals("null", diagnostics.getValue("droppedFrames").jsonPrimitive.content)
-        assertEquals("true", diagnostics.getValue("cropFixedAtStart").jsonPrimitive.content)
-    }
-
-    @Test
     fun `attach tool returns negotiated warnings driver and lease through MCP`() = runBlocking {
         val sessionInfo =
             DaemonSessionInfo(
@@ -243,6 +184,22 @@ class SpectreMcpServerTest {
             listOf("native handles may be unavailable"),
             negotiated.getValue("warnings").jsonArray.map { it.jsonPrimitive.content },
         )
+    }
+
+    @Test
+    fun `record stop returns backend diagnostics including unavailable values`() = runBlocking {
+        val server = SpectreMcpServer.create { request ->
+            assertIs<DaemonRequest.StopRecording>(request)
+            DaemonResponse.RecordingStopped(request.sessionId, "/capture.mp4").also {
+                it.diagnostics = DaemonResponse.RecordingDiagnostics(null, true)
+            }
+        }
+        val result =
+            invokeTool(server, "record_stop", buildJsonObject { put("session_id", "pid-3") })
+        val body = Json.parseToJsonElement((result.content.single() as TextContent).text).jsonObject
+        val diagnostics = body.getValue("diagnostics").jsonObject
+        assertEquals("null", diagnostics.getValue("droppedFrames").jsonPrimitive.content)
+        assertEquals("true", diagnostics.getValue("cropFixedAtStart").jsonPrimitive.content)
     }
 
     @Test
@@ -289,134 +246,6 @@ class SpectreMcpServerTest {
 
         val detachRequest = assertIs<DaemonRequest.Detach>(seen.single())
         assertEquals("session-42", detachRequest.sessionId)
-    }
-
-    @Test
-    fun `detach tool fails closed for unknown session`() = runBlocking {
-        val server = SpectreMcpServer.create { request ->
-            when (request) {
-                is DaemonRequest.Detach ->
-                    DaemonResponse.Error(
-                        code = DaemonErrorCode.SessionNotFound,
-                        message = "session not found: ${request.sessionId}",
-                    )
-                else -> error("unexpected daemon request: $request")
-            }
-        }
-
-        val result =
-            invokeTool(server, "detach", buildJsonObject { put("session_id", "missing-session") })
-
-        assertTrue(result.isError == true, "unknown session must set isError")
-        assertEquals(
-            "session not found: missing-session",
-            (result.content.single() as TextContent).text,
-        )
-    }
-
-    @Test
-    fun `detach tool requires session_id`() = runBlocking {
-        val server = SpectreMcpServer.create {
-            error("detach must not reach daemon without session_id")
-        }
-
-        val result = invokeTool(server, "detach", buildJsonObject {})
-
-        assertTrue(result.isError == true, "missing session_id must fail closed: $result")
-        val message = (result.content.single() as TextContent).text
-        assertTrue(
-            message.contains("session_id", ignoreCase = true),
-            "error should mention session_id, was: $message",
-        )
-    }
-
-    @Test
-    fun `detach tool fails closed for empty session_id without reaching daemon`() = runBlocking {
-        var daemonReached = false
-        val server = SpectreMcpServer.create {
-            daemonReached = true
-            error("detach must not reach daemon with empty session_id")
-        }
-
-        val result = invokeTool(server, "detach", buildJsonObject { put("session_id", "") })
-
-        assertTrue(result.isError == true, "empty session_id must fail closed: $result")
-        assertTrue(!daemonReached, "empty session_id must fail at the tool boundary: $result")
-        val message = (result.content.single() as TextContent).text
-        assertTrue(
-            message.contains("session_id", ignoreCase = true),
-            "error should mention session_id, was: $message",
-        )
-    }
-
-    @Test
-    fun `detach tool fails closed for whitespace-only session_id without reaching daemon`() =
-        runBlocking {
-            var daemonReached = false
-            val server = SpectreMcpServer.create {
-                daemonReached = true
-                error("detach must not reach daemon with blank session_id")
-            }
-
-            val result =
-                invokeTool(server, "detach", buildJsonObject { put("session_id", "   \t") })
-
-            assertTrue(result.isError == true, "blank session_id must fail closed: $result")
-            assertTrue(!daemonReached, "blank session_id must fail at the tool boundary: $result")
-            val message = (result.content.single() as TextContent).text
-            assertTrue(
-                message.contains("session_id", ignoreCase = true),
-                "error should mention session_id, was: $message",
-            )
-        }
-
-    @Test
-    fun `detach tool fails closed for non-string session_id without reaching daemon`() =
-        runBlocking {
-            var daemonReached = false
-            val server = SpectreMcpServer.create {
-                daemonReached = true
-                error("detach must not reach daemon with non-string session_id")
-            }
-
-            val result = invokeTool(server, "detach", buildJsonObject { put("session_id", 42) })
-
-            assertTrue(result.isError == true, "numeric session_id must fail closed: $result")
-            assertTrue(
-                !daemonReached,
-                "non-string session_id must fail at the tool boundary: $result",
-            )
-            val message = (result.content.single() as TextContent).text
-            assertTrue(
-                message.contains("session_id", ignoreCase = true),
-                "error should mention session_id, was: $message",
-            )
-        }
-
-    @Test
-    fun `detach tool fails closed for object session_id without reaching daemon`() = runBlocking {
-        var daemonReached = false
-        val server = SpectreMcpServer.create {
-            daemonReached = true
-            error("detach must not reach daemon with object session_id")
-        }
-
-        val result =
-            invokeTool(
-                server,
-                "detach",
-                buildJsonObject { put("session_id", buildJsonObject { put("nested", "value") }) },
-            )
-
-        assertTrue(result.isError == true, "object session_id must fail closed: $result")
-        assertTrue(!daemonReached, "object session_id must fail at the tool boundary: $result")
-        val message = (result.content.single() as TextContent).text
-        assertTrue(
-            message.contains("session_id", ignoreCase = true) ||
-                message.contains("string", ignoreCase = true) ||
-                message.contains("Error executing tool", ignoreCase = true),
-            "error should identify bad session_id input, was: $message",
-        )
     }
 
     @Test

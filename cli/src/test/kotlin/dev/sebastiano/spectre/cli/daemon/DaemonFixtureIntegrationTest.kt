@@ -123,7 +123,23 @@ class DaemonFixtureIntegrationTest {
                     assertTrue(
                         java.util.Base64.getDecoder().decode(image.data).startsWith(PNG_MAGIC)
                     )
-                    assertMcpDetachReleasesSession(client, attached)
+                    fixture.dropTarget()
+                    val dropped =
+                        client.callTool(
+                            "accessibility_tree",
+                            mapOf("session_id" to attached),
+                        )
+                    assertTrue(dropped.isError == true, "dropped target must be an MCP error")
+                    assertTrue(
+                        dropped.content.filterIsInstance<TextContent>().any {
+                            it.text.isNotBlank()
+                        },
+                        "dropped target must carry the daemon diagnostic: ${dropped.content}",
+                    )
+                    assertTrue(
+                        mcpText(client, "list_processes", emptyMap()).contains("processes"),
+                        "the MCP connection must survive the failed session lookup",
+                    )
                 }
             } finally {
                 transport.close()
@@ -259,6 +275,9 @@ class DaemonFixtureIntegrationTest {
                         .exitCode,
                 )
                 assertTrue(Files.readAllBytes(screenshot).startsWith(PNG_MAGIC))
+
+                fixture.dropTarget()
+                assertCliDroppedTargetIsStructuredAndDaemonLives(daemonUser, sessionId)
             }
         } finally {
             runCatching { runCliBinary(daemonUser, "daemon", "kill") }
@@ -873,6 +892,25 @@ private suspend fun mcpText(client: Client, tool: String, arguments: Map<String,
     return (result.content.single() as TextContent).text
 }
 
+private fun assertCliDroppedTargetIsStructuredAndDaemonLives(
+    daemonUser: String,
+    sessionId: String,
+) {
+    val dropped = runCliBinary(daemonUser, "a11y", "tree", "--session", sessionId)
+    assertTrue(dropped.exitCode != 0, "dropped target must fail: ${dropped.output}")
+    assertTrue(dropped.errorOutput.isNotBlank(), "dropped target must have a diagnostic")
+    assertTrue(
+        !dropped.errorOutput.contains("closed the connection before responding"),
+        "daemon must return its structured error: ${dropped.errorOutput}",
+    )
+    val afterFailure = runCliBinary(daemonUser, "ps", "--json")
+    assertEquals(
+        0,
+        afterFailure.exitCode,
+        "an independent CLI operation must still work: ${afterFailure.errorOutput}",
+    )
+}
+
 private suspend fun mcpAttachSession(client: Client, pid: Long): String =
     mcpText(client, "attach", mapOf("pid" to pid)).let { response ->
         Json.parseToJsonElement(response).jsonObject.getValue("sessionId").jsonPrimitive.content
@@ -1056,6 +1094,13 @@ private class FixtureProcess(
 ) : AutoCloseable {
     val pid: Long
         get() = process.pid()
+
+    fun dropTarget() {
+        process.destroyForcibly()
+        check(process.waitFor(FIXTURE_STOP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            "Compose fixture did not stop"
+        }
+    }
 
     override fun close() {
         process.destroyForcibly()

@@ -109,6 +109,7 @@ class SpectreMcpStdioIntegrationTest {
                 assertEquals(
                     setOf(
                         "attach",
+                        "accessibility_tree",
                         "capture",
                         "click",
                         "detach",

@@ -254,6 +254,7 @@ jobs:
           xvfb-run -a ./gradlew :agent:test \
             --tests "*AgentAttachIntegrationTest*" \
             --tests "*AgentContractCorpusTest*" \
+            --tests "*WindowChangeCaptureTest*" \
             --rerun-tasks
         shell: bash
 
@@ -400,7 +401,8 @@ jobs:
           # the script under `set -e` (same pattern as the verifier above).
           verify_agent_xml() {
             local class_name="$1"
-            local xml="agent/build/test-results/test/TEST-dev.sebastiano.spectre.agent.${class_name}.xml"
+            local package_name="${2:-dev.sebastiano.spectre.agent}"
+            local xml="agent/build/test-results/test/TEST-${package_name}.${class_name}.xml"
             if [ ! -f "$xml" ]; then
               echo "::error::Missing JUnit XML report $xml — :agent:test never ran $class_name"
               exit 1
@@ -429,6 +431,7 @@ jobs:
           }
           verify_agent_xml "AgentAttachIntegrationTest"
           verify_agent_xml "AgentContractCorpusTest"
+          verify_agent_xml "WindowChangeCaptureTest" "dev.sebastiano.spectre.agent.runtime"
         shell: bash
 
       - name: Upload validation artefacts

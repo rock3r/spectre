@@ -13,12 +13,16 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.measureTime
 import org.junit.jupiter.api.io.TempDir
 
 class AccessibilityHelperClientTest {
+    private val request = AccessibilitySnapshotRequest(Target.ProcessId(1), 4, 10, 100)
+    private val helper = Path.of("recorded-helper")
+
     @Test
     fun `decodes a recorded successful helper response without a desktop`() {
         val response = AccessibilityHelperClient { _, _, _ ->
@@ -32,6 +36,8 @@ class AccessibilityHelperClientTest {
         val success = assertIs<AccessibilitySnapshotResponse.Success>(response)
         assertEquals("w0/app/0", success.snapshot.nodes.single().key)
         assertEquals(BoundsSpace.Screen, success.snapshot.windows.single().boundsSpace)
+        assertNull(success.snapshot.nodes.single().bounds)
+        assertNull(success.snapshot.nodes.single().onScreen)
     }
 
     @Test
@@ -48,6 +54,8 @@ class AccessibilityHelperClientTest {
         assertEquals(2, snapshot?.schemaVersion)
         assertEquals("os-accessibility", snapshot?.source)
         assertEquals("w0/root", snapshot?.nodes?.single()?.key)
+        assertNull(snapshot?.nodes?.single()?.bounds)
+        assertNull(snapshot?.nodes?.single()?.onScreen)
     }
 
     @Test
@@ -71,6 +79,131 @@ class AccessibilityHelperClientTest {
     }
 
     @Test
+    fun `partial snapshot presence is validated against every emitted error reason`() {
+        fun decode(code: String, partial: String = "null") = AccessibilityHelperClient { _, _, _ ->
+            """{"ok":false,"error":{"code":"$code","message":"failed","partialSnapshot":$partial}}"""
+        }
+            .snapshot(request, helper)
+
+        val validPartial = snapshotJson(nodes = "")
+        assertFailsWith<IllegalArgumentException> { decode("limit-reached") }
+        assertIs<AccessibilitySnapshotResponse.Failure>(decode("limit-reached", validPartial))
+        assertIs<AccessibilitySnapshotResponse.Failure>(decode("timeout"))
+        assertIs<AccessibilitySnapshotResponse.Failure>(decode("timeout", validPartial))
+        listOf(
+                "permission-missing",
+                "accessibility-disabled",
+                "target-not-found",
+                "no-accessibility-tree",
+                "restore-failed",
+                "unsupported-target",
+            )
+            .forEach { code ->
+                assertIs<AccessibilitySnapshotResponse.Failure>(decode(code))
+                assertFailsWith<IllegalArgumentException>(code) { decode(code, validPartial) }
+            }
+    }
+
+    @Test
+    fun `requires truly boolean ok`() {
+        listOf("1", "\"true\"", "null").forEach { ok ->
+            assertFailsWith<IllegalArgumentException>(ok) {
+                AccessibilityHelperClient { _, _, _ ->
+                        """{"ok":$ok,"snapshot":${snapshotJson()}}"""
+                    }
+                    .snapshot(request, helper)
+            }
+        }
+    }
+
+    @Test
+    fun `requires window scoped preorder parents and permits a depth limited forest`() {
+        val twoWindows =
+            """{"key":"w0","title":null,"bounds":{"x":0,"y":0,"width":1,"height":1},"boundsSpace":"screen"},
+               {"key":"w1","title":null,"bounds":{"x":0,"y":0,"width":1,"height":1},"boundsSpace":"screen"}"""
+        assertFailsWith<IllegalArgumentException> {
+            decodeSuccess(snapshotJson(nodes = node("w0/root", "w0/root")))
+        }
+        val childBeforeParent = node("w0/parent/child", "w0/parent") + "," + node("w0/parent", null)
+        assertFailsWith<IllegalArgumentException> {
+            decodeSuccess(snapshotJson(windows = twoWindows, nodes = childBeforeParent))
+        }
+        val priorCrossWindowParent = node("w0/root", null) + "," + node("w1/child", "w0/root")
+        assertFailsWith<IllegalArgumentException> {
+            decodeSuccess(snapshotJson(windows = twoWindows, nodes = priorCrossWindowParent))
+        }
+        assertIs<AccessibilitySnapshotResponse.Success>(
+            decodeSuccess(
+                snapshotJson(
+                    windows = twoWindows,
+                    nodes = node("w0/root", null) + "," + node("w1/root", null),
+                )
+            )
+        )
+    }
+
+    @Test
+    fun `rejects duplicate nodes`() {
+        val root = node("w0/root", null)
+        assertFailsWith<IllegalArgumentException> {
+            decodeSuccess(snapshotJson(nodes = "$root,$root"))
+        }
+    }
+
+    @Test
+    fun `rejects unknown coordinate space with its raw value`() {
+        val failure =
+            assertFailsWith<IllegalArgumentException> {
+                decodeSuccess(snapshotJson().replace("\"screen\"", "\"desktop-logical\""))
+            }
+        assertTrue(failure.message.orEmpty().contains("desktop-logical"))
+    }
+
+    @Test
+    fun `unknown helper error remains a typed failure with its raw code`() {
+        val failure =
+            assertIs<AccessibilitySnapshotResponse.Failure>(
+                AccessibilityHelperClient { _, _, _ ->
+                        """{"ok":false,"error":{"code":"reader-busy","message":"busy"}}"""
+                    }
+                    .snapshot(request, helper)
+            )
+        assertEquals(AccessibilityErrorCode.Unknown, failure.error.code)
+        assertEquals("reader-busy", failure.error.rawCode)
+        assertNull(failure.error.partialSnapshot)
+    }
+
+    @Test
+    fun `restore failure is a known native failure without a stale partial snapshot`() {
+        val failure =
+            assertIs<AccessibilitySnapshotResponse.Failure>(
+                AccessibilityHelperClient { _, _, _ ->
+                        """{"ok":false,"error":{"code":"restore-failed","message":"restore denied"}}"""
+                    }
+                    .snapshot(request, helper)
+            )
+
+        assertEquals(AccessibilityErrorCode.RestoreFailed, failure.error.code)
+        assertNull(failure.error.rawCode)
+        assertNull(failure.error.partialSnapshot)
+    }
+
+    @Test
+    fun `validated response owns all snapshot collections`() {
+        val response =
+            assertIs<AccessibilitySnapshotResponse.Success>(decodeSuccess(snapshotJson()))
+        assertFailsWith<UnsupportedOperationException> {
+            (response.snapshot.windows as MutableList).clear()
+        }
+        assertFailsWith<UnsupportedOperationException> {
+            (response.snapshot.nodes.single().states as MutableList).add("changed")
+        }
+        assertFailsWith<UnsupportedOperationException> {
+            (response.snapshot.notes as MutableList).add("changed")
+        }
+    }
+
+    @Test
     fun `passes command and bounded request to helper`() {
         var stdin = ""
         val helper = Files.createTempFile("spectre-helper", "")
@@ -85,6 +218,21 @@ class AccessibilityHelperClientTest {
 
         assertIs<AccessibilitySnapshotResponse.Failure>(response)
         assertTrue(stdin.contains("\"maximumNodeCount\":5"))
+    }
+
+    @Test
+    fun `decodes successful nodes with unknown geometry`() {
+        val response = AccessibilityHelperClient { _, _, _ ->
+            javaClass.getResource("/accessibility/unknown-geometry.json")!!.readText()
+        }
+            .snapshot(
+                AccessibilitySnapshotRequest(Target.ProcessId(42), 20, 2_000, 750),
+                java.nio.file.Path.of("recorded-helper"),
+            )
+
+        val node = assertIs<AccessibilitySnapshotResponse.Success>(response).snapshot.nodes.single()
+        assertNull(node.bounds)
+        assertNull(node.onScreen)
     }
 
     @Test
@@ -237,6 +385,21 @@ class AccessibilityHelperClientTest {
 
     private fun request(timeoutMs: Long) =
         AccessibilitySnapshotRequest(Target.ProcessId(1), 1, 1, timeoutMs)
+
+    private fun decodeSuccess(snapshot: String) = AccessibilityHelperClient { _, _, _ ->
+        """{"ok":true,"snapshot":$snapshot}"""
+    }
+        .snapshot(request, helper)
+
+    private fun snapshotJson(
+        windows: String =
+            """{"key":"w0","title":null,"bounds":{"x":0,"y":0,"width":1,"height":1},"boundsSpace":"screen"}""",
+        nodes: String = node("w0/root", null),
+    ) =
+        """{"schemaVersion":2,"source":"os-accessibility","capturedAt":"now","windows":[$windows],"nodes":[$nodes],"notes":[]}"""
+
+    private fun node(key: String, parent: String?) =
+        """{"key":"$key","parentKey":${parent?.let { "\"$it\"" } ?: "null"},"id":null,"platformRole":null,"role":null,"name":null,"states":[],"value":null,"bounds":null,"onScreen":null}"""
 
     private fun awaitFixture(description: String, ready: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)

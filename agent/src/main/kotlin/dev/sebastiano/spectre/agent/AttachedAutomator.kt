@@ -381,6 +381,18 @@ internal constructor(
             ?: throw wireMismatch("WindowIdentities", resp)
     }
 
+    public fun beginWindowChangeCapture(): Long {
+        val response = exchange(AgentRequest.BeginWindowChangeCapture)
+        return (response as? AgentResponse.WindowChangeCapture)?.token
+            ?: throw wireMismatch("WindowChangeCapture", response)
+    }
+
+    public fun endWindowChangeCapture(token: Long): Long {
+        val response = exchange(AgentRequest.EndWindowChangeCapture(token))
+        return (response as? AgentResponse.WindowChangeCapture)?.generation
+            ?: throw wireMismatch("WindowChangeCapture", response)
+    }
+
     /**
      * Wait until a semantics node matches [tag] and/or [text] (AND when both are set), same as
      * in-process `ComposeAutomator.waitForNode` (#201).

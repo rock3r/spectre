@@ -87,6 +87,15 @@ def _text_content(result: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+def _check_accessibility_artifacts(tree_path: str, png_path: str) -> None:
+    tree = json.loads(Path(tree_path).read_text(encoding="utf-8"))
+    if tree["schemaVersion"] != 2 or tree["source"] != "os-accessibility" or not tree["nodes"]:
+        fail(f"expected a populated native accessibility snapshot in {tree_path}")
+    with Path(png_path).open("rb") as png:
+        if png.read(8) != b"\x89PNG\r\n\x1a\n":
+            fail(f"expected a window PNG in {png_path}")
+
+
 def _daemon_kill(command: list[str], env: dict[str, str] | None) -> None:
     """Best-effort teardown so smoke does not leave an idle daemon for the isolation user."""
     try:
@@ -117,8 +126,14 @@ def main() -> None:
         default=None,
         help="Isolate daemon via JAVA_TOOL_OPTIONS -Duser.name (recommended with --attach-pid)",
     )
+    parser.add_argument(
+        "--accessibility-capture", action="store_true",
+        help="Exercise packaged CLI and MCP native capture on the attached fixture (requires --attach-pid)",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if args.accessibility_capture and args.attach_pid is None:
+        parser.error("--accessibility-capture requires --attach-pid")
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         parser.error("executable command required after --")
@@ -216,6 +231,22 @@ def main() -> None:
             except (json.JSONDecodeError, KeyError, TypeError):
                 fail(f"attach did not return sessionId JSON: {attach_text!r}", process)
                 return
+
+            if args.accessibility_capture:
+                with tempfile.TemporaryDirectory() as captures:
+                    cli = subprocess.run(
+                        [*command, "capture", session_id, "--source", "accessibility",
+                         "--out-dir", captures, "--json"],
+                        env=env, text=True, stdout=subprocess.PIPE, check=True, timeout=60,
+                    )
+                    report = json.loads(cli.stdout)
+                    _check_accessibility_artifacts(report["captureJson"], report["screenshotPng"])
+                    result = _assert_tool_ok(_tool_call(process, next_id, "capture", {
+                        "session_id": session_id, "source": "accessibility", "out_dir": captures,
+                    }), "capture")
+                    next_id += 1
+                    report = json.loads(_text_content(result))
+                    _check_accessibility_artifacts(report["captureJsonPath"], report["screenshotPngPath"])
 
             # Cheap session op: prefer tree, fall back to windows.
             if "tree" in names:
