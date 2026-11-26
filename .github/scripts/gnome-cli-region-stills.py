@@ -49,6 +49,8 @@ receipts = [json.loads(line) for line in (A / "region-java-receipts.jsonl").read
 if [item["name"] for item in receipts] != list(expected):
     raise RuntimeError(f"unexpected capture order: {receipts}")
 (A / "public-region-stills-evidence.json").write_text(json.dumps({
+    "evidenceKind": "region",
+    "isOriginalWindowCrop": False,
     "publicCaller": "LinuxNativeScreenshotter.captureRegion(Rectangle)",
     "productCommit": os.environ["CANDIDATE_SHA"],
     "productTree": "c2bdbe1c9aa55eb536ee727231d0e33877fbcafd",

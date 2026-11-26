@@ -357,14 +357,16 @@ def main() -> None:
     )
     helper_alive = (Path(f"/proc/{helper_pid}").is_dir() and socket.is_socket() and
                     socket_owner(socket) == helper_pid)
+    capture_evidence_path = artifacts / (
+        "public-region-stills-evidence.json" if region_mode else
+        "public-window-crop-evidence.json")
+    capture_evidence = (json.loads(capture_evidence_path.read_text())
+                        if capture_evidence_path.is_file() else None)
     evidence.update({
         "cropExitCode": crop.returncode,
-        "cropEvidence": json.loads((artifacts / (
-            "public-region-stills-evidence.json" if region_mode else
-            "public-window-crop-evidence.json")).read_text())
-                        if (artifacts / (
-                            "public-region-stills-evidence.json" if region_mode else
-                            "public-window-crop-evidence.json")).is_file() else None,
+        "captureEvidenceKind": "region" if region_mode else "window-crop",
+        "regionEvidence": capture_evidence if region_mode else None,
+        "windowCropEvidence": None if region_mode else capture_evidence,
         "portalBackendPid": backend,
         "portalObservations": observations,
         "pickerAppearances": nonzero_runs,
@@ -380,7 +382,8 @@ def main() -> None:
         "markerExistsAfterCapture": marker.is_file(),
     })
     evidence_path.write_text(json.dumps(evidence, indent=2) + "\n")
-    receipt(receipts, "native-proven-public-crop", exitCode=crop.returncode,
+    receipt(receipts, ("native-proven-public-region" if region_mode else
+                       "native-proven-public-window-crop"), exitCode=crop.returncode,
             pickerValid=picker_valid, helperAlive=helper_alive)
     if crop.returncode:
         raise RuntimeError(f"native-tested public crop probe failed ({crop.returncode})")
