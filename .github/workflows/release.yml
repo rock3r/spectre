@@ -20,29 +20,22 @@ name: Release
 #                            full Gradle `check`, and runs `mkdocs build --strict`
 #                            before any helper build or publish job starts.
 #
-#   2. `macos-release-artifacts` — Reuses `.github/workflows/macos-release-artifacts.yml`.
-#                            Its macOS jobs build, Developer ID sign, notarize, staple, and
-#                            upload the universal SCK helper and both Roast `.app` bundles.
-#                            The operator-triggered pre-tag workflow uses the exact same path.
+#   2. Native per-CPU builds — After the gate, Ubuntu arm64 builds and validates the Linux
+#                            arm64 ZIP. Windows builds the WGC helper for x64 and arm64, puts
+#                            both helpers in the Windows x64 ZIP, and validates it on Windows.
+#                            The reusable Linux helper workflow builds both architectures
+#                            natively; its combined resources remain in both Linux ZIPs.
 #
-#   3. `linux-helpers`    — Reuses `.github/workflows/linux-helpers.yml`, the same
-#                            workflow `ci.yml` runs on every PR. Builds the Wayland Rust
-#                            helper natively on an x86_64 and an aarch64 runner and
-#                            uploads both as the `linux-helpers` artifact
-#                            (`{x86_64,aarch64}/spectre-wayland-helper`).
+#   3. `macos-release-artifacts` — Reuses the trusted macOS workflow. Native Intel and arm64
+#                            Macs separately build, sign, notarize, staple, and verify their
+#                            matching archives. The operator-triggered pre-tag workflow uses
+#                            the same path.
 #
-#   4. `windows-helper`   — Windows runner. Builds the .NET Graphics Capture helper for
-#                            x64 and arm64 and uploads both helper directories as a
-#                            GitHub Actions artifact.
-#
-#   5. `publish`          — Linux runner. Depends on the gate and all helper jobs. Downloads
-#                            the artefacts, stages them into the platform helper
-#                            resource jars via `-PprebuiltMacHelperPath=...` and
-#                            `-PprebuiltLinuxHelpersDir=...` and
-#                            `-PprebuiltWindowsHelpersDir=...`, runs the publication-shape
-#                            verification, then `publish` against the Sonatype Central
-#                            Portal staging endpoint. Finally it uploads the Linux x86_64
-#                            cross-targeted Roast CLI bundles to the draft GitHub release.
+#   4. `publish`          — Ubuntu x64. Downloads four already-produced ZIPs (both macOS,
+#                            Linux arm64, and Windows x64), then builds Linux x64 locally;
+#                            that local ZIP is not uploaded as an intermediate Actions
+#                            artifact. It verifies all five ZIPs before uploading Maven
+#                            artifacts and the draft release assets.
 #
 # Secrets used (all from repo settings):
 #   APPLE_DEVELOPER_ID_P12 / _PASSWORD                  → reusable macOS artifact workflow
