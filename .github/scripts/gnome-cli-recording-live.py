@@ -141,7 +141,10 @@ def interface_version(bus, bus_name: str, interface: str, *, optional: bool = Fa
             return None
         raise
     version = int(value)
-    if version < 1:
+    # Implementation interfaces are diagnostic only. GNOME 42 advertises its
+    # native RemoteDesktop implementation as version 0, which is distinct from
+    # an absent property; public portal interfaces must still be positive.
+    if version < 0 or (version == 0 and not optional):
         raise RuntimeError(f"invalid {interface} version from {bus_name}: {version}")
     return version
 
@@ -203,6 +206,10 @@ def main() -> None:
     bus = dbus.SessionBus()
     backend = portal.backend_pid(bus)
     versions = portal_versions(bus)
+    evidence_path = artifacts / "cli-recording-live-evidence.json"
+    # Persist diagnostic metadata before any grant/session/capture assertion so
+    # a later failure cannot erase the actual numeric versions we measured.
+    evidence_path.write_text(json.dumps({"portalInterfaceVersions": versions}, indent=2) + "\n")
     observation_file = artifacts / "portal-observations.jsonl"
     observer_ready = artifacts / "portal-observer.ready"
     watcher = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--observe",
@@ -277,7 +284,6 @@ def main() -> None:
     receipt(receipts, "permissions-check", exitCode=check_exit, **{
         key: checked[key] for key in ("granted", "status", "sessionActive", "tokenStored")})
 
-    evidence_path = artifacts / "cli-recording-live-evidence.json"
     evidence = {
         "candidateSha": os.environ.get("CANDIDATE_SHA"),
         "releaseZip": archive.name,

@@ -26,6 +26,44 @@ def load_permission_verifier():
 VERIFY_PERMISSIONS = load_permission_verifier()
 
 
+def load_interface_version():
+    """Load the version reader with a minimal fake dbus module."""
+    tree = ast.parse(DRIVER)
+    function = next(node for node in tree.body
+                    if isinstance(node, ast.FunctionDef) and node.name == "interface_version")
+
+    class FakeDbus:
+        class DBusException(Exception):
+            pass
+
+    namespace = {"dbus": FakeDbus, "int": int}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[function], type_ignores=[])),
+                 "gnome-cli-recording-live.py", "exec"), namespace)
+    return namespace["interface_version"], FakeDbus
+
+
+INTERFACE_VERSION, FAKE_DBUS = load_interface_version()
+
+
+class FakeProperties:
+    def __init__(self, value=None, error=None):
+        self.value = value
+        self.error = error
+
+    def Get(self, interface, property_name, *, dbus_interface):
+        if self.error:
+            raise self.error
+        return self.value
+
+
+class FakeBus:
+    def __init__(self, properties):
+        self.properties = properties
+
+    def get_object(self, bus_name, path):
+        return self.properties[bus_name]
+
+
 def permission_result(*, stored):
     return {
         "granted": True,
@@ -38,6 +76,20 @@ def permission_result(*, stored):
 
 
 class CliRecordingLiveContractTest(unittest.TestCase):
+    def test_optional_backend_zero_is_distinct_from_public_v1_and_missing(self):
+        bus = FakeBus({
+            "public": FakeProperties(1),
+            "backend": FakeProperties(0),
+            "missing": FakeProperties(error=FAKE_DBUS.DBusException("absent")),
+        })
+        self.assertEqual(1, INTERFACE_VERSION(bus, "public", "public.RemoteDesktop"))
+        self.assertEqual(0, INTERFACE_VERSION(
+            bus, "backend", "impl.RemoteDesktop", optional=True))
+        self.assertIsNone(INTERFACE_VERSION(
+            bus, "missing", "impl.RemoteDesktop", optional=True))
+        with self.assertRaises(RuntimeError):
+            INTERFACE_VERSION(bus, "backend", "public.RemoteDesktop")
+
     def test_native_jammy_v1_accepts_real_session_without_restore_marker(self):
         result = permission_result(stored=False)
         self.assertFalse(VERIFY_PERMISSIONS(result, result.copy(), 1, False, False))
