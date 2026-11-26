@@ -135,9 +135,24 @@ internal object ScreenCaptureKitStillHelper : StillHelper {
     override fun timeoutMessage(process: Process, message: String): String = message
 }
 
+private fun waitForScreenshot(process: Process, argv: List<String>, output: Path) {
+    if (!process.waitFor(SCREENSHOT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+        process.destroyForcibly()
+        process.waitFor(FORCE_KILL_WAIT_SECONDS, TimeUnit.SECONDS)
+        error(
+            "Timed out after $SCREENSHOT_TIMEOUT_SECONDS seconds waiting for " +
+                "spectre-screencapture screenshot. Argv: $argv"
+        )
+    }
+    val exit = process.exitValue()
+    check(exit == 0) { messageForHelperExit(exit, argv, output) }
+}
+
 private const val SCREENSHOT_DISCOVERY_TIMEOUT_MS: Int = 2000
 private const val SCREENSHOT_FRAME_RATE: Int = 30
 // Allow the helper's 2s window discovery and 10s first-frame budgets, plus startup slack.
+private const val SCREENSHOT_TIMEOUT_SECONDS: Long = 15L
+private const val FORCE_KILL_WAIT_SECONDS: Long = 1L
 private const val EXIT_ARGUMENTS_REJECTED: Int = 2
 private const val EXIT_WINDOW_NOT_FOUND: Int = 3
 private const val EXIT_SCREEN_RECORDING_DENIED: Int = 4

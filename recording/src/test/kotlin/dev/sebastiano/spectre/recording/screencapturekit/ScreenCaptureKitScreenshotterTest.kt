@@ -10,6 +10,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.io.TempDir
@@ -37,6 +38,44 @@ class ScreenCaptureKitScreenshotterTest {
         assertContainsSequence(factory.lastArgv, listOf("--region", "12,34,56,78"))
         assertContainsSequence(factory.lastArgv, listOf("--display-index", "2"))
         assertContainsSequence(factory.lastArgv, listOf("--cursor", "false"))
+    }
+
+    @Test
+    fun `captureRegion forcibly stops a helper that times out`() {
+        val process = ScreenshotHelperProcess(waitResults = ArrayDeque(listOf(false, true)))
+        val screenshotter =
+            ScreenCaptureKitScreenshotter(
+                helperExtractor = testExtractor(tempDir),
+                processFactory = ScreenshotHelperProcessFactory(process),
+                requireScreenCaptureAccess = {},
+            )
+
+        val error =
+            assertFailsWith<IllegalStateException> {
+                screenshotter.captureRegion(Rectangle(1, 2, 3, 4), displayIndex = 0)
+            }
+
+        assertTrue(error.message.orEmpty().contains("15 seconds"), error.message)
+        assertEquals(listOf(15L to TimeUnit.SECONDS, 1L to TimeUnit.SECONDS), process.waits)
+        assertTrue(process.destroyedForcibly)
+    }
+
+    @Test
+    fun `captureRegion explains a helper failure`() {
+        val screenshotter =
+            ScreenCaptureKitScreenshotter(
+                helperExtractor = testExtractor(tempDir),
+                processFactory = ScreenshotHelperProcessFactory(ScreenshotHelperProcess(exit = 5)),
+                requireScreenCaptureAccess = {},
+            )
+
+        val error =
+            assertFailsWith<IllegalStateException> {
+                screenshotter.captureRegion(Rectangle(1, 2, 3, 4), displayIndex = 0)
+            }
+
+        assertTrue(error.message.orEmpty().contains("pipeline failed (exit 5)"), error.message)
+        assertTrue(error.message.orEmpty().contains("output at"), error.message)
     }
 
     @Test
@@ -107,4 +146,50 @@ private class SuccessfulScreenshotHelperProcess(private val exit: Int = 0) : Pro
     override fun toHandle(): ProcessHandle = ProcessHandle.current()
 
     override fun onExit(): CompletableFuture<Process> = CompletableFuture.completedFuture(this)
+}
+
+private class ScreenshotHelperProcess(
+    private val exit: Int = 0,
+    private val waitResults: ArrayDeque<Boolean> = ArrayDeque(listOf(true)),
+) : Process() {
+    val waits = mutableListOf<Pair<Long, TimeUnit>>()
+    var destroyedForcibly = false
+        private set
+
+    override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
+
+    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun waitFor(): Int = exit
+
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
+        waits += timeout to unit
+        return waitResults.removeFirst()
+    }
+
+    override fun exitValue(): Int = exit
+
+    override fun destroy() = Unit
+
+    override fun destroyForcibly(): Process {
+        destroyedForcibly = true
+        return this
+    }
+
+    override fun isAlive(): Boolean = !destroyedForcibly
+}
+
+private fun testExtractor(tempDir: Path): HelperBinaryExtractor =
+    HelperBinaryExtractor(
+        envLookup = { null },
+        sysPropLookup = { null },
+        materialLocator = { helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf()) },
+        targetDirProvider = { tempDir },
+    )
+
+private fun assertContainsSequence(actual: List<String>, expected: List<String>) {
+    val start = actual.windowed(expected.size).indexOf(expected)
+    assertTrue(start >= 0, "Expected $actual to contain $expected")
 }
