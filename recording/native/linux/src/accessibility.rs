@@ -309,7 +309,7 @@ fn capture_with_status(
         .map_err(|e| timed_err(deadline, e))?;
     check_deadline(deadline, None)?;
     let bus = Arc::new(SyncConnection::new_address(&address).map_err(|e| timed_err(deadline, e))?);
-    let window_address = find_window(&bus, request, deadline, changed)?;
+    let window_addresses = find_windows(&bus, request, deadline, changed)?;
     let bounds_space = if std::env::var("XDG_SESSION_TYPE")
         .map(|v| v.eq_ignore_ascii_case("wayland"))
         .unwrap_or(false)
@@ -330,70 +330,80 @@ fn capture_with_status(
             Vec::new()
         },
     };
-    let mut provider_nodes =
-        provider_cache(&bus, &window_address, deadline).map_err(|e| timed_err(deadline, e))?;
-    if let Some(nodes) = provider_nodes.as_mut() {
-        enrich_cached_nodes(
-            &bus,
-            &window_address.bus,
-            &window_address.path.to_string(),
-            nodes,
-            request.maximum_node_count,
-            request.maximum_depth,
-            deadline,
-        )
-        .map_err(|e| timed_err(deadline, e))?;
-    }
-    let root_data = if let Some(nodes) = provider_nodes.as_mut() {
-        nodes
-            .remove(&window_address.path.to_string())
-            .ok_or_else(|| {
-                err(
-                    "no-accessibility-tree",
-                    "the provider cache lost the selected AT-SPI root",
-                )
-            })?
-    } else {
-        retry_selected_root_read(deadline, || read_node(&bus, &window_address, deadline))
-            .map_err(|e| timed_err(deadline, e))?
-    };
-    let window_bounds = root_data.bounds.clone().ok_or_else(|| {
-        err(
-            "no-accessibility-tree",
-            "the target window did not provide required AT-SPI Component extents",
-        )
-    })?;
-    snapshot.windows.push(Window {
-        key: "w0".into(),
-        title: root_data.name.clone(),
-        bounds: window_bounds.clone(),
-        bounds_space,
-    });
-    let root_key = format!("w0/{}", segment(root_data.id.as_deref(), 0, false));
-    if let Some(nodes) = provider_nodes.as_mut() {
-        walk_cached(
-            nodes,
-            root_data,
-            root_key,
-            None,
-            0,
-            request,
-            deadline,
-            &window_bounds,
-            &mut snapshot,
-        )?;
-    } else {
-        walk(
-            &bus,
-            root_data,
-            root_key,
-            None,
-            0,
-            request,
-            deadline,
-            &window_bounds,
-            &mut snapshot,
-        )?;
+    for (window_index, window_address) in window_addresses.into_iter().enumerate() {
+        check_deadline(deadline, Some(&mut snapshot))?;
+        if snapshot.nodes.len() >= request.maximum_node_count {
+            node_limit_error(request.maximum_node_count, &mut snapshot)?;
+        }
+        let mut provider_nodes =
+            provider_cache(&bus, &window_address, deadline).map_err(|e| timed_err(deadline, e))?;
+        if let Some(nodes) = provider_nodes.as_mut() {
+            enrich_cached_nodes(
+                &bus,
+                &window_address.bus,
+                &window_address.path.to_string(),
+                nodes,
+                request.maximum_node_count - snapshot.nodes.len(),
+                request.maximum_depth,
+                deadline,
+            )
+            .map_err(|e| timed_err(deadline, e))?;
+        }
+        let root_data = if let Some(nodes) = provider_nodes.as_mut() {
+            nodes
+                .remove(&window_address.path.to_string())
+                .ok_or_else(|| {
+                    err(
+                        "no-accessibility-tree",
+                        "the provider cache lost the selected AT-SPI root",
+                    )
+                })?
+        } else {
+            retry_selected_root_read(deadline, || read_node(&bus, &window_address, deadline))
+                .map_err(|e| timed_err(deadline, e))?
+        };
+        let window_bounds = root_data.bounds.clone().ok_or_else(|| {
+            err(
+                "no-accessibility-tree",
+                "the target window did not provide required AT-SPI Component extents",
+            )
+        })?;
+        let window_key = format!("w{window_index}");
+        snapshot.windows.push(Window {
+            key: window_key.clone(),
+            title: root_data.name.clone(),
+            bounds: window_bounds.clone(),
+            bounds_space,
+        });
+        let root_key = format!(
+            "{window_key}/{}",
+            segment(root_data.id.as_deref(), 0, false)
+        );
+        if let Some(nodes) = provider_nodes.as_mut() {
+            walk_cached(
+                nodes,
+                root_data,
+                root_key,
+                None,
+                0,
+                request,
+                deadline,
+                &window_bounds,
+                &mut snapshot,
+            )?;
+        } else {
+            walk(
+                &bus,
+                root_data,
+                root_key,
+                None,
+                0,
+                request,
+                deadline,
+                &window_bounds,
+                &mut snapshot,
+            )?;
+        }
     }
     Ok(snapshot)
 }
@@ -916,14 +926,14 @@ fn optional_cached_call<T>(
     }
 }
 
-fn find_window(
+fn find_windows(
     bus: &SyncConnection,
     request: &Request,
     deadline: Instant,
     status_changed: bool,
-) -> std::result::Result<Address, CaptureError> {
+) -> std::result::Result<Vec<Address>, CaptureError> {
     if let Target::WindowId { value } = &request.target {
-        return parse_window_id(value).ok_or_else(|| {
+        return parse_window_id(value).map(|window| vec![window]).ok_or_else(|| {
             (
                 "target-not-found",
                 "Linux window-id must be an AT-SPI unique bus name and object path separated by | (for example :1.42|/org/a11y/atspi/accessible/7)".into(),
@@ -963,6 +973,7 @@ fn find_window(
         }
         let apps = children(bus, &root, deadline).map_err(|e| timed_err(deadline, e))?;
         let mut title_matches = Vec::new();
+        let mut process_matches = Vec::new();
         let mut traversal_authoritative = true;
         for app in apps {
             if Instant::now() >= deadline {
@@ -989,7 +1000,7 @@ fn find_window(
             };
             for window in windows {
                 match &request.target {
-                    Target::ProcessId { .. } => return Ok(window),
+                    Target::ProcessId { .. } => process_matches.push(window),
                     Target::WindowTitle { value, .. } => {
                         match find_window_title(bus, &window, deadline)? {
                             TitleRead::Value(title) if title == *value => {
@@ -1004,6 +1015,12 @@ fn find_window(
             }
         }
         completed_authoritative_traversal |= traversal_authoritative;
+        if matches!(request.target, Target::ProcessId { .. }) {
+            if let Some(windows) = completed_process_scan(process_matches, traversal_authoritative)
+            {
+                return Ok(windows);
+            }
+        }
         if let Target::WindowTitle { value, .. } = &request.target {
             match unscoped_title_decision(
                 title_matches,
@@ -1012,7 +1029,7 @@ fn find_window(
                 unique_title_seen,
                 Instant::now(),
             ) {
-                TitleDecision::Accept(window) => return Ok(window),
+                TitleDecision::Accept(window) => return Ok(vec![window]),
                 TitleDecision::Ambiguous(count) => {
                     return Err((
                         "target-not-found",
@@ -1031,6 +1048,13 @@ fn find_window(
         std::thread::sleep(REGISTRY_POLL_TIME.min(remaining(deadline)));
     }
     Err(find_window_expired(request))
+}
+
+fn completed_process_scan(
+    matches: Vec<Address>,
+    traversal_authoritative: bool,
+) -> Option<Vec<Address>> {
+    (traversal_authoritative && !matches.is_empty()).then_some(matches)
 }
 
 enum TitleDecision {
@@ -1497,11 +1521,8 @@ fn structural_read_error(
             format!("failed to read an AT-SPI child: {error}"),
         )
     };
-    (
-        code,
-        message,
-        Some(std::mem::replace(snapshot, empty_snapshot())),
-    )
+    let partial = (code == "timeout").then(|| std::mem::replace(snapshot, empty_snapshot()));
+    (code, message, partial)
 }
 
 fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Result<NodeData> {
@@ -3085,6 +3106,21 @@ mod tests {
     }
 
     #[test]
+    fn process_scan_returns_every_window_in_registry_order() {
+        let windows = vec![test_address("/window/9"), test_address("/window/2")];
+        let selected = completed_process_scan(windows, true).unwrap();
+        assert_eq!(
+            selected
+                .iter()
+                .map(|window| window.path.to_string())
+                .collect::<Vec<_>>(),
+            ["/window/9", "/window/2"]
+        );
+        assert!(completed_process_scan(vec![test_address("/window/9")], false).is_none());
+        assert!(completed_process_scan(Vec::new(), true).is_none());
+    }
+
+    #[test]
     fn unscoped_window_search_expiration_remains_timeout() {
         let request: Request = serde_json::from_str(
             r#"{"target":{"type":"window-title","value":"Preferences"},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#,
@@ -3140,7 +3176,7 @@ mod tests {
     }
 
     #[test]
-    fn structural_failure_keeps_the_available_partial_snapshot() {
+    fn structural_failure_discards_the_available_partial_snapshot() {
         let mut snapshot = empty_snapshot();
         snapshot.nodes.push(Node {
             key: "w0/root".into(),
@@ -3163,8 +3199,8 @@ mod tests {
 
         assert_eq!(code, "no-accessibility-tree");
         assert!(message.contains("StructuralFailure"));
-        assert_eq!(partial.unwrap().nodes.len(), 1);
-        assert!(snapshot.nodes.is_empty());
+        assert!(partial.is_none());
+        assert_eq!(snapshot.nodes.len(), 1);
     }
 
     #[test]
