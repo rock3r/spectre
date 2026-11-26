@@ -54,6 +54,10 @@ def main():
         with (root/"commands.txt").open("w") as log:
             version_text=run([exe,"--version"],log)
             if version_text.strip()!=f"spectre {a.version}": raise SystemExit(f"CLI version mismatch: {version_text!r}")
+            help_text=run([exe,"--help"],log)
+            if not help_text.strip(): raise SystemExit("CLI --help output is empty")
+            record_help=run([exe,"record","--help"],log)
+            if not record_help.strip(): raise SystemExit("CLI record --help output is empty")
             # Locate only the known helper entry; never materialize every class or scan outside jars.
             candidates=[]
             for jar in unpacked.rglob("*.jar"):
@@ -70,7 +74,7 @@ def main():
             if a.version=="0.9.0":
                 # The historical helper has a recording JSON-lines protocol; --help is not its contract.
                 response=json.loads(run([helper],log,stdin='{"command":"stop"}\n',timeout=5))
-                if response.get("event") != "error" or response.get("kind") != "Protocol":
+                if response.get("event") != "error" or response.get("kind") != "Protocol" or not response.get("message"):
                     raise SystemExit("historical helper did not return its documented protocol error")
                 claim="finite genuine stdin JSON recording-protocol probe; accessibility not claimed"
             else:
