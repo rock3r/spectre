@@ -62,8 +62,8 @@ object PublicWaylandRegionStills {
                 }
         }
         try {
-            val origin = scene.locationOnScreen
-            geometry(screen, transform.scaleX, transform.scaleY, origin)
+            val preMap = awtGeometry(scene)
+            writeGeometry("region-pre-map-awt-geometry.json", screen, preMap)
             stage("window-mapped")
             val xid =
                 command(
@@ -83,7 +83,6 @@ object PublicWaylandRegionStills {
             command("seat-activate.txt", "xdotool", "windowactivate", "--sync", xid)
             command("seat-focus.txt", "xdotool", "windowfocus", "--sync", xid)
             val cursor = Point(screen.x + screen.width - 2, screen.y + screen.height - 2)
-            check(!move(first, origin).contains(cursor) && !move(second, origin).contains(cursor))
             command(
                 "seat-cursor.txt",
                 "xdotool",
@@ -95,6 +94,17 @@ object PublicWaylandRegionStills {
             val active = command("net-active-window.txt", "xprop", "-root", "_NET_ACTIVE_WINDOW")
             val activeXid = Regex("0x([0-9a-fA-F]+)").find(active)?.groupValues?.get(1)?.toLong(16)
             check(activeXid == xid.toLong()) { "fixture $xid is not active: $active" }
+
+            SwingUtilities.invokeAndWait {
+                frame.isVisible = true
+                frame.toFront()
+                frame.validate()
+            }
+            Toolkit.getDefaultToolkit().sync()
+            val actual = reconcileGeometry(scene, screen, xid)
+            val origin = actual.awt.location
+            check(!move(first, origin).contains(cursor) && !move(second, origin).contains(cursor))
+            geometry(screen, transform.scaleX, transform.scaleY, origin)
 
             val shared = LinuxNativeScreenshotter()
             phase(shared, scene, screen, origin, changed = false)
@@ -175,6 +185,7 @@ object PublicWaylandRegionStills {
         var last: BufferedImage? = null
         var cyanBox: Rectangle? = null
         var magentaBox: Rectangle? = null
+        val rgbObservations = mutableListOf<String>()
         while (System.nanoTime() < deadline) {
             attempt++
             val started = System.nanoTime()
@@ -188,6 +199,8 @@ object PublicWaylandRegionStills {
             magentaBox = boundingBox(image, Color.MAGENTA)
             val expectedCyan = move(cyan, origin)
             val expectedMagenta = move(magenta, origin)
+            rgbObservations +=
+                "{\"attempt\":$attempt,\"cyan\":${rgbAt(image, expectedCyan.x, expectedCyan.y)},\"magenta\":${rgbAt(image, expectedMagenta.x, expectedMagenta.y)},\"base\":${rgbAt(image, origin.x + 80, origin.y + 60)}}"
             val unchanged =
                 image.width == screen.width &&
                     image.height == screen.height &&
@@ -208,7 +221,7 @@ object PublicWaylandRegionStills {
         command(nativeGeometry, "xwininfo", "-root", "-stats", "-tree", required = false)
         Files.writeString(
             artifacts.resolve("region-$phase-settle-timeout.json"),
-            """{"nativeGeometry":"$nativeGeometry","completePng":"${complete.fileName}","cyanBox":${boxJson(cyanBox)},"magentaBox":${boxJson(magentaBox)},"cyanScaled":${scaledJson(cyanBox, screen)},"magentaScaled":${scaledJson(magentaBox, screen)}}
+            """{"nativeGeometry":"$nativeGeometry","completePng":"${complete.fileName}","cyanBox":${boxJson(cyanBox)},"magentaBox":${boxJson(magentaBox)},"cyanScaled":${scaledJson(cyanBox, screen)},"magentaScaled":${scaledJson(magentaBox, screen)},"expectedRgb":{"cyan":${Color.CYAN.rgb},"magenta":${Color.MAGENTA.rgb},"base":${base.rgb}},"rgbObservations":${rgbObservations.joinToString(prefix = "[", postfix = "]")}}
 """,
         )
         error("$phase compositor frame did not settle before deadline")
@@ -297,6 +310,93 @@ object PublicWaylandRegionStills {
         Files.writeString(
             artifacts.resolve("region-app-geometry.json"),
             """{"units":"AWT user-space pixels","device":{"x":${screen.x},"y":${screen.y},"width":${screen.width},"height":${screen.height}},"sceneOrigin":${origin?.let { "{\"x\":${it.x},\"y\":${it.y}}" } ?: "null"},"first":{"x":${first.x},"y":${first.y},"width":${first.width},"height":${first.height}},"second":{"x":${second.x},"y":${second.y},"width":${second.width},"height":${second.height}},"markers":{"cyan":{"x":${cyan.x},"y":${cyan.y},"width":18,"height":18},"magenta":{"x":${magenta.x},"y":${magenta.y},"width":18,"height":18}},"scaleX":$sx,"scaleY":$sy}
+""",
+        )
+    }
+
+    private fun reconcileGeometry(scene: Scene, screen: Rectangle, xid: String): ActualGeometry {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+        val observations = mutableListOf<ActualGeometry>()
+        var consecutive = 0
+        var previous: ActualGeometry? = null
+        while (System.nanoTime() < deadline) {
+            Toolkit.getDefaultToolkit().sync()
+            val awt = awtGeometry(scene)
+            val observationNumber = observations.size + 1
+            val nativeOutput =
+                command(
+                    "fixture-geometry-${observationNumber.toString().padStart(2, '0')}-xwininfo.txt",
+                    "xwininfo",
+                    "-id",
+                    xid,
+                    "-stats",
+                )
+            val native = parseNativeGeometry(nativeOutput)
+            val actual = ActualGeometry(awt, native)
+            observations += actual
+            val agrees =
+                awt == native &&
+                    screen.contains(awt.location) &&
+                    awt.width > 0 &&
+                    awt.height > 0 &&
+                    awt.x + awt.width <= screen.x + screen.width &&
+                    awt.y + awt.height <= screen.y + screen.height
+            consecutive = if (agrees && actual == previous) consecutive + 1 else if (agrees) 1 else 0
+            previous = actual
+            if (consecutive >= 3) {
+                writeActualGeometry(screen, observations, actual)
+                return actual
+            }
+            Thread.sleep(200)
+        }
+        writeActualGeometry(screen, observations, null)
+        error("AWT and native per-XID geometry did not agree for three consistent observations")
+    }
+
+    private fun awtGeometry(scene: Scene): Rectangle {
+        var result: Rectangle? = null
+        SwingUtilities.invokeAndWait {
+            val location = scene.locationOnScreen
+            result = Rectangle(location.x, location.y, scene.width, scene.height)
+        }
+        return checkNotNull(result)
+    }
+
+    private fun parseNativeGeometry(output: String): Rectangle {
+        fun value(label: String): Int =
+            requireNotNull(Regex("(?m)^\\s*$label:\\s*(-?\\d+)\\s*$").find(output)) {
+                    "xwininfo omitted $label"
+                }
+                .groupValues[1]
+                .toInt()
+        return Rectangle(
+            value("Absolute upper-left X"),
+            value("Absolute upper-left Y"),
+            value("Width"),
+            value("Height"),
+        )
+    }
+
+    private fun writeGeometry(name: String, screen: Rectangle, geometry: Rectangle) {
+        Files.writeString(
+            artifacts.resolve(name),
+            """{"screen":${boxJson(screen)},"awt":${boxJson(geometry)}}
+""",
+        )
+    }
+
+    private fun writeActualGeometry(
+        screen: Rectangle,
+        observations: List<ActualGeometry>,
+        agreed: ActualGeometry?,
+    ) {
+        val values =
+            observations.joinToString(prefix = "[", postfix = "]") {
+                "{\"awt\":${boxJson(it.awt)},\"nativeXwininfo\":${boxJson(it.native)}}"
+            }
+        Files.writeString(
+            artifacts.resolve("region-final-actual-geometry.json"),
+            """{"screen":${boxJson(screen)},"observations":$values,"agreed":${agreed?.let { "{\"awt\":${boxJson(it.awt)},\"nativeXwininfo\":${boxJson(it.native)}}" } ?: "null"}}
 """,
         )
     }
@@ -445,7 +545,12 @@ object PublicWaylandRegionStills {
             "{\"x\":${it.x.toDouble() / screen.width},\"y\":${it.y.toDouble() / screen.height},\"width\":${it.width.toDouble() / screen.width},\"height\":${it.height.toDouble() / screen.height}}"
         } ?: "null"
 
+    private fun rgbAt(image: BufferedImage, x: Int, y: Int): Int? =
+        if (x in 0 until image.width && y in 0 until image.height) image.getRGB(x, y) else null
+
     private data class SettledFrame(val image: BufferedImage, val started: Long, val ended: Long)
+
+    private data class ActualGeometry(val awt: Rectangle, val native: Rectangle)
 
     private class Scene : JPanel() {
         @Volatile var changed = false
