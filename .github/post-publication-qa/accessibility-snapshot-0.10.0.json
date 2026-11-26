@@ -1,0 +1,4 @@
+{
+  "requiredTopLevel": ["ok", "snapshot"],
+  "requiredSnapshot": ["schemaVersion", "source", "capturedAt", "windows", "nodes", "notes"]
+}

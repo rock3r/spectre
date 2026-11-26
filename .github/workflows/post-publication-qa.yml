@@ -1,0 +1,88 @@
+name: Scratch hosted post-publication QA
+
+on:
+  push:
+    branches: [work]
+    paths: [.github/post-publication-qa/control.env]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scratch-post-publication-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    if: startsWith(github.event.head_commit.message, 'Probe published Spectre')
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.control.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with: {persist-credentials: false}
+      - id: control
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/work
+          source .github/post-publication-qa/control.env
+          [[ "$VERSION" == 0.9.0 || "$VERSION" == 0.10.0 ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          python3 .github/post-publication-qa/verify_release.py --control .github/post-publication-qa/control.env --output release-identity.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: public-release-identity
+          path: release-identity.json
+          if-no-files-found: error
+
+  native:
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+            asset: spectre-linuxX64.zip
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            asset: spectre-linuxArm64.zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+        with: {persist-credentials: false}
+      - name: Download, authenticate, and run the native public archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python3 .github/post-publication-qa/verify_release.py --control .github/post-publication-qa/control.env --asset '${{ matrix.asset }}' --output evidence/release-and-asset.json
+          python3 .github/post-publication-qa/verify_native_archive.py --version '${{ needs.gate.outputs.version }}' --arch '${{ matrix.arch }}' --archive 'evidence/${{ matrix.asset }}' --evidence evidence/native --golden .github/post-publication-qa/accessibility-snapshot-0.10.0.json
+          sha256sum 'evidence/${{ matrix.asset }}' > evidence/archive.sha256
+      - uses: actions/upload-artifact@v6
+        with:
+          name: native-${{ matrix.arch }}-${{ needs.gate.outputs.version }}
+          path: evidence
+          if-no-files-found: error
+
+  external-consumer:
+    needs: gate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: ''
+      - name: Consume every exact public module from Central in a fresh external project
+        shell: bash
+        run: .github/post-publication-qa/verify_consumer.sh '${{ needs.gate.outputs.version }}' "$RUNNER_TEMP/consumer-evidence"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: central-consumer-${{ needs.gate.outputs.version }}
+          path: ${{ runner.temp }}/consumer-evidence
+          if-no-files-found: error
