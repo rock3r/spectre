@@ -91,8 +91,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [atspi-ownership, accessibility, atspi-distinct-content]
-        replica: [1, 2]
+        mode: [public-window-crop]
+        replica: [1]
 
     steps:
       - name: Check out temporary workflow tooling

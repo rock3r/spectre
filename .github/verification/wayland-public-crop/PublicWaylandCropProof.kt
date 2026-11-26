@@ -64,12 +64,17 @@ object PublicWaylandCropProof {
             // Mutter's startup-focus prevention race, including when green replaces red.
             if (!Files.exists(decoyReveal)) Files.writeString(decoyReveal, "reveal\n")
             val decoyXid = findOwnedDecoy(decoyPid)
+            // Mutter is allowed to choose an initial position for a newly mapped window. Put the
+            // independently owned helper back at the fixture's explicit geometry before taking
+            // any measurements; the subsequent xwininfo observations prove what was honored.
+            command("xdotool", "windowmove", decoyXid.toString(), "200", "200")
             Files.writeString(artifacts.resolve("decoy-identity.json"),
                 "{\"expectedPid\":$decoyPid,\"actualPid\":${commandLong("xdotool", "getwindowpid", decoyXid.toString())},\"expectedXid\":$decoyXid}\n")
             val focusStarted = System.nanoTime()
             focusDecoy(decoyPid, decoyXid)
             val focusNs = System.nanoTime() - focusStarted
-            verifyOverlapAndStacking(frame, decoyPid, decoyXid)
+            val occlusion = verifyOverlapAndStacking(frame, decoyPid, decoyXid)
+            receipts += occlusion.receipt(case.name)
             receipts += receipt(case.name, "blue-focus-acquired", true,
                 "expectedPid" to decoyPid, "actualPid" to commandLong("xdotool", "getwindowpid", decoyXid.toString()),
                 "expectedXid" to decoyXid, "actualXid" to activeXid(), "focusElapsedNs" to focusNs)
@@ -138,6 +143,7 @@ object PublicWaylandCropProof {
                 """{"case":"${case.name}","decorated":${case.decorated},"captureApi":{"still":"public AutoScreenshotter.captureWindow whole native window","reference":"getSubimage derived from public whole still; not a native screenshot-crop endpoint","movie":"public AutoRecorder.startWindow cropInWindow"},"requestedTopLevelBounds":{"x":200,"y":200,"width":480,"height":320},"capturedWhole":{"width":${still.width},"height":${still.height}},"contentInsets":{"left":${insets.left},"top":${insets.top},"right":${insets.right},"bottom":${insets.bottom}},"cropInWindow":{"x":${crop.x},"y":${crop.y},"width":${crop.width},"height":${crop.height},"units":"AWT user-space relative to top-level"},"deviceCrop":{"x":${deviceCrop.x},"y":${deviceCrop.y},"width":${deviceCrop.width},"height":${deviceCrop.height}},"graphicsTransform":{"scaleX":${transform.scaleX},"scaleY":${transform.scaleY}},"expectedPositiveMarker":"stable yellow 18x18 at crop (24,19)","dynamicIndicator":"moving white ticker inside crop","targetPid":${ProcessHandle.current().pid()},"decoyPid":$decoyPid,"decoyXid":$decoyXid,"actualOverlayIdentity":{"title":"$TITLE","ownerPid":${ProcessHandle.current().pid()}},"focus":{"beforeMovie":$beforeFocus,"afterMovie":$afterFocus},"timing":{"movieWallStartedMonotonicNs":$started,"movieWallEndedMonotonicNs":$ended,"requestedDurationNs":3000000000}}
 """,
             )
+            check(occlusion.valid) { occlusion.failureMessage }
         } finally {
             onEdt { frame.dispose() }
         }
@@ -181,19 +187,46 @@ object PublicWaylandCropProof {
         return value.toLong(16)
     }
 
-    private fun verifyOverlapAndStacking(frame: JFrame, decoyPid: Long, decoyXid: Long) {
+    private fun verifyOverlapAndStacking(frame: JFrame, decoyPid: Long, decoyXid: Long): OcclusionEvidence {
         val targetXid = command("xdotool", "search", "--all", "--pid", ProcessHandle.current().pid().toString(), "--name", TITLE)
-            .lineSequence().mapNotNull(String::toLongOrNull).single()
+            .lineSequence().mapNotNull(String::toLongOrNull).distinct().single()
         check(commandLong("xdotool", "getwindowpid", targetXid.toString()) == ProcessHandle.current().pid())
         check(commandLong("xdotool", "getwindowpid", decoyXid.toString()) == decoyPid)
-        val stacking = command("xprop", "-root", "_NET_CLIENT_LIST_STACKING")
-        fun position(xid: Long) = stacking.lowercase().indexOf("0x${xid.toString(16)}")
-        check(position(targetXid) >= 0 && position(decoyXid) > position(targetXid))
-        val target = onEdt { frame.bounds }
-        val decoyGeometry = command("xdotool", "getwindowgeometry", "--shell", decoyXid.toString())
-            .lineSequence().mapNotNull { line -> line.split("=", limit = 2).takeIf { it.size == 2 } }.associate { it[0] to it[1].toInt() }
-        val decoy = Rectangle(decoyGeometry.getValue("X"), decoyGeometry.getValue("Y"), decoyGeometry.getValue("WIDTH"), decoyGeometry.getValue("HEIGHT"))
-        check(target.intersects(decoy) && target.intersection(decoy).width >= 400 && target.intersection(decoy).height >= 250)
+        val stackingRaw = command("xprop", "-root", "_NET_CLIENT_LIST_STACKING")
+        val stacking = Regex("0x[0-9a-fA-F]+").findAll(stackingRaw).map { it.value.removePrefix("0x").toLong(16) }.toList()
+        val targetStack = stacking.indexOf(targetXid)
+        val decoyStack = stacking.indexOf(decoyXid)
+        check(targetStack >= 0 && decoyStack > targetStack) {
+            "verified decoy is not above target: targetXid=$targetXid decoyXid=$decoyXid stacking=$stacking"
+        }
+        val targetRaw = command("xwininfo", "-id", targetXid.toString(), "-stats")
+        val decoyRaw = command("xwininfo", "-id", decoyXid.toString(), "-stats")
+        val target = parseXwininfo(targetRaw)
+        val decoy = parseXwininfo(decoyRaw)
+        val overlap = target.intersection(decoy)
+        val awt = onEdt { frame.bounds }
+        val transform = frame.graphicsConfiguration.defaultTransform
+        val transformed = Rectangle(
+            (awt.x * transform.scaleX).toInt(),
+            (awt.y * transform.scaleY).toInt(),
+            (awt.width * transform.scaleX).toInt(),
+            (awt.height * transform.scaleY).toInt(),
+        )
+        val valid = target.intersects(decoy) && overlap.width >= 400 && overlap.height >= 250
+        return OcclusionEvidence(
+            targetXid, decoyXid, targetRaw, decoyRaw, stackingRaw, stacking,
+            target, decoy, overlap, awt, transformed, activeXid(), valid,
+        )
+    }
+
+    private fun parseXwininfo(raw: String): Rectangle {
+        fun number(label: String): Int = Regex("(?m)^\\s*${Regex.escape(label)}:\\s*(-?\\d+)")
+            .find(raw)?.groupValues?.get(1)?.toInt()
+            ?: error("xwininfo missing $label: $raw")
+        return Rectangle(
+            number("Absolute upper-left X"), number("Absolute upper-left Y"),
+            number("Width"), number("Height"),
+        )
     }
 
     private fun command(vararg args: String, allowFailure: Boolean = false): String {
@@ -219,6 +252,39 @@ object PublicWaylandCropProof {
     }
 
     private data class Case(val name: String, val color: Color, val decorated: Boolean)
+
+    private data class OcclusionEvidence(
+        val targetXid: Long,
+        val decoyXid: Long,
+        val targetRaw: String,
+        val decoyRaw: String,
+        val stackingRaw: String,
+        val stacking: List<Long>,
+        val target: Rectangle,
+        val decoy: Rectangle,
+        val overlap: Rectangle,
+        val awt: Rectangle,
+        val transformed: Rectangle,
+        val focusXid: Long,
+        val valid: Boolean,
+    ) {
+        val failureMessage =
+            "insufficient verified native-pixel overlap: target=$target decoy=$decoy overlap=$overlap required=400x250"
+
+        fun receipt(case: String) = receipt(
+            case, "occlusion-measured", valid,
+            "targetUniqueXid" to targetXid, "decoyUniqueXid" to decoyXid,
+            "targetXwininfoRaw" to targetRaw, "decoyXwininfoRaw" to decoyRaw,
+            "stackingRaw" to stackingRaw, "stackingNumericIds" to stacking.joinToString(","),
+            "targetRootWindow" to target, "decoyRootWindow" to decoy,
+            "expectedOverlapRectangle" to Rectangle(200, 237, 480, 283),
+            "minimumRequiredOverlap" to "400x250",
+            "actualOverlapRectangle" to overlap, "awtWindowBounds" to awt,
+            "awtTransformedRootWindow" to transformed, "verifiedFocusXid" to focusXid,
+            "occlusionLabel" to if (valid) "verified-valid" else "labeled-invalid",
+            "rejection" to if (valid) "none" else failureMessage,
+        )
+    }
 
     private class PatternPanel(private val base: Color) : JPanel() {
         var tick: Int = 0

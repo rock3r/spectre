@@ -284,6 +284,18 @@ class PublicWindowCropContractTest(unittest.TestCase):
         self.assertNotIn("gnome-cli-recording-live.py", probe)
         self.assertNotIn("PublicWaylandCliRecordingLive", probe + fixture)
 
+    def test_public_crop_uses_root_pixel_xwininfo_not_reparented_xdotool_geometry(self):
+        fixture = (ROOT / ".github/verification/wayland-public-crop/PublicWaylandCropProof.kt").read_text()
+        self.assertIn('command("xwininfo", "-id", targetXid.toString(), "-stats")', fixture)
+        self.assertIn('number("Absolute upper-left X")', fixture)
+        self.assertIn('number("Absolute upper-left Y")', fixture)
+        self.assertNotIn('"getwindowgeometry"', fixture)
+        self.assertIn(".mapNotNull(String::toLongOrNull).distinct().single()", fixture)
+        self.assertIn('Regex("0x[0-9a-fA-F]+")', fixture)
+        self.assertIn('"targetXwininfoRaw"', fixture)
+        self.assertIn('"awtTransformedRootWindow"', fixture)
+        self.assertIn('"labeled-invalid"', fixture)
+
 
 if __name__ == "__main__":
     unittest.main()
