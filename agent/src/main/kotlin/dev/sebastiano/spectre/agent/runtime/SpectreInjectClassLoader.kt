@@ -26,7 +26,10 @@ internal class SpectreInjectClassLoader(urls: Array<URL>, parent: ClassLoader) :
                     if (resolve) resolveClass(fromInject)
                     return fromInject
                 } catch (_: ClassNotFoundException) {
-                    // Fall through to parent.
+                    throw ClassNotFoundException(
+                        "Spectre-owned class $name is missing from the inject runtime; " +
+                            "refusing to mix it with the target JVM's Spectre version"
+                    )
                 }
             }
             val fromParent = parent.loadClass(name)

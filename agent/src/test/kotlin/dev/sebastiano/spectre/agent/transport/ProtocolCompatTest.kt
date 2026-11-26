@@ -64,12 +64,35 @@ class ProtocolCompatTest {
 
     @Test
     fun `IpcClient handshake exchanges Hello and HelloAck at CURRENT version`() {
-        IpcServer(udsPath, stubHandler()).use {
+        val expected =
+            AgentSessionInfoDto(
+                driverKind = "synthetic",
+                inputLeasePolicy = "Required",
+                coreProvenance = "preinstalled",
+                coreVersion = "0.10.0",
+            )
+        IpcServer(udsPath, stubHandler(), sessionInfo = expected).use {
             awaitSocket(udsPath)
             // Constructing IpcClient performs the handshake; send Ping proves the session works.
             IpcClient(udsPath).use { client ->
+                assertEquals(expected, client.sessionInfo)
                 assertEquals(AgentResponse.Pong, client.send(AgentRequest.Ping))
             }
+        }
+    }
+
+    @Test
+    fun `session info preserves absent core version instead of calling it unknown`() {
+        val expected =
+            AgentSessionInfoDto(
+                driverKind = "synthetic",
+                inputLeasePolicy = "Required",
+                coreProvenance = "injected",
+                coreVersion = null,
+            )
+        IpcServer(udsPath, stubHandler(), sessionInfo = expected).use {
+            awaitSocket(udsPath)
+            IpcClient(udsPath).use { client -> assertEquals(expected, client.sessionInfo) }
         }
     }
 
@@ -117,6 +140,7 @@ class ProtocolCompatTest {
 
     @Test
     fun `v3 client is rejected by current runtime`() {
+
         IpcServer(udsPath, stubHandler()).use {
             awaitSocket(udsPath)
             // Open a raw socket and send Hello without using IpcClient's init handshake so we
@@ -132,6 +156,28 @@ class ProtocolCompatTest {
                 val bytes = Framing.readFrame(input) ?: error("no response")
                 val resp = WireCodec.decodeResponse(bytes)
                 val err = assertIs<AgentResponse.Error>(resp)
+                assertEquals(AgentErrorCategory.ProtocolMismatch.wireName, err.category)
+                assertTrue(err.message.contains("mismatch", ignoreCase = true))
+            }
+        }
+    }
+
+    @Test
+    fun `Hello with arbitrary mismatched protocol version returns protocolMismatch`() {
+        IpcServer(udsPath, stubHandler()).use {
+            awaitSocket(udsPath)
+            SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
+                channel.connect(UnixDomainSocketAddress.of(udsPath))
+                val input = Channels.newInputStream(channel)
+                val output = Channels.newOutputStream(channel)
+                Framing.writeFrame(
+                    output,
+                    WireCodec.encode(
+                        AgentRequest.Hello(protocolVersion = ProtocolVersion.CURRENT + 99)
+                    ),
+                )
+                val bytes = Framing.readFrame(input) ?: error("no response")
+                val err = assertIs<AgentResponse.Error>(WireCodec.decodeResponse(bytes))
                 assertEquals(AgentErrorCategory.ProtocolMismatch.wireName, err.category)
                 assertTrue(err.message.contains("mismatch", ignoreCase = true))
             }
