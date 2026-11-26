@@ -45,9 +45,8 @@ only `Robot`. When `spectre-recording` is on the classpath, `screenshot(node)`, 
 - `screenshot(node)`, `screenshot(windowIndex)`, `capture`, and failure-artefact window captures fail closed when
   GStreamer (`gst-launch-1.0`) is missing. Install GStreamer on Linux X11 CI runners if failing tests should save
   per-window PNG artefacts.
-- `waitForVisualIdle` falls back to `Robot` region capture when `:recording` is absent or the native helper/GStreamer
-  binary cannot launch, whereas other native capture failures (such as an occluded or ambiguous window) count as
-  unsampleable frames and reset the stability streak until timeout.
+- Visual idle requires native window samples by default. Pass `allowScreenRegionFallback = true` to
+  `waitForVisualIdle` only when the visible desktop pixels, including occluding windows, are suitable evidence. Other native capture failures can reset the stability streak until timeout.
 
 ### Windows prerequisites
 
