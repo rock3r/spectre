@@ -51,6 +51,9 @@ public data class InputIsolationConfig(
         public fun perInteraction(): InputIsolationConfig =
             InputIsolationConfig(InputIsolationMode.PerInteraction)
 
+        public fun perInteraction(acquireTimeout: Duration): InputIsolationConfig =
+            InputIsolationConfig(InputIsolationMode.PerInteraction, acquireTimeout)
+
         public fun off(): InputIsolationConfig = InputIsolationConfig(InputIsolationMode.Off)
     }
 }
@@ -90,10 +93,12 @@ internal class InputIsolationSession(
     private val acquireBeforeAutoFactory: Boolean,
     private val ownerLabel: String,
     private val leaseFactory: InputTestLeaseFactory,
+    private val enforceFactoryPolicy: Boolean = false,
 ) : ExtensionContext.Store.CloseableResource {
     private var lease: AutomatorInputLease? = null
     private var binding: AutoCloseable? = null
     private var managedResource: AutoCloseable? = null
+    private var operationOptionsBinding: AutoCloseable? = null
 
     fun acquireBeforeFactory() {
         if (
@@ -105,6 +110,16 @@ internal class InputIsolationSession(
     }
 
     fun bindAfterFactory(automator: ComposeAutomator) {
+        if (config.mode == InputIsolationMode.PerInteraction && enforceFactoryPolicy) {
+            check(automator.inputLeasePolicy != InputLeasePolicy.Off) {
+                "PerInteraction input isolation requires the custom factory to create an " +
+                    "automator with InputLeasePolicy.Auto or InputLeasePolicy.Required"
+            }
+            operationOptionsBinding =
+                automator.bindInputLeaseOptions(
+                    InputLeaseOptions(config.acquireTimeout, ownerLabel)
+                )
+        }
         if (
             config.mode == InputIsolationMode.Auto &&
                 !acquireBeforeAutoFactory &&
@@ -135,16 +150,21 @@ internal class InputIsolationSession(
 
     override fun close() {
         try {
-            binding?.close()
+            operationOptionsBinding?.close()
         } finally {
-            binding = null
+            operationOptionsBinding = null
             try {
-                lease?.close()
+                binding?.close()
             } finally {
-                lease = null
-                val resource = managedResource
-                managedResource = null
-                resource?.close()
+                binding = null
+                try {
+                    lease?.close()
+                } finally {
+                    lease = null
+                    val resource = managedResource
+                    managedResource = null
+                    resource?.close()
+                }
             }
         }
     }
