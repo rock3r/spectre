@@ -115,8 +115,8 @@ internal object AgentJarResolution {
     /**
      * Resolve the agent runtime jar using the public attach lookup order.
      *
-     * 1. [agentJarPath] if present and a regular file
-     * 2. [runtimeJarSystemProperty] path if present and a regular file
+     * 1. [agentJarPath], when present; fails if it is not a regular file
+     * 2. [runtimeJarSystemProperty], when present; fails if it is not a regular file
      * 3. Classpath auto-discovery
      * 4. In-repo fallback gated on Spectre source-checkout detection from [cwd]
      */
@@ -129,15 +129,15 @@ internal object AgentJarResolution {
         val tried = mutableListOf<Path>()
 
         agentJarPath?.let { path ->
-            tried.add(path)
             if (Files.isRegularFile(path)) return path
+            throw AgentJarNotFoundException(listOf(path))
         }
 
         val sysProp = runtimeJarSystemProperty?.takeIf { it.isNotBlank() }
         if (sysProp != null) {
             val path = Path.of(sysProp)
-            tried.add(path)
             if (Files.isRegularFile(path)) return path
+            throw AgentJarNotFoundException(listOf(path))
         }
 
         val classpathRuntime = findRuntimeJarOnClasspath(classPath)

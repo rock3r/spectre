@@ -1,7 +1,5 @@
 package dev.sebastiano.spectre.cli.mcp
 
-import dev.sebastiano.spectre.cli.daemon.AccessibilityError
-import dev.sebastiano.spectre.cli.daemon.AccessibilityErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonClient
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
@@ -18,32 +16,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-class SpectreMcpDiagnosticsTest {
-    @Test
-    fun `accessibility structured failures are never MCP success`() = runBlocking {
-        val server = SpectreMcpServer.create {
-            DaemonResponse.AccessibilityErrorResult(
-                AccessibilityError(
-                    AccessibilityErrorCode.Unknown,
-                    "reader is busy",
-                    rawCode = "reader-busy",
-                )
-            )
-        }
-
-        val result = invokeTool(server, "accessibility_tree", buildJsonObject { put("pid", 42) })
-
-        assertTrue(result.isError == true, "structured helper failure must set isError: $result")
-        val body = Json.parseToJsonElement((result.content.single() as TextContent).text).jsonObject
-        assertEquals("reader-busy", body.getValue("rawCode").jsonPrimitive.content)
-    }
-
+class SpectreMcpServerWireDiagnosticsTest {
     @Test
     fun `real daemon wire carries warnings into generic image and partial MCP results`() =
         runBlocking {

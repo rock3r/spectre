@@ -6,6 +6,7 @@ import java.util.jar.JarOutputStream
 import java.util.zip.ZipEntry
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -49,6 +50,19 @@ class SpectreInjectClassLoaderTest {
         // JDK class always from parent hierarchy.
         val stringClass = loader.loadClass("java.lang.String")
         assertSame(java.lang.String::class.java, stringClass)
+    }
+
+    @Test
+    fun `inject classloader never fills a missing owned class from the host`() {
+        val loader =
+            SpectreInjectClassLoader(
+                arrayOf(writeJarWithTextResource().toUri().toURL()),
+                ClassLoader.getSystemClassLoader(),
+            )
+
+        assertFailsWith<ClassNotFoundException> {
+            loader.loadClass(SpectreInjectClassLoaderTest::class.java.name)
+        }
     }
 
     private fun writeJarWithTextResource(): Path {

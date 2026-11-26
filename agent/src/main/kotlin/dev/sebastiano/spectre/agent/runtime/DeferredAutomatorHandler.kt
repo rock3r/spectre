@@ -6,6 +6,7 @@ import dev.sebastiano.spectre.agent.transport.AgentErrorCategory
 import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentRequestHandler
 import dev.sebastiano.spectre.agent.transport.AgentResponse
+import dev.sebastiano.spectre.agent.transport.AgentSessionInfoDto
 import dev.sebastiano.spectre.agent.transport.ProtocolVersion
 
 /**
@@ -16,6 +17,7 @@ internal class ConnectedAutomator(
     val automator: Any,
     val handler: AgentRequestHandler,
     val targetInputResource: AutoCloseable?,
+    val sessionInfo: AgentSessionInfoDto = AgentSessionInfoDto("unknown", "unknown", "unknown"),
 )
 
 /**
