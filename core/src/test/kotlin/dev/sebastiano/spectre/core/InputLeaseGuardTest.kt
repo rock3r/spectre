@@ -903,7 +903,7 @@ class UnreachableCoordinatorRecoveryTest {
     }
 }
 
-private fun realDriver(
+internal fun realDriver(
     coordinator: InputLeaseCoordinator,
     policy: InputLeasePolicy = InputLeasePolicy.Required,
 ): RobotDriver =
