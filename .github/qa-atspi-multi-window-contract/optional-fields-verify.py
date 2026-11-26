@@ -61,7 +61,22 @@ def main():
     raw = args.journal.read_text(); baseline_calls = [json.loads(line) for line in raw[:middle].splitlines() if line]; candidate_calls = [json.loads(line) for line in raw[middle:].splitlines() if line]
     bn, cn = normalized(baseline), normalized(candidate)
     required_error = lambda value: value["errorCode"] == "no-accessibility-tree" and not value["hasPartial"]
-    calls_from = lambda calls, result: bool(calls) and all(call.get("senderPid") == result["pid"] for call in calls)
+    def calls_from(calls, result):
+        senders = {call.get("sender") for call in calls}
+        expected_pid = result["pid"]
+        valid_sender = lambda sender: (
+            isinstance(sender, str)
+            and sender.startswith(":")
+            and len(sender[1:].split(".")) >= 2
+            and all(part and all(character.isalnum() or character in "_-" for character in part) for part in sender[1:].split("."))
+        )
+        return (
+            bool(calls)
+            and len(senders) == 1
+            and all(valid_sender(sender) for sender in senders)
+            and any(call.get("senderPid") == expected_pid for call in calls)
+            and all(call.get("senderPid") in (None, expected_pid) for call in calls)
+        )
     calls_observed = calls_from(baseline_calls, baseline) and calls_from(candidate_calls, candidate)
     checks = {"actualBusCallsObserved": calls_observed, "candidateNoForbiddenStructuralPartial": not cn["hasPartial"]}
     if mode == "missing-children":
