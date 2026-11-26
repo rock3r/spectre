@@ -40,6 +40,7 @@ constructor(
     private val sessionInfo: AgentSessionInfoDto? = null,
     /** Per-frame read/write deadline; `<= 0` disables (not for production). */
     private val frameIoTimeoutMs: Long = FrameIoDeadline.DEFAULT_TIMEOUT_MS,
+    private val onDeadlineResponseClaimed: () -> Unit = {},
 ) : AutoCloseable {
     private var createdParentDir: Path? = null
 
@@ -172,6 +173,7 @@ constructor(
                 channel = client,
                 frameIoTimeoutMs = frameIoTimeoutMs,
                 inputWorkers = inputWorkers,
+                onDeadlineResponseClaimed = onDeadlineResponseClaimed,
             )
             .run(input, output)
     }
