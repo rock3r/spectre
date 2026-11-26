@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   release-smoke-xvfb:
-    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Diagnose Windows') && !startsWith(github.event.head_commit.message, 'Rehearse Linux release seat') && !startsWith(github.event.head_commit.message, 'Benchmark AT-SPI') && !startsWith(github.event.head_commit.message, 'Verify AT-SPI')
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Ship final Linux region recovery') && !startsWith(github.event.head_commit.message, 'Diagnose Windows') && !startsWith(github.event.head_commit.message, 'Rehearse Linux release seat') && !startsWith(github.event.head_commit.message, 'Benchmark AT-SPI') && !startsWith(github.event.head_commit.message, 'Verify AT-SPI')
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
