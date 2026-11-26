@@ -10,6 +10,9 @@ on:
   push:
     branches: [release-0.10/gnome-hosted-smoke]
     paths-ignore:
+      - .github/workflows/gnome-hosted-smoke.yml
+      - .github/post-publication-qa/**
+      - .github/workflows/post-publication-qa.yml
       - .github/workflows/gnome-jammy-smoke.yml
       - .github/smoke-overlays/jammy-identity.patch
       - .github/reader-overlays/726-packaged-smoke.patch

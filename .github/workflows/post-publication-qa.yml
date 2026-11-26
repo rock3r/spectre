@@ -2,8 +2,8 @@ name: Scratch hosted post-publication QA
 
 on:
   push:
-    branches: [work]
-    paths: [.github/post-publication-qa/control.env]
+    branches: [release-0.10/gnome-hosted-smoke]
+    paths: [.github/post-publication-qa/**, .github/workflows/post-publication-qa.yml]
 
 permissions:
   contents: read
