@@ -128,6 +128,25 @@ def _accesskit_fixture_pid(ready_line: str) -> int:
     return int(match.group(1))
 
 
+def _assert_accessibility_cli_refusal(
+    completed: subprocess.CompletedProcess[str],
+) -> None:
+    if completed.returncode != 5:
+        raise AssertionError(
+            f"default packaged CLI refusal must exit 5, got {completed.returncode}"
+        )
+    if completed.stdout != "":
+        raise AssertionError("default packaged CLI refusal must leave stdout empty")
+    if re.fullmatch(
+        r"Spectre daemon error: AccessibilityDisabled: [^\r\n]+"
+        r"(?:\r?\nHint: [^\r\n]+)?\r?\n?",
+        completed.stderr,
+    ) is None:
+        raise AssertionError(
+            f"unexpected default packaged CLI refusal stderr: {completed.stderr!r}"
+        )
+
+
 @contextlib.contextmanager
 def _private_daemon_environment():
     parent = "/tmp" if os.name == "posix" else None
@@ -450,10 +469,7 @@ def _accesskit_cli_smoke(executable: Path, expected_version: str) -> str:
                 if system == "Linux":
                     _assert_linux_accessibility_disabled(environment, "fixture startup")
                     refused = invoke("--pid", str(fixture_pid))
-                    if refused.returncode == 0 or "accessibility-disabled" not in refused.stderr:
-                        raise AssertionError(
-                            "default packaged CLI must return structured accessibility-disabled"
-                        )
+                    _assert_accessibility_cli_refusal(refused)
                 assert_accessibility_snapshot(
                     read("--pid", str(fixture_pid), *opt_in), system
                 )
@@ -463,7 +479,16 @@ def _accesskit_cli_smoke(executable: Path, expected_version: str) -> str:
                 limited = invoke(
                     "--pid", str(fixture_pid), "--maximum-node-count", "2", *opt_in
                 )
-                assert_accessibility_limit_result(limited, maximum_node_count=2)
+                preceding_lines = (
+                    (f"notice: {LINUX_ACCESSIBILITY_ENABLE_NOTE}",)
+                    if system == "Linux"
+                    else ()
+                )
+                assert_accessibility_limit_result(
+                    limited,
+                    maximum_node_count=2,
+                    preceding_stderr_lines=preceding_lines,
+                )
                 if system == "Linux":
                     subprocess.run(
                         [
@@ -479,6 +504,33 @@ def _accesskit_cli_smoke(executable: Path, expected_version: str) -> str:
                         timeout=120,
                     )
                     _assert_linux_accessibility_disabled(environment, "packaged MCP")
+                    subprocess.run(
+                        [
+                            *prefix,
+                            str(ROOT / "gradlew"),
+                            ":cli:test",
+                            "--tests",
+                            "*DaemonFixtureIntegrationTest.packaged CLI and MCP capture*",
+                            f"-PVERSION_NAME={expected_version}",
+                            f"-Dspectre.cli.distributionExecutable={executable}",
+                            "--rerun-tasks",
+                            "--console=plain",
+                        ],
+                        cwd=ROOT,
+                        env=environment,
+                        check=True,
+                        timeout=600,
+                    )
+                    assert_junit_testcases_passed(
+                        ROOT / "cli/build/test-results/test",
+                        needles=(
+                            "packaged CLI and MCP capture an attached JVM through private AT-SPI consent",
+                        ),
+                        cell="a11y-accesskit-linux attached CLI/MCP capture",
+                    )
+                    _assert_linux_accessibility_disabled(
+                        environment, "attached CLI/MCP capture"
+                    )
                 return _accesskit_success_detail(system)
             finally:
                 try:

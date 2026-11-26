@@ -87,13 +87,52 @@ def _text_content(result: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _check_accessibility_artifacts(tree_path: str, png_path: str) -> None:
+LINUX_ACCESSIBILITY_NOTE = (
+    "enabled Linux accessibility for this snapshot; restored the previous setting afterwards"
+)
+
+
+def _check_accessibility_artifacts_legacy(tree_path: str, png_path: str) -> None:
     tree = json.loads(Path(tree_path).read_text(encoding="utf-8"))
     if tree["schemaVersion"] != 2 or tree["source"] != "os-accessibility" or not tree["nodes"]:
         fail(f"expected a populated native accessibility snapshot in {tree_path}")
     with Path(png_path).open("rb") as png:
         if png.read(8) != b"\x89PNG\r\n\x1a\n":
             fail(f"expected a window PNG in {png_path}")
+
+
+def _check_accessibility_artifacts(
+    tree_path: str, png_path: str, *, expected_title: str, expected_note: str
+) -> None:
+    tree = json.loads(Path(tree_path).read_text(encoding="utf-8"))
+    if tree["schemaVersion"] != 2 or tree["source"] != "os-accessibility" or not tree["nodes"]:
+        fail(f"expected a populated native accessibility snapshot in {tree_path}")
+    windows = tree.get("windows") or []
+    if len(windows) != 1 or windows[0].get("title") != expected_title:
+        fail(f"capture did not select the attached fixture window: {windows}")
+    if expected_note not in tree.get("notes", []):
+        fail(f"capture omitted the accessibility enable/restore note: {tree.get('notes')}")
+    window_key = windows[0].get("key")
+    if not window_key or not any(
+        node.get("key") == window_key
+        or str(node.get("key", "")).startswith(f"{window_key}/")
+        for node in tree["nodes"]
+    ):
+        fail("native nodes do not belong to the captured window")
+    with Path(png_path).open("rb") as png:
+        header = png.read(24)
+        if header[:8] != b"\x89PNG\r\n\x1a\n":
+            fail(f"expected a window PNG in {png_path}")
+        width = int.from_bytes(header[16:20], "big")
+        height = int.from_bytes(header[20:24], "big")
+    if width <= 0 or height <= 0:
+        fail(f"capture PNG has invalid dimensions {width}x{height}")
+    if not any(
+        (node.get("bounds") or {}).get("width", 0) > 0
+        and (node.get("bounds") or {}).get("height", 0) > 0
+        for node in tree["nodes"]
+    ):
+        fail("captured native tree has no nodes with concrete bounds to relate to the image")
 
 
 def _daemon_kill(command: list[str], env: dict[str, str] | None) -> None:
@@ -227,10 +266,7 @@ def main() -> None:
             if "accessibility_tree" not in names:
                 fail("tools/list missing accessibility_tree", process)
 
-            def accessibility_call(arguments: dict[str, Any]) -> dict[str, Any]:
-                nonlocal next_id
-                result = _tool_call(process, next_id, "accessibility_tree", arguments)
-                next_id += 1
+            def assert_accessibility_disabled(operation: str) -> None:
                 state = subprocess.run(
                     ["gdbus", "call", "--session", "--dest", "org.a11y.Bus",
                      "--object-path", "/org/a11y/bus", "--method",
@@ -238,7 +274,13 @@ def main() -> None:
                     env=env, check=True, capture_output=True, text=True, timeout=30,
                 )
                 if "false" not in state.stdout.lower():
-                    fail("accessibility_tree did not immediately restore IsEnabled=false", process)
+                    fail(f"{operation} did not immediately restore IsEnabled=false", process)
+
+            def accessibility_call(arguments: dict[str, Any]) -> dict[str, Any]:
+                nonlocal next_id
+                result = _tool_call(process, next_id, "accessibility_tree", arguments)
+                next_id += 1
+                assert_accessibility_disabled("accessibility_tree")
                 return result
 
             base = {"pid": args.accessibility_pid, "timeout_ms": 5000}
@@ -256,10 +298,13 @@ def main() -> None:
                 fail(f"accessibility_tree opt-in returned invalid JSON: {enabled}", process)
             expected_ids = {"fixture-window", "primary-button", "newsletter", "account-name"}
             actual_ids = {node.get("id") for node in snapshot.get("nodes", [])}
-            expected_note = (
-                "enabled Linux accessibility for this snapshot; restored the previous setting afterwards"
+            expected_note = LINUX_ACCESSIBILITY_NOTE
+            fixture_is_valid = (
+                bool(snapshot.get("nodes"))
+                if args.accessibility_capture
+                else expected_ids.issubset(actual_ids)
             )
-            if not expected_ids.issubset(actual_ids) or expected_note not in snapshot.get("notes", []):
+            if not fixture_is_valid or expected_note not in snapshot.get("notes", []):
                 fail(
                     "accessibility_tree opt-in omitted fixture IDs or exact enable/restore note: "
                     f"{snapshot}",
@@ -283,19 +328,71 @@ def main() -> None:
 
             if args.accessibility_capture:
                 with tempfile.TemporaryDirectory() as captures:
-                    cli = subprocess.run(
-                        [*command, "capture", session_id, "--source", "accessibility",
-                         "--out-dir", captures, "--json"],
-                        env=env, text=True, stdout=subprocess.PIPE, check=True, timeout=60,
-                    )
-                    report = json.loads(cli.stdout)
-                    _check_accessibility_artifacts(report["captureJson"], report["screenshotPng"])
-                    result = _assert_tool_ok(_tool_call(process, next_id, "capture", {
-                        "session_id": session_id, "source": "accessibility", "out_dir": captures,
-                    }), "capture")
-                    next_id += 1
-                    report = json.loads(_text_content(result))
-                    _check_accessibility_artifacts(report["captureJsonPath"], report["screenshotPngPath"])
+                    if args.accessibility_pid is None:
+                        cli = subprocess.run(
+                            [*command, "capture", session_id, "--source", "accessibility",
+                             "--out-dir", captures, "--json"],
+                            env=env, text=True, stdout=subprocess.PIPE, check=True, timeout=60,
+                        )
+                        report = json.loads(cli.stdout)
+                        _check_accessibility_artifacts_legacy(
+                            report["captureJson"], report["screenshotPng"]
+                        )
+                        result = _assert_tool_ok(_tool_call(process, next_id, "capture", {
+                            "session_id": session_id, "source": "accessibility",
+                            "out_dir": captures,
+                        }), "capture")
+                        next_id += 1
+                        report = json.loads(_text_content(result))
+                        _check_accessibility_artifacts_legacy(
+                            report["captureJsonPath"], report["screenshotPngPath"]
+                        )
+                    else:
+                        cli_base = [
+                            *command, "capture", session_id, "--source", "accessibility",
+                            "--out-dir", captures, "--json",
+                        ]
+                        refused = subprocess.run(
+                            cli_base, env=env, text=True, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, check=False, timeout=60,
+                        )
+                        if refused.returncode != 5 or refused.stdout or "AccessibilityDisabled" not in refused.stderr:
+                            fail(f"CLI capture without consent must refuse: {refused!r}", process)
+                        cli = subprocess.run(
+                            [*cli_base, "--allow-accessibility-enable"], env=env, text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=60,
+                        )
+                        report = json.loads(cli.stdout)
+                        assert_accessibility_disabled("CLI capture")
+                        if cli.stderr != f"notice: {LINUX_ACCESSIBILITY_NOTE}\n":
+                            fail(f"CLI capture emitted unexpected stderr: {cli.stderr!r}", process)
+                        _check_accessibility_artifacts(
+                            report["captureJson"], report["screenshotPng"],
+                            expected_title="Spectre Agent Test Fixture",
+                            expected_note=LINUX_ACCESSIBILITY_NOTE,
+                        )
+                        false_result = _tool_call(process, next_id, "capture", {
+                            "session_id": session_id, "source": "accessibility", "out_dir": captures,
+                            "allow_accessibility_enable": False,
+                        })
+                        next_id += 1
+                        assert_accessibility_disabled("MCP capture false consent")
+                        if not false_result.get("isError") or "accessibility-disabled" not in _text_content(false_result):
+                            fail(f"MCP capture with false consent must refuse: {false_result}", process)
+                        result = _assert_tool_ok(_tool_call(process, next_id, "capture", {
+                            "session_id": session_id, "source": "accessibility", "out_dir": captures,
+                            "allow_accessibility_enable": True,
+                        }), "capture")
+                        next_id += 1
+                        report = json.loads(_text_content(result))
+                        assert_accessibility_disabled("MCP capture")
+                        if LINUX_ACCESSIBILITY_NOTE not in report.get("notes", []):
+                            fail(f"MCP capture omitted consent note: {report}", process)
+                        _check_accessibility_artifacts(
+                            report["captureJsonPath"], report["screenshotPngPath"],
+                            expected_title="Spectre Agent Test Fixture",
+                            expected_note=LINUX_ACCESSIBILITY_NOTE,
+                        )
 
             # Cheap session op: prefer tree, fall back to windows.
             if "tree" in names:

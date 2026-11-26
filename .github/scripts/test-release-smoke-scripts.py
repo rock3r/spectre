@@ -322,6 +322,30 @@ class SmokeLibSchemaTest(unittest.TestCase):
         )
         smoke_lib.assert_accessibility_limit_result(completed, maximum_node_count=2)
 
+    def test_linux_accessibility_limit_contract_requires_exact_preceding_notice(self):
+        partial = {"schemaVersion": 2, "source": "os-accessibility", "nodes": [{}, {}]}
+        notice = (
+            "notice: enabled Linux accessibility for this snapshot; restored the previous "
+            "setting afterwards"
+        )
+        completed = SimpleNamespace(
+            returncode=5,
+            stdout=json.dumps(partial),
+            stderr=(
+                f"{notice}\n"
+                "Spectre daemon error: LimitReached: maximumNodeCount 2 reached\n"
+                'Hint: run "spectre guide traps" or "spectre guide --search <words>".\n'
+            ),
+        )
+        smoke_lib.assert_accessibility_limit_result(
+            completed, maximum_node_count=2, preceding_stderr_lines=(notice,)
+        )
+        completed.stderr = completed.stderr.replace("notice:", "Notice:", 1)
+        with self.assertRaisesRegex(AssertionError, "unexpected node-budget stderr"):
+            smoke_lib.assert_accessibility_limit_result(
+                completed, maximum_node_count=2, preceding_stderr_lines=(notice,)
+            )
+
     def test_accesskit_snapshot_contract_matches_real_windows_controls(self):
         nodes = [
             {"key": "w0", "parentKey": None, "id": None, "name": "Spectre AccessKit Fixture", "platformRole": "Window", "states": [], "value": None, "bounds": {}, "onScreen": True},
@@ -1238,6 +1262,33 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
         for line in ("SPECTRE_ACCESSKIT_FIXTURE_READY", "SPECTRE_ACCESSKIT_FIXTURE_READY pid=0", "SPECTRE_ACCESSKIT_FIXTURE_READY pid=oops"):
             with self.subTest(line=line), self.assertRaises(ValueError):
                 self.rs._accesskit_fixture_pid(line)
+
+    def test_accesskit_cli_refusal_requires_public_cli_contract(self):
+        stderr = (
+            "Spectre daemon error: AccessibilityDisabled: "
+            "the session accessibility service is disabled\n"
+            'Hint: run "spectre guide troubleshooting" or '
+            '"spectre guide --search <words>".\n'
+        )
+        self.rs._assert_accessibility_cli_refusal(
+            subprocess.CompletedProcess([], 5, stdout="", stderr=stderr)
+        )
+        self.rs._assert_accessibility_cli_refusal(
+            subprocess.CompletedProcess(
+                [], 5, stdout="", stderr=stderr.splitlines()[0] + "\n"
+            )
+        )
+        for completed in (
+            subprocess.CompletedProcess([], 1, stdout="", stderr=stderr),
+            subprocess.CompletedProcess(
+                [], 5, stdout="", stderr=stderr.replace(
+                    "AccessibilityDisabled", "accessibility-disabled"
+                )
+            ),
+            subprocess.CompletedProcess([], 5, stdout="unexpected", stderr=stderr),
+        ):
+            with self.subTest(completed=completed), self.assertRaises(AssertionError):
+                self.rs._assert_accessibility_cli_refusal(completed)
 
     def test_accesskit_fixture_uses_xvfb_on_headless_linux(self):
         with (

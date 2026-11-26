@@ -78,7 +78,7 @@ A11Y_ACCESSKIT_SCENARIO_IDS: Mapping[str, str] = {
 
 
 def assert_accessibility_limit_result(
-    completed: Any, *, maximum_node_count: int
+    completed: Any, *, maximum_node_count: int, preceding_stderr_lines: tuple[str, ...] = ()
 ) -> Mapping[str, Any]:
     """Validate the packaged CLI's typed node-budget result without merging its streams."""
     if completed.returncode != 5:
@@ -90,7 +90,8 @@ def assert_accessibility_limit_result(
         f"maximumNodeCount {maximum_node_count} reached"
     )
     diagnostic_lines = [line.strip() for line in completed.stderr.splitlines() if line.strip()]
-    if not diagnostic_lines or diagnostic_lines[0] != expected_error:
+    expected_lines = [*preceding_stderr_lines, expected_error]
+    if diagnostic_lines[: len(expected_lines)] != expected_lines:
         raise AssertionError(f"unexpected node-budget stderr: {completed.stderr!r}")
     try:
         snapshot = json.loads(completed.stdout)
