@@ -85,21 +85,9 @@ stays valid. What can still require a new approval:
 - The grant covers one monitor. A region on another monitor cannot be captured with it.
 - A desktop other than GNOME may not restore RemoteDesktop grants without a dialog.
 
-What never needs another dialog on GNOME: window stills, `waitForVisualIdle()` samples, and
-window recording. They use GNOME Mutter's own `org.gnome.Mutter.ScreenCast` window streams
-through the session helper, which need no consent. The portal's window source cannot do
-this: GNOME stores a window grant as the window's app id and title, and gives a Java window
-without a matching `.desktop` file a new `window:<n>` app id, so every new window would show
-a new window picker. Mutter selects the window that has keyboard focus, so Spectre focuses a
-window briefly the first time it captures it, checks the frame size, and gives focus back.
-GNOME ignores a Java window's own focus request when another application, or no window, has
-focus, so Spectre then asks the window manager to activate the window (`_NET_ACTIVE_WINDOW`).
-It does not give focus back to another application's window.
-A window that cannot take focus, a translucent window, or a desktop other than GNOME fails
-with an error. Popup windows (a `JWindow`, or any window that is not a `Frame` or `Dialog`)
-cannot be captured yet: AWT keeps their keyboard focus on the owner frame, so Mutter would record
-the owner. Their capture fails at once with an `UnsupportedOperationException`;
-[#640](https://github.com/rock3r/spectre/issues/640) tracks binding by window identity. Spectre never substitutes a crop of a monitor capture for a window capture.
+On GNOME, window stills, visual-idle samples, and window recording use Mutter window
+streams through the session helper. Starting the helper requires a RemoteDesktop grant.
+Binding a window through Mutter then needs no separate window-picker grant.
 GNOME shows its screen-sharing indicator in the top bar while window streams run. Each bound
 stream lives until its window closes or the session helper's client disconnects.
 
@@ -231,20 +219,6 @@ X11, macOS, and Windows keep their input and capture paths.
   Rust can pass it to `gst-launch-1.0`; JVM `ProcessBuilder` does not expose the
   required `fcntl(F_SETFD, ...)` control. macOS also uses a separate capture helper.
 
-  **`WaylandPortalWindowRecorder` needs `xprop` on `PATH` and GTK/Mutter frame extents.**
-  Mutter includes invisible shadows in window streams, often 25 px per side for
-  GNOME GTK client-side decoration. `Frame.getBounds()` covers only the inner window.
-  `WaylandPortalWindowRecorder` queries `_GTK_FRAME_EXTENTS(CARDINAL)` through `xprop`
-  on the JFrame's XWayland window. It uses that value to place the stream-relative crop.
-  Without the extents, the crop can clip the title bar close button.
-  Debian and Ubuntu provide `xprop` in `x11-utils`. Minimal images may need that package.
-  The recorder throws `IllegalStateException` when `xprop` is missing, the title is blank,
-  or the window manager does not publish `_GTK_FRAME_EXTENTS`.
-  Older Mutter, non-GTK decoration, and KDE Plasma may lack the property.
-  Use `AutoRecorder.startRegion(...)` or `WaylandPortalRecorder` for explicit region capture.
-  Installing `xprop` cannot make Qt, JavaFX, Electron, SDL, KDE, or wlroots windows
-  publish the GTK property.
-
   **HiDPI / mixed AWT and portal coordinates.** On fractional-scale Wayland, AWT/XWayland
   often reports a larger virtual desktop than the ScreenCast stream. For example,
   AWT may report 2560×1440 while the portal supplies 1536×864. Region capture
@@ -371,18 +345,18 @@ Popups and movement follow the monitor-region limits described above.
 
 ## JUnit failure-video policy (#206)
 
-`ComposeAutomatorExtension` / `ComposeAutomatorRule` can record the whole test and keep or
+`ComposeAutomatorExtension` / `ComposeAutomatorRule` can record video during a test and keep or
 delete the file at the end (`FailureVideoPolicy`: `Off` | `OnFailureKeep` | `Always`). See
 [JUnit integration — Failure video](guide/junit.md#failure-video).
 
 Recording overhead:
 
-- **Per-OS cost** — the same backends as `AutoRecorder` run for the full test duration
+- **Per-OS cost** — the same backends as `AutoRecorder` run while the recorder is active
   (ScreenCaptureKit helper on macOS, Windows Graphics Capture helper on Windows, GStreamer
   X11 / Wayland portal on Linux). CPU, encoder, and helper-process cost scale with test
   length and resolution; capability and permission limits on this page still apply.
-- **Disk under `OnFailureKeep`** — the video file is written during **every** invocation
-  (including green tests) and only deleted after stop+finalise on pass. Parallel suites and
+- **Disk under `OnFailureKeep`** — a passing test also writes a video file. The wrapper deletes it after
+  the recorder stops and finalises. Parallel suites and
   long-running tests can therefore spike disk use during the run even when nothing remains
   after a green suite.
 - **Stop before delete** — Spectre always stops the recorder and finalises the file before
