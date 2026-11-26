@@ -130,6 +130,12 @@ def main() -> None:
         "--accessibility-capture", action="store_true",
         help="Exercise packaged CLI and MCP native capture on the attached fixture (requires --attach-pid)",
     )
+    parser.add_argument(
+        "--accessibility-pid",
+        type=int,
+        default=None,
+        help="Exercise Linux accessibility default/false refusal and real public opt-in",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.accessibility_capture and args.attach_pid is None:
@@ -216,6 +222,46 @@ def main() -> None:
             "list_processes",
         )
         next_id += 1
+
+        if args.accessibility_pid is not None:
+            if "accessibility_tree" not in names:
+                fail("tools/list missing accessibility_tree", process)
+
+            def accessibility_call(arguments: dict[str, Any]) -> dict[str, Any]:
+                nonlocal next_id
+                result = _tool_call(process, next_id, "accessibility_tree", arguments)
+                next_id += 1
+                state = subprocess.run(
+                    [
+                        "gdbus", "call", "--session", "--dest", "org.a11y.Bus",
+                        "--object-path", "/org/a11y/bus", "--method",
+                        "org.freedesktop.DBus.Properties.Get", "org.a11y.Status", "IsEnabled",
+                    ],
+                    env=env,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if "false" not in state.stdout.lower():
+                    fail("accessibility_tree did not immediately restore IsEnabled=false", process)
+                return result
+
+            base = {"pid": args.accessibility_pid, "timeout_ms": 5000}
+            for false_arguments in (base, {**base, "allow_accessibility_enable": False}):
+                refused = accessibility_call(false_arguments)
+                if not refused.get("isError") or "accessibility-disabled" not in _text_content(refused):
+                    fail(f"MCP default/false must return accessibility-disabled: {refused}", process)
+            enabled = _assert_tool_ok(
+                accessibility_call({**base, "allow_accessibility_enable": True}),
+                "accessibility_tree opt-in",
+            )
+            try:
+                snapshot = json.loads(_text_content(enabled))
+            except json.JSONDecodeError:
+                fail(f"accessibility_tree opt-in returned invalid JSON: {enabled}", process)
+            if not snapshot.get("nodes") or not snapshot.get("notes"):
+                fail(f"accessibility_tree opt-in omitted nodes or enablement note: {snapshot}", process)
 
         lifecycle = "tools+unknown-detach"
         if args.attach_pid is not None:

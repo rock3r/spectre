@@ -343,27 +343,14 @@ def _linux_accessibility_enabled(env: dict[str, str]) -> bool:
     return match.group(1).lower() == "true"
 
 
-def _set_linux_accessibility_enabled(enabled: bool, env: dict[str, str]) -> None:
-    subprocess.run(
-        ["gdbus", "call", "--session", "--dest", "org.a11y.Bus", "--object-path", "/org/a11y/bus", "--method", "org.freedesktop.DBus.Properties.Set", "org.a11y.Status", "IsEnabled", f"<{str(enabled).lower()}>"],
-        cwd=ROOT, env=env, check=True, capture_output=True, text=True, timeout=30,
-    )
+def _assert_linux_accessibility_disabled(env: dict[str, str], operation: str) -> None:
+    if _linux_accessibility_enabled(env):
+        raise AssertionError(
+            f"{operation} did not restore org.a11y.Status.IsEnabled=false"
+        )
 
 
-@contextlib.contextmanager
-def _linux_accessibility_for_smoke(env: dict[str, str]):
-    original = _linux_accessibility_enabled(env)
-    changed = not original
-    try:
-        if changed:
-            _set_linux_accessibility_enabled(True, env)
-        yield
-    finally:
-        if changed:
-            _set_linux_accessibility_enabled(False, env)
-
-
-def _accesskit_cli_smoke(executable: Path) -> str:
+def _accesskit_cli_smoke(executable: Path, expected_version: str) -> str:
     system = platform.system()
     manifest = ROOT / "fixtures/accesskit/Cargo.toml"
     if not manifest.is_file():
@@ -377,9 +364,9 @@ def _accesskit_cli_smoke(executable: Path) -> str:
     fixture = manifest.parent / "target/debug/spectre-accesskit-fixture"
     prefix = xvfb_prefix(system)
     with _private_daemon_environment() as daemon_environment:
-        with _private_linux_dbus(
-            system == "Linux" and bool(prefix)
-        ) as bus_environment:
+        # Never borrow the operator's accessibility bus. In particular, an opt-in
+        # smoke must not disable a desktop which was already enabled by its user.
+        with _private_linux_dbus(system == "Linux") as bus_environment:
             environment = {**os.environ, **daemon_environment, **bus_environment}
             process = subprocess.Popen(
                 [*prefix, str(fixture)],
@@ -394,9 +381,9 @@ def _accesskit_cli_smoke(executable: Path) -> str:
                 ready = _wait_for_accesskit_ready(process)
                 fixture_pid = _accesskit_fixture_pid(ready)
 
-                def read(*target: str) -> dict:
+                def invoke(*arguments: str) -> subprocess.CompletedProcess[str]:
                     completed = subprocess.run(
-                        [str(executable), "a11y", "tree", *target, "--timeout-ms", "5000"],
+                        [str(executable), "a11y", "tree", *arguments, "--timeout-ms", "5000"],
                         cwd=ROOT,
                         env=environment,
                         check=False,
@@ -404,6 +391,12 @@ def _accesskit_cli_smoke(executable: Path) -> str:
                         text=True,
                         timeout=120,
                     )
+                    if system == "Linux":
+                        _assert_linux_accessibility_disabled(environment, "packaged CLI")
+                    return completed
+
+                def read(*target: str) -> dict:
+                    completed = invoke(*target)
                     if completed.returncode != 0:
                         raise RuntimeError(
                             "packaged accessibility CLI exited "
@@ -414,35 +407,54 @@ def _accesskit_cli_smoke(executable: Path) -> str:
                         raise AssertionError(
                             f"CLI emitted no JSON snapshot: {completed.stdout!r}"
                         )
-                    return json.loads(completed.stdout[json_start:])
+                    snapshot = json.loads(completed.stdout[json_start:])
+                    if system == "Linux":
+                        if "notice:" not in completed.stderr or not snapshot.get("notes"):
+                            raise AssertionError(
+                                "Linux opt-in must be exposed in CLI stderr and snapshot notes"
+                            )
+                    return snapshot
 
-                accessibility = (
-                    _linux_accessibility_for_smoke(environment)
-                    if system == "Linux"
-                    else contextlib.nullcontext()
+                opt_in = ("--allow-accessibility-enable",) if system == "Linux" else ()
+                if system == "Linux":
+                    _assert_linux_accessibility_disabled(environment, "fixture startup")
+                    refused = invoke("--pid", str(fixture_pid))
+                    if refused.returncode == 0 or "accessibility-disabled" not in refused.stderr:
+                        raise AssertionError(
+                            "default packaged CLI must return structured accessibility-disabled"
+                        )
+                assert_accessibility_snapshot(
+                    read("--pid", str(fixture_pid), *opt_in), system
                 )
-                with accessibility:
-                    assert_accessibility_snapshot(
-                        read("--pid", str(fixture_pid)), system
-                    )
-                    assert_accessibility_snapshot(
-                        read("--window", "Spectre AccessKit Fixture"), system
-                    )
-                    limited = subprocess.run(
-                        [str(executable), "a11y", "tree", "--pid", str(fixture_pid),
-                         "--maximum-node-count", "2", "--timeout-ms", "5000"],
+                assert_accessibility_snapshot(
+                    read("--window", "Spectre AccessKit Fixture", *opt_in), system
+                )
+                limited = invoke(
+                    "--pid", str(fixture_pid), "--maximum-node-count", "2", *opt_in
+                )
+                assert_accessibility_limit_result(limited, maximum_node_count=2)
+                if system == "Linux":
+                    subprocess.run(
+                        [
+                            sys.executable,
+                            str(ROOT / "scripts" / "mcp-stdio-smoke.py"),
+                            "--expected-version",
+                            expected_version,
+                            "--accessibility-pid",
+                            str(fixture_pid),
+                            "--",
+                            str(executable),
+                        ],
                         cwd=ROOT,
                         env=environment,
-                        check=False,
-                        capture_output=True,
-                        text=True,
+                        check=True,
                         timeout=120,
                     )
-                    assert_accessibility_limit_result(limited, maximum_node_count=2)
+                    _assert_linux_accessibility_disabled(environment, "packaged MCP")
                 return (
-                    "real packaged CLI read fixture by pid and title; stable native roles, "
-                    "values, ownership, and schemaVersion=2 verified; public MCP transport "
-                    "and error-path evidence is verified separately by mcp-sdk-flow"
+                    "real packaged CLI read fixture by pid and title; Linux default refusal, "
+                    "public CLI/MCP opt-in notes, immediate D-Bus restoration, stable native "
+                    "roles, values, ownership, and schemaVersion=2 verified"
                 )
             finally:
                 try:
@@ -1601,7 +1613,7 @@ def _main(argv: list[str] | None, seat_monitor: SeatMonitorGuard) -> int:
             run_callable_scenario(
                 active_a11y_id,
                 name=f"AccessKit accessibility snapshot ({system})",
-                action=lambda: _accesskit_cli_smoke(executable),
+                action=lambda: _accesskit_cli_smoke(executable, args.version),
                 out_dir=out_dir,
             )
         )
