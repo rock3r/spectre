@@ -1,0 +1,145 @@
+name: QA Linux packaged v5 same-PID two-window attach
+
+on:
+  push:
+    branches: [release-0.10/gnome-hosted-smoke]
+    paths:
+      - .github/workflows/qa-linux-two-window.yml
+      - .github/qa-linux-two-window/**
+
+permissions:
+  contents: read
+
+jobs:
+  packaged-two-window-attach:
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    env:
+      QA_DIR: ${{ github.workspace }}/scratch/.github/qa-linux-two-window
+
+    steps:
+      - name: Check out scratch harness without credentials
+        uses: actions/checkout@v6
+        with:
+          path: scratch
+          persist-credentials: false
+
+      - name: Initialize retained evidence directory
+        shell: bash
+        run: |
+          echo "TWO_WINDOW_EVIDENCE=$RUNNER_TEMP/qa-linux-two-window" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/qa-linux-two-window"
+
+      - name: Check out and attest the single pinned production candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="$QA_DIR/candidate.env"
+          test "$(grep -Ec '^(CANDIDATE_SHA|CANDIDATE_TREE)=[0-9a-f]{40}$' "$pin")" -eq 2
+          test "$(grep -Evc '^(#|$|CANDIDATE_SHA=[0-9a-f]{40}|CANDIDATE_TREE=[0-9a-f]{40})$' "$pin")" -eq 0
+          source "$pin"
+          git init --quiet candidate
+          git -C candidate remote add origin https://github.com/rock3r/spectre.git
+          git -C candidate fetch --quiet --no-tags --depth=1 origin "$CANDIDATE_SHA"
+          git -C candidate checkout --quiet --detach FETCH_HEAD
+          actual_sha=$(git -C candidate rev-parse HEAD)
+          base_tree=$(git -C candidate rev-parse 'HEAD^{tree}')
+          test "$base_tree" = b6672c347607c71135ddd27d14143f32ec5c8b6e
+          printf '%s  %s\n' ca4c41ae53ecb05615d4c7304a210217aa0fbc87e7ed15dff4f60db7858577ed "$QA_DIR/v5-runtime-source.patch" | sha256sum -c -
+          git -C candidate apply --index "$QA_DIR/v5-runtime-source.patch"
+          git -C candidate diff --cached --check
+          actual_tree=$(git -C candidate write-tree)
+          test "$actual_tree" = "$CANDIDATE_TREE"
+          git -C candidate -c user.name=Verification -c user.email=verification@localhost commit --quiet -m "Assemble verified v5 package source"
+          test "$actual_sha" = "$CANDIDATE_SHA"
+          test "$actual_tree" = "$CANDIDATE_TREE"
+          test -z "$(git -C candidate status --porcelain=v1 --untracked-files=all)"
+          mkdir -p "$TWO_WINDOW_EVIDENCE"
+          printf '{"sha":"%s","tree":"%s"}\n' "$actual_sha" "$actual_tree" \
+            > "$TWO_WINDOW_EVIDENCE/source-pin.json"
+
+      - name: Stage only the supplied validation fixture and MCP smoke overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture=sample-desktop/src/validation/kotlin/dev/sebastiano/spectre/sample/validation/AttachedTwoWindowFixture.kt
+          install -Dm644 "$QA_DIR/AttachedTwoWindowFixture.kt" "candidate/$fixture"
+          install -m755 "$QA_DIR/mcp-stdio-smoke.py" candidate/scripts/mcp-stdio-smoke.py
+          git -C candidate add -- "$fixture" scripts/mcp-stdio-smoke.py
+          git -C candidate diff --cached --check
+          test "$(git -C candidate diff --cached --name-only)" = "$fixture
+          scripts/mcp-stdio-smoke.py"
+          git -C candidate diff --cached --binary > "$TWO_WINDOW_EVIDENCE/exact-validation-overlay.diff"
+
+      - name: Set up JDK 21 toolchain
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up default JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up stable Rust for the packaged native helper
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Gradle with read-only caching
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          build-root-directory: candidate
+          cache-read-only: true
+
+      - name: Install and verify real Linux UI, AT-SPI, and media dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            at-spi2-core dbus-x11 xauth xvfb x11-utils xdotool openbox \
+            libatk-wrapper-java libatk-wrapper-java-jni libatspi2.0-0 libatspi2.0-dev \
+            libdbus-1-dev libgtk-3-0t64 libxkbcommon-x11-0 libxcursor1 libxrandr2 \
+            libxinerama1 libxi6 libxtst6 libgl1-mesa-dri pkg-config clang \
+            libpipewire-0.3-dev libspa-0.2-dev ffmpeg gstreamer1.0-libav \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly
+          # Ubuntu provides the Java ATK bridge under these real package names; there is
+          # intentionally no dependency on a fictitious java-atk-wrapper apt package.
+          dpkg-query -W libatk-wrapper-java libatk-wrapper-java-jni | tee "$TWO_WINDOW_EVIDENCE/atk-packages.txt"
+          test -f /usr/share/java/java-atk-wrapper.jar
+          for command in dbus-run-session Xvfb openbox ffmpeg gst-inspect-1.0; do command -v "$command"; done
+          for element in ximagesrc x264enc h264parse mp4mux pngenc; do
+            gst-inspect-1.0 "$element" > "$TWO_WINDOW_EVIDENCE/gstreamer-$element.txt"
+          done
+
+      - name: Build and attest the genuine packaged 0.10.0 CLI
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon -PVERSION_NAME=0.10.0 :cli:packageLinuxX64 --console=plain
+          executable=cli/build/construo/linuxX64/roast/spectre
+          test -x "$executable"
+          "$executable" --version | tee "$TWO_WINDOW_EVIDENCE/packaged-version.txt"
+          grep -Eq '(^|[^[:alnum:].])0\.10\.0([^[:alnum:].]|$)' "$TWO_WINDOW_EVIDENCE/packaged-version.txt"
+          sha256sum "$executable" | tee "$TWO_WINDOW_EVIDENCE/packaged-binary.sha256"
+          package_zip=$(find cli/build/construo/distributions/linuxX64 -maxdepth 1 -type f -name '*.zip' -print -quit)
+          test -n "$package_zip"
+          sha256sum "$package_zip" | tee "$TWO_WINDOW_EVIDENCE/package-archive.sha256"
+
+      - name: Run private D-Bus, real Xvfb/WM, two-window CLI and MCP proof
+        working-directory: candidate
+        shell: bash
+        run: dbus-run-session -- "$QA_DIR/run-two-window-session.sh"
+
+      - name: Preserve complete evidence on pass or failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-linux-two-window-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qa-linux-two-window
+          if-no-files-found: error
+          retention-days: 14

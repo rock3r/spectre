@@ -1,0 +1,12 @@
+gradle.projectsEvaluated {
+    def sample = gradle.rootProject.findProject(':sample-desktop')
+    if (sample == null) return
+    sample.tasks.register('writeAttachedValidationClasspath') {
+        def classes = sample.sourceSets.validation.runtimeClasspath
+        dependsOn(sample.tasks.named('validationClasses'), classes)
+        doLast {
+            def destination = new File(sample.layout.buildDirectory.get().asFile, 'two-window-qa-classpath.txt')
+            destination.text = classes.asPath
+        }
+    }
+}

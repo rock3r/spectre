@@ -1,0 +1,675 @@
+diff --git a/agent/api/agent.api b/agent/api/agent.api
+index 1f27dbe4..61a2bda8 100644
+--- a/agent/api/agent.api
++++ b/agent/api/agent.api
+@@ -115,6 +115,7 @@ public final class dev/sebastiano/spectre/agent/AttachUnsupportedException : dev
+ 
+ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/AutoCloseable {
+ 	public final fun allNodes ()Ljava/util/List;
++	public final fun beginWindowChangeCapture ()J
+ 	public final fun capture (Ljava/lang/Integer;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
+ 	public static synthetic fun capture$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/Integer;ILjava/lang/Object;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
+ 	public final fun captureWithUntitledWindowStill (ILjava/lang/String;[BLdev/sebastiano/spectre/agent/transport/RectDto;)Ldev/sebastiano/spectre/agent/AtomicCaptureResult;
+@@ -123,6 +124,7 @@ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/Au
+ 	public final fun click (Ljava/lang/String;)V
+ 	public fun close ()V
+ 	public final fun doubleClick (Ljava/lang/String;)V
++	public final fun endWindowChangeCapture (J)J
+ 	public final fun findByContentDescription (Ljava/lang/String;)Ljava/util/List;
+ 	public final fun findByRole (Ljava/lang/String;)Ljava/util/List;
+ 	public final fun findByTestTag (Ljava/lang/String;)Ljava/util/List;
+diff --git a/agent/src/main/kotlin/dev/sebastiano/spectre/agent/AttachedAutomator.kt b/agent/src/main/kotlin/dev/sebastiano/spectre/agent/AttachedAutomator.kt
+index 37170422..08cf1640 100644
+--- a/agent/src/main/kotlin/dev/sebastiano/spectre/agent/AttachedAutomator.kt
++++ b/agent/src/main/kotlin/dev/sebastiano/spectre/agent/AttachedAutomator.kt
+@@ -381,6 +381,18 @@ internal constructor(
+             ?: throw wireMismatch("WindowIdentities", resp)
+     }
+ 
++    public fun beginWindowChangeCapture(): Long {
++        val response = exchange(AgentRequest.BeginWindowChangeCapture)
++        return (response as? AgentResponse.WindowChangeCapture)?.token
++            ?: throw wireMismatch("WindowChangeCapture", response)
++    }
++
++    public fun endWindowChangeCapture(token: Long): Long {
++        val response = exchange(AgentRequest.EndWindowChangeCapture(token))
++        return (response as? AgentResponse.WindowChangeCapture)?.generation
++            ?: throw wireMismatch("WindowChangeCapture", response)
++    }
++
+     /**
+      * Wait until a semantics node matches [tag] and/or [text] (AND when both are set), same as
+      * in-process `ComposeAutomator.waitForNode` (#201).
+diff --git a/agent/src/main/kotlin/dev/sebastiano/spectre/agent/runtime/DeferredAutomatorHandler.kt b/agent/src/main/kotlin/dev/sebastiano/spectre/agent/runtime/DeferredAutomatorHandler.kt
+index a0b03645..826ae963 100644
+--- a/agent/src/main/kotlin/dev/sebastiano/spectre/agent/runtime/DeferredAutomatorHandler.kt
++++ b/agent/src/main/kotlin/dev/sebastiano/spectre/agent/runtime/DeferredAutomatorHandler.kt
+@@ -61,9 +61,14 @@ internal class DeferredAutomatorHandler(
+                 closed = true
+                 connected.also { connected = null }
+             }
++        toClose?.handler?.connectionClosed()
+         toClose?.targetInputResource?.close()
+     }
+ 
++    override fun connectionClosed() {
++        connected?.handler?.connectionClosed()
++    }
++
+     private fun connectedOrNull(): ConnectedAutomator? {
+         connected?.let {
+             return it
+@@ -104,6 +109,9 @@ internal class DeferredAutomatorHandler(
+             is AgentRequest.FindByContentDescription,
+             is AgentRequest.FindByRole -> AgentResponse.Nodes(emptyList())
+             is AgentRequest.WindowIdentity -> AgentResponse.WindowIdentities(emptyList())
++            AgentRequest.BeginWindowChangeCapture,
++            is AgentRequest.EndWindowChangeCapture ->
++                errorResponse(AgentErrorCategory.InternalError, NO_COMPOSE_YET)
+             AgentRequest.PrintTree -> AgentResponse.TreeDump("")
+             is AgentRequest.WaitUntilGone,
+             is AgentRequest.WaitForIdle,
+diff --git a/agent/src/main/kotlin/dev/sebastiano/spectre/agent/runtime/ReflectiveAutomatorHandler.kt b/agent/src/main/kotlin/dev/sebastiano/spectre/agent/runtime/ReflectiveAutomatorHandler.kt
+index 1ad7980b..8687e5d6 100644
+--- a/agent/src/main/kotlin/dev/sebastiano/spectre/agent/runtime/ReflectiveAutomatorHandler.kt
++++ b/agent/src/main/kotlin/dev/sebastiano/spectre/agent/runtime/ReflectiveAutomatorHandler.kt
+@@ -78,6 +78,8 @@ internal class ReflectiveAutomatorHandler(
+     private val nodeBooleanMethods = ConcurrentHashMap<Pair<Class<*>, String>, Method>()
+     private val nodeEditableTextMethods = ConcurrentHashMap<Class<*>, Method>()
+     private val nodeState = NodeStateReflectiveMapper()
++    private val windowChangeCaptures = ConcurrentHashMap<Long, WindowChangeCapture>()
++    private val nextWindowChangeCapture = java.util.concurrent.atomic.AtomicLong()
+ 
+     /**
+      * `ComposeAutomator.windows` is a Volatile cache populated by `refreshWindows()` (or by any of
+@@ -200,6 +202,8 @@ internal class ReflectiveAutomatorHandler(
+                 AtomicCaptureReflectiveMapper.invokeWithUntitledWindowStill(automator, request)
+             is AgentRequest.WindowIdentity ->
+                 WindowIdentityReflectiveMapper.invoke(automator, request.windowIndex)
++            AgentRequest.BeginWindowChangeCapture -> beginWindowChangeCapture()
++            is AgentRequest.EndWindowChangeCapture -> endWindowChangeCapture(request.token)
+             AgentRequest.Detach -> AgentResponse.Detached
+             // Handled in IpcServer before the automator handler; keep exhaustive.
+             is AgentRequest.Hello ->
+@@ -214,6 +218,30 @@ internal class ReflectiveAutomatorHandler(
+             AgentRequest.PrintTree -> handlePrintTree()
+         }
+ 
++    private fun beginWindowChangeCapture(): AgentResponse {
++        val capture = WindowChangeCapture.begin()
++        val token = nextWindowChangeCapture.incrementAndGet()
++        windowChangeCaptures[token] = capture
++        return AgentResponse.WindowChangeCapture(token, 0)
++    }
++
++    private fun endWindowChangeCapture(token: Long): AgentResponse {
++        val capture =
++            requireNotNull(windowChangeCaptures.remove(token)) {
++                "unknown window change capture $token"
++            }
++        return try {
++            AgentResponse.WindowChangeCapture(token, capture.changeGeneration)
++        } finally {
++            capture.close()
++        }
++    }
++
++    override fun connectionClosed() {
++        windowChangeCaptures.values.forEach { runCatching { it.close() } }
++        windowChangeCaptures.clear()
++    }
++
+     // Note on un-caught exceptions: any non-reflective `RuntimeException` thrown by the
+     // automator (NullPointerException from a broken window list, ClassCastException from a
+     // method whose JVM signature drifted, etc.) propagates to [IpcServer.handleConnection],
+diff --git a/agent/src/main/kotlin/dev/sebastiano/spectre/agent/runtime/WindowChangeCapture.kt b/agent/src/main/kotlin/dev/sebastiano/spectre/agent/runtime/WindowChangeCapture.kt
+new file mode 100644
+index 00000000..c27b514c
+--- /dev/null
++++ b/agent/src/main/kotlin/dev/sebastiano/spectre/agent/runtime/WindowChangeCapture.kt
+@@ -0,0 +1,81 @@
++package dev.sebastiano.spectre.agent.runtime
++
++import java.awt.AWTEvent
++import java.awt.EventQueue
++import java.awt.Toolkit
++import java.awt.Window
++import java.awt.event.AWTEventListener
++import java.awt.event.ComponentEvent
++import java.awt.event.WindowEvent
++import java.beans.PropertyChangeEvent
++import java.beans.PropertyChangeListener
++import java.util.concurrent.atomic.AtomicLong
++import javax.swing.SwingUtilities
++
++/** Agent-owned observation, independent of the target core version. */
++internal class WindowChangeCapture private constructor() : AutoCloseable {
++    private val generation = AtomicLong()
++    private val observed = mutableSetOf<Window>()
++    private val propertyListener = PropertyChangeListener(::propertyChanged)
++    private val awtListener = AWTEventListener(::eventDispatched)
++
++    val changeGeneration: Long
++        get() = onEdt { generation.get() }
++
++    private fun propertyChanged(event: PropertyChangeEvent) {
++        if (
++            event.source is Window &&
++                (event.propertyName == "title" || event.propertyName == "owner")
++        ) {
++            generation.incrementAndGet()
++        }
++    }
++
++    private fun eventDispatched(event: AWTEvent) {
++        val window = event.source as? Window ?: return
++        when (event) {
++            is WindowEvent -> if (event.id in RELEVANT_WINDOW_EVENTS) generation.incrementAndGet()
++            is ComponentEvent ->
++                if (
++                    event.id == ComponentEvent.COMPONENT_SHOWN ||
++                        event.id == ComponentEvent.COMPONENT_HIDDEN
++                ) {
++                    generation.incrementAndGet()
++                }
++        }
++        observe(window)
++    }
++
++    private fun observe(window: Window) {
++        if (observed.add(window)) window.addPropertyChangeListener(propertyListener)
++    }
++
++    override fun close() = onEdt {
++        Toolkit.getDefaultToolkit().removeAWTEventListener(awtListener)
++        observed.forEach { it.removePropertyChangeListener(propertyListener) }
++        observed.clear()
++    }
++
++    companion object {
++        fun begin(): WindowChangeCapture = onEdt {
++            WindowChangeCapture().also { capture ->
++                Window.getWindows().forEach(capture::observe)
++                Toolkit.getDefaultToolkit()
++                    .addAWTEventListener(
++                        capture.awtListener,
++                        AWTEvent.WINDOW_EVENT_MASK or AWTEvent.COMPONENT_EVENT_MASK,
++                    )
++            }
++        }
++
++        private val RELEVANT_WINDOW_EVENTS =
++            setOf(WindowEvent.WINDOW_OPENED, WindowEvent.WINDOW_CLOSING, WindowEvent.WINDOW_CLOSED)
++    }
++}
++
++private fun <T> onEdt(block: () -> T): T {
++    if (EventQueue.isDispatchThread()) return block()
++    var result: Result<T>? = null
++    SwingUtilities.invokeAndWait { result = runCatching(block) }
++    return requireNotNull(result).getOrThrow()
++}
+diff --git a/agent/src/main/kotlin/dev/sebastiano/spectre/agent/transport/IpcServer.kt b/agent/src/main/kotlin/dev/sebastiano/spectre/agent/transport/IpcServer.kt
+index ab376eee..906b654f 100644
+--- a/agent/src/main/kotlin/dev/sebastiano/spectre/agent/transport/IpcServer.kt
++++ b/agent/src/main/kotlin/dev/sebastiano/spectre/agent/transport/IpcServer.kt
+@@ -165,15 +165,19 @@ constructor(
+         // Phase 1: bare Hello (#199).
+         if (!performHandshake(client, input, output)) return
+         // Phase 2: multiplexed OpRequest frames on a worker pool (#200).
+-        MultiplexedIpcSession(
+-                handler = handler,
+-                running = running,
+-                onDetach = onDetach,
+-                channel = client,
+-                frameIoTimeoutMs = frameIoTimeoutMs,
+-                inputWorkers = inputWorkers,
+-            )
+-            .run(input, output)
++        try {
++            MultiplexedIpcSession(
++                    handler = handler,
++                    running = running,
++                    onDetach = onDetach,
++                    channel = client,
++                    frameIoTimeoutMs = frameIoTimeoutMs,
++                    inputWorkers = inputWorkers,
++                )
++                .run(input, output)
++        } finally {
++            handler.connectionClosed()
++        }
+     }
+ 
+     /** Bare Hello handshake. Returns false if the connection should end. */
+@@ -389,4 +393,7 @@ constructor(
+  */
+ internal fun interface AgentRequestHandler {
+     fun handle(request: AgentRequest): AgentResponse
++
++    /** Releases resources scoped to the just-ended IPC connection. */
++    fun connectionClosed() {}
+ }
+diff --git a/agent/src/main/kotlin/dev/sebastiano/spectre/agent/transport/ProtocolVersion.kt b/agent/src/main/kotlin/dev/sebastiano/spectre/agent/transport/ProtocolVersion.kt
+index 0c7a5fec..f1e739ac 100644
+--- a/agent/src/main/kotlin/dev/sebastiano/spectre/agent/transport/ProtocolVersion.kt
++++ b/agent/src/main/kotlin/dev/sebastiano/spectre/agent/transport/ProtocolVersion.kt
+@@ -15,7 +15,8 @@ public object ProtocolVersion {
+      * v1: bare request/response frames after Hello. v2 (#200): operation envelopes with op ids,
+      * cancel, and deadline budgets; long ops run off the accept thread. v3: bulk payloads
+      * (`pngBytes`, `captureJsonUtf8`) encode as CBOR byte strings rather than integer arrays. v4:
+-     * `waitForVisualIdle` fails closed unless screen-region fallback is explicitly requested.
++     * `waitForVisualIdle` fails closed unless screen-region fallback is explicitly requested. v5:
++     * scoped top-level AWT window-change observation used by atomic accessibility captures.
+      *
+      * v3 is a **representation** change and v4 is a behavioral safety change, both invisible to the
+      * type system. A library and runtime jar from either side would otherwise pass the exact-match
+@@ -23,5 +24,5 @@ public object ProtocolVersion {
+      * `AttachOptions.agentJarPath` and the runtime-jar system property make those pairings
+      * reachable, so they must fail at Hello.
+      */
+-    public const val CURRENT: Int = 4
++    public const val CURRENT: Int = 5
+ }
+diff --git a/agent/src/main/kotlin/dev/sebastiano/spectre/agent/transport/Wire.kt b/agent/src/main/kotlin/dev/sebastiano/spectre/agent/transport/Wire.kt
+index 0e488aa7..ec39df99 100644
+--- a/agent/src/main/kotlin/dev/sebastiano/spectre/agent/transport/Wire.kt
++++ b/agent/src/main/kotlin/dev/sebastiano/spectre/agent/transport/Wire.kt
+@@ -250,6 +250,14 @@ internal sealed interface AgentRequest {
+     @SerialName("windowIdentity")
+     data class WindowIdentity(val windowIndex: Int? = null) : AgentRequest
+ 
++    @Serializable
++    @SerialName("beginWindowChangeCapture")
++    data object BeginWindowChangeCapture : AgentRequest
++
++    @Serializable
++    @SerialName("endWindowChangeCapture")
++    data class EndWindowChangeCapture(val token: Long) : AgentRequest
++
+     /**
+      * Signal the agent runtime to drain in-flight requests, stop accepting new ones, release the
+      * in-target `ComposeAutomator`, unlink the UDS path, and remove its shutdown hook. Server
+@@ -372,6 +380,8 @@ internal val AgentRequest.logLabel: String
+             is AgentRequest.CaptureWithWindowStill -> "captureWithWindowStill"
+             is AgentRequest.CaptureWithUntitledWindowStill -> "captureWithUntitledWindowStill"
+             is AgentRequest.WindowIdentity -> "windowIdentity"
++            AgentRequest.BeginWindowChangeCapture -> "beginWindowChangeCapture"
++            is AgentRequest.EndWindowChangeCapture -> "endWindowChangeCapture"
+             AgentRequest.Detach -> "detach"
+             is AgentRequest.Hello -> "hello"
+             is AgentRequest.Cancel -> "cancel"
+@@ -406,6 +416,8 @@ internal val AgentRequest.requiresInputLane: Boolean
+             is AgentRequest.CaptureWithWindowStill,
+             is AgentRequest.CaptureWithUntitledWindowStill,
+             is AgentRequest.WindowIdentity,
++            AgentRequest.BeginWindowChangeCapture,
++            is AgentRequest.EndWindowChangeCapture,
+             AgentRequest.Detach,
+             is AgentRequest.Hello,
+             is AgentRequest.Cancel,
+@@ -508,6 +520,10 @@ internal sealed interface AgentResponse {
+     @SerialName("windowIdentities")
+     data class WindowIdentities(val windows: List<WindowIdentityDto>) : AgentResponse
+ 
++    @Serializable
++    @SerialName("windowChangeCapture")
++    data class WindowChangeCapture(val token: Long, val generation: Long) : AgentResponse
++
+     /**
+      * Server-side failure with a stable [category] from the #199 error taxonomy plus a
+      * human-readable [message].
+diff --git a/agent/src/test/kotlin/dev/sebastiano/spectre/agent/runtime/WindowChangeCaptureTest.kt b/agent/src/test/kotlin/dev/sebastiano/spectre/agent/runtime/WindowChangeCaptureTest.kt
+new file mode 100644
+index 00000000..99a82e3c
+--- /dev/null
++++ b/agent/src/test/kotlin/dev/sebastiano/spectre/agent/runtime/WindowChangeCaptureTest.kt
+@@ -0,0 +1,40 @@
++package dev.sebastiano.spectre.agent.runtime
++
++import java.awt.BorderLayout
++import javax.swing.JButton
++import javax.swing.JFrame
++import javax.swing.SwingUtilities
++import kotlin.test.Test
++import kotlin.test.assertEquals
++import kotlin.test.assertTrue
++import org.junit.jupiter.api.condition.DisabledIfSystemProperty
++
++@DisabledIfSystemProperty(named = "java.awt.headless", matches = "true")
++class WindowChangeCaptureTest {
++    @Test
++    fun `title ABA is observed but child navigation is harmless`() {
++        val frame = onEdt { JFrame("A").apply { add(JButton("one"), BorderLayout.CENTER) } }
++        try {
++            val capture = WindowChangeCapture.begin()
++            onEdt {
++                frame.title = "B"
++                frame.title = "A"
++            }
++            assertTrue(capture.changeGeneration > 0)
++            capture.close()
++
++            val childCapture = WindowChangeCapture.begin()
++            onEdt { (frame.contentPane.getComponent(0) as JButton).text = "two" }
++            assertEquals(0, childCapture.changeGeneration)
++            childCapture.close()
++        } finally {
++            onEdt { frame.dispose() }
++        }
++    }
++}
++
++private fun <T> onEdt(block: () -> T): T {
++    var value: T? = null
++    SwingUtilities.invokeAndWait { value = block() }
++    @Suppress("UNCHECKED_CAST") return value as T
++}
+diff --git a/agent/src/test/kotlin/dev/sebastiano/spectre/agent/transport/IpcRoundTripTest.kt b/agent/src/test/kotlin/dev/sebastiano/spectre/agent/transport/IpcRoundTripTest.kt
+index 3c6afed4..221d85a9 100644
+--- a/agent/src/test/kotlin/dev/sebastiano/spectre/agent/transport/IpcRoundTripTest.kt
++++ b/agent/src/test/kotlin/dev/sebastiano/spectre/agent/transport/IpcRoundTripTest.kt
+@@ -631,6 +631,9 @@ class IpcRoundTripTest {
+                     captureDurationMs = 0,
+                 )
+             is AgentRequest.WindowIdentity -> AgentResponse.WindowIdentities(emptyList())
++            AgentRequest.BeginWindowChangeCapture -> AgentResponse.WindowChangeCapture(1, 0)
++            is AgentRequest.EndWindowChangeCapture ->
++                AgentResponse.WindowChangeCapture(request.token, 0)
+             AgentRequest.Detach -> AgentResponse.Detached
+             is AgentRequest.Hello ->
+                 AgentResponse.HelloAck(protocolVersion = ProtocolVersion.CURRENT)
+diff --git a/agent/src/test/kotlin/dev/sebastiano/spectre/agent/transport/ProtocolCompatTest.kt b/agent/src/test/kotlin/dev/sebastiano/spectre/agent/transport/ProtocolCompatTest.kt
+index a9a4c0c4..bbc8de53 100644
+--- a/agent/src/test/kotlin/dev/sebastiano/spectre/agent/transport/ProtocolCompatTest.kt
++++ b/agent/src/test/kotlin/dev/sebastiano/spectre/agent/transport/ProtocolCompatTest.kt
+@@ -35,7 +35,7 @@ class ProtocolCompatTest {
+         // library with a runtime built on either side of the @ByteString or visual-capture-policy
+         // changes. Those pairings would otherwise advertise the same version and pass the
+         // exact-match handshake, then fail late or silently capture a Robot screen region.
+-        assertEquals(4, ProtocolVersion.CURRENT, "bump this when wire behavior changes")
++        assertEquals(5, ProtocolVersion.CURRENT, "bump this when wire behavior changes")
+     }
+ 
+     private val udsPath: Path =
+diff --git a/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/AccessibilityDaemonHandler.kt b/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/AccessibilityDaemonHandler.kt
+index ab84044b..0b1fb37f 100644
+--- a/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/AccessibilityDaemonHandler.kt
++++ b/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/AccessibilityDaemonHandler.kt
+@@ -71,6 +71,11 @@ internal class AccessibilityDaemonHandler(private val client: AccessibilityHelpe
+                         "Session '${request.sessionId}' or window ${request.windowIndex} not found",
+                     )
+                 )
++        if (isWindows() && selected.nativeHandle != null && selected.nativeHandle != 0L) {
++            return TargetResolution.Resolved(
++                Target.WindowId(java.lang.Long.toUnsignedString(selected.nativeHandle))
++            )
++        }
+         val title =
+             selected.window.title
+                 ?: return TargetResolution.Error(
+@@ -137,4 +142,11 @@ internal class AccessibilityDaemonHandler(private val client: AccessibilityHelpe
+     }
+ }
+ 
+-internal data class SessionAccessibilityTarget(val pid: Long, val window: WindowSummaryDto)
++internal data class SessionAccessibilityTarget(
++    val pid: Long,
++    val window: WindowSummaryDto,
++    val nativeHandle: Long? = null,
++)
++
++private fun isWindows(): Boolean =
++    System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
+diff --git a/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/AttachedAccessibilityOperations.kt b/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/AttachedAccessibilityOperations.kt
+index d97f30e5..725c26c0 100644
+--- a/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/AttachedAccessibilityOperations.kt
++++ b/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/AttachedAccessibilityOperations.kt
+@@ -15,28 +15,61 @@ internal class AttachedAccessibilityOperations(
+         }
+         val sessionId = request.sessionId ?: return handler.handle(request)
+         return withSession(sessionId) { session ->
+-            handler.handle(request) { _, windowIndex -> session.accessibilityTarget(windowIndex) }
++            guarded(session, request.windowIndex) { verify ->
++                val response =
++                    handler.handle(request) { _, windowIndex ->
++                        session.accessibilityTarget(windowIndex)
++                    }
++                verify() ?: response
++            }
+         }
+     }
+ 
+     fun capture(request: DaemonRequest.Capture): DaemonResponse =
+         withSession(request.sessionId) { session ->
+-            try {
++            guarded(session, request.windowIndex) { verify ->
+                 writeCapture(
+                     request,
+                     session.automator,
+                     liveSessionIds(),
+                     handler,
+                     session::accessibilityTarget,
+-                )
+-            } catch (exception: IOException) {
+-                DaemonResponse.Error(
+-                    code = DaemonErrorCode.OperationFailed,
+-                    message = exception.message ?: "session operation failed",
++                    verify,
+                 )
+             }
+         }
+ 
++    private fun guarded(
++        session: DaemonSession,
++        windowIndex: Int,
++        operation: (() -> DaemonResponse?) -> DaemonResponse,
++    ): DaemonResponse {
++        var token: Long? = null
++        return try {
++            token = session.automator.beginWindowChangeCapture()
++            val before = session.accessibilityTarget(windowIndex)
++            operation {
++                val after = session.accessibilityTarget(windowIndex)
++                val generation = session.automator.endWindowChangeCapture(requireNotNull(token))
++                token = null
++                if (generation != 0L || before == null || before != after) changedWindowFailure()
++                else null
++            }
++        } catch (exception: IOException) {
++            DaemonResponse.Error(
++                DaemonErrorCode.OperationFailed,
++                exception.message ?: "session operation failed",
++            )
++        } catch (exception: UnsupportedOperationException) {
++            DaemonResponse.Error(
++                DaemonErrorCode.OperationFailed,
++                exception.message ?: "agent runtime lacks atomic accessibility capability",
++            )
++        } finally {
++            token?.let { runCatching { session.automator.endWindowChangeCapture(it) } }
++        }
++    }
++
+     private fun withSession(
+         sessionId: String,
+         operation: (DaemonSession) -> DaemonResponse,
+@@ -62,9 +95,18 @@ internal class AttachedAccessibilityOperations(
+ 
+ private fun DaemonSession.accessibilityTarget(windowIndex: Int): SessionAccessibilityTarget? {
+     val window = automator.windows().singleOrNull { it.index == windowIndex } ?: return null
+-    return SessionAccessibilityTarget(summary.targetPid, window)
++    val identity = automator.windowIdentities(windowIndex).singleOrNull()
++    return SessionAccessibilityTarget(summary.targetPid, window, identity?.nativeHandle)
+ }
+ 
++private fun changedWindowFailure(): DaemonResponse =
++    DaemonResponse.AccessibilityErrorResult(
++        AccessibilityError(
++            AccessibilityErrorCode.TargetNotFound,
++            "The selected window changed while its accessibility tree was captured",
++        )
++    )
++
+ internal fun deadlineAfterMillis(timeoutMs: Long): Long =
+     System.nanoTime() + timeoutMs.coerceIn(0, Long.MAX_VALUE / NANOS_PER_MS) * NANOS_PER_MS
+ 
+diff --git a/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/DaemonSessionAutomator.kt b/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/DaemonSessionAutomator.kt
+index bbd043df..74b0610d 100644
+--- a/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/DaemonSessionAutomator.kt
++++ b/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/DaemonSessionAutomator.kt
+@@ -4,6 +4,7 @@ import dev.sebastiano.spectre.agent.AtomicCaptureResult
+ import dev.sebastiano.spectre.agent.AttachedAutomator
+ import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+ import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
++import dev.sebastiano.spectre.agent.transport.WindowIdentityDto
+ import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
+ import dev.sebastiano.spectre.recording.RecordingResult
+ import java.io.IOException
+@@ -18,6 +19,18 @@ internal interface DaemonSessionAutomator : AutoCloseable {
+ 
+     @Throws(IOException::class) fun windows(): List<WindowSummaryDto>
+ 
++    @Throws(IOException::class)
++    fun windowIdentities(windowIndex: Int? = null): List<WindowIdentityDto> =
++        throw UnsupportedOperationException("agent runtime lacks window identity capability")
++
++    @Throws(IOException::class)
++    fun beginWindowChangeCapture(): Long =
++        throw UnsupportedOperationException("agent runtime lacks atomic accessibility capability")
++
++    @Throws(IOException::class)
++    fun endWindowChangeCapture(token: Long): Long =
++        throw UnsupportedOperationException("agent runtime lacks atomic accessibility capability")
++
+     @Throws(IOException::class) fun allNodes(): List<NodeSnapshotDto>
+ 
+     @Throws(IOException::class) fun findByTestTag(tag: String): List<NodeSnapshotDto>
+@@ -136,6 +149,14 @@ internal class AttachedDaemonSession(
+                 warnings = it.warnings,
+             )
+         }
++
++    override fun windowIdentities(windowIndex: Int?): List<WindowIdentityDto> =
++        delegate.windowIdentities(windowIndex)
++
++    override fun beginWindowChangeCapture(): Long = delegate.beginWindowChangeCapture()
++
++    override fun endWindowChangeCapture(token: Long): Long = delegate.endWindowChangeCapture(token)
++
+     private val recording =
+         DaemonSessionRecording(
+             delegate = delegate,
+diff --git a/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/DaemonSessionRegistry.kt b/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/DaemonSessionRegistry.kt
+index c50814f3..fd7f3847 100644
+--- a/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/DaemonSessionRegistry.kt
++++ b/cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/DaemonSessionRegistry.kt
+@@ -778,6 +778,7 @@ internal fun writeCapture(
+     liveSessionIds: Set<String>,
+     accessibilityHandler: AccessibilityDaemonHandler,
+     sessionTarget: ((Int) -> SessionAccessibilityTarget?)? = null,
++    verifyAccessibilityTarget: (() -> DaemonResponse?)? = null,
+ ): DaemonResponse {
+     if (request.source == DaemonCaptureSource.Compose) {
+         return CaptureArtifactStore.write(
+@@ -797,17 +798,20 @@ internal fun writeCapture(
+             accessibilityHandler.handle(treeRequest) { _, index -> resolver(index) }
+         } ?: accessibilityHandler.handle(treeRequest)
+     return when (tree) {
+-        is DaemonResponse.AccessibilitySnapshotResult ->
+-            CaptureArtifactStore.writeAccessibility(
+-                sessionId = request.sessionId,
+-                windowIndex = request.windowIndex,
+-                pngBytes = automator.capture(request.windowIndex).pngBytes,
+-                snapshot = tree.snapshot,
+-                outDir = request.outDir,
+-                liveSessionIds = liveSessionIds,
+-            )
++        is DaemonResponse.AccessibilitySnapshotResult -> {
++            val pngBytes = automator.capture(request.windowIndex).pngBytes
++            verifyAccessibilityTarget?.invoke()
++                ?: CaptureArtifactStore.writeAccessibility(
++                    sessionId = request.sessionId,
++                    windowIndex = request.windowIndex,
++                    pngBytes = pngBytes,
++                    snapshot = tree.snapshot,
++                    outDir = request.outDir,
++                    liveSessionIds = liveSessionIds,
++                )
++        }
+         is DaemonResponse.AccessibilityErrorResult,
+-        is DaemonResponse.Error -> tree
++        is DaemonResponse.Error -> verifyAccessibilityTarget?.invoke() ?: tree
+         else -> error("unexpected accessibility response")
+     }
+ }
+diff --git a/cli/src/test/kotlin/dev/sebastiano/spectre/cli/daemon/TestDaemonSessionAutomator.kt b/cli/src/test/kotlin/dev/sebastiano/spectre/cli/daemon/TestDaemonSessionAutomator.kt
+index b4352812..1eb1b28d 100644
+--- a/cli/src/test/kotlin/dev/sebastiano/spectre/cli/daemon/TestDaemonSessionAutomator.kt
++++ b/cli/src/test/kotlin/dev/sebastiano/spectre/cli/daemon/TestDaemonSessionAutomator.kt
+@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.cli.daemon
+ import dev.sebastiano.spectre.agent.AtomicCaptureResult
+ import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
+ import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
++import dev.sebastiano.spectre.agent.transport.WindowIdentityDto
+ import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
+ import dev.sebastiano.spectre.recording.RecordingResult
+ import java.io.IOException
+@@ -11,6 +12,9 @@ import java.util.concurrent.atomic.AtomicInteger
+ @OptIn(ExperimentalSpectreAgentApi::class)
+ internal class TestDaemonSessionAutomator(
+     private val windowsResult: () -> List<WindowSummaryDto> = { emptyList() },
++    private val windowIdentitiesResult: (Int?) -> List<WindowIdentityDto> = { emptyList() },
++    private val beginWindowChangeCaptureResult: () -> Long = { 1L },
++    private val endWindowChangeCaptureResult: (Long) -> Long = { 0L },
+     private val nodesResult: () -> List<NodeSnapshotDto> = { emptyList() },
+     private val findByTestTagResult: (String) -> List<NodeSnapshotDto> = { emptyList() },
+     private val clickAction: (String) -> Unit = {},
+@@ -65,6 +69,13 @@ internal class TestDaemonSessionAutomator(
+         return windowsResult()
+     }
+ 
++    override fun windowIdentities(windowIndex: Int?): List<WindowIdentityDto> =
++        windowIdentitiesResult(windowIndex)
++
++    override fun beginWindowChangeCapture(): Long = beginWindowChangeCaptureResult()
++
++    override fun endWindowChangeCapture(token: Long): Long = endWindowChangeCaptureResult(token)
++
+     override fun allNodes(): List<NodeSnapshotDto> {
+         ensureOpen("allNodes")
+         return nodesResult()
+diff --git a/docs/guide/agent.md b/docs/guide/agent.md
+index 31f84ab8..e21bbbd9 100644
+--- a/docs/guide/agent.md
++++ b/docs/guide/agent.md
+@@ -391,7 +391,7 @@ hierarchy.
+ 
+ After the UDS connects, the first exchange is always:
+ 
+-1. Client → `hello` with `protocolVersion` (currently `4` — `ProtocolVersion.CURRENT`)
++1. Client → `hello` with `protocolVersion` (currently `5` — `ProtocolVersion.CURRENT`)
+ 2. Runtime → `helloAck` with the same version, or `error` with category
+    `protocolMismatch`
+ 
+@@ -399,7 +399,7 @@ The experimental agent protocol requires an **exact version match**.
+ A mismatch fails attach with `IOException` or `SpectreAgentException`.
+ A future additive compatibility range would change `ProtocolVersion.CURRENT` and this guide.
+ 
+-The protocol has four revisions. **v1** uses bare request and response frames after
++The protocol has five revisions. **v1** uses bare request and response frames after
+ `hello`. **v2** (#200) adds operation envelopes with op ids, cancellation, and deadline
+ budgets. **v3** encodes bulk `pngBytes` and `captureJsonUtf8` payloads as CBOR byte
+ strings. Earlier peers expect integer arrays; the type system cannot detect this
+@@ -413,6 +413,10 @@ old Robot screen-region behavior. Exact matching now rejects v3/v4 peers during
+ visual request or capture runs. Both the default fail-closed endpoint and the explicit fallback
+ endpoint use v4.
+ 
++**v5** adds scoped top-level window-change capture for daemon accessibility snapshots. The new
++request discriminators are negotiated only by v5 peers, and the runtime releases any active scope
++when its IPC connection ends.
++
+ ### Unknown operations
+ 
+ If the runtime receives an unknown sealed `@SerialName` request, it returns an `error`
