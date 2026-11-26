@@ -20,6 +20,7 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[2]
 MCP_SMOKE = ROOT / "scripts" / "mcp-stdio-smoke.py"
 RELEASE_SMOKE = ROOT / "scripts" / "release-smoke.py"
+WINDOWS_SMOKE = ROOT / "scripts" / "windows-release-smoke.ps1"
 SMOKE_LIB = ROOT / "scripts" / "smoke_lib.py"
 
 
@@ -981,6 +982,19 @@ class SmokeLibSchemaTest(unittest.TestCase):
         # #433: live pointer-move cell must stay fail-closed once moveTo/moveBy ship.
         self.assertIn("pointer_move_api_skip_reason", text)
         self.assertIn("*PointerMoveLive*", text)
+        # Hosted Windows must exercise the explicit typed no-WGC policy rather than starting the
+        # native helper and interpreting its timeout.  The signed-in Windows harness owns the real
+        # untitled two-window pixel/title/ambiguity acceptance.
+        runtime_matrix = (ROOT / ".github" / "workflows" / "runtime-matrix.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("AtomicCaptureValidationTest", runtime_matrix)
+        self.assertIn("capture fails closed instead of cropping", runtime_matrix)
+        self.assertIn("assert_junit_testcases_passed", runtime_matrix)
+        self.assertIn("sample-desktop/build/test-results/validationTest", runtime_matrix)
+        windows_smoke = WINDOWS_SMOKE.read_text(encoding="utf-8")
+        self.assertIn(":recording:runUntitledWindowScreenshotSmoke", windows_smoke)
+        self.assertIn("Untitled native window screenshot acceptance", windows_smoke)
         # #459: experimental input-coordination delta hard cells must drive the coordinator's own
         # deterministic + forked-process + JUnit-isolation tests, fail-closed on the JUnit XML.
         self.assertIn("input_coordination_missing_surface", text)

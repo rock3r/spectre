@@ -1004,6 +1004,14 @@ try {
         }
         else {
             $step = Invoke-Step -Id "host-native-recording" -Name "Host native recording (WGC region)" -Action {
+                # This is the signed-in counterpart to runtime-matrix's typed hosted-unavailable
+                # assertion. Keep the existing exact-pixel, unchanged-title, and same-frame
+                # ambiguity acceptance in the hard WGC cell so its evidence cannot disappear.
+                Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $WgcTimeoutSeconds -LogName "wgc-untitled-window" -GradleArgs @(
+                    ":recording:runUntitledWindowScreenshotSmoke",
+                    "--rerun-tasks",
+                    "--no-build-cache"
+                )
                 Invoke-Gradle -RepoRoot $repoRoot -TimeoutSeconds $WgcTimeoutSeconds -LogName "wgc-region" -GradleArgs @(
                     ":recording:runWindowsGraphicsCaptureRegionSmoke",
                     "--rerun-tasks",
@@ -1014,6 +1022,7 @@ try {
                 $len = [int64](Get-Item -LiteralPath $mp4).Length
                 if ($len -lt 8192) { throw ("MP4 too small ({0} bytes): {1}" -f $len, $mp4) }
                 Write-Host ("  mp4: {0} ({1} bytes)" -f $mp4, $len) -ForegroundColor DarkGray
+                Write-Host "  Untitled native window screenshot acceptance: exact pixels, unchanged titles, same-frame rejection" -ForegroundColor DarkGray
             }
             [void]$results.Add($step)
         }

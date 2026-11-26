@@ -186,16 +186,38 @@ jobs:
         run: xvfb-run -a ./gradlew :recording:runLinuxX11RecordingSmoke
 
       - name: Untitled native window screenshot acceptance
-        if: runner.os == 'Linux' || runner.os == 'Windows'
+        if: runner.os == 'Linux'
+        env:
+          SPECTRE_MATRIX_JAVA_HOME: ${{ steps.jdk.outputs.path }}
+        shell: bash
+        run: xvfb-run -a ./gradlew :recording:runUntitledWindowScreenshotSmoke
+
+      # GitHub-hosted Windows advertises its lack of an interactive WGC session through
+      # RUNNER_ENVIRONMENT=github-hosted. Exercise the production fail-closed contract instead of
+      # starting the helper and treating its ten-second startup timeout as a capability probe. The
+      # signed-in Windows release harness runs the real two-window pixel/title/ambiguity acceptance.
+      - name: Hosted Windows native capture unavailable contract
+        if: runner.os == 'Windows'
         env:
           SPECTRE_MATRIX_JAVA_HOME: ${{ steps.jdk.outputs.path }}
         shell: bash
         run: |
-          if [[ "${{ runner.os }}" == "Linux" ]]; then
-            xvfb-run -a ./gradlew :recording:runUntitledWindowScreenshotSmoke
-          else
-            ./gradlew :recording:runUntitledWindowScreenshotSmoke
-          fi
+          ./gradlew :sample-desktop:validationTest \
+            --tests '*AtomicCaptureValidationTest.capture fails closed instead of cropping*' \
+            --rerun-tasks
+          python - <<'PY'
+          from pathlib import Path
+
+          from scripts.smoke_lib import assert_junit_testcases_passed
+
+          assert_junit_testcases_passed(
+              Path("sample-desktop/build/test-results/validationTest"),
+              needles=[
+                  "capture fails closed instead of cropping the desktop on GitHub-hosted Windows"
+              ],
+              cell="hosted-windows-native-capture-unavailable",
+          )
+          PY
 
       - name: Upload cell artefacts
         if: always()
@@ -210,6 +232,7 @@ jobs:
             server/build/reports/tests/
             server/build/test-results/
             recording/build/reports/
+            sample-desktop/build/test-results/validationTest/
           if-no-files-found: ignore
           retention-days: 14
 
