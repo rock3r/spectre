@@ -735,13 +735,11 @@ private fun atkWrapperLibraryPath(): String {
     check(process.waitFor() == 0) { "Could not list libatk-wrapper-java-jni files: $packageFiles" }
     val library =
         checkNotNull(
-            packageFiles
-                .lineSequence()
-                .map(Paths::get)
-                .singleOrNull {
-                    it.isAbsolute && it.fileName?.toString() == "libatk-wrapper.so" &&
-                        Files.isRegularFile(it)
-                }
+            packageFiles.lineSequence().map(Paths::get).singleOrNull {
+                it.isAbsolute &&
+                    it.fileName?.toString() == "libatk-wrapper.so" &&
+                    Files.isRegularFile(it)
+            }
         ) {
             "Expected one installed libatk-wrapper.so in libatk-wrapper-java-jni: $packageFiles"
         }
