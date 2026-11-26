@@ -1249,6 +1249,25 @@ class ReleaseSmokeHelperLogicTest(unittest.TestCase):
                 self.assertEqual(Path(tempfile.gettempdir()), directory.parent)
         self.assertFalse(directory.exists())
 
+    def test_accesskit_private_daemon_environment_uses_real_host_temp_semantics(self):
+        foreign_display_system = "Windows" if os.name == "posix" else "Linux"
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "sp-a11y-host"
+            with (
+                unittest.mock.patch.object(
+                    self.rs.platform, "system", return_value=foreign_display_system
+                ),
+                unittest.mock.patch.object(
+                    self.rs.tempfile, "mkdtemp", return_value=str(directory)
+                ) as mkdtemp,
+            ):
+                directory.mkdir()
+                with self.rs._private_daemon_environment():
+                    pass
+
+        expected_parent = "/tmp" if os.name == "posix" else None
+        self.assertEqual(expected_parent, mkdtemp.call_args.kwargs["dir"])
+
     def test_linux_accessibility_state_is_restored_after_failure(self):
         changes = []
         with unittest.mock.patch.object(self.rs, "_linux_accessibility_enabled", return_value=False), unittest.mock.patch.object(self.rs, "_set_linux_accessibility_enabled", side_effect=lambda enabled, env: changes.append((enabled, env))):
