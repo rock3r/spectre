@@ -235,7 +235,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
         with:
           cache-read-only: true
+      - name: Install .NET 8 for the original Windows full gate
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+      - name: Run the official full gate with its normal parallel workload
+        if: startsWith(github.event.head_commit.message, 'Diagnose Windows full')
+        timeout-minutes: 40
+        run: ./gradlew check
       - name: Repeated native Windows short-launch classification
+        if: "!startsWith(github.event.head_commit.message, 'Diagnose Windows full')"
         shell: bash
         run: |
           test "$(git rev-parse HEAD)" = aa8d5b2731f42886356e563c3e40c64807f1ae1b
@@ -293,6 +302,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: short-java-exit-windows-${{ matrix.replica }}
-          path: ${{ runner.temp }}/short-launch-receipts
+          path: |
+            ${{ runner.temp }}/short-launch-receipts
+            agent/build/test-results/test/TEST-*LaunchAndAttachIntegrationTest.xml
+            **/build/test-results/**/TEST-*.xml
           if-no-files-found: error
           retention-days: 7
