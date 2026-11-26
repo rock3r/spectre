@@ -1060,6 +1060,12 @@ class SmokeLibSchemaTest(unittest.TestCase):
         self.assertIn("_robot_env(", headed)
         self.assertIn("robot_xvfb_unavailable_reason", headed)
         self.assertIn("assert_junit_testcases_passed", headed)
+        attached = text[text.index('raise RuntimeError(f"attached CLI/MCP capture:') :]
+        attached = attached[: attached.index("assert_junit_testcases_passed(")]
+        self.assertIn("robot_xvfb_prefix(system)", attached)
+        self.assertIn("_robot_env(environment).items()", attached)
+        self.assertIn('if value != ""', attached)
+        self.assertIn("env=attached_environment", attached)
         # Non-login SSH / xvfb-run must still see rustup cargo for helper rebuilds.
         self.assertIn("apply_linux_toolchain_path", text)
         # #502: macos-tcc must refresh a stale runtime helper after an unknown probe.

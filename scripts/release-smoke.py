@@ -513,9 +513,18 @@ def _accesskit_cli_smoke(executable: Path, expected_version: str) -> str:
                         timeout=120,
                     )
                     _assert_linux_accessibility_disabled(environment, "packaged MCP")
+                    blocked = robot_xvfb_unavailable_reason(system)
+                    if blocked:
+                        raise RuntimeError(f"attached CLI/MCP capture: {blocked}")
+                    # The private session bus has no Wayland capture portals.
+                    attached_environment = {
+                        key: value
+                        for key, value in _robot_env(environment).items()
+                        if value != ""
+                    }
                     subprocess.run(
                         [
-                            *prefix,
+                            *robot_xvfb_prefix(system),
                             str(ROOT / "gradlew"),
                             ":cli:test",
                             "--tests",
@@ -526,7 +535,7 @@ def _accesskit_cli_smoke(executable: Path, expected_version: str) -> str:
                             "--console=plain",
                         ],
                         cwd=ROOT,
-                        env=environment,
+                        env=attached_environment,
                         check=True,
                         timeout=600,
                     )

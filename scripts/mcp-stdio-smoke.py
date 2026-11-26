@@ -360,8 +360,14 @@ def main() -> None:
                             fail(f"CLI capture without consent must refuse: {refused!r}", process)
                         cli = subprocess.run(
                             [*cli_base, "--allow-accessibility-enable"], env=env, text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=60,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=60,
                         )
+                        if cli.returncode != 0:
+                            fail(
+                                f"CLI capture with consent exited {cli.returncode}\n"
+                                f"stdout:\n{cli.stdout}\nstderr:\n{cli.stderr}",
+                                process,
+                            )
                         report = json.loads(cli.stdout)
                         assert_accessibility_disabled("CLI capture")
                         if cli.stderr != f"notice: {LINUX_ACCESSIBILITY_NOTE}\n":
