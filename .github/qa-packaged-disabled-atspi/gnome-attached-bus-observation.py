@@ -14,7 +14,7 @@ out = Path(os.environ['SMOKE_ARTIFACTS'])
 sys.path.insert(0, str(repo/'scripts'))
 release = runpy.run_path(str(repo/'scripts/release-smoke.py'))
 mcp = runpy.run_path(str(repo/'scripts/mcp-stdio-smoke.py'))
-cli = next((repo/'cli/build/construo/linuxX64/roast').glob('spectre'))
+cli = Path(os.environ['QA_EXTRACTED_ROAST_CLI'])
 assert cli.is_file()
 assert subprocess.check_output([cli,'--version'],text=True).strip() == 'spectre 0.10.0'
 assert os.environ.get('SMOKE_HOSTED_FINAL_QA') == '1'

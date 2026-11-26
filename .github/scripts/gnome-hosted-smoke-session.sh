@@ -223,10 +223,17 @@ if [[ "$SMOKE_MODE" == cli-recording-live || "$SMOKE_MODE" == cli-recording-rest
   timeout 15s gdbus wait --session --activate org.freedesktop.portal.Desktop
   timeout 15s gdbus wait --session --activate org.freedesktop.impl.portal.desktop.gnome
   cd "$SMOKE_REPO"
-  ./gradlew --no-daemon -PVERSION_NAME=0.10.0 :cli:shadowDistZip --console=plain \
-    2>&1 | tee "$SMOKE_ARTIFACTS/build-cli-release-zip.log"
-  cli_zip="$(find cli/build/distributions -maxdepth 1 -type f -name 'spectre-cli-*-linux-*.zip' -print -quit)"
-  [[ -f "$cli_zip" ]] || { echo "shadowDistZip did not produce the Linux release ZIP" >&2; exit 1; }
+  if [[ "$SMOKE_MODE" == cli-region-stills && "${SMOKE_HOSTED_FINAL_QA:-0}" == 1 ]]; then
+    qa_dir="$(cd "$(dirname "$0")/../qa-packaged-disabled-atspi" && pwd)"
+    ./gradlew --no-daemon --no-configuration-cache -PVERSION_NAME=0.10.0 -I "$qa_dir/attached-fixture-classpath.gradle"       :cli:packageLinuxX64 :cli:exportHostedAttachFixtureClasspath --console=plain >"$SMOKE_ARTIFACTS/attached-product-build.log" 2>&1
+    test -s "$SMOKE_ARTIFACTS/attached-fixture-classpath.txt"
+    cli_zip=cli/build/construo/distributions/linuxX64/spectre-linuxX64.zip
+    export SMOKE_GNOME_ATTACHED_DIAGNOSTIC="$qa_dir/gnome-attached-bus-observation.py"
+  else
+    ./gradlew --no-daemon -PVERSION_NAME=0.10.0 :cli:shadowDistZip --console=plain       2>&1 | tee "$SMOKE_ARTIFACTS/build-cli-release-zip.log"
+    cli_zip="$(find cli/build/distributions -maxdepth 1 -type f -name 'spectre-cli-*-linux-*.zip' -print -quit)"
+  fi
+  test -s "$cli_zip"
   export SPECTRE_CLI_ZIP="$PWD/$cli_zip"
   export SPECTRE_CLI_HOME
   SPECTRE_CLI_HOME="$(mktemp -d "$XDG_RUNTIME_DIR/spectre-packaged-cli-XXXXXX")/distribution"
@@ -234,12 +241,6 @@ if [[ "$SMOKE_MODE" == cli-recording-live || "$SMOKE_MODE" == cli-recording-rest
   export SPECTRE_WAYLAND_SESSION_DIR="$XDG_RUNTIME_DIR/spectre-cli-live-session"
   export SPECTRE_WAYLAND_RESTORE_TOKEN_DIR="$XDG_RUNTIME_DIR/spectre-cli-live-tokens"
   mkdir -m 0700 "$SPECTRE_WAYLAND_SESSION_DIR" "$SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"
-  if [[ "$SMOKE_MODE" == cli-region-stills && "${SMOKE_HOSTED_FINAL_QA:-0}" == 1 ]]; then
-    qa_dir="$(cd "$(dirname "$0")/../qa-packaged-disabled-atspi" && pwd)"
-    ./gradlew --no-daemon --no-configuration-cache -PVERSION_NAME=0.10.0 -I "$qa_dir/attached-fixture-classpath.gradle"       :cli:packageLinuxX64 :cli:exportHostedAttachFixtureClasspath --console=plain >"$SMOKE_ARTIFACTS/attached-product-build.log" 2>&1
-    test -s "$SMOKE_ARTIFACTS/attached-fixture-classpath.txt"
-    export SMOKE_GNOME_ATTACHED_DIAGNOSTIC="$qa_dir/gnome-attached-bus-observation.py"
-  fi
   if [[ "$SMOKE_MODE" == qa-final-region-stills ]]; then
     /usr/bin/python3 "$(dirname "$0")/gnome-cli-region-stills.py" \
       2> >(tee "$SMOKE_ARTIFACTS/cli-region-stills.stderr" >&2)

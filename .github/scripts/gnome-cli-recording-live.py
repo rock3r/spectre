@@ -39,7 +39,7 @@ def extract_release(archive: Path, destination: Path) -> tuple[Path, Path]:
             mode = (member.external_attr >> 16) & 0o777
             if mode and target.exists():
                 target.chmod(mode)
-    launchers = list(destination.glob("*/bin/spectre"))
+    launchers = list(destination.glob("*/spectre" if os.environ.get('SMOKE_GNOME_ATTACHED_DIAGNOSTIC') else "*/bin/spectre"))
     runtimes = list(destination.glob("*/runtime/bin/java"))
     if len(launchers) != 1 or len(runtimes) != 1:
         raise RuntimeError(f"unexpected release layout: {launchers=}, {runtimes=}")
@@ -429,7 +429,23 @@ def main() -> None:
     if not helper_alive or marker.is_file() != token_required:
         raise RuntimeError("packaged CLI session did not govern capture through completion")
     if region_mode and (diagnostic := os.environ.get("SMOKE_GNOME_ATTACHED_DIAGNOSTIC")):
-        subprocess.run([sys.executable, diagnostic], cwd=os.environ['SMOKE_REPO'], env=env, check=True, timeout=400)
+        env['QA_EXTRACTED_ROAST_CLI']=str(cli)
+        diagnostic_dir=Path(diagnostic).parent
+        status={}
+        for label, command, budget in [
+            ('attached-native', [sys.executable, diagnostic], 450),
+            ('stock-private-X11', [sys.executable, str(diagnostic_dir/'run-gnome-fixed-stock.py'), str(cli)], 1200),
+        ]:
+            try:
+                with (artifacts/f'{label}.log').open('w') as output:
+                    proc=subprocess.run(command, cwd=os.environ['SMOKE_REPO'], env=env,
+                                        stdout=output,stderr=subprocess.STDOUT,timeout=budget)
+                    status[label]=proc.returncode
+            except subprocess.TimeoutExpired:
+                status[label]='timeout'
+        (artifacts/'consent-cells.json').write_text(json.dumps(status)+'\n')
+        if any(value != 0 for value in status.values()):
+            raise RuntimeError(f'GNOME verification findings: {status}')
 
 
 if __name__ == "__main__":
