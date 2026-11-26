@@ -161,6 +161,40 @@ def portal_versions(bus) -> dict[str, int | None]:
     }
 
 
+def ensure_overview_inactive(bus, output: Path) -> None:
+    """Hide GNOME Shell's public Overview and durably record verified readback."""
+    shell = bus.get_object("org.gnome.Shell", "/org/gnome/Shell")
+    properties = "org.freedesktop.DBus.Properties"
+
+    def sample() -> dict[str, object]:
+        value = bool(shell.Get("org.gnome.Shell", "OverviewActive",
+                               dbus_interface=properties))
+        return {
+            "overviewActive": value,
+            "monotonicNs": time.monotonic_ns(),
+            "timestampUtc": datetime.now(timezone.utc).isoformat(),
+        }
+
+    before = sample()
+    if before["overviewActive"]:
+        shell.Set("org.gnome.Shell", "OverviewActive", dbus.Boolean(False),
+                  dbus_interface=properties)
+    deadline = time.monotonic() + 5
+    while True:
+        after = sample()
+        if not after["overviewActive"]:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("GNOME Shell OverviewActive remained true after public Set")
+        time.sleep(.05)
+
+    with output.open("w") as evidence:
+        json.dump({"before": before, "after": after}, evidence, indent=2)
+        evidence.write("\n")
+        evidence.flush()
+        os.fsync(evidence.fileno())
+
+
 def verify_permissions(request: dict, checked: dict, remote_desktop_version: int,
                        marker_after_request: bool, marker_after_check: bool) -> bool:
     """Fail closed on grants/sessions while applying the protocol's restore-token contract."""
@@ -324,6 +358,7 @@ def main() -> None:
         env["SPECTRE_REGION_SESSION_SOCKET"] = str(socket)
         env["SPECTRE_REGION_SESSION_OWNER_PID"] = str(helper_pid)
         crop_script = Path(__file__).with_name("gnome-cli-region-stills.py")
+        ensure_overview_inactive(bus, artifacts / "gnome-shell-overview.json")
     capture_started = time.monotonic()
     crop = subprocess.run([sys.executable, str(crop_script)], env=env, text=True,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)

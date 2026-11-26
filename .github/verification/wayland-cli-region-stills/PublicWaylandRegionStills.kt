@@ -80,8 +80,6 @@ object PublicWaylandRegionStills {
                     .lineSequence()
                     .map(String::trim)
                     .first { it.matches(Regex("[0-9]+")) }
-            // XTEST on this attended Xwayland seat is normal input, not Robot or another portal.
-            command("seat-escape.txt", "xdotool", "key", "--clearmodifiers", "Escape")
             command("seat-activate.txt", "xdotool", "windowactivate", "--sync", xid)
             command("seat-focus.txt", "xdotool", "windowfocus", "--sync", xid)
             val cursor = Point(screen.x + screen.width - 2, screen.y + screen.height - 2)
