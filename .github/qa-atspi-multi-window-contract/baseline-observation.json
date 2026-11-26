@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "observedAtUtc": "2026-11-26T00:00:00Z",
+  "environment": "Ubuntu 24.04 container, dbus-run-session, Xvfb, Openbox, private AT-SPI bus",
+  "baselineCommit": "3e831adde0ff84b535ec997446a347be90431304",
+  "baselineFullTree": "94c8531cbc03b17da73e7d1d4b82c3fcb189c4b2",
+  "nativeTree": "dfe6553aec2fcaebfbe9d8b29322c856e720fa55",
+  "fixture": {
+    "mappedWindowTitles": ["Alpha", "Beta"],
+    "distinctXids": true,
+    "bothNetWmPidMatchedFixture": true,
+    "singleAtspiOwnerMatchedFixturePid": true,
+    "cacheGetItemsError": "org.freedesktop.DBus.Error.UnknownMethod"
+  },
+  "observations": {
+    "pidOnlyNodeIds": ["alpha-root", "alpha-group", "alpha-interior", "alpha-marker"],
+    "pidOnlyOmittedBetaWindow": true,
+    "explicitAlphaSelectedOnlyAlpha": true,
+    "explicitBetaSelectedOnlyBeta": true,
+    "ordinaryErrorCode": "no-accessibility-tree",
+    "ordinaryErrorMessage": "failed to read an AT-SPI child: AT-SPI GetChildren failed",
+    "ordinaryErrorPartialNodeIds": ["alpha-root", "alpha-group", "alpha-interior"],
+    "ordinaryErrorMaskedProviderMessage": "fixture ordinary child read rejected before deadline",
+    "timeoutCode": "timeout",
+    "timeoutHadMeaningfulPartialPrefix": true
+  }
+}

@@ -1,0 +1,98 @@
+name: Scratch native AT-SPI multi-window contract
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [release-0.10/gnome-hosted-smoke]
+    paths:
+      - .github/workflows/qa-atspi-multi-window-contract.yml
+      - .github/qa-atspi-multi-window-contract/**
+
+permissions:
+  contents: read
+
+jobs:
+  native-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: qa
+          persist-credentials: false
+      - name: Materialize and authenticate exact product trees
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASELINE_SHA=3e831adde0ff84b535ec997446a347be90431304
+          BASELINE_FULL_TREE=94c8531cbc03b17da73e7d1d4b82c3fcb189c4b2
+          BASELINE_NATIVE_TREE=dfe6553aec2fcaebfbe9d8b29322c856e720fa55
+          source qa/.github/qa-atspi-multi-window-contract/candidate.env
+          [[ -z "$CANDIDATE_SHA" || -z "$CANDIDATE_PATCH" ]]
+          git clone --filter=blob:none --no-checkout https://github.com/rock3r/spectre.git product
+          git -C product checkout --detach "$BASELINE_SHA"
+          test "$(git -C product rev-parse HEAD)" = "$BASELINE_SHA"
+          test "$(git -C product rev-parse HEAD^{tree})" = "$BASELINE_FULL_TREE"
+          test "$(git -C product rev-parse HEAD:recording/native/linux)" = "$BASELINE_NATIVE_TREE"
+          printf '%s\n' "$BASELINE_SHA" >"$RUNNER_TEMP/baseline-commit.txt"
+          printf '%s\n' "$BASELINE_FULL_TREE" >"$RUNNER_TEMP/baseline-full-tree.txt"
+          if [[ -n "$CANDIDATE_SHA$CANDIDATE_PATCH" ]]; then
+            [[ "$CANDIDATE_FULL_TREE" =~ ^[0-9a-f]{40}$ && "$CANDIDATE_NATIVE_TREE" =~ ^[0-9a-f]{40}$ ]]
+            git -C product worktree add --detach "$GITHUB_WORKSPACE/candidate" "$BASELINE_SHA"
+            if [[ -n "$CANDIDATE_SHA" ]]; then
+              [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+              git -C candidate fetch origin "$CANDIDATE_SHA" --no-tags
+              git -C candidate merge-base --is-ancestor "$BASELINE_SHA" "$CANDIDATE_SHA"
+              git -C candidate checkout --detach "$CANDIDATE_SHA"
+              tree=$(git -C candidate rev-parse HEAD^{tree})
+            else
+              [[ "$CANDIDATE_PATCH" =~ ^[A-Za-z0-9._-]+\.patch$ ]]
+              test -f "qa/.github/qa-atspi-multi-window-contract/$CANDIDATE_PATCH"
+              git -C candidate apply --check "$GITHUB_WORKSPACE/qa/.github/qa-atspi-multi-window-contract/$CANDIDATE_PATCH"
+              git -C candidate apply --index "$GITHUB_WORKSPACE/qa/.github/qa-atspi-multi-window-contract/$CANDIDATE_PATCH"
+              tree=$(git -C candidate write-tree)
+            fi
+            test "$tree" = "$CANDIDATE_FULL_TREE"
+            test "$(git -C candidate rev-parse "$tree:recording/native/linux")" = "$CANDIDATE_NATIVE_TREE"
+            printf '%s\n' "$tree" >"$RUNNER_TEMP/candidate-full-tree.txt"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install private desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb openbox dbus-x11 at-spi2-core python3-dbus python3-gi gir1.2-gtk-3.0 libgtk-3-0t64 libatspi2.0-dev libdbus-1-dev pkg-config x11-utils
+      - name: Test and build exact native helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --release --locked --manifest-path product/recording/native/linux/Cargo.toml
+          cargo build --release --locked --manifest-path product/recording/native/linux/Cargo.toml
+          if [[ -d candidate ]]; then
+            cargo test --release --locked --manifest-path candidate/recording/native/linux/Cargo.toml
+            cargo build --release --locked --manifest-path candidate/recording/native/linux/Cargo.toml
+          fi
+      - name: Run fresh Xvfb, window manager, session D-Bus and AT-SPI bus
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/qa-atspi-multi-window"
+          candidate=
+          [[ ! -d candidate ]] || candidate="$GITHUB_WORKSPACE/candidate/recording/native/linux/target/release/spectre-wayland-helper"
+          dbus-run-session -- xvfb-run -a sh -c 'openbox >/tmp/openbox.log 2>&1 & exec env "$@"' sh \
+            NO_AT_BRIDGE=0 GTK_MODULES=gail:atk-bridge \
+            QA_ROOT="$GITHUB_WORKSPACE/qa/.github/qa-atspi-multi-window-contract" \
+            ARTIFACTS="$RUNNER_TEMP/qa-atspi-multi-window" \
+            BASELINE_HELPER="$GITHUB_WORKSPACE/product/recording/native/linux/target/release/spectre-wayland-helper" \
+            CANDIDATE_HELPER="$candidate" \
+            "$GITHUB_WORKSPACE/qa/.github/qa-atspi-multi-window-contract/run-session.sh"
+      - name: Preserve machine-readable native evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: qa-atspi-multi-window-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/qa-atspi-multi-window
+            ${{ runner.temp }}/*-commit.txt
+            ${{ runner.temp }}/*-tree.txt
+          if-no-files-found: warn
+          retention-days: 14
