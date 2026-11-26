@@ -1,0 +1,123 @@
+name: Scratch packaged AT-SPI multi-window contract
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [qa/atspi-multi-window-contract]
+    paths:
+      - .github/workflows/qa-atspi-multi-window-package.yml
+      - .github/qa-atspi-multi-window-package/**
+
+permissions:
+  contents: read
+
+jobs:
+  packaged-cli-daemon-mcp:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: qa
+          persist-credentials: false
+      - name: Authenticate public baseline and optional native-only candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=ce03a8cea810a173e4941908a3a2adf7a4da5814
+          BASE_TREE=504a2b1e1481afe4e409105ba2d8546f319fc851
+          BASE_ACCESSIBILITY=9a8ecd3bdfbccbca394d818011515a23563ad744
+          source qa/.github/qa-atspi-multi-window-package/candidate.env
+          [[ -z "$CANDIDATE_SHA" || -z "$CANDIDATE_PATCH" ]]
+          git clone --filter=blob:none --no-checkout https://github.com/rock3r/spectre.git product
+          git -C product checkout --detach "$BASE"
+          test "$(git -C product rev-parse HEAD^{tree})" = "$BASE_TREE"
+          test "$(git -C product rev-parse HEAD:recording/native/linux/src/accessibility.rs)" = "$BASE_ACCESSIBILITY"
+          printf '%s\n' "$BASE" >"$RUNNER_TEMP/baseline-commit.txt"
+          printf '%s\n' "$BASE_TREE" >"$RUNNER_TEMP/baseline-full-tree.txt"
+          printf '%s\n' "$BASE_ACCESSIBILITY" >"$RUNNER_TEMP/baseline-accessibility-blob.txt"
+          if [[ -n "$CANDIDATE_SHA$CANDIDATE_PATCH" ]]; then
+            [[ "$CANDIDATE_ACCESSIBILITY_BLOB" =~ ^[0-9a-f]{40}$ ]]
+            git -C product worktree add --detach "$GITHUB_WORKSPACE/candidate" "$BASE"
+            if [[ -n "$CANDIDATE_SHA" ]]; then
+              [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+              git -C candidate fetch origin "$CANDIDATE_SHA" --no-tags
+              git -C candidate merge-base --is-ancestor "$BASE" "$CANDIDATE_SHA"
+              git -C candidate checkout --detach "$CANDIDATE_SHA"
+            else
+              [[ "$CANDIDATE_PATCH" =~ ^[A-Za-z0-9._-]+\.patch$ ]]
+              git -C candidate apply --check "$GITHUB_WORKSPACE/qa/.github/qa-atspi-multi-window-package/$CANDIDATE_PATCH"
+              git -C candidate apply --index "$GITHUB_WORKSPACE/qa/.github/qa-atspi-multi-window-package/$CANDIDATE_PATCH"
+            fi
+            test "$(git -C candidate diff --name-only "$BASE" --)" = recording/native/linux/src/accessibility.rs
+            tree=$(git -C candidate write-tree)
+            blob=$(git -C candidate rev-parse "$tree:recording/native/linux/src/accessibility.rs")
+            native=$(git -C candidate rev-parse "$tree:recording/native/linux")
+            test "$blob" = "$CANDIDATE_ACCESSIBILITY_BLOB"
+            [[ -z "$CANDIDATE_NATIVE_TREE" || "$native" = "$CANDIDATE_NATIVE_TREE" ]]
+            [[ -z "$CANDIDATE_FULL_TREE" || "$tree" = "$CANDIDATE_FULL_TREE" ]]
+            printf '%s\n' "$tree" >"$RUNNER_TEMP/candidate-full-tree.txt"
+            printf '%s\n' "$native" >"$RUNNER_TEMP/candidate-native-tree.txt"
+            printf '%s\n' "$blob" >"$RUNNER_TEMP/candidate-accessibility-blob.txt"
+          fi
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install desktop and package build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb openbox dbus-x11 at-spi2-core python3-dbus python3-gi gir1.2-gtk-3.0 libgtk-3-0t64 libatspi2.0-dev libdbus-1-dev pkg-config x11-utils unzip clang libpipewire-0.3-dev libspa-0.2-dev libxkbcommon-x11-0
+      - name: Build and unpack actual CLI distributions
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_package() {
+            local tree=$1 name=$2 zip root jar resource
+            ./"$tree"/gradlew -p "$tree" --no-daemon -PVERSION_NAME=0.10.0 :cli:shadowDistZip
+            zip=$(find "$tree/cli/build/distributions" -name 'spectre-cli-*-linux-x86_64.zip' -print -quit)
+            test -n "$zip"; mkdir "$GITHUB_WORKSPACE/$name-package"; unzip -q "$zip" -d "$GITHUB_WORKSPACE/$name-package"
+            root=$(find "$GITHUB_WORKSPACE/$name-package" -mindepth 1 -maxdepth 1 -type d -print -quit)
+            cli="$root/bin/spectre"; test -x "$cli"
+            jar=$(find "$root/lib" -name 'cli-*-all.jar' -print -quit); test -n "$jar"
+            resource=$(unzip -Z1 "$jar" | sed -n '/native\/linux\/.*spectre-wayland-helper$/p' | head -1); test -n "$resource"
+            unzip -p "$jar" "$resource" >"$RUNNER_TEMP/$name-helper"; chmod +x "$RUNNER_TEMP/$name-helper"
+            sha256sum "$zip" >"$RUNNER_TEMP/$name-package.sha256"
+            sha256sum "$RUNNER_TEMP/$name-helper" >"$RUNNER_TEMP/$name-native-resource.sha256"
+            printf '%s\n' "$cli" >"$RUNNER_TEMP/$name-cli-path.txt"
+          }
+          build_package product baseline
+          [[ ! -d candidate ]] || build_package candidate candidate
+      - name: Run registered AT-SPI fixture against package surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/qa-atspi-multi-window"
+          baseline_cli=$(cat "$RUNNER_TEMP/baseline-cli-path.txt")
+          candidate_cli=; [[ ! -f "$RUNNER_TEMP/candidate-cli-path.txt" ]] || candidate_cli=$(cat "$RUNNER_TEMP/candidate-cli-path.txt")
+          dbus-run-session -- xvfb-run -a sh -c 'openbox >/tmp/openbox.log 2>&1 & exec env "$@"' sh \
+            NO_AT_BRIDGE=0 GTK_MODULES=gail:atk-bridge \
+            QA_ROOT="$GITHUB_WORKSPACE/qa/.github/qa-atspi-multi-window-package" \
+            ARTIFACTS="$RUNNER_TEMP/qa-atspi-multi-window" \
+            BASELINE_HELPER="$RUNNER_TEMP/baseline-helper" BASELINE_CLI="$baseline_cli" \
+            CANDIDATE_HELPER="${candidate_cli:+$RUNNER_TEMP/candidate-helper}" CANDIDATE_CLI="$candidate_cli" \
+            "$GITHUB_WORKSPACE/qa/.github/qa-atspi-multi-window-package/run-session.sh"
+      - name: Preserve complete raw evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: qa-atspi-packaged-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/qa-atspi-multi-window
+            ${{ runner.temp }}/*-commit.txt
+            ${{ runner.temp }}/*-tree.txt
+            ${{ runner.temp }}/*-blob.txt
+            ${{ runner.temp }}/*-resource.sha256
+            ${{ runner.temp }}/*-package.sha256
+          if-no-files-found: error
+          retention-days: 14

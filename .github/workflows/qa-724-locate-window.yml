@@ -34,22 +34,17 @@ jobs:
       - name: Check out candidate base
         uses: actions/checkout@v6
         with:
-          ref: e963afeb01991600891e8fb7bed5d0df6d860dbf
+          ref: 4b4e88e9a10a01fef2b5c25f09df860f595204aa
           path: candidate
           persist-credentials: false
 
-      - name: Apply the exact corrected capture and installed helper candidate
+      - name: Verify clean published integrated capture source
         working-directory: candidate
-        env:
-          EXPECTED_OVERLAY_SHA256: ${{ inputs.corrected_patch_sha256 || '6894422e48eca68d2522ddec5f7caae19c276499378f0bcb644cd16f03b3c87f' }}
         run: |
-          overlay="$GITHUB_WORKSPACE/smoke-tooling/.github/locate-window-overlays/724-final-native-and-kotlin.patch"
-          printf '%s  %s\n' "$EXPECTED_OVERLAY_SHA256" "$overlay" | sha256sum -c -
-          git apply --index "$overlay"
-          git diff --cached --check
-          test "$(git rev-parse :recording/native/linux/src/main.rs)" = f156ec43878915d1d736af59f1c5b8f357ad8d9a
-          git diff --cached --check
-          test "$(git write-tree)" = 2df173145f3e5645c94d8b0cff533a921e5608c4
+          test "$(git rev-parse HEAD)" = 4b4e88e9a10a01fef2b5c25f09df860f595204aa
+          test "$(git rev-parse HEAD:recording/native/linux/src/main.rs)" = f156ec43878915d1d736af59f1c5b8f357ad8d9a
+          test "$(git write-tree)" = aae4ca66a4cf6a717fad872dc809c7c8a1c1f44a
+          test -z "$(git status --porcelain)"
 
       - name: Set up JDK 25
         uses: actions/setup-java@v5
@@ -68,7 +63,7 @@ jobs:
           ATSPI_REPO: unused
           FIXTURE_CHECKOUT: unused
           SMOKE_MODE: locate-window-724
-          CANDIDATE_SHA: e963afeb01991600891e8fb7bed5d0df6d860dbf
+          CANDIDATE_SHA: 4b4e88e9a10a01fef2b5c25f09df860f595204aa
           BASELINE_REPO: ${{ github.workspace }}/baseline
           SMOKE_REPO: ${{ github.workspace }}/candidate
           SMOKE_ARTIFACTS: ${{ runner.temp }}/qa-724-locate-window
