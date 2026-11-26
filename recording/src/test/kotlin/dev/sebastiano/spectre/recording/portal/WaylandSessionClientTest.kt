@@ -95,6 +95,51 @@ class WaylandSessionClientTest {
     }
 
     @Test
+    fun `legacy screenshot response explains how to replace the held helper`() {
+        val client = screenshotClient(Event.ScreenshotSaved(outputSizeBytes = 1))
+
+        val error =
+            assertFailsWith<IllegalStateException> { client.screenshot(Rectangle(10, 20, 2, 3)) }
+
+        val message = error.message.orEmpty()
+        assertTrue(message.contains("capture_region"), message)
+        assertTrue(message.contains("upgrade"), message)
+        assertTrue(message.contains("restart all Spectre"), message)
+        assertTrue(message.contains("spectre permissions request"), message)
+        assertTrue(message.contains("Share picker"), message)
+    }
+
+    @Test
+    fun `verified crop whose size differs from PNG fails closed`() {
+        val client =
+            screenshotClient(
+                Event.ScreenshotSaved(outputSizeBytes = 1, captureRegion = listOf(5, 6, 3, 3))
+            )
+
+        val error =
+            assertFailsWith<IllegalStateException> { client.screenshot(Rectangle(10, 20, 2, 3)) }
+
+        assertTrue(error.message.orEmpty().contains("refusing a clipped capture"), error.message)
+    }
+
+    private fun screenshotClient(event: Event.ScreenshotSaved): WaylandSessionClient =
+        WaylandSessionClient(
+            helperExtractor = extractor(),
+            envLookup = sessionDirEnv(),
+            processFactory = RecordingProcessFactory(exitCode = 0),
+            waitForSocket = { _, _ -> false },
+            screenshotSender = {
+                val command = it as Command.Screenshot
+                ImageIO.write(
+                    BufferedImage(2, 3, BufferedImage.TYPE_INT_ARGB),
+                    "png",
+                    Path.of(command.output).toFile(),
+                )
+                event
+            },
+        )
+
+    @Test
     fun `a consent timeout or denial is not prompted again in the same client`() {
         val factory = RecordingProcessFactory(exitCode = WAYLAND_SESSION_CONSENT_EXIT)
         val client = client(factory, sessionDirEnv())

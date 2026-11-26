@@ -263,6 +263,14 @@ X11, macOS, and Windows keep their input and capture paths.
   cursor mode cannot be changed after the portal stream is opened. X11 still capture continues to
   request a hidden cursor explicitly.
 
+  Region screenshots require the held helper to return its verified stream-relative crop; the PNG
+  dimensions alone cannot prove that the requested pixels were not shifted or clipped. A new
+  client therefore rejects a screenshot response from a running 0.9.0 helper instead of inferring
+  a crop from the PNG. Upgrade every Spectre client and restart all applications using the held
+  session, then run `spectre permissions request` before retrying. Spectre does not terminate the
+  old helper while other clients may still hold its grant. Older portals may show a new Share
+  picker because the replacement helper needs a new grant.
+
   **HiDPI / mixed AWT and portal coordinates.** On fractional-scale Wayland, AWT/XWayland
   often reports a larger virtual desktop than the ScreenCast stream. For example,
   AWT may report 2560×1440 while the portal supplies 1536×864. Region capture
