@@ -1467,7 +1467,8 @@ mod tests {
                 Err(anyhow::Error::new(dbus::Error::new_custom(
                     "org.freedesktop.DBus.Error.UnknownInterface",
                     "No such interface 'org.a11y.atspi.Accessible'",
-                )))
+                ))
+                .context("AT-SPI GetChildren failed"))
             } else {
                 Ok(42)
             }
@@ -1484,11 +1485,18 @@ mod tests {
                 "org.freedesktop.DBus.Error.AccessDenied",
                 "org.a11y.atspi.Accessible",
             ),
+            (
+                "org.freedesktop.DBus.Error.Failed",
+                "Permanent AT-SPI failure",
+            ),
         ] {
             let mut calls = 0;
             let result = retry_selected_root_read(Instant::now() + Duration::from_secs(1), || {
                 calls += 1;
-                Err::<(), _>(anyhow::Error::new(dbus::Error::new_custom(name, message)))
+                Err::<(), _>(
+                    anyhow::Error::new(dbus::Error::new_custom(name, message))
+                        .context("AT-SPI GetChildren failed"),
+                )
             });
             assert!(result.is_err());
             assert_eq!(calls, 1);
@@ -1521,6 +1529,64 @@ mod tests {
         assert_eq!(restore_result(false, Ok(false)), Ok(()));
         assert!(restore_result(false, Ok(true)).is_err());
         assert!(restore_result(true, Err("read failed".into())).is_err());
+    }
+
+    #[test]
+    fn applied_enable_with_lost_reply_is_restored_before_returning() {
+        use std::cell::Cell;
+
+        let enabled = Cell::new(false);
+        let restore_calls = Cell::new(0);
+        let result = with_status_restoration(
+            || {
+                enabled.set(true);
+                Err(("timeout", "enable reply was lost".into(), None))
+            },
+            || panic!("capture must not run after an enable error"),
+            || {
+                restore_calls.set(restore_calls.get() + 1);
+                enabled.set(false);
+                Ok(())
+            },
+        );
+
+        assert_eq!(result.unwrap_err().0, "timeout");
+        assert!(!enabled.get(), "the mock desktop setting must be reverted");
+        assert_eq!(restore_calls.get(), 1);
+    }
+
+    #[test]
+    fn each_sequential_call_gets_only_the_current_remaining_budget() {
+        let deadline = Instant::now() + Duration::from_millis(80);
+        let first = call_timeout(deadline).unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        let second = call_timeout(deadline).unwrap();
+        assert!(second < first, "a later proxy must not reuse {first:?}");
+
+        let request_deadline = Instant::now() + Duration::from_millis(300);
+        let mutation_deadline = request_deadline - STATUS_RESTORE_BUDGET;
+        assert!(call_timeout(mutation_deadline).unwrap() <= Duration::from_millis(100));
+    }
+
+    #[test]
+    fn only_unknown_interface_makes_a_title_scan_non_authoritative() {
+        let transient = dbus::Error::new_custom(
+            "org.freedesktop.DBus.Error.UnknownInterface",
+            "Accessible is still registering",
+        );
+        let permanent =
+            dbus::Error::new_custom("org.freedesktop.DBus.Error.AccessDenied", "title denied");
+        assert!(is_transient_title_error(&transient));
+        assert!(!is_transient_title_error(&permanent));
+
+        let candidate = Address {
+            bus: ":1.7".into(),
+            path: "/window/1".into(),
+        };
+        assert!(matches!(
+            unscoped_title_decision(vec![candidate], false, false, None, Instant::now()),
+            TitleDecision::Retry(None)
+        ));
     }
 
     #[test]
