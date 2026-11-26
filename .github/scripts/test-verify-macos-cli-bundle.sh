@@ -8,17 +8,20 @@ seal_probe="$repo_root/.github/scripts/test-macos-cli-seal-preservation.sh"
 workflow_contract="$repo_root/.github/scripts/test-macos-release-artifact-workflows.sh"
 dual_package="$repo_root/.github/scripts/test-macos-roast-dual-package-graph.sh"
 verify_ordering="$repo_root/.github/scripts/test-macos-bundle-verify-ordering.sh"
+shaded_jar_signing="$repo_root/.github/scripts/test-sign-macos-shaded-jar.py"
 
 test -x "$verifier"
 test -x "$seal_probe"
 test -x "$workflow_contract"
 test -x "$dual_package"
 test -x "$verify_ordering"
+test -f "$shaded_jar_signing"
 grep -Fq 'verify-macos-cli-bundle.sh "$archive" "$RELEASE_VERSION"' "$workflow"
 grep -Fq 'app="$workspace/$expected_root/Spectre.app"' "$verifier"
 grep -Fq 'codesign --verify --deep --strict --verbose=4 "$app"' "$verifier"
 grep -Fq 'xcrun stapler validate "$app"' "$verifier"
 grep -Fq 'spctl --assess --type execute --verbose=4 "$app"' "$verifier"
+grep -Fq 'python3 .github/scripts/sign-macos-shaded-jar.py \' "$workflow"
 
 # Intermediate release signing must also deep-verify (not only --strict). A non-deep
 # check can green-pass while nested jlink dylibs under Resources/runtime are already
@@ -39,3 +42,4 @@ fi
 bash "$verify_ordering"
 bash "$workflow_contract"
 bash "$seal_probe"
+python3 "$shaded_jar_signing"
