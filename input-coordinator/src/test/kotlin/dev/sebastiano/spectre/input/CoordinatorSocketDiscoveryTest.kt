@@ -2,11 +2,13 @@
 
 package dev.sebastiano.spectre.input
 
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * #462 client half: a client must find the coordinator even when it had to fall forward past a
@@ -17,6 +19,21 @@ class CoordinatorSocketDiscoveryTest {
     private val first: Path = Path.of("/tmp/spc/input-v1-a.sock")
     private val second: Path = Path.of("/tmp/spc/input-v1-a-1.sock")
     private val third: Path = Path.of("/tmp/spc/input-v1-a-2.sock")
+
+    @Test
+    fun `known non-socket file types are positively unusable socket candidates`() {
+        val directory = Files.createTempDirectory("spc-candidate-")
+        val regularFile = Files.createFile(directory.resolve("regular"))
+        val nestedDirectory = Files.createDirectory(directory.resolve("directory"))
+        try {
+            assertTrue(regularFile.isPositivelyUnusableSocketCandidate())
+            assertTrue(nestedDirectory.isPositivelyUnusableSocketCandidate())
+        } finally {
+            Files.deleteIfExists(regularFile)
+            Files.deleteIfExists(nestedDirectory)
+            Files.deleteIfExists(directory)
+        }
+    }
 
     @Test
     fun `the first reachable candidate wins`() {

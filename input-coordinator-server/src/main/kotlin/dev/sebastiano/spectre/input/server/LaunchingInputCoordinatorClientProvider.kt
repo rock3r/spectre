@@ -8,12 +8,23 @@ import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
 import dev.sebastiano.spectre.input.InputCoordinatorClientProvider
 import dev.sebastiano.spectre.input.LocalInputCoordinatorClient
 import java.io.IOException
+import java.io.InterruptedIOException
+import java.net.ConnectException
 import java.time.Duration
 import java.util.concurrent.locks.LockSupport
 
 /** Service-loaded provider that launches the small external coordinator JVM when necessary. */
 @ExperimentalSpectreInputCoordinationApi
-public class LaunchingInputCoordinatorClientProvider : InputCoordinatorClientProvider {
+public class LaunchingInputCoordinatorClientProvider public constructor() :
+    InputCoordinatorClientProvider {
+    private var launch: (CoordinatorEndpoint) -> Unit = { endpoint ->
+        CoordinatorProcessLauncher(endpoint).start()
+    }
+
+    internal constructor(launch: (CoordinatorEndpoint) -> Unit) : this() {
+        this.launch = launch
+    }
+
     override fun connect(
         endpoint: CoordinatorEndpoint,
         resourceKey: DesktopResourceKey,
@@ -22,15 +33,18 @@ public class LaunchingInputCoordinatorClientProvider : InputCoordinatorClientPro
         tryConnect(endpoint, resourceKey, ownerLabel)?.let {
             return it
         }
-        CoordinatorProcessLauncher(endpoint).start()
+        launch(endpoint)
         val deadline = System.nanoTime() + STARTUP_TIMEOUT.toNanos()
         var lastFailure: IOException? = null
         while (System.nanoTime() < deadline) {
             try {
                 return LocalInputCoordinatorClient.connect(endpoint, resourceKey, ownerLabel)
-            } catch (failure: IOException) {
+            } catch (failure: ConnectException) {
                 lastFailure = failure
                 LockSupport.parkNanos(STARTUP_RETRY_DELAY.toNanos())
+                if (Thread.currentThread().isInterrupted) {
+                    throw InterruptedIOException("Input coordinator startup was interrupted")
+                }
             }
         }
         throw IOException(
@@ -46,7 +60,7 @@ public class LaunchingInputCoordinatorClientProvider : InputCoordinatorClientPro
     ): LocalInputCoordinatorClient? =
         try {
             LocalInputCoordinatorClient.connect(endpoint, resourceKey, ownerLabel)
-        } catch (_: IOException) {
+        } catch (_: ConnectException) {
             null
         }
 

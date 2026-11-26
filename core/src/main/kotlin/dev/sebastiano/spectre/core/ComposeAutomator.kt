@@ -51,6 +51,11 @@ private constructor(
     public val inputCapabilities: InputCapabilities
         get() = robotDriver.inputCapabilities
 
+    /** Cooperative input policy selected by this automator's driver. */
+    @InternalSpectreApi
+    public val inputLeasePolicy: InputLeasePolicy
+        get() = robotDriver.inputLeasePolicy
+
     /** Holds one reentrant desktop lease across the complete [block]. */
     @ExperimentalSpectreInputCoordinationApi
     public suspend fun <T> withExclusiveInput(
@@ -64,6 +69,10 @@ private constructor(
     internal fun bindInputLease(
         lease: dev.sebastiano.spectre.input.CoordinatedInputLease
     ): AutoCloseable = robotDriver.bindInputLease(lease)
+
+    @InternalSpectreApi
+    public fun bindInputLeaseOptions(options: InputLeaseOptions): AutoCloseable =
+        robotDriver.bindInputLeaseOptions(options)
 
     /**
      * Snapshot of the currently tracked windows. Returns the live `TrackedWindow` collaborator
@@ -191,19 +200,24 @@ private constructor(
      */
     public suspend fun click(node: AutomatorNode) {
         val center = pointerTargetOnScreen(node, action = "click")
-        robotDriver.clickVerified(center.x, center.y)
+        robotDriver.clickVerified(center.x, center.y, node.trackedWindow.composeInputTarget)
     }
 
     /** Double-clicks [node]'s centre, with the delivery guarantee described on [click]. */
     public suspend fun doubleClick(node: AutomatorNode) {
         val center = pointerTargetOnScreen(node, action = "double-click")
-        robotDriver.doubleClickVerified(center.x, center.y)
+        robotDriver.doubleClickVerified(center.x, center.y, node.trackedWindow.composeInputTarget)
     }
 
     /** Long-clicks [node]'s centre, with the delivery guarantee described on [click]. */
     public suspend fun longClick(node: AutomatorNode, holdFor: Duration = 500.milliseconds) {
         val center = pointerTargetOnScreen(node, action = "long-click")
-        robotDriver.longClickVerified(center.x, center.y, holdFor)
+        robotDriver.longClickVerified(
+            center.x,
+            center.y,
+            holdFor,
+            node.trackedWindow.composeInputTarget,
+        )
     }
 
     /**
@@ -262,6 +276,7 @@ private constructor(
             toCenter.y,
             steps,
             duration,
+            from.trackedWindow.composeInputTarget,
         )
     }
 
@@ -274,7 +289,12 @@ private constructor(
      */
     public suspend fun scrollWheel(node: AutomatorNode, wheelClicks: Int) {
         val center = pointerTargetOnScreen(node, action = "scroll the wheel over")
-        robotDriver.scrollWheelVerified(center.x, center.y, wheelClicks)
+        robotDriver.scrollWheelVerified(
+            center.x,
+            center.y,
+            wheelClicks,
+            node.trackedWindow.composeInputTarget,
+        )
     }
 
     public suspend fun typeText(text: String) {
@@ -312,15 +332,7 @@ private constructor(
 
     internal fun focusWindowUncoordinated(node: AutomatorNode) {
         val window = node.trackedWindow.window
-        if (SwingUtilities.isEventDispatchThread()) {
-            window.toFront()
-            window.requestFocus()
-        } else {
-            SwingUtilities.invokeAndWait {
-                window.toFront()
-                window.requestFocus()
-            }
-        }
+        requestAndVerifyWindowFocus(window)
     }
 
     internal fun checkpointInputLease() {
@@ -825,16 +837,8 @@ private constructor(
         region: Rectangle,
         windowBounds: Rectangle,
         frameInsets: java.awt.Insets,
-    ): BufferedImage {
-        return screenshotTrackedRegionCapture(trackedWindow, region, windowBounds, frameInsets)
-            .image
-    }
-
-    private data class ScreenshotGeometry(
-        val region: Rectangle,
-        val windowBounds: Rectangle,
-        val frameInsets: java.awt.Insets,
-    )
+    ): BufferedImage =
+        screenshotTrackedRegionCapture(trackedWindow, region, windowBounds, frameInsets).image
 
     private fun screenshotTrackedRegionCapture(
         trackedWindow: TrackedWindow,
@@ -1034,3 +1038,9 @@ private fun StringBuilder.appendNodeTree(node: AutomatorNode, depth: Int) {
         appendNodeTree(child, depth + 1)
     }
 }
+
+private data class ScreenshotGeometry(
+    val region: Rectangle,
+    val windowBounds: Rectangle,
+    val frameInsets: java.awt.Insets,
+)

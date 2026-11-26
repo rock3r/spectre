@@ -10,7 +10,7 @@ import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
 import org.junit.jupiter.api.Assumptions.assumeFalse
 
 /**
@@ -18,6 +18,16 @@ import org.junit.jupiter.api.Assumptions.assumeFalse
  * property, and bounds failures must not drop tracked surfaces from the Windows wire response.
  */
 class ReflectiveAutomatorHandlerWindowsAgreementTest {
+
+    @Test
+    fun `Windows op reports a clear error when isShowing cannot be read`() {
+        val tracked = AgreementFakeTrackedWindowMissingShowing()
+        val handler =
+            ReflectiveAutomatorHandler(AgreementFakeAutomator(windowsValue = listOf(tracked)))
+
+        val error = assertFailsWith<IllegalStateException> { handler.handle(AgentRequest.Windows) }
+        kotlin.test.assertTrue(error.message.orEmpty().contains("isShowing could not be read"))
+    }
 
     @Test
     fun `Windows op extracts title from Dialog and windowTitle property`() {
@@ -58,28 +68,19 @@ class ReflectiveAutomatorHandlerWindowsAgreementTest {
     }
 
     @Test
-    fun `Windows op keeps surface when composeSurfaceBoundsOnScreen throws`() {
+    fun `Windows op fails when composeSurfaceBoundsOnScreen throws`() {
         val trackedWindow =
             AgreementFakeTrackedWindowThrowingBounds(
                 surfaceIdValue = "window:0",
                 isPopupValue = false,
-                windowTitleValue = "Still listed",
+                windowTitleValue = "Not silently listed",
             )
         val automator = AgreementFakeAutomator(windowsValue = listOf(trackedWindow))
         val handler = ReflectiveAutomatorHandler(automator)
 
         val response = handler.handle(AgentRequest.Windows)
-        check(response is AgentResponse.Windows) {
-            "expected AgentResponse.Windows, got ${response::class.simpleName}: $response"
-        }
-        assertEquals(1, response.windows.size)
-        val dto = response.windows.single()
-        assertEquals("window:0", dto.surfaceId)
-        assertEquals("Still listed", dto.title)
-        assertEquals(false, dto.isPopup)
-        assertEquals(0, dto.bounds.width)
-        assertEquals(0, dto.bounds.height)
-        assertTrue(dto.surfaceId.startsWith("window:"))
+        check(response is AgentResponse.Error)
+        kotlin.test.assertTrue(response.message.contains("simulated locationOnScreen failure"))
     }
 
     @Test
@@ -125,6 +126,17 @@ class ReflectiveAutomatorHandlerWindowsAgreementTest {
     }
 }
 
+private class AgreementFakeTrackedWindowMissingShowing {
+    @Suppress("unused", "FunctionOnlyReturningConstant")
+    fun getSurfaceId(): String = "window:missing-showing"
+
+    @Suppress("unused", "FunctionOnlyReturningConstant") fun isPopup(): Boolean = false
+
+    @Suppress("unused") fun getComposeSurfaceBoundsOnScreen(): Rectangle = Rectangle(0, 0, 1, 1)
+
+    @Suppress("unused", "FunctionOnlyReturningConstant") fun getWindow(): Any? = null
+}
+
 private class AgreementFakeTrackedWindow(
     private val surfaceIdValue: String,
     private val isPopupValue: Boolean,
@@ -157,6 +169,8 @@ private class AgreementFakeTrackedWindowWithTitle(
     @Suppress("unused") fun getWindowTitle(): String? = windowTitleValue
 
     @Suppress("unused", "FunctionOnlyReturningConstant") fun getWindow(): java.awt.Window? = null
+
+    @Suppress("unused", "FunctionOnlyReturningConstant") fun isShowing(): Boolean = true
 }
 
 private class AgreementFakeTrackedWindowThrowingBounds(
