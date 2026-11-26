@@ -12,6 +12,8 @@ on:
     paths:
       - .github/workflows/qa-atspi-optional-fields.yml
       - .github/qa-atspi-multi-window-contract/optional-fields-*
+      - .github/qa-atspi-multi-window-contract/candidate.env
+      - .github/qa-atspi-multi-window-contract/all-windows.patch
 
 permissions:
   contents: read
@@ -22,7 +24,7 @@ jobs:
     timeout-minutes: 25
     env:
       BASELINE_SHA: 3e831adde0ff84b535ec997446a347be90431304
-      QA_EARLY_TYPED_TIMEOUT: ${{ inputs.early_typed_timeout && '1' || '0' }}
+      QA_EARLY_TYPED_TIMEOUT: '1'
     steps:
       - uses: actions/checkout@v6
         with:
