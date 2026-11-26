@@ -19,6 +19,7 @@ MUTTER_CONTROL = ROOT / ".github/scripts/gnome-mutter-control-probe.py"
 VERIFICATION_EXTENSION = ROOT / ".github/gnome-shell-extensions/spectre-mutter-control-verification@sebastiano.dev/extension.js"
 WARMUP = ROOT / ".github/scripts/gnome-portal-dialog-warmup.py"
 ATSPI_OWNERSHIP = ROOT / ".github/scripts/gnome-atspi-ownership-probe.py"
+ATSPI_DISTINCT = ROOT / ".github/scripts/gnome-atspi-distinct-content-probe.py"
 
 
 class GnomeHostedSmokeContractTest(unittest.TestCase):
@@ -82,6 +83,29 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
             "ready PID",
             'error.get("code") == "target-not-found"',
             'error.get("code") == "timeout"',
+        ):
+            self.assertIn(contract, probe)
+        self.assertNotIn("pkill", probe)
+        self.assertNotIn("killall", probe)
+
+    def test_atspi_distinct_content_is_an_independent_native_wayland_cell(self):
+        probe = ATSPI_DISTINCT.read_text()
+        self.assertIn("mode: [accessibility, atspi-ownership, atspi-distinct-content]", self.workflow)
+        self.assertIn('SMOKE_MODE" == atspi-distinct-content', self.session)
+        self.assertEqual(self.workflow.count("matrix.mode == 'atspi-distinct-content'"), 3)
+        for contract in (
+            'TITLE = "Spectre distinct GTK ownership"',
+            'CONTROLS = ("Orchard saffron", "Harbor indigo")',
+            '"GTK_A11Y": "atspi"',
+            '"GDK_BACKEND": "wayland"',
+            'GetConnectionUnixProcessID',
+            'org.a11y.atspi.Registry',
+            '"processId"',
+            '"target-not-found"',
+            '"ambiguous"',
+            '"summary.json"',
+            '"junit.xml"',
+            'time.monotonic_ns()',
         ):
             self.assertIn(contract, probe)
         self.assertNotIn("pkill", probe)

@@ -193,6 +193,17 @@ if [[ "$SMOKE_MODE" == atspi-ownership ]]; then
   exit 0
 fi
 
+if [[ "$SMOKE_MODE" == atspi-distinct-content ]]; then
+  cd "$ATSPI_REPO/recording/native/linux"
+  cargo build --locked
+  unset DISPLAY
+  export GDK_BACKEND=wayland GTK_A11Y=atspi
+  /usr/bin/python3 "$(dirname "$0")/gnome-atspi-distinct-content-probe.py" \
+    --helper "$ATSPI_REPO/recording/native/linux/target/debug/spectre-wayland-helper" \
+    --artifacts "$SMOKE_ARTIFACTS"
+  exit 0
+fi
+
 cd "$SMOKE_REPO"
 ./gradlew --no-daemon :recording:assembleWaylandHelper --console=plain \
   2>&1 | tee "$SMOKE_ARTIFACTS/assemble-wayland-helper.log"
