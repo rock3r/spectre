@@ -474,6 +474,10 @@ private fun wirePerTargetRoastNativeFiltering(roastTargets: List<String>) {
                     layout.buildDirectory.file("construo/distributions/$target/spectre-$target.zip")
                 )
                 roastTargetName.set(target)
+                requireAllLinuxHelpers.set(
+                    providers.gradleProperty("prebuiltLinuxHelpersDir").isPresent ||
+                        providers.gradleProperty("allLinuxArches").isPresent
+                )
             }
         // finalizedBy so any explicit package* (release matrix, local cross-build) still runs
         // the layout gate without pulling every target into :cli:check.
