@@ -7,6 +7,9 @@ import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -16,6 +19,80 @@ import kotlin.test.assertTrue
 import org.junit.jupiter.api.io.TempDir
 
 class DaemonAccessibilityTreeTest {
+    @Test
+    fun `standalone accessibility accepts timeout above sixty seconds`() {
+        val response =
+            fixture()
+                .registry
+                .handle(DaemonRequest.AccessibilityTree(processId = 8123, timeoutMs = 60_001))
+
+        assertIs<DaemonResponse.AccessibilitySnapshotResult>(response)
+    }
+
+    @Test
+    fun `attached accessibility accepts timeout above sixty seconds`() {
+        val fixture = fixture(windows = listOf(window(0, "Fixture")))
+        fixture.registry.handle(DaemonRequest.Attach(44))
+
+        val response =
+            fixture.registry.handle(
+                DaemonRequest.AccessibilityTree(sessionId = "pid-44", timeoutMs = 60_001)
+            )
+
+        assertIs<DaemonResponse.AccessibilitySnapshotResult>(response)
+    }
+
+    @Test
+    fun `attached accessibility request owns exact session until helper completes`() {
+        val windowsEntered = CountDownLatch(1)
+        val releaseWindows = CountDownLatch(1)
+        val helperEntered = CountDownLatch(1)
+        val releaseHelper = CountDownLatch(1)
+        val closed = CountDownLatch(1)
+        val fixture =
+            fixture(
+                automator =
+                    TestDaemonSessionAutomator(
+                        windowsResult = {
+                            windowsEntered.countDown()
+                            check(releaseWindows.await(5, TimeUnit.SECONDS))
+                            listOf(window(0, "Fixture"))
+                        },
+                        closeAction = { closed.countDown() },
+                    ),
+                helperAction = {
+                    helperEntered.countDown()
+                    check(releaseHelper.await(5, TimeUnit.SECONDS))
+                },
+            )
+        fixture.registry.handle(DaemonRequest.Attach(44))
+
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val request =
+                pool.submit<DaemonResponse> {
+                    fixture.registry.handle(DaemonRequest.AccessibilityTree(sessionId = "pid-44"))
+                }
+            check(windowsEntered.await(5, TimeUnit.SECONDS))
+            val detach =
+                pool.submit<DaemonResponse> {
+                    fixture.registry.handle(DaemonRequest.Detach("pid-44"))
+                }
+            assertTrue(!closed.await(200, TimeUnit.MILLISECONDS), "detach raced target lookup")
+            releaseWindows.countDown()
+            check(helperEntered.await(5, TimeUnit.SECONDS))
+            assertTrue(!closed.await(200, TimeUnit.MILLISECONDS), "detach raced native helper")
+            releaseHelper.countDown()
+
+            assertIs<DaemonResponse.AccessibilitySnapshotResult>(request.get(5, TimeUnit.SECONDS))
+            assertIs<DaemonResponse.Detached>(detach.get(5, TimeUnit.SECONDS))
+        } finally {
+            releaseWindows.countDown()
+            releaseHelper.countDown()
+            pool.shutdownNow()
+        }
+    }
+
     @Test
     fun `non JVM pid is sent directly to packaged helper`() {
         val fixture = fixture()
@@ -175,6 +252,7 @@ class DaemonAccessibilityTreeTest {
         windows: List<WindowSummaryDto> = emptyList(),
         automator: TestDaemonSessionAutomator =
             TestDaemonSessionAutomator(windowsResult = { windows }),
+        helperAction: () -> Unit = {},
     ): Fixture {
         var input = ""
         val helper =
@@ -183,6 +261,7 @@ class DaemonAccessibilityTreeTest {
                 runner =
                     AccessibilityHelperRunner { _, stdin, _ ->
                         input = stdin
+                        helperAction()
                         output
                     },
             )
