@@ -2,6 +2,8 @@
 
 package dev.sebastiano.spectre.agent.launch
 
+import com.sun.tools.attach.AgentLoadException
+import com.sun.tools.attach.AttachNotSupportedException
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import java.io.InputStream
 import java.io.OutputStream
@@ -277,14 +279,6 @@ class LaunchReadinessProcessExitGraceTest {
             const val EXIT_CODE: Int = 17
         }
     }
-
-    /**
-     * Local stand-ins so tests do not compile-depend on `jdk.attach`. Production matches these
-     * types by simple name on the cause chain — the same names HotSpot throws.
-     */
-    private class AttachNotSupportedException(message: String) : RuntimeException(message)
-
-    private class AgentLoadException(message: String) : RuntimeException(message)
 
     private fun attachNotSupportedCause(): RuntimeException =
         RuntimeException(
