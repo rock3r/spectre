@@ -80,6 +80,7 @@ abstract class AttachSpikeArgumentProvider @Inject constructor() : CommandLineAr
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    systemProperty("spectre.test.gradleHome", requireNotNull(gradle.gradleHomeDir).absolutePath)
 
     // Expose the freshly-built agent runtime JAR to AgentAttachIntegrationTest. The test reads
     // this system property and skips itself (via JUnit `assumeFalse`) if it's not set.

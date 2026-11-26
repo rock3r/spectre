@@ -8,40 +8,71 @@ import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import kotlin.io.path.writeText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Assertions.assertAll
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
+import org.junit.jupiter.api.function.Executable
+import org.junit.jupiter.api.io.TempDir
 
 /**
  * Real Gradle/JavaExec boundary coverage for launch ownership; no Attach call is used as a probe.
  */
 class GradleLaunchMarkerIntegrationTest {
+    @TempDir lateinit var directory: Path
+    private val reusableFixtures = mutableListOf<Path>()
+
+    @AfterEach
+    fun stopFixtureDaemons() {
+        assertAll(
+            reusableFixtures.map { fixture ->
+                Executable {
+                    val daemon = buildJvm(fixture)
+                    runGradle(fixture, "--stop")
+                    daemon?.onExit()?.get(15, TimeUnit.SECONDS)
+                }
+            }
+        )
+    }
+
     @Test
     fun `overlapping JavaExec launches with the same main bind to their own marker`() {
         val fixtureA = createFixture("overlap-a")
         val fixtureB = createFixture("overlap-b")
-        val warmup = startGradle(fixtureA, marker = null, task = "help")
-        assertEquals(0, warmup.waitFor(), "failed to warm a reusable Gradle daemon")
+        // Warm both independent build JVMs before either measured app launch.
+        for (fixture in listOf(fixtureA, fixtureB)) {
+            reusableFixtures.add(fixture)
+            runGradle(fixture, "--daemon", "help")
+        }
 
+        val warmedA = requireNotNull(buildJvm(fixtureA))
+        val warmedB = requireNotNull(buildJvm(fixtureB))
         val first = startMarkedFixture(fixtureA)
         var second: Launch? = null
         try {
             val firstPid = awaitOwnedJvm(first)
             second = startMarkedFixture(fixtureB)
             val secondPid = awaitOwnedJvm(second)
+            assertEquals(warmedA, buildJvm(fixtureA))
+            assertEquals(warmedB, buildJvm(fixtureB))
             assertNotEquals(firstPid, secondPid)
             assertTrue(hasLaunchMarker(firstPid, first.marker))
             assertTrue(hasLaunchMarker(secondPid, second.marker))
             assertTrue(!hasLaunchMarker(firstPid, second.marker))
             assertTrue(!hasLaunchMarker(secondPid, first.marker))
         } finally {
-            destroyLaunch(first)
-            second?.let(::destroyLaunch)
+            try {
+                second?.let(::destroyLaunch)
+            } finally {
+                destroyLaunch(first)
+            }
         }
     }
 
@@ -75,83 +106,109 @@ class GradleLaunchMarkerIntegrationTest {
     }
 
     private fun createFixture(name: String, disablePerfData: Boolean = false): Path {
-        val directory = Files.createTempDirectory("spectre-gradle-marker-$name-")
-        directory.resolve("settings.gradle").writeText("rootProject.name = '$name'\n")
-        directory
+        val fixture = Files.createDirectory(directory.resolve(name))
+        fixture
+            .resolve("settings.gradle")
+            .writeText(
+                """
+                |rootProject.name = '$name'
+                |file('build.pid').text = ProcessHandle.current().pid().toString()
+                |println 'Fixture settings evaluated'
+                """
+                    .trimMargin()
+            )
+        fixture
+            .resolve("gradle.properties")
+            .writeText("org.gradle.jvmargs=-Xmx192m -XX:ActiveProcessorCount=2 -XX:+UseSerialGC\n")
+        fixture
             .resolve("build.gradle")
             .writeText(
                 """
                 |tasks.register('runFixture', JavaExec) {
-                |    classpath = files('.')
-                |    mainClass = 'SameMain'
-                |    args providers.gradleProperty('fixtureReadinessFile').get()
+                |    classpath = files(providers.gradleProperty('fixtureClasses').get())
+                |    mainClass = '${SameMain::class.java.name}'
+                |    maxHeapSize = '32m'
+                |    args 'fixture.ready', '${ProcessHandle.current().pid()}', '${LaunchAndAttach.LAUNCH_MARKER_PROPERTY}'
                 |    ${if (disablePerfData) "jvmArgs '-XX:-UsePerfData'" else ""}
+                |    doFirst { logger.lifecycle('Fixture JavaExec starting') }
                 |}
                 """
                     .trimMargin()
             )
-        directory
-            .resolve("SameMain.java")
-            .writeText(
-                """
-                |public final class SameMain {
-                |    public static void main(String[] args) throws Exception {
-                |        java.nio.file.Files.writeString(
-                |            java.nio.file.Path.of(args[0]),
-                |            ProcessHandle.current().pid() + "\n" +
-                |                System.getProperty("${LaunchAndAttach.LAUNCH_MARKER_PROPERTY}", "") + "\n"
-                |        );
-                |        Thread.sleep(120000L);
-                |    }
-                |}
-                """
-                    .trimMargin()
-            )
-        val javac = Path.of(System.getProperty("java.home"), "bin", "javac").toString()
-        val compile = ProcessBuilder(javac, "SameMain.java").directory(directory.toFile()).start()
-        assertEquals(0, compile.waitFor(), "fixture javac failed")
-        return directory
+        return fixture
     }
 
-    private fun startMarkedFixture(
-        fixture: Path,
-        noDaemon: Boolean = false,
-    ): Launch {
-        val capture = Files.createTempDirectory("spectre-gradle-marker-capture-")
-        val command = buildList {
-            add(gradlew().toString())
-            add("-p")
-            add(fixture.toString())
-            add("runFixture")
-            add("-q")
-            add("-PfixtureReadinessFile=${capture.resolve("fixture.ready")}")
-            if (noDaemon) add("--no-daemon")
-        }
+    private fun startMarkedFixture(fixture: Path, noDaemon: Boolean = false): Launch {
+        val command =
+            gradleCommand(
+                if (noDaemon) "--no-daemon" else "--daemon",
+                "-PfixtureClasses=${Path.of(SameMain::class.java.protectionDomain.codeSource.location.toURI())}",
+                "runFixture",
+            )
         val marker = UUID.randomUUID().toString()
-        val marked = prepareGradleLaunchCommand(command, capture, marker)
+        val marked = prepareGradleLaunchCommand(command, fixture, marker)
         val startedAt = Instant.now()
         return Launch(
-            process =
-                ProcessBuilder(marked)
-                    .redirectErrorStream(true)
-                    .redirectOutput(capture.resolve("gradle.log").toFile())
-                    .start(),
-            startedAt = startedAt,
-            marker = marker,
-            capture = capture,
+            startBuild(fixture, marked, fixture.resolve("gradle.log")),
+            startedAt,
+            marker,
+            fixture,
         )
     }
 
-    private fun startGradle(fixture: Path, marker: String?, task: String): Process {
-        val command = listOf(gradlew().toString(), "-p", fixture.toString(), task, "-q")
-        val actual =
-            if (marker == null) command else prepareGradleLaunchCommand(command, fixture, marker)
-        return ProcessBuilder(actual).redirectErrorStream(true).start()
+    private fun gradleCommand(vararg args: String): List<String> {
+        val binary = if (java.io.File.separatorChar == '\\') "gradle.bat" else "gradle"
+        val gradle = Path.of(System.getProperty("spectre.test.gradleHome"), "bin", binary)
+        return listOf(
+            gradle.toString(),
+            "--offline",
+            "--console=plain",
+            "--max-workers=1",
+            "--no-watch-fs",
+            *args,
+        )
+    }
+
+    private fun startBuild(fixture: Path, command: List<String>, log: Path): Process =
+        ProcessBuilder(command)
+            .directory(fixture.toFile())
+            .apply {
+                // Host launch options can override the fixture budget or dump unrelated arguments.
+                listOf(
+                        "JAVA_OPTS",
+                        "GRADLE_OPTS",
+                        "JAVA_TOOL_OPTIONS",
+                        "_JAVA_OPTIONS",
+                        "JDK_JAVA_OPTIONS",
+                    )
+                    .forEach(environment()::remove)
+                environment()["GRADLE_USER_HOME"] =
+                    fixture.resolveSibling("${fixture.fileName}-home").toString()
+                environment()["JAVA_HOME"] = System.getProperty("java.home")
+            }
+            .redirectErrorStream(true)
+            .redirectOutput(log.toFile())
+            .start()
+
+    private fun runGradle(fixture: Path, vararg args: String) {
+        val log = fixture.resolve(if ("--stop" in args) "stop.log" else "warmup.log")
+        val process = startBuild(fixture, gradleCommand(*args), log)
+        try {
+            check(
+                process.waitFor(FIXTURE_READY_TIMEOUT.seconds, TimeUnit.SECONDS) &&
+                    process.exitValue() == 0
+            ) {
+                "Fixture Gradle ${args.toList()} failed: ${Files.readString(log)}"
+            }
+        } finally {
+            if (process.isAlive) ProcessTreeTeardown.destroyTree(process.toHandle())
+        }
     }
 
     private fun awaitOwnedJvm(launch: Launch): Long {
         val fixture = awaitFixtureReadiness(launch)
-        val deadline = Instant.now().plus(MARKER_DISCOVERY_TIMEOUT)
+        val readyAt = Instant.now()
+        val deadline = readyAt.plus(MARKER_DISCOVERY_TIMEOUT)
         while (Instant.now().isBefore(deadline)) {
             discoverOwnedAppJvm(
                     clientPid = launch.process.pid(),
@@ -164,6 +221,11 @@ class GradleLaunchMarkerIntegrationTest {
                         fixture.pid,
                         discoveredPid,
                         "ownership discovery selected a different process than the live fixture",
+                    )
+                    val readinessMs = Duration.between(launch.startedAt, readyAt).toMillis()
+                    val discoveryMs = Duration.between(readyAt, Instant.now()).toMillis()
+                    println(
+                        "Fixture ${launch.capture.fileName}: readiness=${readinessMs}ms discovery=${discoveryMs}ms"
                     )
                     return discoveredPid
                 }
@@ -224,25 +286,25 @@ class GradleLaunchMarkerIntegrationTest {
             .trimMargin()
     }
 
-    private fun destroyLaunch(launch: Launch) {
-        ProcessHandle.allProcesses()
-            .filter { hasLaunchMarker(it.pid(), launch.marker) }
-            .forEach { ProcessTreeTeardown.destroyTreeByPid(it.pid()) }
-        launch.process.destroyForcibly()
-        launch.process.waitFor()
-    }
-
-    private fun gradlew(): Path {
-        var directory = Path.of(System.getProperty("user.dir")).toAbsolutePath()
-        repeat(8) {
-            val candidate =
-                directory.resolve(
-                    if (java.io.File.separatorChar == '\\') "gradlew.bat" else "gradlew"
-                )
-            if (Files.isRegularFile(candidate)) return candidate
-            directory = directory.parent ?: error("could not find gradlew")
+    private fun buildJvm(fixture: Path): ProcessHandle? =
+        fixture.resolve("build.pid").takeIf(Files::isRegularFile)?.let {
+            Files.readString(it).trim().toLongOrNull()?.let { pid ->
+                ProcessHandle.of(pid).orElse(null)
+            }
         }
-        error("could not find gradlew")
+
+    private fun destroyLaunch(launch: Launch) {
+        val singleUseDaemon =
+            if (launch.capture in reusableFixtures) null else buildJvm(launch.capture)
+        Files.createFile(launch.capture.resolve("fixture.release"))
+        if (!launch.process.waitFor(15, TimeUnit.SECONDS)) {
+            ProcessHandle.allProcesses()
+                .filter { hasLaunchMarker(it.pid(), launch.marker) }
+                .forEach { ProcessTreeTeardown.destroyTreeByPid(it.pid()) }
+            ProcessTreeTeardown.destroyTree(launch.process.toHandle())
+        }
+        // Windows keeps cache files locked until the single-use build JVM exits.
+        singleUseDaemon?.onExit()?.get(15, TimeUnit.SECONDS)
     }
 
     private data class Launch(

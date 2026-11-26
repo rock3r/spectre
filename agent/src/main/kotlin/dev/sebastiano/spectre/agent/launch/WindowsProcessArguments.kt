@@ -10,6 +10,9 @@ import com.sun.jna.win32.StdCallLibrary
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 
 internal fun processArguments(handle: ProcessHandle): Array<String> {
+    // Linux JDKs can stop reading cmdline at a page boundary. macOS obtains argv via
+    // KERN_PROCARGS2 and argc; keep its argument boundaries (never tokenize ps output).
+    if (System.getProperty("os.name") == "Linux") return LinuxProcessArguments.read(handle)
     val arguments = handle.info().arguments().orElse(emptyArray())
     return if (arguments.isEmpty() && java.io.File.separatorChar == '\\') {
         WindowsProcessArguments.read(handle.pid())
