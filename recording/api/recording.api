@@ -1,3 +1,7 @@
+public final class dev/sebastiano/spectre/recording/AccessibilityHelperLocatorKt {
+	public static final fun locateAccessibilityHelper ()Ljava/nio/file/Path;
+}
+
 public final class dev/sebastiano/spectre/recording/AutoRecorder {
 	public fun <init> (Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/portal/WaylandWindowSourceRecorder;)V
 	public synthetic fun <init> (Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/screencapturekit/WindowRecorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/Recorder;Ldev/sebastiano/spectre/recording/portal/WaylandWindowSourceRecorder;ILkotlin/jvm/internal/DefaultConstructorMarker;)V

@@ -6,6 +6,8 @@
 package dev.sebastiano.spectre.core
 
 import dev.sebastiano.spectre.input.CoordinatedInputLease
+import dev.sebastiano.spectre.input.CoordinatorEndpoint
+import dev.sebastiano.spectre.input.DesktopResourceKey
 import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
 import dev.sebastiano.spectre.input.InputCoordinatorClientFactory
 import dev.sebastiano.spectre.input.InputCoordinatorException
@@ -162,6 +164,7 @@ internal class InputLeaseGuard(
     private val capabilities: InputCapabilities,
     private val coordinator: InputLeaseCoordinator,
 ) {
+    private val optionsBinding = AtomicReference<InputLeaseOptions?>()
     private val boundLease = AtomicReference<CoordinatedInputLease?>()
     private val blockingContext = ThreadLocal<BlockingLeaseContext?>()
     private val operationMutex = Mutex()
@@ -169,7 +172,7 @@ internal class InputLeaseGuard(
     suspend fun <T> withOperation(
         currentOperation: String,
         resource: CoordinatedResource,
-        options: InputLeaseOptions = InputLeaseOptions(),
+        options: InputLeaseOptions? = null,
         block: suspend () -> T,
     ): T {
         val operationContext = coroutineContext[LeaseContext]
@@ -194,7 +197,11 @@ internal class InputLeaseGuard(
             val immediate = SwingUtilities.isEventDispatchThread()
             val lease =
                 try {
-                    coordinator.acquire(options, currentOperation, immediate)
+                    coordinator.acquire(
+                        options ?: optionsBinding.get() ?: InputLeaseOptions(),
+                        currentOperation,
+                        immediate,
+                    )
                 } catch (failure: InputCoordinatorException) {
                     if (
                         policy == InputLeasePolicy.Auto &&
@@ -219,6 +226,13 @@ internal class InputLeaseGuard(
                 lease.close()
             }
         }
+    }
+
+    fun bindOptions(options: InputLeaseOptions): AutoCloseable {
+        check(optionsBinding.compareAndSet(null, options)) {
+            "This RobotDriver is already bound to live per-invocation input lease options"
+        }
+        return AutoCloseable { optionsBinding.compareAndSet(options, null) }
     }
 
     fun <T> withBlockingOperation(
@@ -347,8 +361,7 @@ internal class InputLeaseGuard(
     }
 
     private companion object {
-        val AUTO_DEGRADE_ERROR_CODES: Set<String> =
-            setOf("COORDINATOR_PROVIDER_MISSING", "COORDINATOR_SESSION_UNAVAILABLE")
+        val AUTO_DEGRADE_ERROR_CODES: Set<String> = setOf("COORDINATOR_PROVIDER_MISSING")
 
         /**
          * Failures that mean no coordinator could be reached at all, as opposed to one that
@@ -415,6 +428,8 @@ internal class DriverInputCoordination(private val guard: InputLeaseGuard) {
 
     fun bind(lease: CoordinatedInputLease): AutoCloseable = guard.bind(lease)
 
+    fun bindOptions(options: InputLeaseOptions): AutoCloseable = guard.bindOptions(options)
+
     fun <T> withBlockingInput(operation: String, block: () -> T): T =
         guard.withBlockingOperation(operation, CoordinatedResource.FOCUS, block)
 }
@@ -427,12 +442,18 @@ internal suspend fun <T> RobotDriver.withExclusiveInput(
 internal fun RobotDriver.bindInputLease(lease: CoordinatedInputLease): AutoCloseable =
     inputCoordination.bind(lease)
 
+internal fun RobotDriver.bindInputLeaseOptions(options: InputLeaseOptions): AutoCloseable =
+    inputCoordination.bindOptions(options)
+
 internal fun <T> RobotDriver.withBlockingInput(operation: String, block: () -> T): T =
     inputCoordination.withBlockingInput(operation, block)
 
 internal class ProductionInputLeaseCoordinator(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val connectClient: ((String?) -> LocalInputCoordinatorClient)? = null,
+    private val endpoint: () -> CoordinatorEndpoint = LocalCoordinatorEnvironment::defaultEndpoint,
+    private val resourceKey: () -> DesktopResourceKey =
+        LocalCoordinatorEnvironment::defaultDesktopResourceKey,
 ) : InputLeaseCoordinator, AutoCloseable {
     private val client = AtomicReference<ClientSession?>()
 
@@ -445,12 +466,22 @@ internal class ProductionInputLeaseCoordinator(
         if (
             immediate && (currentSession == null || currentSession.ownerLabel != options.ownerLabel)
         ) {
-            throw InputCoordinatorException(
-                errorCode = "COORDINATOR_SESSION_UNAVAILABLE",
-                message =
-                    "A coordinator session with the requested owner label is not connected; " +
-                        "establish an exclusive lease off the EDT",
-            )
+            if (currentSession != null || connectClient != null) throw sessionUnavailable()
+            if (InputCoordinatorClientFactory.isProviderInstalled()) throw sessionUnavailable()
+            val candidateExists =
+                try {
+                    InputCoordinatorClientFactory.hasExistingSocketCandidate(endpoint())
+                } catch (failure: IOException) {
+                    throw InputCoordinatorException(
+                            errorCode = "COORDINATOR_ENDPOINT_AMBIGUOUS",
+                            message =
+                                "Could not establish whether a standalone input coordinator " +
+                                    "exists: ${failure.message}",
+                        )
+                        .apply { initCause(failure) }
+                }
+            if (candidateExists) throw sessionUnavailable()
+            throw missingProvider()
         }
         if (immediate) {
             return requireNotNull(currentSession).client.tryAcquire(currentOperation)
@@ -539,22 +570,57 @@ internal class ProductionInputLeaseCoordinator(
     private fun openClient(ownerLabel: String?): LocalInputCoordinatorClient =
         connectClient?.invoke(ownerLabel) ?: connectCoordinator(ownerLabel)
 
-    private fun connectCoordinator(ownerLabel: String?): LocalInputCoordinatorClient =
-        try {
-            InputCoordinatorClientFactory.connectOrStart(ownerLabel = ownerLabel)
+    private fun connectCoordinator(ownerLabel: String?): LocalInputCoordinatorClient {
+        val resolvedEndpoint = endpoint()
+        val resolvedResourceKey = resourceKey()
+        return try {
+            InputCoordinatorClientFactory.connectOrStart(
+                resolvedEndpoint,
+                resolvedResourceKey,
+                ownerLabel,
+            )
         } catch (failure: InputCoordinatorException) {
             if (failure.errorCode != "COORDINATOR_PROVIDER_MISSING") throw failure
             try {
                 LocalInputCoordinatorClient.connect(
-                    LocalCoordinatorEnvironment.defaultEndpoint(),
-                    LocalCoordinatorEnvironment.defaultDesktopResourceKey(),
+                    resolvedEndpoint,
+                    resolvedResourceKey,
                     ownerLabel,
                 )
             } catch (connectionFailure: IOException) {
                 failure.addSuppressed(connectionFailure)
+                val candidateExists =
+                    try {
+                        InputCoordinatorClientFactory.hasExistingSocketCandidate(resolvedEndpoint)
+                    } catch (probeFailure: IOException) {
+                        failure.addSuppressed(probeFailure)
+                        throw InputCoordinatorException(
+                                "COORDINATOR_ENDPOINT_AMBIGUOUS",
+                                "Could not safely discover a standalone input coordinator",
+                            )
+                            .apply { initCause(failure) }
+                    }
+                if (candidateExists) throw sessionUnavailable().apply { initCause(failure) }
                 throw failure
             }
         }
+    }
+
+    private fun missingProvider(): InputCoordinatorException =
+        InputCoordinatorException(
+            errorCode = "COORDINATOR_PROVIDER_MISSING",
+            message =
+                "No Spectre input coordinator process provider is installed and no standalone " +
+                    "coordinator socket exists",
+        )
+
+    private fun sessionUnavailable(): InputCoordinatorException =
+        InputCoordinatorException(
+            errorCode = "COORDINATOR_SESSION_UNAVAILABLE",
+            message =
+                "A coordinator session with the requested owner label is not connected; " +
+                    "establish an exclusive lease off the EDT",
+        )
 
     private data class ClientSession(
         val ownerLabel: String?,

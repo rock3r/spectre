@@ -87,19 +87,10 @@ class NodeStateMappingTest {
     }
 
     @Test
-    fun `maps an AutomatorNode that predates the node state accessors`() {
-        // A runtime-side AutomatorNode from before #576 has no isClickable / toggleable /
-        // progress / parent / children / bothBounds accessors. Mapping must fall back to the
-        // wire defaults rather than fail.
-        val dto = mapSingle(LegacyNode(key = "legacy", boundsOnScreen = Rectangle(1, 2, 3, 4)))
-
-        assertFalse(dto.isClickable)
-        assertNull(dto.toggleableState)
-        assertNull(dto.progress)
-        assertNull(dto.parentKey)
-        assertTrue(dto.childKeys.isEmpty())
-        assertNull(dto.boundsInWindow)
-        assertEquals(RectDto(x = 1, y = 2, width = 3, height = 4), dto.bounds)
+    fun `fails when node state cannot be read`() {
+        kotlin.test.assertFailsWith<IllegalStateException> {
+            mapSingle(LegacyNode(key = "legacy", boundsOnScreen = Rectangle(1, 2, 3, 4)))
+        }
     }
 
     private fun mapSingle(node: Any): NodeSnapshotDto {
@@ -137,6 +128,9 @@ private class StateNode(
     private val boundsInWindow: Rect = Rect.Zero,
     private val boundsOnScreen: Rectangle = Rectangle(0, 0, 0, 0),
     private val isVisible: Boolean = true,
+    private val isFocused: Boolean = false,
+    private val isDisabled: Boolean = false,
+    private val isSelected: Boolean = false,
     private val editableText: String? = null,
 ) {
     @Suppress("unused") fun getKey(): String = key
@@ -144,6 +138,12 @@ private class StateNode(
     @Suppress("unused") fun getEditableText(): String? = editableText
 
     @Suppress("unused") fun isVisible(): Boolean = isVisible
+
+    @Suppress("unused") fun isFocused(): Boolean = isFocused
+
+    @Suppress("unused") fun isDisabled(): Boolean = isDisabled
+
+    @Suppress("unused") fun isSelected(): Boolean = isSelected
 
     @Suppress("unused") fun getBoundsOnScreen(): Rectangle = boundsOnScreen
 

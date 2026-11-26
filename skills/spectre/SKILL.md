@@ -217,4 +217,4 @@ Load only the reference matching the task:
   `executeOnPooledThread`, `synthetic(rootWindow = ideFrame)`, popup layers)** → `references/intellij.md`
 - **Programmatic `AgentAttach`, `AttachedAutomator`, `AttachOptions`, `spectre-agent`/`spectre-agent-runtime`
   dependencies, or zero-dependency `inject-runtime.jar` bootstrap** → `references/agent.md`
-- **Querying, diffing, or pruning `capture.json` (`schemaVersion 1`) with `jq`** → sibling skill `spectre-capture`
+- **Querying, diffing, or pruning `capture.json` (`schemaVersion 2`) with `jq`** → sibling skill `spectre-capture`

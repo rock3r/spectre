@@ -51,6 +51,11 @@ private constructor(
     public val inputCapabilities: InputCapabilities
         get() = robotDriver.inputCapabilities
 
+    /** Cooperative input policy selected by this automator's driver. */
+    @InternalSpectreApi
+    public val inputLeasePolicy: InputLeasePolicy
+        get() = robotDriver.inputLeasePolicy
+
     /** Holds one reentrant desktop lease across the complete [block]. */
     @ExperimentalSpectreInputCoordinationApi
     public suspend fun <T> withExclusiveInput(
@@ -64,6 +69,10 @@ private constructor(
     internal fun bindInputLease(
         lease: dev.sebastiano.spectre.input.CoordinatedInputLease
     ): AutoCloseable = robotDriver.bindInputLease(lease)
+
+    @InternalSpectreApi
+    public fun bindInputLeaseOptions(options: InputLeaseOptions): AutoCloseable =
+        robotDriver.bindInputLeaseOptions(options)
 
     /**
      * Snapshot of the currently tracked windows. Returns the live `TrackedWindow` collaborator
@@ -825,16 +834,8 @@ private constructor(
         region: Rectangle,
         windowBounds: Rectangle,
         frameInsets: java.awt.Insets,
-    ): BufferedImage {
-        return screenshotTrackedRegionCapture(trackedWindow, region, windowBounds, frameInsets)
-            .image
-    }
-
-    private data class ScreenshotGeometry(
-        val region: Rectangle,
-        val windowBounds: Rectangle,
-        val frameInsets: java.awt.Insets,
-    )
+    ): BufferedImage =
+        screenshotTrackedRegionCapture(trackedWindow, region, windowBounds, frameInsets).image
 
     private fun screenshotTrackedRegionCapture(
         trackedWindow: TrackedWindow,
@@ -1034,3 +1035,9 @@ private fun StringBuilder.appendNodeTree(node: AutomatorNode, depth: Int) {
         appendNodeTree(child, depth + 1)
     }
 }
+
+private data class ScreenshotGeometry(
+    val region: Rectangle,
+    val windowBounds: Rectangle,
+    val frameInsets: java.awt.Insets,
+)

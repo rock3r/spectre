@@ -28,7 +28,82 @@ public data class CaptureNodeSnapshot(
     public val focused: Boolean,
     public val selected: Boolean,
     public val boundsScreen: Rectangle,
-)
+    public val parentKey: String? = null,
+    public val id: String? = null,
+    public val platformRole: String? = null,
+    public val states: List<String> = emptyList(),
+    public val value: String? = null,
+) {
+    /** Binary/source-compatible schema-v1 constructor. */
+    public constructor(
+        key: String,
+        testTag: String?,
+        text: String?,
+        texts: List<String>,
+        editableText: String?,
+        contentDescription: String?,
+        role: String?,
+        enabled: Boolean,
+        clickable: Boolean,
+        focused: Boolean,
+        selected: Boolean,
+        boundsScreen: Rectangle,
+    ) : this(
+        key,
+        testTag,
+        text,
+        texts,
+        editableText,
+        contentDescription,
+        role,
+        enabled,
+        clickable,
+        focused,
+        selected,
+        boundsScreen,
+        null,
+        testTag,
+        null,
+        emptyList(),
+        null,
+    )
+
+    /** JVM bridge for callers compiled against the schema-v1 data-class copy function. */
+    @JvmName("copy")
+    public fun copyV1(
+        key: String = this.key,
+        testTag: String? = this.testTag,
+        text: String? = this.text,
+        texts: List<String> = this.texts,
+        editableText: String? = this.editableText,
+        contentDescription: String? = this.contentDescription,
+        role: String? = this.role,
+        enabled: Boolean = this.enabled,
+        clickable: Boolean = this.clickable,
+        focused: Boolean = this.focused,
+        selected: Boolean = this.selected,
+        boundsScreen: Rectangle = this.boundsScreen,
+    ): CaptureNodeSnapshot =
+        CaptureNodeSnapshot(
+            key,
+            testTag,
+            text,
+            texts,
+            editableText,
+            contentDescription,
+            role,
+            enabled,
+            clickable,
+            focused,
+            selected,
+            boundsScreen,
+            parentKey,
+            id,
+            platformRole,
+            states,
+            value,
+        )
+}
 
 /**
  * Builds an [AtomicCapture] from pre-snapshotted nodes, window metadata, and a PNG image.
@@ -53,12 +128,17 @@ public object AtomicCaptureBuilder {
         val captureNodes = nodeSnapshots.map { snap ->
             CaptureNode(
                 key = snap.key,
+                parentKey = snap.parentKey,
+                id = snap.id,
                 testTag = snap.testTag,
                 text = snap.text,
                 texts = snap.texts,
                 editableText = snap.editableText,
                 contentDescription = snap.contentDescription,
                 role = snap.role,
+                platformRole = snap.platformRole,
+                states = snap.states,
+                value = snap.value,
                 enabled = snap.enabled,
                 clickable = snap.clickable,
                 focused = snap.focused,
@@ -80,6 +160,7 @@ public object AtomicCaptureBuilder {
                         width = snap.boundsScreen.width,
                         height = snap.boundsScreen.height,
                     ),
+                onScreen = captureRegion.intersects(snap.boundsScreen),
             )
         }
         val summary =
@@ -95,6 +176,7 @@ public object AtomicCaptureBuilder {
         val document =
             CaptureDocument(
                 schemaVersion = CaptureDocument.SCHEMA_VERSION,
+                source = CaptureSource.ComposeSemantics,
                 capturedAt = capturedAt.toString(),
                 window =
                     CaptureWindow(
@@ -109,6 +191,7 @@ public object AtomicCaptureBuilder {
                                 width = captureRegion.width,
                                 height = captureRegion.height,
                             ),
+                        boundsSpace = BoundsSpace.Screen,
                         densityScaleX = densityScaleX,
                         densityScaleY = densityScaleY,
                         imageWidth = image.width,
