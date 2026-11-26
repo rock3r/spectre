@@ -1,0 +1,295 @@
+name: QA M9 cross-targeted Windows runtime
+
+on:
+  push:
+    branches:
+      - qa/m9-cross-windows-fd462c8d
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  SOURCE_SHA: fd462c8dd790471a7da58865761ae540af66b3ac
+  RELEASE_VERSION: 0.10.0
+
+jobs:
+  linux-helper:
+    name: Build Linux helper (${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            file-arch: x86-64
+          - arch: aarch64
+            runner: ubuntu-26.04-arm
+            file-arch: ARM aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      # This is the source-identical implementation of linux-helpers.yml with its checkout
+      # pinned because a workflow_call cannot override that workflow's checkout ref.
+      - name: Check out immutable candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Refuse any other source tree
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config at-spi2-core dbus-x11 xvfb python3-gi gir1.2-atspi-2.0 zenity libxcursor1 libxkbcommon-x11-0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and verify native Wayland helper
+        env:
+          ARCH: ${{ matrix.arch }}
+          FILE_ARCH: ${{ matrix.file-arch }}
+        run: |
+          ./gradlew :recording:assembleWaylandHelper
+          bin="recording/build/generated/waylandHelper/native/linux/$ARCH/spectre-wayland-helper"
+          test -f "$bin"
+          file -b "$bin" | tee /dev/stderr | grep -F "$FILE_ARCH"
+      - name: Upload native helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-helper-${{ matrix.arch }}
+          path: recording/build/generated/waylandHelper/native/linux/
+          if-no-files-found: error
+          retention-days: 1
+
+  windows-helper:
+    name: Build Windows Graphics Capture helper
+    runs-on: windows-latest
+    steps:
+      - name: Check out immutable candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Refuse any other source tree
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+      - uses: gradle/actions/setup-gradle@v5
+      # Deliberately identical to release.yml: the Gradle task supplies every x64 and arm64
+      # dotnet publish input defined by the candidate source.
+      - name: Build Windows Graphics Capture helper
+        run: ./gradlew :recording:assembleWindowsScreenshotHelper
+        shell: bash
+      - name: Upload Windows helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-helper
+          path: recording/build/generated/windowsScreenshotHelper/native/windows/
+          if-no-files-found: error
+          retention-days: 1
+
+  package-and-inspect:
+    name: Package and structurally inspect all targets
+    needs: [linux-helper, windows-helper]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out immutable candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Refuse any other source tree
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Download Linux helpers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: linux-helper-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/linux-helpers
+      - name: Download Windows helper
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-helper
+          path: ${{ runner.temp }}/windows-helper
+      - name: Recover trusted signed v0.9.0 macOS helper
+        id: mac-helper
+        continue-on-error: true
+        env:
+          MAC_ZIP_SHA256: b36c5816795c9ec43ff816ec012500490171709b015ac11baacbc2cf123559e0
+        run: |
+          set -euo pipefail
+          url=https://github.com/rock3r/spectre/releases/download/v0.9.0/spectre-macosX64.zip
+          curl --fail --location --retry 3 "$url" -o "$RUNNER_TEMP/spectre-macosX64-v0.9.0.zip"
+          echo "$MAC_ZIP_SHA256  $RUNNER_TEMP/spectre-macosX64-v0.9.0.zip" | sha256sum --check
+          python3 - <<'PY'
+          import json, os, pathlib, stat, zipfile
+          outer = pathlib.Path(os.environ["RUNNER_TEMP"]) / "spectre-macosX64-v0.9.0.zip"
+          root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "mac-v0.9.0"
+          with zipfile.ZipFile(outer) as z:
+              jars = [n for n in z.namelist() if n.endswith("/Resources/cli-0.9.0-all.jar")]
+              assert len(jars) == 1, jars
+              jar = root / "cli.jar"
+              jar.parent.mkdir(parents=True, exist_ok=True)
+              jar.write_bytes(z.read(jars[0]))
+          prefix = "native/macos/SpectreCaptureHelper.app/"
+          app = root / "SpectreCaptureHelper.app"
+          with zipfile.ZipFile(jar) as z:
+              names = [n for n in z.namelist() if n.startswith(prefix) and not n.endswith("/")]
+              assert names
+              for name in names:
+                  info = z.getinfo(name)
+                  target = app / name.removeprefix(prefix)
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(z.read(name))
+                  mode = info.external_attr >> 16
+                  if mode:
+                      target.chmod(stat.S_IMODE(mode))
+              helper = app / "Contents/MacOS/spectre-screencapture"
+              assert helper.exists()
+              assert helper.read_bytes()[:4] in (b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf", b"\xbe\xba\xfe\xca", b"\xbf\xba\xfe\xca")
+              helper.chmod(helper.stat().st_mode | 0o111)
+          provenance = {
+              "source_candidate": os.environ["SOURCE_SHA"],
+              "mac_helper_source": "official GitHub release v0.9.0 spectre-macosX64.zip",
+              "mac_release_asset_sha256": os.environ["MAC_ZIP_SHA256"],
+              "mac_helper_note": "Signed bundled app recovered from cli-0.9.0-all.jar; mac-only resources are filtered from Linux and Windows targets.",
+              "linux_helper_source": f'{os.environ["SOURCE_SHA"]} native builds matching linux-helpers.yml',
+              "windows_helper_source": f'{os.environ["SOURCE_SHA"]} release.yml assembleWindowsScreenshotHelper',
+              "recovery": "success",
+          }
+          (root / "helper-provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+          PY
+          test -x "$RUNNER_TEMP/mac-v0.9.0/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture"
+          file "$RUNNER_TEMP/mac-v0.9.0/SpectreCaptureHelper.app/Contents/MacOS/spectre-screencapture"
+      - name: Build version-stamped cross-targeted CLI distributions
+        id: package
+        continue-on-error: true
+        run: |
+          ./gradlew \
+            :cli:packageLinuxX64 \
+            :cli:packageLinuxArm64 \
+            :cli:packageWindowsX64 \
+            -PVERSION_NAME="$RELEASE_VERSION" \
+            -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-v0.9.0/SpectreCaptureHelper.app" \
+            -PprebuiltLinuxHelpersDir="$RUNNER_TEMP/linux-helpers" \
+            -PprebuiltWindowsHelpersDir="$RUNNER_TEMP/windows-helper"
+      - name: Inspect ZIP central directories and native binaries
+        if: always()
+        env:
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+          MAC_HELPER_OUTCOME: ${{ steps.mac-helper.outcome }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/qa-report"
+          if test -f "$RUNNER_TEMP/mac-v0.9.0/helper-provenance.json"; then
+            cp "$RUNNER_TEMP/mac-v0.9.0/helper-provenance.json" "$RUNNER_TEMP/qa-report/helper-provenance.json"
+          else
+            printf '{"source_candidate":"%s","recovery":"%s","error":"trusted macOS helper recovery did not complete"}\n' "$SOURCE_SHA" "$MAC_HELPER_OUTCOME" > "$RUNNER_TEMP/qa-report/helper-provenance.json"
+          fi
+          python3 - <<'PY'
+          import hashlib, io, json, os, pathlib, re, struct, zipfile
+          root = pathlib.Path("cli/build/construo/distributions")
+          report = {"source_sha": os.environ["SOURCE_SHA"], "version": os.environ["RELEASE_VERSION"], "package_outcome": os.environ["PACKAGE_OUTCOME"], "mac_helper_outcome": os.environ["MAC_HELPER_OUTCOME"], "targets": {}}
+          specs = {"windowsX64": ("spectre-windowsX64.zip", 0x8664), "linuxX64": ("spectre-linuxX64.zip", 62), "linuxArm64": ("spectre-linuxArm64.zip", 183)}
+          def pe_machine(data):
+              try:
+                  if data[:2] != b"MZ" or len(data) < 0x40: return None
+                  offset = struct.unpack_from("<I", data, 0x3c)[0]
+                  return struct.unpack_from("<H", data, offset + 4)[0] if data[offset:offset + 4] == b"PE\0\0" else None
+              except struct.error:
+                  return None
+          def elf_machine(data):
+              return struct.unpack_from("<H", data, 18)[0] if data[:4] == b"\x7fELF" and len(data) >= 20 else None
+          for target, (filename, machine) in specs.items():
+              archive = root / target / filename
+              result = {"archive": str(archive), "exists": archive.is_file(), "checks": {}}
+              report["targets"][target] = result
+              if not archive.is_file(): continue
+              result["sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+              with zipfile.ZipFile(archive) as z:
+                  names = z.namelist()
+                  result["entry_count"] = len(names)
+                  if target == "windowsX64":
+                      wanted = {"jvm.dll": "/runtime/bin/server/jvm.dll", "jli.dll": "/runtime/bin/jli.dll", "java.exe": "/runtime/bin/java.exe"}
+                      for label, suffix in wanted.items():
+                          hits = [n for n in names if n.lower().endswith(suffix)]
+                          result["checks"][label] = {"paths": hits, "pe_signature_and_x86_64": bool(hits) and all(pe_machine(z.read(n)) == machine for n in hits)}
+                      vc_hits = [n for n in names if "/runtime/bin/" in n.lower() and re.fullmatch(r"(?:msvcp|vcruntime)\d[^/]*\.dll", pathlib.PurePosixPath(n.lower()).name)]
+                      result["checks"]["vc_runtime_dlls"] = {"paths": vc_hits, "pe_signature_and_x86_64": bool(vc_hits) and all(pe_machine(z.read(n)) == machine for n in vc_hits)}
+                  else:
+                      wanted = {"java": "/runtime/bin/java", "libjvm.so": "/runtime/lib/server/libjvm.so", "libjli.so": "/runtime/lib/libjli.so"}
+                      for label, suffix in wanted.items():
+                          hits = [n for n in names if n.endswith(suffix)]
+                          result["checks"][label] = {"paths": hits, "elf_machine_matches": bool(hits) and all(elf_machine(z.read(n)) == machine for n in hits)}
+                  native = []
+                  for jar_name in [n for n in names if n.endswith(".jar")]:
+                      try:
+                          with zipfile.ZipFile(io.BytesIO(z.read(jar_name))) as jar:
+                              for name in jar.namelist():
+                                  if (name.startswith("native/windows/") or name.startswith("native/linux/")) and not name.endswith("/"):
+                                      data = jar.read(name)
+                                      native.append({"path": f"{jar_name}!/{name}", "resource": name, "pe_machine": pe_machine(data), "elf_machine": elf_machine(data)})
+                      except zipfile.BadZipFile: pass
+                  result["checks"]["native_helpers"] = native
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "qa-report"
+          out.mkdir(exist_ok=True)
+          (out / "inspection.json").write_text(json.dumps(report, indent=2) + "\n")
+          with (out / "SHA256SUMS").open("w") as sums:
+              for value in report["targets"].values():
+                  if "sha256" in value: sums.write(f'{value["sha256"]}  {value["archive"]}\n')
+          print(json.dumps(report, indent=2))
+          PY
+          find cli/build/construo/distributions -type f -name '*.zip' -print 2>/dev/null | sort > "$RUNNER_TEMP/qa-report/archive-manifest.txt" || true
+      - name: Upload all archives and inspection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-m9-cross-windows-fd462c8d
+          path: |
+            cli/build/construo/distributions/windowsX64/spectre-windowsX64.zip
+            cli/build/construo/distributions/linuxX64/spectre-linuxX64.zip
+            cli/build/construo/distributions/linuxArm64/spectre-linuxArm64.zip
+            ${{ runner.temp }}/qa-report/
+          if-no-files-found: warn
+          retention-days: 1
+      - name: Fail for packaging or structural regressions
+        if: always()
+        env:
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+          MAC_HELPER_OUTCOME: ${{ steps.mac-helper.outcome }}
+        run: |
+          test "$MAC_HELPER_OUTCOME" = success
+          test "$PACKAGE_OUTCOME" = success
+          python3 - <<'PY'
+          import json, os, pathlib
+          report = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "qa-report/inspection.json").read_text())
+          windows = report["targets"]["windowsX64"]["checks"]
+          for name in ("jvm.dll", "jli.dll", "java.exe", "vc_runtime_dlls"):
+              assert windows[name]["pe_signature_and_x86_64"], (name, windows[name])
+          expected_windows = {"native/windows/x64/spectre-window-capture.exe": 0x8664, "native/windows/arm64/spectre-window-capture.exe": 0xaa64}
+          found_windows = {item["resource"]: item["pe_machine"] for item in windows["native_helpers"] if item["resource"].startswith("native/windows/")}
+          assert all(found_windows.get(path) == machine for path, machine in expected_windows.items()), found_windows
+          for target, machine, arch in (("linuxX64", 62, "x86_64"), ("linuxArm64", 183, "aarch64")):
+              checks = report["targets"][target]["checks"]
+              for name in ("java", "libjvm.so", "libjli.so"):
+                  assert checks[name]["elf_machine_matches"], (target, name, checks[name])
+              helpers = checks["native_helpers"]
+              assert not any(item["resource"].startswith("native/windows/") for item in helpers), helpers
+              expected = {f"native/linux/x86_64/spectre-wayland-helper": 62, f"native/linux/aarch64/spectre-wayland-helper": 183}
+              found = {item["resource"]: item["elf_machine"] for item in helpers if item["resource"].startswith("native/linux/")}
+              assert all(found.get(path) == elf_machine for path, elf_machine in expected.items()), (target, arch, found)
+          PY
