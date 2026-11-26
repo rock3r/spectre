@@ -149,7 +149,7 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
 
     def test_identity_is_independent_public_api_evidence(self):
         identity = IDENTITY.read_text()
-        self.assertIn("identity, mutter-control, geometry-calibration", self.workflow)
+        self.assertIn("mode: [geometry-calibration]", self.workflow)
         self.assertIn("SMOKE_MODE\" == identity", self.session)
         for contract in ("LookupWindow", "RecordWindow", "PipeWireStreamAdded", "gst-launch-1.0",
                          "focusSamples", "focusObservedXids", "interiorColorCounts", "pipeWireNode"):
@@ -159,7 +159,7 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
     def test_mutter_control_uses_separate_caller_owned_verification_service(self):
         probe = MUTTER_CONTROL.read_text()
         extension = VERIFICATION_EXTENSION.read_text()
-        self.assertIn("identity, mutter-control, geometry-calibration", self.workflow)
+        self.assertIn("mode: [geometry-calibration]", self.workflow)
         self.assertIn('SMOKE_MODE" == mutter-control', self.session)
         for contract in (
             "GetConnectionUnixProcessID", "get_client_type()", "Meta.WindowClientType.X11",
@@ -218,8 +218,14 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
             self.assertIn(contract, probe)
         for contract in ("getBounds()", "getLocationOnScreen()", "getInsets()", "getDefaultTransform()", "getBounds()"):
             self.assertIn(contract, fixture)
-        for contract in ("SPA_META_VideoCrop", "SPA_META_VideoTransform", '"present\\\":false', "pw_stream_dequeue_buffer"):
+        for contract in ("SPA_META_VideoCrop", "SPA_META_VideoTransform", '"present\\\":false', "pw_stream_dequeue_buffer", "SPA_PARAM_EnumFormat", "SPA_PARAM_Meta", "PW_STREAM_FLAG_MAP_BUFFERS"):
             self.assertIn(contract, pipewire)
+        for contract in ("GetStageDiagnosticsAsync", "GLib.Variant('(s)'", "invocation.return_value"):
+            self.assertIn(contract, VERIFICATION_EXTENSION.read_text())
+        self.assertIn("frameExtentsLeftRightTopBottom", probe)
+        self.assertNotIn("frameExtentsLeftTopRightBottom", probe)
+        for contract in ("video/x-raw,format=RGBA", "snapshot=true", "gstreamer.log", "pipewire-monitor.stderr", 'f"{kind}-awt.json"'):
+            self.assertIn(contract, probe)
 
     def test_geometry_extension_gates_pid_xid_and_ancestry(self):
         extension = VERIFICATION_EXTENSION.read_text()

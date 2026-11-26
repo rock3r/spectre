@@ -3,11 +3,8 @@ package verification
 import dev.sebastiano.spectre.recording.AutoRecorder
 import dev.sebastiano.spectre.recording.AutoScreenshotter
 import dev.sebastiano.spectre.recording.RecordingOptions
-import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import dev.sebastiano.spectre.recording.screencapturekit.asTitledWindow
 import java.awt.Color
-import java.awt.Rectangle
-import java.awt.Robot
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
@@ -26,30 +23,27 @@ object PublicWaylandCliRecordingLive {
         val red = window(TITLE, Color.RED, 180, 170)
         try {
             Thread.sleep(1_500)
-            requireActivePid(decoyPid, "before-red")
-
-            val mismatch = artifacts.resolve("mismatched-fixture-must-not-exist.png")
-            mismatch.deleteIfExists()
+            focusDecoy(decoyPid, "before-title-rejection")
             val rejected = runCatching {
-                AutoScreenshotter().captureWindow(
-                    object : TitledWindow {
-                        override var title: String? = TITLE
-                        override val bounds = Rectangle(180, 170, WIDTH, HEIGHT)
-                    },
-                    decoyPid,
-                )
+                AutoScreenshotter().captureWindowByTitle(TITLE, decoyPid)
             }.exceptionOrNull()
-            check(rejected != null && !Files.exists(mismatch)) {
-                "a non-caller-owned PID fixture was not rejected without media"
+            check(rejected is UnsupportedOperationException &&
+                rejected.message.orEmpty().contains("unsupported on this platform")) {
+                "documented Linux cross-process-by-title rejection was not observed: $rejected"
             }
-            Files.writeString(artifacts.resolve("mismatched-pid-rejection.txt"), rejected.toString())
+            java.nio.file.Files.writeString(
+                artifacts.resolve("cross-process-title-rejection.txt"),
+                "${rejected::class.qualifiedName}: ${rejected.message}\n",
+            )
 
+            focusDecoy(decoyPid, "before-red-still")
             val redImage = AutoScreenshotter().captureWindow(red.asTitledWindow())
             val redFile = artifacts.resolve("red-covered.png")
             ImageIO.write(redImage, "png", redFile.toFile())
             requireColor(redImage, Color.RED, "red still")
             requireActivePid(decoyPid, "after-red")
 
+            focusDecoy(decoyPid, "before-red-recording")
             val movie = artifacts.resolve("red-covered.mp4")
             movie.deleteIfExists()
             val recording = AutoRecorder().startWindow(red.asTitledWindow(), movie, RecordingOptions())
@@ -61,12 +55,7 @@ object PublicWaylandCliRecordingLive {
             val green = window("Spectre governed green target", Color.GREEN, 500, 100)
             try {
                 Thread.sleep(1_000)
-                Robot().apply {
-                    mouseMove(430, 340)
-                    mousePress(java.awt.event.InputEvent.BUTTON1_DOWN_MASK)
-                    mouseRelease(java.awt.event.InputEvent.BUTTON1_DOWN_MASK)
-                }
-                Thread.sleep(750)
+                focusDecoy(decoyPid, "before-green-still")
                 requireActivePid(decoyPid, "green-refocused")
                 val greenImage = AutoScreenshotter().captureWindow(green.asTitledWindow())
                 ImageIO.write(greenImage, "png", artifacts.resolve("green-covered.png").toFile())
@@ -77,7 +66,8 @@ object PublicWaylandCliRecordingLive {
             }
             Files.writeString(
                 artifacts.resolve("java-live-evidence.json"),
-                """{"decoyPid":$decoyPid,"targetPid":${ProcessHandle.current().pid()},"publicApi":true,"mismatchedPidRejected":true}\n""",
+                """{"decoyPid":$decoyPid,"targetPid":${ProcessHandle.current().pid()},"publicApi":true,"crossProcessByTitleUnsupported":true,"awtOwnerArgumentIdentityChecked":false}
+                """.trimIndent() + "\n",
             )
         } finally {
             SwingUtilities.invokeAndWait { red.dispose() }
@@ -102,6 +92,17 @@ object PublicWaylandCliRecordingLive {
         check(active.waitFor() == 0 && observed == pid) {
             "blue decoy lost real-seat focus at $phase: expected $pid, observed $observed"
         }
+    }
+
+    private fun focusDecoy(pid: Long, phase: String) {
+        val search = ProcessBuilder("xdotool", "search", "--onlyvisible", "--pid", pid.toString())
+            .redirectErrorStream(true).start()
+        val ids = search.inputReader().readLines().filter { it.isNotBlank() }
+        check(search.waitFor() == 0 && ids.size == 1) { "expected one blue XID at $phase: $ids" }
+        check(ProcessBuilder("xdotool", "windowactivate", "--sync", ids.single()).start().waitFor() == 0)
+        check(ProcessBuilder("xdotool", "windowraise", ids.single()).start().waitFor() == 0)
+        Thread.sleep(300)
+        requireActivePid(pid, phase)
     }
 
     private fun requireColor(image: BufferedImage, expected: Color, label: String) {

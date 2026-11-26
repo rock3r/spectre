@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import atexit
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
-import threading
 import time
+import zipfile
 
 import dbus
-import pyatspi
 from PIL import Image
 
 _portal_path = Path(__file__).with_name("gnome-portal-dialog-warmup.py")
@@ -23,10 +24,40 @@ portal = importlib.util.module_from_spec(_portal_spec)
 _portal_spec.loader.exec_module(portal)
 
 
-def dialog_count(pid: int) -> int:
-    return sum(1 for app in pyatspi.Registry.getDesktop(0) if app.get_process_id() == pid
-               for node in portal.descendants(app)
-               if node.name == portal.TITLE and node.getRoleName() in ("dialog", "frame"))
+def extract_release(archive: Path, destination: Path) -> tuple[Path, Path]:
+    """Extract a trusted build output without traversal, retaining Unix executable modes."""
+    destination.mkdir()
+    root = destination.resolve()
+    with zipfile.ZipFile(archive) as source:
+        for member in source.infolist():
+            target = (destination / member.filename).resolve()
+            if target != root and root not in target.parents:
+                raise RuntimeError(f"unsafe ZIP member: {member.filename}")
+            source.extract(member, destination)
+            mode = (member.external_attr >> 16) & 0o777
+            if mode and target.exists():
+                target.chmod(mode)
+    launchers = list(destination.glob("*/bin/spectre"))
+    runtimes = list(destination.glob("*/runtime/bin/java"))
+    if len(launchers) != 1 or len(runtimes) != 1:
+        raise RuntimeError(f"unexpected release layout: launchers={launchers}, runtimes={runtimes}")
+    if not os.access(launchers[0], os.X_OK) or not os.access(runtimes[0], os.X_OK):
+        raise RuntimeError("packaged launcher/runtime lost executable permissions")
+    return launchers[0].resolve(), runtimes[0].resolve()
+
+
+def observe_dialogs(pid: int, output: Path, ready: Path) -> None:
+    # This process owns its pyatspi Registry and D-Bus connection. pyatspi's singleton Registry is
+    # not safe to access from a watcher thread while the parent drives the picker.
+    import pyatspi
+    ready.write_text("ready\n")
+    with output.open("a", buffering=1) as receipt:
+        while True:
+            count = sum(1 for app in pyatspi.Registry.getDesktop(0) if app.get_process_id() == pid
+                        for node in portal.descendants(app)
+                        if node.name == portal.TITLE and node.getRoleName() in ("dialog", "frame"))
+            receipt.write(json.dumps({"monotonic": time.monotonic(), "pickerCount": count}) + "\n")
+            time.sleep(.1)
 
 
 def colors(path: Path) -> dict[str, float]:
@@ -40,36 +71,78 @@ def colors(path: Path) -> dict[str, float]:
     }
 
 
+def sanitized(text: str) -> str:
+    """Keep diagnostics useful without ever retaining portal/authorization bearer values."""
+    return re.sub(r'(?i)(authorization|bearer|restore[_ -]?token)(["=: ]+)[^\s",}]+',
+                  r'\1\2<redacted>', text)
+
+
+def receipt(path: Path, phase: str, **facts: object) -> None:
+    with path.open("a") as output:
+        output.write(json.dumps({"phase": phase, **facts}, sort_keys=True) + "\n")
+
+
 def main() -> None:
     artifacts = Path(os.environ["SMOKE_ARTIFACTS"])
+    receipts = artifacts / "cli-live-phase-receipts.jsonl"
     repo = Path(os.environ["SMOKE_REPO"])
-    cli = repo / "cli/build/install/spectre/bin/spectre"
+    cli, runtime_java = extract_release(Path(os.environ["SPECTRE_CLI_ZIP"]),
+                                        Path(os.environ["SPECTRE_CLI_HOME"]))
+    java_version = subprocess.run([str(runtime_java), "-version"], text=True,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     backend = portal.backend_pid(dbus.SessionBus())
-    observations: list[dict] = []
-    stop = threading.Event()
-
-    def observe() -> None:
-        while not stop.is_set():
-            observations.append({"monotonic": time.monotonic(), "pickerCount": dialog_count(backend)})
-            time.sleep(.1)
-
-    watcher = threading.Thread(target=observe, daemon=True)
-    watcher.start()
+    observation_file = artifacts / "portal-observations.jsonl"
+    observer_ready = artifacts / "portal-observer.ready"
+    watcher = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--observe",
+                                str(backend), str(observation_file), str(observer_ready)])
+    def stop_watcher() -> None:
+        if watcher.poll() is None:
+            watcher.terminate()
+            try: watcher.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                watcher.kill(); watcher.wait(timeout=5)
+    atexit.register(stop_watcher)
+    for _ in range(100):
+        if observer_ready.is_file(): break
+        if watcher.poll() is not None: raise RuntimeError("independent portal observer exited")
+        time.sleep(.1)
+    else: raise RuntimeError("independent portal observer was not ready")
     request_out = artifacts / "cli-permissions-request.json"
     request_err = artifacts / "cli-permissions-request.stderr"
-    with request_out.open("w") as out, request_err.open("w") as err:
-        request = subprocess.Popen([str(cli), "permissions", "request", "--json", "--timeout", "60"],
-                                   stdout=out, stderr=err)
-        selected = portal.accept_dialog(backend, artifacts / "cli-request-atspi-tree.json")
-        if request.wait(timeout=45) != 0:
-            raise RuntimeError(f"installed CLI request failed; see {request_err}")
+    try:
+        with request_out.open("w") as out, request_err.open("w") as err:
+            request = subprocess.Popen([str(cli), "permissions", "request", "--json", "--timeout", "60"],
+                                       stdout=out, stderr=err)
+            # Detect bootstrap/runtime failures before spending the full picker timeout.
+            time.sleep(.5)
+            if request.poll() not in (None, 0):
+                raise RuntimeError(f"packaged CLI request exited early ({request.returncode})")
+            selected = portal.accept_dialog(backend, artifacts / "cli-request-atspi-tree.json")
+            if request.wait(timeout=45) != 0:
+                raise RuntimeError(f"packaged CLI request failed; see {request_err}")
+    finally:
+        if "request" in locals() and request.poll() is None:
+            request.terminate()
+            try: request.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                request.kill(); request.wait(timeout=5)
+        if request_err.exists(): request_err.write_text(sanitized(request_err.read_text()))
+        (artifacts / "cli-request-phase.json").write_text(json.dumps({
+            "stdoutBytes": request_out.stat().st_size if request_out.exists() else 0,
+            "stderrBytes": request_err.stat().st_size if request_err.exists() else 0,
+        }, indent=2) + "\n")
     proof = json.loads(request_out.read_text())
-    if not (proof["granted"] and proof["sessionActive"] and proof["tokenStored"]):
-        raise RuntimeError(f"CLI did not report an active persistent grant: {proof}")
-    marker = Path(proof["tokenPath"])
+    request_out.write_text(json.dumps(proof, indent=2) + "\n")
+    receipt(receipts, "permissions-request", exitCode=request.returncode,
+            granted=proof.get("granted"), sessionActive=proof.get("sessionActive"),
+            tokenStored=proof.get("tokenStored"))
+    if not (proof["granted"] and proof["sessionActive"]):
+        raise RuntimeError(f"CLI did not report an active persistent session: {proof}")
+    token_stored = bool(proof["tokenStored"])
+    marker = Path(proof["tokenPath"]) if token_stored else None
     socket = Path(proof["sessionSocket"])
-    if not marker.is_file() or not socket.is_socket():
-        raise RuntimeError("CLI grant marker/session socket did not persist")
+    if (token_stored and not marker.is_file()) or not socket.is_socket():
+        raise RuntimeError("CLI session evidence did not persist")
     helper_pids = [int(value) for value in subprocess.check_output(
         ["fuser", str(socket)], text=True, stderr=subprocess.DEVNULL).split()]
     if len(helper_pids) != 1 or not Path(f"/proc/{helper_pids[0]}").is_dir():
@@ -78,10 +151,17 @@ def main() -> None:
     check = subprocess.run([str(cli), "permissions", "check", "--json"], text=True,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     (artifacts / "cli-permissions-check.json").write_text(check.stdout)
-    (artifacts / "cli-permissions-check.stderr").write_text(check.stderr)
+    (artifacts / "cli-permissions-check.stderr").write_text(sanitized(check.stderr))
     checked = json.loads(check.stdout)
-    if not (checked["granted"] and checked["sessionActive"] and checked["tokenStored"]):
+    if not (checked["granted"] and checked["sessionActive"] and
+            bool(checked["tokenStored"]) == token_stored):
         raise RuntimeError(f"CLI check lost grant: {checked}")
+    (artifacts / "cli-check-phase.json").write_text(json.dumps({"exitCode": check.returncode,
+        "granted": checked["granted"], "sessionActive": checked["sessionActive"],
+        "tokenStored": checked["tokenStored"]}, indent=2) + "\n")
+    receipt(receipts, "permissions-check", exitCode=check.returncode,
+            granted=checked["granted"], sessionActive=checked["sessionActive"],
+            tokenStored=checked["tokenStored"])
 
     decoy_classes = artifacts / "decoy-classes"
     decoy_classes.mkdir()
@@ -110,9 +190,13 @@ def main() -> None:
         if run.returncode:
             print(run.stderr, file=sys.stderr, end="")
             raise RuntimeError("public recording live process failed")
+        receipt(receipts, "public-api-captures", exitCode=run.returncode)
     finally:
-        decoy.terminate()
-        decoy.wait(timeout=10)
+        if decoy.poll() is None:
+            decoy.terminate()
+            try: decoy.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                decoy.kill(); decoy.wait(timeout=5)
         decoy_log.close()
 
     frames = artifacts / "movie-frames"
@@ -137,22 +221,32 @@ def main() -> None:
         raise RuntimeError(f"blue decoy leaked into stills: {stills}")
     if not Path(f"/proc/{helper_pids[0]}").is_dir() or not socket.is_socket():
         raise RuntimeError("the CLI-started helper did not survive all captures")
+    receipt(receipts, "media-validation", helperAlive=True, sessionSocketExists=True)
 
-    stop.set(); watcher.join(timeout=2)
+    stop_watcher()
+    atexit.unregister(stop_watcher)
+    observations = [json.loads(line) for line in observation_file.read_text().splitlines()]
     nonzero_runs = sum(current["pickerCount"] > 0 and (i == 0 or observations[i-1]["pickerCount"] == 0)
                        for i, current in enumerate(observations))
     if nonzero_runs != 1 or max(item["pickerCount"] for item in observations) != 1:
         raise RuntimeError(f"expected exactly one singular consent picker, observed {nonzero_runs}")
     evidence = {"selectedSource": selected, "pickerAppearances": nonzero_runs,
                 "maxConcurrentPickers": max(item["pickerCount"] for item in observations),
-                "portalObservations": observations, "grantMarkerExists": marker.is_file(),
+                "portalObservations": observations,
+                "tokenStored": token_stored,
+                "grantMarkerExists": marker.is_file() if marker else False,
                 "sessionSocketExists": socket.is_socket(), "helperPid": helper_pids[0],
+                "packagedLauncher": str(cli), "packagedRuntimeJava": str(runtime_java),
+                "packagedJavaVersion": (java_version.stderr or java_version.stdout).splitlines()[0],
                 "helperAliveAfterCaptures": True, "stills": stills,
                 "movieFrames": frame_evidence, "movieDurationSeconds": duration}
     (artifacts / "cli-recording-live-evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 5 and sys.argv[1] == "--observe":
+        observe_dialogs(int(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]))
+        raise SystemExit(0)
     try:
         main()
     except Exception as error:

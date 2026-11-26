@@ -19,11 +19,12 @@ const ERROR = `${BUS}.Error`;
 export default class MutterControlVerification extends Extension {
     enable() {
         const service = {
-            GetStageDiagnostics: () => {
+            GetStageDiagnosticsAsync: (_parameters, invocation) => {
                 const monitors = Main.layoutManager.monitors.map(m => ({x: m.x, y: m.y,
                     width: m.width, height: m.height, scale: m.geometry_scale ?? null}));
-                return [JSON.stringify({units: 'Mutter logical stage pixels', width: global.stage.width,
-                    height: global.stage.height, monitors})];
+                const diagnostics = JSON.stringify({units: 'Mutter logical stage pixels',
+                    width: global.stage.width, height: global.stage.height, monitors});
+                invocation.return_value(new GLib.Variant('(s)', [diagnostics]));
             },
             InspectDescendantX11WindowAsync: async ([xid, pid], invocation) => {
                 try {

@@ -20,7 +20,11 @@ class CliRecordingLiveContractTest(unittest.TestCase):
         self.assertNotIn("git push", WORKFLOW)
 
     def test_installed_cli_and_real_portal_are_used_once(self):
-        self.assertIn(":cli:installDist", SESSION)
+        self.assertIn(":cli:shadowDistZip", SESSION)
+        self.assertNotIn(":cli:installDist", SESSION)
+        self.assertIn("SPECTRE_CLI_ZIP", SESSION)
+        self.assertIn("extract_release", DRIVER)
+        self.assertIn('runtime/bin/java', DRIVER)
         self.assertIn('"permissions", "request", "--json"', DRIVER)
         self.assertIn('"permissions", "check", "--json"', DRIVER)
         self.assertIn("portal.accept_dialog", DRIVER)
@@ -31,15 +35,24 @@ class CliRecordingLiveContractTest(unittest.TestCase):
 
     def test_public_api_color_movie_focus_and_pid_contracts(self):
         for contract in (
-            "AutoScreenshotter", "AutoRecorder", "asTitledWindow", "mismatchedPidRejected",
-            "requireActivePid", "green-refocused", "Color.RED", "Color.GREEN",
+            "AutoScreenshotter", "AutoRecorder", "asTitledWindow", "captureWindowByTitle",
+            "crossProcessByTitleUnsupported", "focusDecoy", "Color.RED", "Color.GREEN",
         ):
             self.assertIn(contract, FIXTURE)
         for contract in (
             "ffprobe", "ffmpeg", "(.1, .5, .9)", 'coverage["blue"] >= .01',
             "helperAliveAfterCaptures", "grantMarkerExists", "sessionSocketExists",
+            "packagedJavaVersion", "portal-observations.jsonl", "tokenStored",
         ):
             self.assertIn(contract, DRIVER)
+
+    def test_observer_is_process_isolated_and_outputs_are_sanitized(self):
+        self.assertIn('"--observe"', DRIVER)
+        self.assertNotIn("threading", DRIVER)
+        self.assertIn("def sanitized", DRIVER)
+        self.assertIn("<redacted>", DRIVER)
+        self.assertNotIn("object : TitledWindow", FIXTURE)
+        self.assertIn("awtOwnerArgumentIdentityChecked", FIXTURE)
 
 
 if __name__ == "__main__":
