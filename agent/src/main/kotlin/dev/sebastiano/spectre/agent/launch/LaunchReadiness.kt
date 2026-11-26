@@ -1,13 +1,13 @@
 package dev.sebastiano.spectre.agent.launch
 
-import com.sun.tools.attach.AgentLoadException
-import com.sun.tools.attach.AttachNotSupportedException
 import dev.sebastiano.spectre.agent.AgentAttach
 import dev.sebastiano.spectre.agent.AttachInterruptedException
 import dev.sebastiano.spectre.agent.AttachOptions
 import dev.sebastiano.spectre.agent.AttachedAutomator
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.HotSpotAttachSocket
+import dev.sebastiano.spectre.agent.RemoteAttachFailure
+import dev.sebastiano.spectre.agent.RemoteAttachFailureKind
 import dev.sebastiano.spectre.agent.SpectreAgentException
 import dev.sebastiano.spectre.agent.SpectreAttachException
 import dev.sebastiano.spectre.agent.effectiveUdsPath
@@ -336,8 +336,20 @@ internal object LaunchReadiness {
         ) {
             return false
         }
-        if (chain.any { it is AttachNotSupportedException }) return true
-        if (chain.any { it is AgentLoadException }) {
+        if (
+            chain.any {
+                (it as? RemoteAttachFailure)?.kind == RemoteAttachFailureKind.AttachNotSupported ||
+                    it.javaClass.simpleName == "AttachNotSupportedException"
+            }
+        ) {
+            return true
+        }
+        if (
+            chain.any {
+                (it as? RemoteAttachFailure)?.kind == RemoteAttachFailureKind.AgentLoad ||
+                    it.javaClass.simpleName == "AgentLoadException"
+            }
+        ) {
             // HotSpot: "Target VM did not respond" and "target process not responding".
             return "not respond" in lower ||
                 "no such process" in lower ||

@@ -2,6 +2,7 @@
 
 package dev.sebastiano.spectre.agent
 
+import dev.sebastiano.spectre.agent.launch.LaunchAgentBootstrapException
 import dev.sebastiano.spectre.agent.launch.LaunchReadiness
 import dev.sebastiano.spectre.agent.launch.LaunchStage
 import dev.sebastiano.spectre.agent.launch.ProcessExitedBeforeAttachException
@@ -13,7 +14,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.io.TempDir
@@ -30,7 +30,10 @@ class WindowsAttachHelperTest {
                 )
             )
 
-        assertIs<com.sun.tools.attach.AttachNotSupportedException>(failure.cause)
+        assertEquals(
+            RemoteAttachFailureKind.AttachNotSupported,
+            (failure.cause as RemoteAttachFailure).kind,
+        )
         assertTrue(LaunchReadiness.isNoLiveAgentFailure(failure))
     }
 
@@ -49,9 +52,12 @@ class WindowsAttachHelperTest {
                 )
             )
 
-        assertIs<com.sun.tools.attach.AgentLoadException>(dying.cause)
+        assertEquals(RemoteAttachFailureKind.AgentLoad, (dying.cause as RemoteAttachFailure).kind)
         assertTrue(LaunchReadiness.isNoLiveAgentFailure(dying))
-        assertIs<com.sun.tools.attach.AgentLoadException>(ordinary.cause)
+        assertEquals(
+            RemoteAttachFailureKind.AgentLoad,
+            (ordinary.cause as RemoteAttachFailure).kind,
+        )
         assertFalse(LaunchReadiness.isNoLiveAgentFailure(ordinary))
     }
 
@@ -69,6 +75,26 @@ class WindowsAttachHelperTest {
         val failure = requireNotNull(WindowsAttachHelper.failure("ERROR\t%%%\t%%%\t%%%"))
 
         assertTrue(failure.message.orEmpty().contains("Invalid Windows attach helper response"))
+    }
+
+    @Test
+    fun `diagnostics and launch classification work without jdk attach module`() {
+        val process =
+            ProcessBuilder(
+                    Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                    "--limit-modules",
+                    "java.base",
+                    "-cp",
+                    System.getProperty("java.class.path"),
+                    WindowsAttachWithoutModuleFixture::class.java.name,
+                )
+                .start()
+
+        assertTrue(process.waitFor(10, TimeUnit.SECONDS), "limited-module child did not terminate")
+        val stdout = process.inputStream.bufferedReader().readText()
+        val stderr = process.errorStream.bufferedReader().readText()
+        assertEquals(0, process.exitValue(), "stdout=$stdout\nstderr=$stderr")
+        assertEquals("attach-without-module-ok", stdout.trim())
     }
 
     @Test
@@ -155,4 +181,86 @@ object WindowsAttachHelperExitFixture {
         Thread.sleep(200)
         kotlin.system.exitProcess(17)
     }
+}
+
+object WindowsAttachWithoutModuleFixture {
+    @JvmStatic
+    fun main(args: Array<String>) {
+        val encoder = Base64.getUrlEncoder().withoutPadding()
+        fun encode(value: String) = encoder.encodeToString(value.toByteArray())
+        fun response(type: String, detail: String) =
+            listOf("ERROR", encode("attach failed"), encode(type), encode(detail))
+                .joinToString("\t")
+
+        val attach =
+            requireNotNull(
+                WindowsAttachHelper.failure(
+                    response("AttachNotSupportedException", "not attachable")
+                )
+            )
+        check(attach.cause?.message == "not attachable")
+        check(LaunchReadiness.isNoLiveAgentFailure(attach))
+
+        val dyingLoad =
+            requireNotNull(
+                WindowsAttachHelper.failure(
+                    response("AgentLoadException", "Target VM did not respond")
+                )
+            )
+        check(LaunchReadiness.isNoLiveAgentFailure(dyingLoad))
+        val ordinaryLoad =
+            requireNotNull(
+                WindowsAttachHelper.failure(
+                    response("AgentLoadException", "agent library failed to init")
+                )
+            )
+        check(!LaunchReadiness.isNoLiveAgentFailure(ordinaryLoad))
+        val unknown =
+            requireNotNull(WindowsAttachHelper.failure(response("UnrelatedException", "detail")))
+        check(!LaunchReadiness.isNoLiveAgentFailure(unknown))
+        check(!LaunchReadiness.isNoLiveAgentFailure(IllegalStateException("ordinary")))
+        check(LaunchReadiness.isNoLiveAgentFailure(AttachNotSupportedException()))
+        check(
+            LaunchReadiness.isNoLiveAgentFailure(
+                AgentLoadException("target process not responding")
+            )
+        )
+        check(!LaunchReadiness.isNoLiveAgentFailure(AgentLoadException("invalid agent")))
+
+        val bootstrap = runCatching {
+            LaunchReadiness.bootstrapFailureOrProcessExit(
+                process = UnusedProcess,
+                gradleish = true,
+                attachedPid = 42,
+                stdoutPath = Path.of("stdout"),
+                stderrPath = Path.of("stderr"),
+                cause = ordinaryLoad,
+                graceMs = 0,
+            )
+        }
+            .exceptionOrNull()
+        check(bootstrap is LaunchAgentBootstrapException)
+        check(bootstrap.cause === ordinaryLoad)
+        check(bootstrap.cause?.cause?.message == "agent library failed to init")
+
+        print("attach-without-module-ok")
+    }
+}
+
+private class AttachNotSupportedException : RuntimeException()
+
+private class AgentLoadException(message: String) : RuntimeException(message)
+
+private object UnusedProcess : Process() {
+    override fun getOutputStream() = error("unused")
+
+    override fun getInputStream() = error("unused")
+
+    override fun getErrorStream() = error("unused")
+
+    override fun waitFor(): Int = error("unused")
+
+    override fun exitValue(): Int = error("unused")
+
+    override fun destroy() = error("unused")
 }
