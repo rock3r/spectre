@@ -2,6 +2,6 @@
   "uuid": "spectre-window-identity@sebastiano.dev",
   "name": "Spectre Window Identity",
   "description": "Lets Spectre resolve only its own Xwayland windows to Mutter window ids.",
-  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "shell-version": ["42", "43", "44", "45", "46", "47", "48", "49", "50"],
   "version": 1
 }

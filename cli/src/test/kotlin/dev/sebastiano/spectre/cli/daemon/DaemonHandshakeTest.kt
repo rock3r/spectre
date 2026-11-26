@@ -330,6 +330,22 @@ class DaemonSessionCommandProtocolTest {
         assertEquals(responses, decoded)
     }
 
+    @Test
+    fun `current client preserves historical handshake floors for supported operations`() {
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 15),
+            DaemonProtocol.clientHandshakeVersion(DaemonRequest.ListSessions),
+        )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 15),
+            DaemonProtocol.clientHandshakeVersion(DaemonRequest.StopRecording("pid-1")),
+        )
+        assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 17),
+            DaemonProtocol.clientHandshakeVersion(DaemonRequest.AccessibilityTree()),
+        )
+    }
+
     private fun roundTripRequest(request: DaemonRequest): DaemonRequest {
         val bytes = DaemonProtocol.cbor.encodeToByteArray(DaemonRequest.serializer(), request)
         return DaemonProtocol.cbor.decodeFromByteArray(DaemonRequest.serializer(), bytes)

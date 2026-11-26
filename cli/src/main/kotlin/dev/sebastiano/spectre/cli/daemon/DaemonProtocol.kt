@@ -102,7 +102,12 @@ public object DaemonProtocol {
      * Negotiates connection-wide configuration and diagnostics for every operation but shutdown.
      */
     internal fun clientHandshakeVersion(request: DaemonRequest): DaemonProtocolVersion =
-        if (request is DaemonRequest.Shutdown) minimumDaemonVersion(request) else CurrentVersion
+        if (request is DaemonRequest.Shutdown) {
+            minimumDaemonVersion(request)
+        } else {
+            val operation = minimumDaemonVersion(request)
+            versionFor(maxOf(operation.minor, DIAGNOSTICS_INTRODUCED_MINOR))
+        }
 
     /** Whether this negotiated client can decode operation-level diagnosed envelopes. */
     internal fun supportsDiagnosedResponses(handshake: DaemonProtocolVersion): Boolean =

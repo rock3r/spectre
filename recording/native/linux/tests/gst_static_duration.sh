@@ -4,9 +4,10 @@ set -euo pipefail
 for tool in gst-launch-1.0 gst-inspect-1.0 ffprobe ffmpeg; do
   command -v "$tool" >/dev/null || { echo "missing required test tool: $tool" >&2; exit 1; }
 done
+pipewiresrc_inspection="$(gst-inspect-1.0 pipewiresrc)"
+grep -q 'keepalive-time.*Periodically send last buffer' <<<"$pipewiresrc_inspection"
+
 work="$(mktemp -d)"
-gst-inspect-1.0 pipewiresrc >"$work/pipewiresrc.txt"
-grep -q 'keepalive-time.*Periodically send last buffer' "$work/pipewiresrc.txt"
 trap 'rm -rf "$work"' EXIT
 record_for() {
   local output="$1"; shift
@@ -23,11 +24,10 @@ record_for "$work/static.mp4" \
   ! video/x-raw,width=64,height=48,framerate=30/1 \
   ! imagefreeze is-live=true num-buffers=36
 
-ffprobe -v error -select_streams v:0 -show_entries frame=pts_time \
-  -of csv=p=0 "$work/static.mp4" >"$work/static-pts.txt"
 read -r frames first_pts last_pts < <(
-  awk '$1 ~ /^-?[0-9]+([.][0-9]+)?$/ { if (!count) first=$1; last=$1; count++ }
-       END { print count, first, last }' "$work/static-pts.txt"
+  ffprobe -v error -select_streams v:0 -show_entries frame=pts_time \
+    -of default=noprint_wrappers=1:nokey=1 "$work/static.mp4" \
+    | awk 'NR == 1 { first=$1 } { last=$1; count++ } END { print count, first, last }'
 )
 awk -v frames="$frames" -v first="$first_pts" -v last="$last_pts" 'BEGIN {
   duration=last-first+(1/30);

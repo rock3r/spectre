@@ -546,14 +546,13 @@ See [Linux Wayland consent](recording.md#linux-wayland-consent).
 
 On Linux Wayland, Spectre captures a window through a GNOME Mutter window stream. Install the
 GNOME Shell extension bundled in the `spectre-recording-linux` jar, then enable it and start a new
-GNOME session. These commands preserve the UUID directory expected by GNOME Shell:
+GNOME session. The installer selects GNOME Shell's legacy entry point on versions 42–44 and its
+ES-module entry point on versions 45–50:
 
 ```shell
 jar xf spectre-recording-linux-<version>.jar \
-  native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev
-mkdir -p ~/.local/share/gnome-shell/extensions
-cp -R native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev \
-  ~/.local/share/gnome-shell/extensions/
+  native/linux/gnome-shell-extension
+bash native/linux/gnome-shell-extension/install.sh
 gnome-extensions enable spectre-window-identity@sebastiano.dev
 ```
 

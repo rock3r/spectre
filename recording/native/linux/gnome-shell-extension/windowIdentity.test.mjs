@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
 import {
     OneTimeBindings,
     parseX11WindowDescription,
@@ -21,6 +23,18 @@ for (const value of ['2a', 'prefix 0x2a', '0x2a title', '0x2a (title) trailing',
 assert(windowMatchesXid(window(), 1234, 42n, X11));
 assert(!windowMatchesXid(window({clientType: WAYLAND}), 1234, 42n, X11));
 assert(!windowMatchesXid(window({pid: 7}), 1234, 42n, X11));
+
+const legacyContext = {};
+vm.runInNewContext(
+    fs.readFileSync(new URL('./spectre-window-identity@sebastiano.dev/windowIdentityCore.js', import.meta.url), 'utf8'),
+    legacyContext,
+);
+const legacyMatches = legacyContext.SpectreWindowIdentityCore.windowMatchesXid.bind(
+    legacyContext.SpectreWindowIdentityCore,
+);
+assert(legacyMatches(window(), 1234, 42n, X11));
+assert(!legacyMatches(window({clientType: WAYLAND}), 1234, 42n, X11));
+assert(!legacyMatches(window({description: 'not an xid'}), 1234, 42n, X11));
 
 let now = 100;
 const bindings = new OneTimeBindings(() => now, 10, 2);
