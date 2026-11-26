@@ -215,6 +215,13 @@ pub fn build_mutter_window_recording_argv(
     codec: &str,
 ) -> Result<Vec<String>> {
     let (top, bottom, left, right) = crop_insets(region, stream_size)?;
+    if frame_rate == 0 {
+        bail!("frame_rate must be positive");
+    }
+    // Mutter is damage-driven and may emit no new PipeWire buffers while a window is static.
+    // pipewiresrc's keepalive repeats its most recent buffer on the live clock; videorate then
+    // normalises those repeats (and real damage frames) to the exact requested output cadence.
+    let keepalive_time_ms = (1_000 / frame_rate).max(1);
     let mut argv = vec![
         "gst-launch-1.0".to_string(),
         "-e".to_string(),
@@ -222,6 +229,7 @@ pub fn build_mutter_window_recording_argv(
         format!("path={pipewire_node_id}"),
         "do-timestamp=true".to_string(),
         "always-copy=true".to_string(),
+        format!("keepalive-time={keepalive_time_ms}"),
         "!".to_string(),
         "videorate".to_string(),
         "!".to_string(),
@@ -486,8 +494,15 @@ mod tests {
         .unwrap();
         assert!(argv.contains(&"path=61".to_string()));
         assert!(!argv.iter().any(|arg| arg.starts_with("fd=")), "{argv:?}");
+        assert!(
+            argv.contains(&"keepalive-time=33".to_string()),
+            "a damage-driven Mutter stream must repeat its last frame at the requested cadence: {argv:?}"
+        );
         for inset in ["top=25", "left=25", "bottom=1115", "right=2135"] {
-            assert!(argv.contains(&inset.to_string()), "missing {inset}: {argv:?}");
+            assert!(
+                argv.contains(&inset.to_string()),
+                "missing {inset}: {argv:?}"
+            );
         }
         assert!(argv.contains(&"-e".to_string()));
     }
