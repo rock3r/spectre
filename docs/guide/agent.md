@@ -391,7 +391,7 @@ hierarchy.
 
 After the UDS connects, the first exchange is always:
 
-1. Client → `hello` with `protocolVersion` (currently `4` — `ProtocolVersion.CURRENT`)
+1. Client → `hello` with `protocolVersion` (currently `5` — `ProtocolVersion.CURRENT`)
 2. Runtime → `helloAck` with the same version, or `error` with category
    `protocolMismatch`
 
@@ -399,7 +399,7 @@ The experimental agent protocol requires an **exact version match**.
 A mismatch fails attach with `IOException` or `SpectreAgentException`.
 A future additive compatibility range would change `ProtocolVersion.CURRENT` and this guide.
 
-The protocol has four revisions. **v1** uses bare request and response frames after
+The protocol has five revisions. **v1** uses bare request and response frames after
 `hello`. **v2** (#200) adds operation envelopes with op ids, cancellation, and deadline
 budgets. **v3** encodes bulk `pngBytes` and `captureJsonUtf8` payloads as CBOR byte
 strings. Earlier peers expect integer arrays; the type system cannot detect this
@@ -412,6 +412,10 @@ with `AttachOptions.agentJarPath`; without the revision bump, that pairing could
 old Robot screen-region behavior. Exact matching now rejects v3/v4 peers during `hello`, before any
 visual request or capture runs. Both the default fail-closed endpoint and the explicit fallback
 endpoint use v4.
+
+**v5** adds scoped top-level window-change capture for daemon accessibility snapshots. The new
+request discriminators are negotiated only by v5 peers, and the runtime releases any active scope
+when its IPC connection ends.
 
 ### Unknown operations
 

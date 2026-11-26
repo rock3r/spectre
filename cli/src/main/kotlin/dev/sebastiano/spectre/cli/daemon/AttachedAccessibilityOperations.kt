@@ -15,27 +15,60 @@ internal class AttachedAccessibilityOperations(
         }
         val sessionId = request.sessionId ?: return handler.handle(request)
         return withSession(sessionId) { session ->
-            handler.handle(request) { _, windowIndex -> session.accessibilityTarget(windowIndex) }
+            guarded(session, request.windowIndex) { verify ->
+                val response =
+                    handler.handle(request) { _, windowIndex ->
+                        session.accessibilityTarget(windowIndex)
+                    }
+                verify() ?: response
+            }
         }
     }
 
     fun capture(request: DaemonRequest.Capture): DaemonResponse =
         withSession(request.sessionId) { session ->
-            try {
+            guarded(session, request.windowIndex) { verify ->
                 writeCapture(
                     request,
                     session.automator,
                     liveSessionIds(),
                     handler,
                     session::accessibilityTarget,
-                )
-            } catch (exception: IOException) {
-                DaemonResponse.Error(
-                    code = DaemonErrorCode.OperationFailed,
-                    message = exception.message ?: "session operation failed",
+                    verify,
                 )
             }
         }
+
+    private fun guarded(
+        session: DaemonSession,
+        windowIndex: Int,
+        operation: (() -> DaemonResponse?) -> DaemonResponse,
+    ): DaemonResponse {
+        var token: Long? = null
+        return try {
+            token = session.automator.beginWindowChangeCapture()
+            val before = session.accessibilityTarget(windowIndex)
+            operation {
+                val after = session.accessibilityTarget(windowIndex)
+                val generation = session.automator.endWindowChangeCapture(requireNotNull(token))
+                token = null
+                if (generation != 0L || before == null || before != after) changedWindowFailure()
+                else null
+            }
+        } catch (exception: IOException) {
+            DaemonResponse.Error(
+                DaemonErrorCode.OperationFailed,
+                exception.message ?: "session operation failed",
+            )
+        } catch (exception: UnsupportedOperationException) {
+            DaemonResponse.Error(
+                DaemonErrorCode.OperationFailed,
+                exception.message ?: "agent runtime lacks atomic accessibility capability",
+            )
+        } finally {
+            token?.let { runCatching { session.automator.endWindowChangeCapture(it) } }
+        }
+    }
 
     private fun withSession(
         sessionId: String,
@@ -62,8 +95,17 @@ internal class AttachedAccessibilityOperations(
 
 private fun DaemonSession.accessibilityTarget(windowIndex: Int): SessionAccessibilityTarget? {
     val window = automator.windows().singleOrNull { it.index == windowIndex } ?: return null
-    return SessionAccessibilityTarget(summary.targetPid, window)
+    val identity = automator.windowIdentities(windowIndex).singleOrNull()
+    return SessionAccessibilityTarget(summary.targetPid, window, identity?.nativeHandle)
 }
+
+private fun changedWindowFailure(): DaemonResponse =
+    DaemonResponse.AccessibilityErrorResult(
+        AccessibilityError(
+            AccessibilityErrorCode.TargetNotFound,
+            "The selected window changed while its accessibility tree was captured",
+        )
+    )
 
 internal fun deadlineAfterMillis(timeoutMs: Long): Long =
     System.nanoTime() + timeoutMs.coerceIn(0, Long.MAX_VALUE / NANOS_PER_MS) * NANOS_PER_MS

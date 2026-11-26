@@ -15,7 +15,8 @@ public object ProtocolVersion {
      * v1: bare request/response frames after Hello. v2 (#200): operation envelopes with op ids,
      * cancel, and deadline budgets; long ops run off the accept thread. v3: bulk payloads
      * (`pngBytes`, `captureJsonUtf8`) encode as CBOR byte strings rather than integer arrays. v4:
-     * `waitForVisualIdle` fails closed unless screen-region fallback is explicitly requested.
+     * `waitForVisualIdle` fails closed unless screen-region fallback is explicitly requested. v5:
+     * scoped top-level AWT window-change observation used by atomic accessibility captures.
      *
      * v3 is a **representation** change and v4 is a behavioral safety change, both invisible to the
      * type system. A library and runtime jar from either side would otherwise pass the exact-match
@@ -23,5 +24,5 @@ public object ProtocolVersion {
      * `AttachOptions.agentJarPath` and the runtime-jar system property make those pairings
      * reachable, so they must fail at Hello.
      */
-    public const val CURRENT: Int = 4
+    public const val CURRENT: Int = 5
 }

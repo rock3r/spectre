@@ -71,6 +71,11 @@ internal class AccessibilityDaemonHandler(private val client: AccessibilityHelpe
                         "Session '${request.sessionId}' or window ${request.windowIndex} not found",
                     )
                 )
+        if (isWindows() && selected.nativeHandle != null && selected.nativeHandle != 0L) {
+            return TargetResolution.Resolved(
+                Target.WindowId(java.lang.Long.toUnsignedString(selected.nativeHandle))
+            )
+        }
         val title =
             selected.window.title
                 ?: return TargetResolution.Error(
@@ -137,4 +142,11 @@ internal class AccessibilityDaemonHandler(private val client: AccessibilityHelpe
     }
 }
 
-internal data class SessionAccessibilityTarget(val pid: Long, val window: WindowSummaryDto)
+internal data class SessionAccessibilityTarget(
+    val pid: Long,
+    val window: WindowSummaryDto,
+    val nativeHandle: Long? = null,
+)
+
+private fun isWindows(): Boolean =
+    System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
