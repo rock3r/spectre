@@ -428,50 +428,36 @@ public object SpectreMcpServer {
         val windowIndex = call.optionalInt("window_index") ?: 0
         val outDir = call.optionalString("out_dir")?.let(::normalizeRecordingOutputPath)
         val includeImage = call.optionalBoolean("include_image") ?: false
-        return when (
-            val response =
-                request(
-                    DaemonRequest.Capture(
-                        sessionId = sessionId,
-                        windowIndex = windowIndex,
-                        outDir = outDir,
-                        source = source,
-                    )
+        return request(
+                DaemonRequest.Capture(
+                    sessionId = sessionId,
+                    windowIndex = windowIndex,
+                    outDir = outDir,
+                    source = source,
                 )
-        ) {
+            )
+            .captureResult(includeImage)
+    }
+
+    private fun DaemonResponse.captureResult(includeImage: Boolean): CallToolResult =
+        when (this) {
             is DaemonResponse.Diagnosed -> {
-                val result =
-                    when (val operation = response.response) {
-                        is DaemonResponse.Capture -> captureToolResult(operation, includeImage)
-                        is DaemonResponse.Error ->
-                            CallToolResult(listOf(TextContent(operation.message)), isError = true)
-                        else ->
-                            CallToolResult(
-                                listOf(
-                                    TextContent("Spectre daemon returned an unexpected response.")
-                                ),
-                                isError = true,
-                            )
-                    }
-                result.copy(
-                    content = response.warnings.map { TextContent("warning: $it") } + result.content
-                )
+                val result = response.captureResult(includeImage)
+                result.copy(content = warnings.map { TextContent("warning: $it") } + result.content)
             }
-            is DaemonResponse.Capture -> captureToolResult(response, includeImage)
+            is DaemonResponse.Capture -> captureToolResult(this, includeImage)
             is DaemonResponse.AccessibilityErrorResult ->
                 CallToolResult(
-                    listOf(TextContent(MCP_JSON.encodeToString(response.error))),
+                    listOf(TextContent(MCP_JSON.encodeToString(error))),
                     isError = true,
                 )
-            is DaemonResponse.Error ->
-                CallToolResult(listOf(TextContent(response.message)), isError = true)
+            is DaemonResponse.Error -> CallToolResult(listOf(TextContent(message)), isError = true)
             else ->
                 CallToolResult(
                     listOf(TextContent("Spectre daemon returned an unexpected response.")),
                     isError = true,
                 )
         }
-    }
 
     private fun captureToolResult(
         response: DaemonResponse.Capture,
@@ -667,37 +653,41 @@ private fun registerAccessibilityTool(
         require(windowIndex >= 0 && maximumDepth > 0 && maximumNodeCount > 0 && timeoutMs > 0) {
             "MCP accessibility target and traversal budgets must be valid"
         }
-        when (
-            val response =
-                request(
-                    DaemonRequest.AccessibilityTree(
-                        pid,
-                        window,
-                        sessionId,
-                        windowIndex,
-                        maximumDepth,
-                        maximumNodeCount,
-                        timeoutMs,
-                    )
+        request(
+                DaemonRequest.AccessibilityTree(
+                    pid,
+                    window,
+                    sessionId,
+                    windowIndex,
+                    maximumDepth,
+                    maximumNodeCount,
+                    timeoutMs,
                 )
-        ) {
-            is DaemonResponse.AccessibilitySnapshotResult ->
-                CallToolResult(listOf(TextContent(MCP_JSON.encodeToString(response.snapshot))))
-            is DaemonResponse.AccessibilityErrorResult ->
-                CallToolResult(
-                    listOf(TextContent(MCP_JSON.encodeToString(response.error))),
-                    isError = true,
-                )
-            is DaemonResponse.Error ->
-                CallToolResult(listOf(TextContent(response.message)), isError = true)
-            else ->
-                CallToolResult(
-                    listOf(TextContent("Spectre daemon returned an unexpected response.")),
-                    isError = true,
-                )
-        }
+            )
+            .accessibilityResult()
     }
 }
+
+private fun DaemonResponse.accessibilityResult(): CallToolResult =
+    when (this) {
+        is DaemonResponse.Diagnosed -> {
+            val result = response.accessibilityResult()
+            result.copy(content = warnings.map { TextContent("warning: $it") } + result.content)
+        }
+        is DaemonResponse.AccessibilitySnapshotResult ->
+            CallToolResult(listOf(TextContent(MCP_JSON.encodeToString(snapshot))))
+        is DaemonResponse.AccessibilityErrorResult ->
+            CallToolResult(
+                listOf(TextContent(MCP_JSON.encodeToString(error))),
+                isError = true,
+            )
+        is DaemonResponse.Error -> CallToolResult(listOf(TextContent(message)), isError = true)
+        else ->
+            CallToolResult(
+                listOf(TextContent("Spectre daemon returned an unexpected response.")),
+                isError = true,
+            )
+    }
 
 private fun CallToolRequest.accessibilityOptionalString(name: String): String? {
     validateKnownArguments()
