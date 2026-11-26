@@ -12,7 +12,7 @@
 //!  6. Emit `Stopped` (with output file size) or `Error` (with cause), then return.
 
 use crate::gst::{build_pipewire_argv, build_x11_recording_argv, X11CaptureTarget};
-use crate::portal::{self, DEFAULT_RESPONSE_TIMEOUT, SOURCE_TYPE_WINDOW};
+use crate::portal::{self, DEFAULT_RESPONSE_TIMEOUT};
 use crate::protocol::{CaptureBackend, CaptureTarget, Event, StartCommand};
 use anyhow::{anyhow, Context, Result};
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
@@ -50,6 +50,13 @@ pub fn run(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
 }
 
 fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
+    crate::protocol::require_portal_region(
+        start.target,
+        &start.source_types,
+        start.window_frame.is_some()
+            || start.window_title.is_some()
+            || start.window_owner_pid.is_some(),
+    )?;
     // 1. Portal handshake — first call within a session pops the user's "share your screen"
     // dialog. Subsequent calls reuse the grant (persistent restore_token (#188)).
     let session = portal::open_screen_cast_session(
@@ -58,7 +65,6 @@ fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
         DEFAULT_RESPONSE_TIMEOUT,
     )
     .context("portal handshake")?;
-    ensure_window_source_if_requested(start.target, session.stream.source_type, "recording")?;
 
     // 2. Clear O_CLOEXEC on the PipeWire FD. Default-CLOEXEC FDs (the kernel sets it on
     // SCM_RIGHTS-delivered FDs for safety) wouldn't survive ProcessBuilder's exec call,
@@ -72,22 +78,15 @@ fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
         .context("fcntl(F_SETFD, !CLOEXEC) on PipeWire FD")?;
 
     // 3. Translate the AWT-screen region into stream-relative coordinates.
-    // Window-source crops are already stream-relative (GTK frame extents). Monitor/region
-    // crops may be in a mixed AWT/XWayland pixel space; convert then clamp.
-    let stream_relative_region = if start.target == CaptureTarget::Window {
-        crate::stream_region::clamp_region_to_stream(start.region, session.stream.size)
-            .context("clamping window-source crop to portal stream")?
-    } else {
-        crate::stream_region::map_awt_region_to_stream(
-            start.region,
-            session.stream.position,
-            session.stream.size,
-            start
-                .screen_size
-                .and_then(crate::stream_region::screen_size_to_region),
-        )
-        .context("mapping AWT region onto portal stream")?
-    };
+    let stream_relative_region = crate::stream_region::map_awt_region_to_stream(
+        start.region,
+        session.stream.position,
+        session.stream.size,
+        start
+            .screen_size
+            .and_then(crate::stream_region::screen_size_to_region),
+    )
+    .context("mapping AWT region onto portal stream")?;
 
     let argv = build_pipewire_argv(
         session.stream.node_id,
@@ -270,6 +269,10 @@ fn run_wayland(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
 }
 
 fn run_x11(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
+    if start.target == CaptureTarget::Region {
+        crate::x11_window::validate_region_in_root(start.display_name.as_deref(), start.region)
+            .context("validating X11 region before starting ximagesrc")?;
+    }
     let (target, stream_size, stream_position) = match start.target {
         CaptureTarget::Region => (
             X11CaptureTarget::Region {
@@ -283,15 +286,25 @@ fn run_x11(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
             [start.region.x, start.region.y],
         ),
         CaptureTarget::Window => {
-            let title = start
-                .window_title
-                .clone()
-                .ok_or_else(|| anyhow!("X11 window recording requires window_title"))?;
-            let resolved =
-                crate::x11_window::find_window_by_title(start.display_name.as_deref(), &title)
-                    .with_context(|| format!("resolving X11 window title {title:?}"))?;
+            let resolved = match (start.window_title.clone(), start.window_frame) {
+                (Some(title), None) => crate::x11_window::find_window_by_title(
+                    start.display_name.as_deref(),
+                    &title,
+                    start.window_owner_pid,
+                )
+                .with_context(|| format!("resolving X11 window title {title:?}"))?,
+                (None, Some(frame)) => crate::x11_window::find_window_by_frame(
+                    start.display_name.as_deref(),
+                    frame,
+                    start.window_owner_pid,
+                )
+                .context("resolving X11 recording window by frame")?,
+                _ => anyhow::bail!(
+                    "X11 window recording requires exactly one of window_title or window_frame"
+                ),
+            };
             eprintln!(
-                "[helper] resolved X11 window title={title:?} xid=0x{:x} size={}x{}",
+                "[helper] resolved X11 window xid=0x{:x} size={}x{}",
                 resolved.xid, resolved.width, resolved.height
             );
             (
@@ -328,22 +341,6 @@ fn run_x11(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
             gst_pid: 0,
         },
     )
-}
-
-fn ensure_window_source_if_requested(
-    target: CaptureTarget,
-    source_type: Option<u32>,
-    mode: &str,
-) -> Result<()> {
-    if target == CaptureTarget::Window && source_type != Some(SOURCE_TYPE_WINDOW) {
-        return Err(anyhow!(
-            "Wayland portal {mode} requested a window source, but the compositor returned \
-             source_type={source_type:?}. Spectre cannot window-crop a monitor-source stream \
-             safely; use region capture or a compositor/version that supports portal window \
-             sources."
-        ));
-    }
-    Ok(())
 }
 
 fn run_gst_lifecycle(

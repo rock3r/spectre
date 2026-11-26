@@ -289,12 +289,12 @@ class VisualIdleSurfaceCaptureTest {
         val frame =
             Frame("ambiguous-a").apply {
                 setBounds(0, 0, 80, 60)
-                addNotify()
+                isVisible = true
             }
         val twin =
             Frame("ambiguous-a").apply {
                 setBounds(100, 0, 80, 60)
-                addNotify()
+                isVisible = true
             }
         var regionCalls = 0
         val backend =

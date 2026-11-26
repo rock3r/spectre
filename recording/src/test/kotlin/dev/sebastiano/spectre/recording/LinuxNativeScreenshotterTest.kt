@@ -115,6 +115,30 @@ class LinuxNativeScreenshotterTest {
     }
 
     @Test
+    fun `X11 captureWindow scopes a title to its owner process`() {
+        val tempDir = Files.createTempDirectory("spectre-linux-screenshotter-test-")
+        val stdin = ByteArrayOutputStream()
+        val process =
+            FakeScreenshotHelperProcess(stdin = stdin, stdout = "not-json\n".byteInputStream())
+        val screenshotter = linuxScreenshotter(tempDir, process)
+        val window =
+            object : TitledWindow {
+                override var title: String? = "Shared title"
+                override val bounds: Rectangle = Rectangle(10, 20, 300, 200)
+            }
+
+        try {
+            assertFailsWith<RuntimeException> { screenshotter.captureWindow(window, 4242L) }
+
+            val command = stdin.toString(Charsets.UTF_8)
+            assertTrue(command.contains("\"window_title\":\"Shared title\""), command)
+            assertTrue(command.contains("\"window_owner_pid\":4242"), command)
+        } finally {
+            tempDir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `Wayland captureWindow never starts a portal window-source helper`() {
         val tempDir = Files.createTempDirectory("spectre-linux-screenshotter-test-")
         val screenshotter =

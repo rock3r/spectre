@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.recording
 
 import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import java.awt.Color
+import java.awt.Dialog
 import java.awt.EventQueue
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
@@ -136,6 +137,7 @@ class NativeWindowCaptureBridgeTest {
         assumeLiveAwtAvailable()
         val owner = Frame("bridge owner")
         val popup = JWindow(owner).apply { setBounds(40, 50, 300, 200) }
+        popup.isVisible = true
 
         try {
             val target = NativeWindowCaptureBridge.captureTargetFor(popup)
@@ -149,9 +151,64 @@ class NativeWindowCaptureBridgeTest {
     }
 
     @Test
+    fun `untitled Frame host is captured by its frame`() {
+        assumeLiveAwtAvailable()
+        val frame = Frame().apply { setBounds(41, 52, 303, 204) }
+        frame.isVisible = true
+
+        try {
+            val target =
+                NativeWindowCaptureBridge.captureTargetFor(
+                    frame,
+                    selectsSharedTitlesByFrame = true,
+                    selectsClientArea = false,
+                )
+
+            val framed = assertIs<FramedWindow>(target, "an empty title cannot select a Frame")
+            assertEquals(Rectangle(41, 52, 303, 204), framed.logicalFrame)
+            assertEquals("", frame.title, "selecting the Frame must not stamp a temporary title")
+        } finally {
+            frame.dispose()
+        }
+    }
+
+    @Test
+    fun `untitled Dialog host is captured by its client frame on X11`() {
+        assumeLiveAwtAvailable()
+        val owner = Frame("dialog owner").apply { isVisible = true }
+        val dialog = Dialog(owner).apply { setBounds(43, 54, 305, 206) }
+        dialog.isVisible = true
+
+        try {
+            val target =
+                NativeWindowCaptureBridge.captureTargetFor(
+                    dialog,
+                    selectsSharedTitlesByFrame = true,
+                    selectsClientArea = true,
+                )
+
+            val framed = assertIs<FramedWindow>(target, "an empty title cannot select a Dialog")
+            val insets = dialog.insets
+            assertEquals(
+                Rectangle(
+                    43 + insets.left,
+                    54 + insets.top,
+                    305 - insets.left - insets.right,
+                    206 - insets.top - insets.bottom,
+                ),
+                framed.logicalFrame,
+            )
+            assertEquals("", dialog.title, "selecting the Dialog must not stamp a temporary title")
+        } finally {
+            dialog.dispose()
+            owner.dispose()
+        }
+    }
+
+    @Test
     fun `titled Frame host keeps the title selector`() {
         assumeLiveAwtAvailable()
-        val frame = Frame("bridge titled frame")
+        val frame = Frame("bridge titled frame").apply { isVisible = true }
 
         try {
             val target = NativeWindowCaptureBridge.captureTargetFor(frame)
@@ -169,8 +226,8 @@ class NativeWindowCaptureBridgeTest {
         assumeLiveAwtAvailable()
         val frame = Frame("bridge shared title").apply { setBounds(40, 50, 300, 200) }
         val twin = Frame("bridge shared title").apply { setBounds(400, 50, 300, 200) }
-        frame.addNotify()
-        twin.addNotify()
+        frame.isVisible = true
+        twin.isVisible = true
 
         try {
             val target =
@@ -194,8 +251,8 @@ class NativeWindowCaptureBridgeTest {
         assumeLiveAwtAvailable()
         val frame = Frame("bridge client area").apply { setBounds(40, 50, 300, 200) }
         val twin = Frame("bridge client area").apply { setBounds(400, 50, 300, 200) }
-        frame.addNotify()
-        twin.addNotify()
+        frame.isVisible = true
+        twin.isVisible = true
 
         try {
             val insets = frame.insets
@@ -216,30 +273,6 @@ class NativeWindowCaptureBridgeTest {
                 ),
                 framed.logicalFrame,
             )
-        } finally {
-            frame.dispose()
-            twin.dispose()
-        }
-    }
-
-    @Test
-    fun `a shared title keeps the title selector where the helper disambiguates titles`() {
-        assumeLiveAwtAvailable()
-        val frame = Frame("bridge macOS title")
-        val twin = Frame("bridge macOS title")
-        frame.addNotify()
-        twin.addNotify()
-
-        try {
-            val target =
-                NativeWindowCaptureBridge.captureTargetFor(
-                    frame,
-                    selectsSharedTitlesByFrame = false,
-                    selectsClientArea = false,
-                )
-
-            assertFalse(target is FramedWindow, "macOS keeps its title selector: $target")
-            assertEquals("bridge macOS title", target.title)
         } finally {
             frame.dispose()
             twin.dispose()

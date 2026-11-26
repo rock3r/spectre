@@ -106,10 +106,9 @@ private constructor(
         output: Path,
         options: RecordingOptions,
     ): RecordingHandle {
-        sessionClient?.let { client ->
-            if (sourceTypes.none { it == SourceType.WINDOW }) {
-                return startViaSession(client, region, output, options)
-            }
+        require(SourceType.WINDOW !in sourceTypes) { "The portal cannot verify window identity." }
+        sessionClient?.let {
+            return startViaSession(it, region, output, options)
         }
         val helperPath = helperExtractor.extract()
         Files.createDirectories(output.toAbsolutePath().parent ?: output.toAbsolutePath())
@@ -319,11 +318,10 @@ private constructor(
     internal companion object {
 
         /**
-         * In-module factory for tests and [WaylandPortalWindowRecorder]'s delegate path. Annotated
-         * `@JvmSynthetic` so Java consumers don't see it — the JVM-public `WaylandPortalRecorder`
-         * class is supposed to expose only its no-arg constructor. Reflection-based access still
-         * works for genuinely needs-the-internals callers but stays absent from IDE autocomplete
-         * and javap's default view.
+         * In-module factory for tests. Annotated `@JvmSynthetic` so Java consumers don't see it —
+         * the JVM-public `WaylandPortalRecorder` class is supposed to expose only its no-arg
+         * constructor. Reflection-based access still works for genuinely needs-the-internals
+         * callers but stays absent from IDE autocomplete and javap's default view.
          */
         @JvmSynthetic
         internal fun createForInternalUse(
@@ -350,18 +348,16 @@ private constructor(
         fun defaultStartCommandFactory(
             sourceTypes: List<SourceType>
         ): (Rectangle, Path, RecordingOptions) -> Command.Start = { region, output, options ->
+            require(SourceType.WINDOW !in sourceTypes) {
+                "The portal cannot verify window identity."
+            }
             require(options.screenIndex == RecordingOptions.DEFAULT_SCREEN_INDEX) {
                 "Wayland portal display selection is controlled by the portal picker; " +
                     "screenIndex=${options.screenIndex} cannot be honored."
             }
             Command.Start(
                 backend = CaptureBackend.WAYLAND_PORTAL,
-                target =
-                    if (sourceTypes == listOf(SourceType.WINDOW)) {
-                        CaptureTarget.WINDOW
-                    } else {
-                        CaptureTarget.REGION
-                    },
+                target = CaptureTarget.REGION,
                 sourceTypes = sourceTypes,
                 cursorMode = if (options.captureCursor) CursorMode.EMBEDDED else CursorMode.HIDDEN,
                 frameRate = options.frameRate,
@@ -372,12 +368,7 @@ private constructor(
                         width = region.width,
                         height = region.height,
                     ),
-                screenSize =
-                    if (sourceTypes == listOf(SourceType.WINDOW)) {
-                        null
-                    } else {
-                        awtDisplayBoundsContaining(region)?.toWire()
-                    },
+                screenSize = awtDisplayBoundsContaining(region)?.toWire(),
                 output = output.toAbsolutePath().toString(),
                 codec = options.codec,
             )

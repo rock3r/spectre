@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.recording.portal
 import dev.sebastiano.spectre.recording.defaultLinuxSessionEnvLookup
 import dev.sebastiano.spectre.recording.waylandHelperEnvironment
 import java.awt.Rectangle
+import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.IOException
 import java.net.StandardProtocolFamily
@@ -77,21 +78,38 @@ internal constructor(
         send(Command.PointerAxis(axis = VERTICAL_POINTER_AXIS, steps = wheelClicks))
     }
 
-    fun screenshot(region: Rectangle): BufferedImage {
+    fun screenshot(region: Rectangle, logicalSize: Boolean = false): BufferedImage {
         val output = Files.createTempFile("spectre-wayland-session-", ".png")
         try {
-            (screenshotSender ?: ::send)(
-                Command.Screenshot(
-                    backend = CaptureBackend.WAYLAND_PORTAL,
-                    target = CaptureTarget.REGION,
-                    sourceTypes = listOf(SourceType.MONITOR),
-                    region = Region(region.x, region.y, region.width, region.height),
-                    screenSize = awtDisplayBoundsContaining(region)?.toWire(),
-                    output = output.toAbsolutePath().toString(),
+            val event =
+                (screenshotSender ?: ::send)(
+                    Command.Screenshot(
+                        backend = CaptureBackend.WAYLAND_PORTAL,
+                        target = CaptureTarget.REGION,
+                        sourceTypes = listOf(SourceType.MONITOR),
+                        region = Region(region.x, region.y, region.width, region.height),
+                        screenSize = awtDisplayBoundsContaining(region)?.toWire(),
+                        output = output.toAbsolutePath().toString(),
+                    )
                 )
-            )
-            return ImageIO.read(output.toFile())
-                ?: error("Wayland session helper did not produce a readable PNG at $output")
+            check(event is Event.ScreenshotSaved) {
+                "Wayland session helper returned an unexpected screenshot event: $event"
+            }
+            val crop =
+                event.captureRegion?.takeIf { it.size == 4 }
+                    ?: error("Wayland session helper did not report its verified capture_region")
+            val image =
+                ImageIO.read(output.toFile())
+                    ?: error("Wayland session helper did not produce a readable PNG at $output")
+            check(
+                image.width == crop[CAPTURE_WIDTH_INDEX] &&
+                    image.height == crop[CAPTURE_HEIGHT_INDEX]
+            ) {
+                "Wayland screenshot returned ${image.width}x${image.height}, but the helper " +
+                    "verified crop was ${crop[CAPTURE_WIDTH_INDEX]}x" +
+                    "${crop[CAPTURE_HEIGHT_INDEX]}; refusing a clipped capture."
+            }
+            return if (logicalSize) resizeScreenshot(image, region.width, region.height) else image
         } finally {
             output.deleteIfExists()
         }
@@ -213,6 +231,8 @@ internal constructor(
     }
 
     private companion object {
+        const val CAPTURE_WIDTH_INDEX: Int = 2
+        const val CAPTURE_HEIGHT_INDEX: Int = 3
         const val SESSION_SOCKET_TIMEOUT_MS: Long = 90_000
         const val SOCKET_POLL_MS: Long = 50
         const val PORTAL_CONSENT_STEPS: Long = 3
@@ -488,5 +508,27 @@ internal object WaylandOsBridge {
 
     @JvmStatic
     @JvmName("createScreenCapture")
-    fun createScreenCapture(region: Rectangle): BufferedImage = client.screenshot(region)
+    fun createScreenCapture(region: Rectangle): BufferedImage =
+        client.screenshot(region, logicalSize = true)
+
+    @JvmStatic
+    @JvmName("createDeviceScaleScreenCapture")
+    fun createDeviceScaleScreenCapture(region: Rectangle): BufferedImage =
+        client.screenshot(region, logicalSize = false)
+}
+
+private fun resizeScreenshot(image: BufferedImage, width: Int, height: Int): BufferedImage {
+    if (image.width == width && image.height == height) return image
+    return BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB).also { resized ->
+        val graphics = resized.createGraphics()
+        try {
+            graphics.setRenderingHint(
+                RenderingHints.KEY_INTERPOLATION,
+                RenderingHints.VALUE_INTERPOLATION_BILINEAR,
+            )
+            graphics.drawImage(image, 0, 0, width, height, null)
+        } finally {
+            graphics.dispose()
+        }
+    }
 }

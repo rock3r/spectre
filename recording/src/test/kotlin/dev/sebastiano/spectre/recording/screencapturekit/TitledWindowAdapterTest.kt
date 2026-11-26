@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
 import java.awt.Dialog
+import java.awt.EventQueue
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
 import kotlin.test.Test
@@ -98,3 +99,30 @@ private fun assumeLiveAwtAvailable() {
 
 /** A subclass of [Frame] that doesn't try to allocate a peer — safe for headless unit tests. */
 private class TestFrame(initialTitle: String) : Frame(initialTitle)
+
+internal fun withSharedSckFrames(test: (Frame, Frame) -> Unit) {
+    assumeLiveAwtAvailable()
+    val titleChanges = java.util.concurrent.atomic.AtomicInteger()
+    lateinit var left: Frame
+    lateinit var right: Frame
+    EventQueue.invokeAndWait {
+        fun visible(x: Int) =
+            Frame("direct SCK shared title").apply {
+                addPropertyChangeListener("title") { titleChanges.incrementAndGet() }
+                isUndecorated = true
+                setBounds(x, 20, 300, 200)
+                isVisible = true
+            }
+        left = visible(10)
+        right = visible(410)
+    }
+    try {
+        test(left, right)
+        assertEquals(0, titleChanges.get(), "capture changed an AWT title")
+    } finally {
+        EventQueue.invokeAndWait {
+            left.dispose()
+            right.dispose()
+        }
+    }
+}

@@ -386,12 +386,12 @@ class ScreenCaptureBackendTest {
         val first =
             Frame("same title").apply {
                 setBounds(10, 20, 100, 80)
-                addNotify()
+                isVisible = true
             }
         val second =
             Frame("same title").apply {
                 setBounds(120, 30, 100, 80)
-                addNotify()
+                isVisible = true
             }
         val backend =
             PlatformScreenCaptureBackend(
@@ -414,8 +414,8 @@ class ScreenCaptureBackendTest {
     @Test
     fun `disposed tracked frame fails before title-based native capture`() {
         assumeLiveAwtAvailable()
-        val target = Frame("same title").apply { addNotify() }
-        val other = Frame("same title").apply { addNotify() }
+        val target = Frame("same title").apply { isVisible = true }
+        val other = Frame("same title").apply { isVisible = true }
         val backend =
             PlatformScreenCaptureBackend(
                 regionCapture = { error("screen-region capture must not be used") },

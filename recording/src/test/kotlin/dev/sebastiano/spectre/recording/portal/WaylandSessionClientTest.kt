@@ -38,7 +38,10 @@ class WaylandSessionClientTest {
                         "png",
                         Path.of(it.output).toFile(),
                     )
-                    Event.ScreenshotSaved(Files.size(Path.of(it.output)))
+                    Event.ScreenshotSaved(
+                        outputSizeBytes = Files.size(Path.of(it.output)),
+                        captureRegion = listOf(0, 0, 2, 3),
+                    )
                 },
             )
 

@@ -389,16 +389,13 @@ takes about 0.15 s, so three stable samples fit inside one blink of a text caret
 versions started a new helper for each still and took about 0.6 s per sample, so a focused
 text field could stop `waitForVisualIdle()` from settling.
 
-macOS does the same for a window that the capture helper can find again by the same selector: an
-untitled window, such as a Swing `JWindow` popup, by its frame, and a window with a unique title by
-that title. A warm still then takes about 35 to 65 ms. Earlier versions started a new
-ScreenCaptureKit capture for each still, which took about 1.4 s. A sample with two windows, such as
-an app window and an open popup, then ran out of its 2 s budget, and `waitForVisualIdle()` timed
-out with most samples unsampleable. A window whose title another window also contains still takes
-one-shot stills, because Spectre adds a different title suffix for each still to find it.
+macOS does the same for every window. Unique titles use an owner-scoped title selector; untitled
+windows and windows whose title is shared use their owner-scoped on-screen frame. A warm still then
+takes about 35 to 65 ms. Spectre never changes the application's title. If two windows share both
+title and frame, capture fails as ambiguous rather than guessing.
 
-Spectre stops every open stills session before it starts a recording or a one-shot still on
-macOS. Then only one capture helper holds a ScreenCaptureKit stream when the new capture starts.
+Spectre stops every open stills session before it starts a recording on macOS. Then only one
+capture helper holds a ScreenCaptureKit stream when the new capture starts.
 
 If every macOS capture fails with `timed out waiting for first recording frame` or
 `timed out waiting for the first stills frame`, and `waitForVisualIdle()` reports every sample as
@@ -531,8 +528,7 @@ If dialogs still appear:
 - A rejected token is cleared and retried once. A second failure is fatal; delete the
   token file only when re-consent is intended.
 
-- A "window picker" dialog (pick one window) comes from `WaylandPortalWindowRecorder`, which
-  you call directly. `AutoRecorder` and screenshots do not use it.
+- Explicit portal window requests fail before opening a picker because the grant cannot identify the requested window.
 
 If nobody answers a dialog that a capture opened within 60 seconds, or someone cancels it,
 Spectre does not ask again in the same JVM. Every later capture fails at once with an error

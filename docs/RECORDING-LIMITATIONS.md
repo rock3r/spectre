@@ -26,7 +26,7 @@ Backend → mode mapping:
 | `LinuxX11Recorder`            | Linux Xorg/Xvfb region and named-window capture via GStreamer `ximagesrc`. |
 | `LinuxNativeScreenshotter`    | Linux Xorg/Xvfb screenshots via `ximagesrc`. Linux Wayland region screenshots via the portal monitor stream; window screenshots via GNOME Mutter window streams. |
 | `WaylandPortalRecorder`       | Region capture, sourced from the Wayland portal (`SourceType.MONITOR`). |
-| `WaylandPortalWindowRecorder` | Window-targeted (Linux Wayland, portal `SourceType.WINDOW`). Explicit opt-in: asks the user to pick every window. `AutoRecorder` uses Mutter window streams instead. |
+| `WaylandPortalWindowRecorder` | Refuses window capture because the portal cannot verify the selected window’s identity. |
 | `ScreenCaptureKitRecorder`    | Region and window-targeted capture (macOS).         |
 | `ScreenCaptureKitScreenshotter` | Window-targeted still screenshots (macOS).         |
 | `WindowsGraphicsCaptureRecorder` | Window-targeted and region capture (Windows Graphics Capture). |
@@ -42,6 +42,23 @@ See [Still window screenshots](guide/recording.md#still-window-screenshots).
 
 The following sections explain each platform's limits. See
 [Window-targeted capture](#window-targeted-capture) for movement and occlusion behaviour.
+
+## Exact geometry and rounding tolerance
+
+Region and window-crop requests fail when any edge lies outside their capture source. Spectre
+does not silently clip a request, move it to the monitor with the largest overlap, stretch a
+partial image, or substitute a full-screen capture. Native helpers tolerate at most one pixel at
+an edge for coordinate rounding, and report both the requested and source rectangles otherwise.
+
+- X11 validates regions against the root window before starting `ximagesrc`.
+- Wayland maps from the selected AWT display into the granted stream, including its position and
+  scale; a region on another monitor fails even when the monitors have the same aspect ratio.
+- Windows rejects cross-monitor regions and window crops outside their WGC capture item.
+- macOS rejects a window-relative crop outside the selected ScreenCaptureKit window.
+- Node still capture requires the entire node region to be inside its captured window.
+
+The one-pixel allowance is only a HiDPI edge-rounding tolerance. It is removed from the returned
+crop; larger overflow is always an error.
 
 
 ## Wayland restore_token (agent non-interactive runs)
@@ -224,8 +241,7 @@ X11, macOS, and Windows keep their input and capture paths.
   file descriptor to the encoder. Its source is in `recording/native/linux/`.
   `WaylandPortalRecorder` selects a monitor through `SourceType.MONITOR` and crops to
   the requested rectangle. `AutoRecorder` records a window through a GNOME Mutter window
-  stream. The explicit `WaylandPortalWindowRecorder` selects one window through
-  `SourceType.WINDOW` and crops the isolated stream to window size.
+  stream.
   `LinuxNativeScreenshotter` uses the same helper for a one-frame PNG.
   The JVM exchanges newline-delimited JSON with the helper over standard streams.
   **Approve once with `spectre permissions request`.** Later calls reuse the portal grant
@@ -233,6 +249,8 @@ X11, macOS, and Windows keep their input and capture paths.
   The helper exists because dbus-java could not decode the Unix file descriptor.
   Rust can pass it to `gst-launch-1.0`; JVM `ProcessBuilder` does not expose the
   required `fcntl(F_SETFD, ...)` control. macOS also uses a separate capture helper.
+
+  The portal picker exposes no verifiable window identity. Explicit portal window requests fail before a grant or restore token is used.
 
   Region stills taken by `LinuxNativeScreenshotter.captureRegion()` and the shared Wayland
   session use that session's compositor-provided `Embedded` cursor stream. Consequently, these
@@ -263,7 +281,6 @@ X11, macOS, and Windows keep their input and capture paths.
   sends the AWT display bounds that contain the requested rectangle. When their
   aspect ratios match, Spectre converts the rectangle into stream pixels and
   clamps overflow. A region outside the granted stream still fails.
-  Window-source crops already use stream coordinates and need only clamping.
 
   Wayland region stills use the same portal grant as video, and window stills use Mutter
   window streams. In unattended SSH/headless runs without a grant, a capture fails with an
@@ -276,9 +293,7 @@ X11, macOS, and Windows keep their input and capture paths.
   `RecordingOptions.captureCursor=true`. The 26.04 run confirmed window-sized output,
   visible window decorations, and isolation from other apps.
   Routine validation does not cover KDE Plasma, sway, wlroots, other distributions,
-  or other Ubuntu versions. The portal API is standard across compositors;
-  `_GTK_FRAME_EXTENTS` is specific to GNOME/Mutter.
-  On KDE or sway, window capture may fail with "Could not determine WM frame extents".
+  or other Ubuntu versions.
   Use `WaylandPortalRecorder` for region capture until a compositor-specific lookup exists.
 
   **The compositor controls source frame rate.** `videorate` targets
@@ -421,3 +436,13 @@ Recording overhead:
 - An embedded panel can use host-window capture with a fixed crop on macOS and
   Windows when its `Frame` or `JFrame` has a usable handle. On Linux, or without
   a suitable host window, use explicit region capture.
+
+
+## Window identity and ambiguity
+
+Native window capture is owner-scoped on every platform. A unique title may be used only together
+with the owner process id. Shared or untitled local windows use their on-screen frame; if multiple
+owned windows match the same selector, capture fails instead of choosing by Z-order or area.
+Spectre never retitles the application under test. Raw Wayland portal window streams do not expose
+enough identity to verify the user's selection, so that explicit path fails closed; local GNOME
+windows use the verified Mutter window-stream path.

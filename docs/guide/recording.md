@@ -149,7 +149,7 @@ Expected results by platform:
 - **Linux Wayland** — run with `XDG_RUNTIME_DIR` and the D-Bus session bus visible to the JVM,
   after `spectre permissions request`. The task binds a GNOME Mutter window stream to the smoke
   window and writes a one-frame PNG. No dialog opens. `:recording:runWaylandPortalWindowSmoke`
-  still tests the portal's window picker, which asks for every window.
+  checks that an unverifiable portal window request fails before capture.
 
 ## Linux Wayland consent
 
@@ -269,11 +269,7 @@ This matrix describes each recorder's source, movement behaviour, and requiremen
 | `ScreenCaptureKitRecorder` | Named window (pid + title substring), optional window-relative crop, or screen region | Window mode follows moves/resizes of the host window; optional `sourceRect` crop is **fixed at start** (v1). Region mode is fixed at `start()` | Window mode (with or without crop) captures only the window's pixels — occluders excluded. Region mode captures visible display pixels including overlapping apps | `spectre-recording-macos` runtime helper (`spectre-screencapture`); macOS Screen Recording TCC for the launching app | macOS |
 | `LinuxX11Recorder` | Screen region or named X11 window (`ximagesrc`) | Region mode is fixed at `start()`; window mode resolves the XID from `WM_NAME` / `_NET_WM_NAME` and captures with `ximagesrc xid=` | Captures visible X server pixels for the selected source; occluding apps can appear in region capture. A title that does not match a mapped window fails; root/desktop recording is excluded | `spectre-recording-linux` runtime helper; `gst-launch-1.0` with `ximagesrc`, `videorate`, `x264enc`, and `mp4mux`; `DISPLAY`; `libX11.so.6` at runtime for named-window lookup | Linux Xorg/Xvfb; named XWayland windows only when the process is deliberately forced onto the X11 backend |
 | `WaylandPortalRecorder` | Monitor region (portal `SourceType.MONITOR`, cropped) | No — monitor-level source | Depends on the compositor. GNOME/Mutter validation includes the user's overlays and excludes apps occluding the recorded region | `spectre-recording-linux` runtime helper (`spectre-wayland-helper`); `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`. First human consent stores a `restore_token` under `$XDG_STATE_HOME/spectre/` so later agent sessions skip the dialog (#188) | Linux Wayland |
-| `WaylandPortalWindowRecorder` | Named window (portal `SourceType.WINDOW` + fixed crop) | **No.** The crop is computed once from `_GTK_FRAME_EXTENTS` at `start()` and stays at those pixel coordinates for the rest of the recording. Moving or resizing the window during recording misaligns the crop (typically the recording shows blank / black for the unrendered area of the original rectangle); see `WaylandPortalWindowRecorder`'s KDoc for the detailed rationale | The stream contains only the picked window's pixels; `OnWindow` popups are excluded | `spectre-recording-linux` runtime helper; `xdg-desktop-portal` + PipeWire; `gst-launch-1.0` on `PATH`; `xprop` on `PATH`; compositor must publish `_GTK_FRAME_EXTENTS` (GNOME/Mutter verified; older Mutter / KDE / sway may fail with an error to avoid misaligned video) | Linux Wayland |
-
-Wayland window capture receives only the selected window's pixels.
-Other applications cannot occlude that source. Its crop stays fixed from `start()`,
-so moving or resizing the window can misalign the recording.
+| `WaylandPortalWindowRecorder` | Refuses window capture because the portal cannot verify the selected window’s identity. | — | — | — | — |
 
 For a `ComposePanel` inside a host window, use **window capture with a crop**.
 This includes Jewel tool windows in IntelliJ. Pass the host as a `TitledWindow`.
@@ -374,19 +370,7 @@ Each platform has additional limits:
   same binary also owns Linux Xorg/Xvfb capture. On Wayland it drives
   `xdg-desktop-portal`'s ScreenCast interface and hands a PipeWire FD to
   `gst-launch-1.0`; on Xorg/Xvfb it runs GStreamer's `ximagesrc` directly.
-- **`WaylandPortalWindowRecorder` is explicit opt-in.** `AutoRecorder` no longer uses it,
-  because it asks the user to pick every window. It runs
-  `xprop` on the JFrame's XWayland window to read `_GTK_FRAME_EXTENTS`. It uses
-  those extents to calculate the crop within the stream. Mutter adds about
-  25 pixels of GTK shadow outside AWT's `frame.getBounds()`. Without the extents,
-  the crop clips the close button. On Debian/Ubuntu, `xprop` comes from
-  `x11-utils`; minimal images may need that package. The recorder throws
-  `IllegalStateException` if `xprop` or `_GTK_FRAME_EXTENTS` is unavailable.
-  Older Mutter, non-GTK CSD, and KDE or sway server-side decorations may lack
-  the property. Installing `xprop` only resolves the missing binary. Qt,
-  JavaFX, Electron, SDL, and other non-GTK windows may still lack the property.
-  Use `startRegion(...)` for explicit region capture. See
-  [Recording limitations](../RECORDING-LIMITATIONS.md#platform) for more.
+- Generic portal window capture fails before opening a picker. A title, frame size, or saved grant cannot identify the requested window. Use GNOME Mutter for supported windows or explicitly request a region.
 
 ## Direct backend selection
 
@@ -402,7 +386,7 @@ Instantiate a backend directly when a test needs a specific implementation:
 | `LinuxNativeScreenshotter`    | Linux Xorg/Xvfb screenshots via `ximagesrc`. Linux Wayland region screenshots via the portal monitor stream, and window screenshots via GNOME Mutter window streams. |
 | `ScreenCaptureKitRecorder`    | macOS-only window-targeted and region capture via the `spectre-recording-macos` Swift helper. |
 | `WaylandPortalRecorder`       | Linux Wayland region capture via `xdg-desktop-portal` (`SourceType.MONITOR`) and the `spectre-recording-linux` Rust helper. |
-| `WaylandPortalWindowRecorder` | Linux Wayland window-targeted capture via `xdg-desktop-portal` (`SourceType.WINDOW`). Asks the user to pick every window; `AutoRecorder` does not use it. |
+| `WaylandPortalWindowRecorder` | Refuses window capture because the portal cannot verify the selected window’s identity. |
 
 ## Per-OS prerequisites
 

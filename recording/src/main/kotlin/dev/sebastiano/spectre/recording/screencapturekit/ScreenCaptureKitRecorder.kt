@@ -24,14 +24,11 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * Lifecycle:
  * 1. [start] extracts the helper binary, builds the helper argv, and spawns the subprocess. Window
- *    capture stamps a unique `Spectre/<id>` suffix on the target window's title so the helper can
- *    find that exact window across the process boundary, unless the window reports that its title
- *    is already unique (AWT [asTitledWindow] adapters). A unique title is matched as-is and never
- *    changed.
+ *    capture uses an owner-scoped title when unique and an owner-scoped frame otherwise. It never
+ *    changes the application window's title.
  * 2. The recorder waits a short startup probe to catch the common fast-fail exit codes
  *    ([HELPER_EXIT_BAD_ARGS], [HELPER_EXIT_WINDOW_NOT_FOUND], [HELPER_EXIT_TCC_DENIED]) and
- *    surfaces them with mapped error messages. Window mode restores the title on every failure so
- *    the user's app isn't left with a stale Spectre suffix.
+ *    surfaces them with mapped error messages.
  * 3. The returned [RecordingHandle] stops the helper by writing `q` to its stdin (mirrors
  *    `FfmpegRecorder`'s shutdown contract). Title restoration happens unconditionally during stop,
  *    including the crashed-mid-recording branch.
@@ -81,9 +78,8 @@ internal constructor(
     }
 
     /**
-     * Window-targeted capture by existing title substring + owner pid, without stamping a
-     * [TitleDiscriminator] on a local AWT window. For daemon/attach scenarios where the target
-     * window lives in another JVM (#185).
+     * Window-targeted capture by existing title substring + owner pid. For daemon/attach scenarios
+     * where the target window lives in another JVM (#185). Ambiguity is rejected by the helper.
      */
     public fun startMatchingTitle(
         titleContains: String,
@@ -128,10 +124,6 @@ internal constructor(
         crop: Rectangle?,
     ): RecordingHandle {
         validateOptions(options)
-        // Resolve everything that can fail without touching window state first. Anything we do
-        // before `discriminator?.apply()` doesn't need a restore path; anything after must
-        // restore on every error branch (the original window title is held by the
-        // discriminator and would otherwise stay dirty across a failed start).
         val helperPath = helperExtractor.extract()
         output.toAbsolutePath().parent?.let(Files::createDirectories)
 
@@ -143,41 +135,21 @@ internal constructor(
             )
         }
 
-        // Only retitle the window when its title is not already unique (same rule as
-        // ScreenCaptureKitScreenshotter, #509). Retitling a unique window shows the suffix in the
-        // recording and races with Compose `Window(title = ...)` recomposition, which can reset
-        // the title before the helper finds it (exit 3, #558).
-        val discriminator =
-            if ((window as? TitleDiscriminationAware)?.requiresTitleDiscriminator == false) {
-                null
-            } else {
-                TitleDiscriminator(window)
-            }
-        val titleContains = discriminator?.apply() ?: checkNotNull(window.title)
-        // Single restore-on-failure point — flipped to true on the success path so the handle
-        // takes ownership of the discriminator. Avoids per-throw-site restore() calls and the
-        // associated "did we cover every exception type from ProcessBuilder.start" gotcha.
-        var success = false
-        try {
-            val argv =
-                HelperArguments(
-                        source = HelperSource.Window,
-                        pid = windowOwnerPid,
-                        titleContains = titleContains,
-                        crop = crop,
-                        output = output,
-                        fps = options.frameRate,
-                        captureCursor = options.captureCursor,
-                        discoveryTimeoutMs = DEFAULT_DISCOVERY_TIMEOUT_MS,
-                    )
-                    .toArgv(helperPath)
-
-            val handle = startHelper(output, argv) { discriminator?.restore() }
-            success = true
-            return handle
-        } finally {
-            if (!success) discriminator?.restore()
-        }
+        val framed = window.ownerScopedFrame(windowOwnerPid, matchesSubstring = true)
+        val argv =
+            HelperArguments(
+                    source = HelperSource.Window,
+                    pid = windowOwnerPid,
+                    titleContains = if (framed == null) checkNotNull(window.title) else null,
+                    frame = framed?.logicalFrame,
+                    crop = crop,
+                    output = output,
+                    fps = options.frameRate,
+                    captureCursor = options.captureCursor,
+                    discoveryTimeoutMs = DEFAULT_DISCOVERY_TIMEOUT_MS,
+                )
+                .toArgv(helperPath)
+        return startHelper(output, argv) {}
     }
 
     override fun start(
@@ -429,10 +401,7 @@ private class ScreenCaptureKitRecordingHandle(
             result.get()?.getOrThrow()
             return
         }
-        // Run both `stopInternal()` and `cleanup()` even if the first one throws — restoring the
-        // window title is part of the cleanup contract even on the crash branch, otherwise the
-        // user's window stays dirtied with the Spectre/<id> suffix forever after a failed
-        // recording. Region recordings pass a no-op cleanup.
+        // Run both `stopInternal()` and `cleanup()` even if the first one throws.
         //
         // Both outcomes are folded into a single `Result` published BEFORE `countDown` so
         // every concurrent caller (the one that won the CAS race AND the ones blocked on
@@ -454,12 +423,7 @@ private class ScreenCaptureKitRecordingHandle(
         }
         // `stopInternal` re-sets the thread's interrupt flag if any of its `waitFor` calls saw
         // an interrupt — that's correct behaviour for propagating cancellation to the caller.
-        // But window cleanup in the production AWT adapter goes through
-        // `EventQueue.invokeAndWait`, whose internal `Object.wait` throws InterruptedException
-        // immediately when the interrupt flag is set. That would skip title restoration on
-        // every interrupted stop and leave the window dirty with a `Spectre/<id>` suffix
-        // forever. Clear the flag around restore, then re-set it so the caller still observes
-        // cancellation. (Unit tests miss this because FakeTitledWindow bypasses the EDT.)
+        // Clear the interrupt flag around cleanup, then restore it so cancellation remains visible.
         val wasInterrupted = Thread.interrupted()
         @Suppress("TooGenericExceptionCaught")
         try {

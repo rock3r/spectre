@@ -17,7 +17,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ScreenCaptureKitRecorderTest {
@@ -45,6 +44,40 @@ class ScreenCaptureKitRecorderTest {
             processFactory = factory,
             requireScreenCaptureAccess = {},
         ) to factory
+    }
+
+    @Test
+    fun `direct recording uses the AWT frame for a shared title with or without a crop`() {
+        withSharedSckFrames { left, _ ->
+            val output = Files.createTempFile("spectre-direct-", ".mov")
+            val pid = ProcessHandle.current().pid()
+            try {
+                for (cropped in listOf(false, true)) {
+                    val (recorder, factory) = newRecorder()
+                    val target = left.asTitledWindow()
+                    val options = RecordingOptions()
+                    if (cropped) {
+                            recorder.startCropped(
+                                target,
+                                Rectangle(2, 3, 20, 30),
+                                pid,
+                                output,
+                                options,
+                            )
+                        } else {
+                            recorder.start(target, pid, output, options)
+                        }
+                        .use {
+                            val argv = factory.lastArgv
+                            assertFalse("--title-contains" in argv)
+                            assertEquals("10,20,300,200", argv[argv.indexOf("--frame") + 1])
+                            assertEquals(pid.toString(), argv[argv.indexOf("--pid") + 1])
+                        }
+                }
+            } finally {
+                output.deleteIfExists()
+            }
+        }
     }
 
     @Test
@@ -109,10 +142,8 @@ class ScreenCaptureKitRecorderTest {
             assertTrue("--pid" in argv)
             assertEquals("4242", argv[argv.indexOf("--pid") + 1])
             assertTrue("--title-contains" in argv)
-            // The discriminator value lives on the window's title at this point — assert the
-            // recorder picked the same string for both.
-            val discriminator = argv[argv.indexOf("--title-contains") + 1]
-            assertTrue(window.title!!.contains(discriminator))
+            assertEquals("MyApp", argv[argv.indexOf("--title-contains") + 1])
+            assertEquals("MyApp", window.title)
             assertEquals(output.toString(), argv.last())
         } finally {
             output.deleteIfExists()
@@ -120,16 +151,20 @@ class ScreenCaptureKitRecorderTest {
     }
 
     @Test
-    fun `start applies title discriminator and stop restores the original title`() {
-        val window = FakeTitledWindow(initialTitle = "MyApp")
+    fun `start selects a shared-title window by its owner-scoped frame`() {
+        val window =
+            FramedWindow(
+                logicalFrame = Rectangle(-20, 30, 400, 250),
+                deviceFrame = Rectangle(-40, 60, 800, 500),
+            )
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
-        Files.write(output, byteArrayOf(1))
-        val (recorder, _) = newRecorder()
+        val (recorder, factory) = newRecorder()
         try {
-            val handle = recorder.start(window, 4242L, output, RecordingOptions())
-            assertTrue(window.title!!.startsWith("MyApp Spectre/"))
-            handle.stop()
-            assertEquals("MyApp", window.title)
+            recorder.start(window, 4242L, output, RecordingOptions())
+
+            assertContainsSequence(factory.lastArgv, listOf("--pid", "4242"))
+            assertContainsSequence(factory.lastArgv, listOf("--frame", "-20,30,400,250"))
+            assertTrue("--title-contains" !in factory.lastArgv)
         } finally {
             output.deleteIfExists()
         }
@@ -417,23 +452,8 @@ class ScreenCaptureKitRecorderTest {
     }
 
     @Test
-    fun `start preserves a null original title and stop restores it as null`() {
-        val window = FakeTitledWindow(initialTitle = null)
-        val output = Files.createTempFile("spectre-sck-test-", ".mov")
-        Files.write(output, byteArrayOf(1))
-        val (recorder, _) = newRecorder()
-        try {
-            val handle = recorder.start(window, 4242L, output, RecordingOptions())
-            handle.stop()
-            assertNull(window.title)
-        } finally {
-            output.deleteIfExists()
-        }
-    }
-
-    @Test
     fun `start does not mutate a uniquely titled window and matches its original title`() {
-        val window = DiscriminationAwareFakeWindow("Unique title", requiresDiscriminator = false)
+        val window = DiscriminationAwareFakeWindow("Unique title")
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
         Files.write(output, byteArrayOf(1))
         val (recorder, factory) = newRecorder()
@@ -451,7 +471,7 @@ class ScreenCaptureKitRecorderTest {
 
     @Test
     fun `startCropped does not mutate a uniquely titled window`() {
-        val window = DiscriminationAwareFakeWindow("Unique title", requiresDiscriminator = false)
+        val window = DiscriminationAwareFakeWindow("Unique title")
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
         Files.write(output, byteArrayOf(1))
         val (recorder, factory) = newRecorder()
@@ -474,7 +494,7 @@ class ScreenCaptureKitRecorderTest {
 
     @Test
     fun `start with a unique title does not touch the title when helper start fails`() {
-        val window = DiscriminationAwareFakeWindow("Unique title", requiresDiscriminator = false)
+        val window = DiscriminationAwareFakeWindow("Unique title")
         val output = Files.createTempFile("spectre-sck-test-", ".mov")
         Files.write(output, byteArrayOf(1))
         val (recorder, _) = newRecorder(process = InstantlyExitingFakeProcess(exitCode = 3))
@@ -487,32 +507,10 @@ class ScreenCaptureKitRecorderTest {
             output.deleteIfExists()
         }
     }
-
-    @Test
-    fun `start applies and restores the discriminator when the window requires one`() {
-        val window = DiscriminationAwareFakeWindow("Shared title", requiresDiscriminator = true)
-        val output = Files.createTempFile("spectre-sck-test-", ".mov")
-        Files.write(output, byteArrayOf(1))
-        val (recorder, factory) = newRecorder()
-        try {
-            val handle = recorder.start(window, 4242L, output, RecordingOptions())
-            assertTrue(window.title!!.startsWith("Shared title Spectre/"))
-            val titleContains = factory.lastArgv[factory.lastArgv.indexOf("--title-contains") + 1]
-            assertTrue(titleContains.startsWith("Spectre/"), "Got: $titleContains")
-            assertTrue(window.title!!.contains(titleContains))
-            handle.stop()
-            assertEquals("Shared title", window.title)
-        } finally {
-            output.deleteIfExists()
-        }
-    }
 }
 
 /** Fake window that reports whether its title is unique, and counts title writes. */
-private class DiscriminationAwareFakeWindow(
-    initialTitle: String?,
-    private val requiresDiscriminator: Boolean,
-) : TitledWindow, TitleDiscriminationAware {
+private class DiscriminationAwareFakeWindow(initialTitle: String?) : TitledWindow {
     var titleWrites: Int = 0
         private set
 
@@ -523,9 +521,6 @@ private class DiscriminationAwareFakeWindow(
         }
 
     override val bounds: Rectangle = Rectangle(0, 0, 100, 100)
-
-    override val requiresTitleDiscriminator: Boolean
-        get() = requiresDiscriminator
 }
 
 private class RecordingProcessFactory(

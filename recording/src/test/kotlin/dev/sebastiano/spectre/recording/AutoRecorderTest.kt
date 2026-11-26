@@ -396,7 +396,7 @@ class AutoRecorderTest {
                     recorder.startWindow(window = StubTitledWindow(title = ""), output = output)
                 }
 
-            assertTrue(error.message.orEmpty().contains("non-blank window title"))
+            assertTrue(error.message.orEmpty().contains("title or frame selector"))
             assertEquals(0, windowRecorder.startCallCount)
             assertFalse(ffmpeg.startCalled)
         } finally {

@@ -158,7 +158,7 @@ Spectre is JVM-first and targets desktop OSes.
 | **macOS** | Primary | Full support. AWT Robot input, ScreenCaptureKit recording (with `spectre-recording-macos` helper), TCC permission diagnostics. |
 | **Windows** | Full | AWT Robot input + Windows Graphics Capture region/window recording + agent attach over native `AF_UNIX` (Windows 10 1803 / Server 2019+). |
 | **Linux Xorg** | Full | AWT Robot input + helper/GStreamer Xorg/Xvfb recording and screenshots. Validated against Xvfb in CI. |
-| **Linux Wayland** | Best-effort | Portal-mediated capture via `WaylandPortalRecorder`, `WaylandPortalWindowRecorder`, and `LinuxNativeScreenshotter`. **Validated on GNOME/Mutter only**; KDE / sway / wlroots compositors may behave differently and are not exercised in CI. Real Robot input is unavailable on Wayland — use the synthetic adapter for tests. |
+| **Linux Wayland** | Best-effort | Portal region capture and GNOME Mutter window capture for movies and stills. **Validated on GNOME/Mutter only**; KDE / sway / wlroots compositors may behave differently and are not exercised in CI. Real Robot input is unavailable on Wayland — use the synthetic adapter for tests. |
 | **BSD** | Unsupported | Not built or tested. |
 
 Cooperative desktop coordination is an **Experimental** preview for participating Spectre clients
