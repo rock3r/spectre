@@ -59,6 +59,29 @@ class PortalDialogSemanticsTest(unittest.TestCase):
         self.assertIsNone(semantics.profile(unrelated))
         self.assertFalse(semantics.is_dialog("dialog", "Screen Sharing"))
 
+    def test_remember_checkbox_accepts_native_gtk_mnemonic(self):
+        authentic = [fact("check box", "_Remember This Selection",
+                          states=("checkable", "checked", "focusable", "sensitive",
+                                  "showing", "visible"), index=10),
+                     fact("label", "Remember This Selection",
+                          states=("sensitive", "showing", "visible"), index=12)]
+        self.assertEqual(10, semantics.remember_checkbox(authentic)["index"])
+        authentic[0]["name"] = "_rEmEmBeR tHiS sElEcTiOn"
+        self.assertEqual(10, semantics.remember_checkbox(authentic)["index"])
+
+    def test_remember_checkbox_is_unique_exact_and_showing(self):
+        checked = fact("check box", "_Remember This Selection",
+                       states=("checked", "showing"), index=10)
+        self.assertIsNone(semantics.remember_checkbox([]))
+        self.assertIsNone(semantics.remember_checkbox([
+            fact("check box", "_Remember This Selection", states=("showing",), index=10)]))
+        self.assertIsNone(semantics.remember_checkbox([checked, dict(checked, index=11)]))
+        self.assertIsNone(semantics.remember_checkbox([
+            fact("label", "Remember This Selection", states=("checked", "showing"), index=12)]))
+        self.assertIsNone(semantics.remember_checkbox([
+            fact("check box", "Remember This Selection later",
+                 states=("checked", "showing"), index=10)]))
+
 
 if __name__ == "__main__":
     unittest.main()

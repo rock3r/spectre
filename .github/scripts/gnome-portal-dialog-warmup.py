@@ -199,12 +199,11 @@ def accept_dialog(pid: int, artifact: Path, *, approve_remember: bool = False) -
         time.sleep(0.1)
     if "checked" not in state_names(remote_input):
         fail("GNOME did not acknowledge the requested remote interaction")
-    remember = [node for node, item in zip(dialog_nodes, dialog_facts)
-                if semantics.folded(item["name"]) == "remember this selection"
-                and item["role"] in ("check box", "toggle button", "switch")]
-    if approve_remember and len(remember) > 1:
-        fail(f"found multiple Remember controls; see {artifact}")
-    if approve_remember and remember and "checked" not in state_names(remember[0]):
+    remember_facts = semantics.remember_controls(dialog_facts)
+    remember = [by_index[item["index"]] for item in remember_facts]
+    if approve_remember and len(remember) != 1:
+        fail(f"expected exactly one showing Remember checkbox; found {len(remember)}; see {artifact}")
+    if approve_remember and "checked" not in state_names(remember[0]):
         invoke(remember[0], accepted=("toggle",))
         deadline = time.monotonic() + 5
         while "checked" not in state_names(remember[0]) and time.monotonic() < deadline:
@@ -219,8 +218,9 @@ def accept_dialog(pid: int, artifact: Path, *, approve_remember: bool = False) -
     selected = {"profile": matched_profile, "role": selected_source.getRoleName(),
                 "name": clean(selected_source.name), "states": state_names(selected_source),
                 "remoteInteractionApproved": "checked" in state_names(remote_input),
-                "rememberAvailable": bool(remember),
-                "rememberApproved": bool(remember and "checked" in state_names(remember[0]))}
+                "rememberAvailable": len(remember) == 1,
+                "rememberApproved": len(remember) == 1 and
+                "checked" in state_names(remember[0])}
     invoke(share, accepted=("click",))
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:

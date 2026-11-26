@@ -1,0 +1,86 @@
+name: Temporary GNOME consent historical replay
+
+on:
+  push:
+    branches: [release-0.10/gnome-hosted-smoke]
+    paths: [.github/workflows/gnome-consent-historical-replay.yml]
+
+# Read an already-public historical run; never mutate it or the repository.
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  replay:
+    if: startsWith(github.event.head_commit.message, 'Verify Jammy QA replays GNOME consent')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out immutable replay tooling
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          path: orchestration
+      - name: Check out the exact public product
+        uses: actions/checkout@v6
+        with:
+          ref: 05f4e18edde2db8ae2d42a36b65deb5c379299ec
+          persist-credentials: false
+          path: product
+      - name: Download and authenticate the official historical evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/download" "$RUNNER_TEMP/replay"
+          gh api repos/${{ github.repository }}/actions/runs/45835317389 > "$RUNNER_TEMP/replay/run.json"
+          gh api repos/${{ github.repository }}/actions/jobs/139962588421 > "$RUNNER_TEMP/replay/job.json"
+          gh api repos/${{ github.repository }}/actions/artifacts/15126133382 > "$RUNNER_TEMP/replay/artifact.json"
+          jq -e '.id == 45835317389 && .head_sha == "b662adbc11fcb8c8ed02b60e953a58d46854da08"' "$RUNNER_TEMP/replay/run.json"
+          jq -e '.id == 139962588421 && .run_id == 45835317389' "$RUNNER_TEMP/replay/job.json"
+          jq -e '.id == 15126133382 && .workflow_run.id == 45835317389 && .expired == false' "$RUNNER_TEMP/replay/artifact.json"
+          gh api repos/${{ github.repository }}/actions/artifacts/15126133382/zip > "$RUNNER_TEMP/artifact.zip"
+          sha256sum "$RUNNER_TEMP/artifact.zip" > "$RUNNER_TEMP/replay/artifact-zip.sha256"
+          test "$(cut -d' ' -f1 "$RUNNER_TEMP/replay/artifact-zip.sha256")" = 6ef045e27ed3d9fbfb143221ed03d346397a3cfd5ef025dc3aa19c68afd3fe49
+          unzip -q "$RUNNER_TEMP/artifact.zip" -d "$RUNNER_TEMP/download"
+      - name: Locate nested originals and derive only the consent conclusion
+        shell: bash
+        run: |
+          set -euo pipefail
+          one() { mapfile -d '' matches < <(find "$RUNNER_TEMP/download" -type f -name "$1" -print0); test "${#matches[@]}" = 1; printf '%s' "${matches[0]}"; }
+          tree="$(one consent-1-atspi-tree.json)"
+          original="$(one consent-summary.json)"
+          report="$(one release-smoke.json)"
+          console="$(one release-smoke-console.log)"
+          cp "$original" "$RUNNER_TEMP/replay/original-consent-summary.json"
+          cp "$report" "$RUNNER_TEMP/replay/release-smoke.original.json"
+          cp "$report" "$RUNNER_TEMP/replay/release-smoke.verification-copy.json"
+          cp "$console" "$RUNNER_TEMP/replay/release-smoke-console.log"
+          python3 orchestration/.github/scripts/rederive-gnome-consent.py \
+            --tree "$tree" --original "$original" \
+            --derived "$RUNNER_TEMP/replay/derived-consent-summary.json" \
+            --differences "$RUNNER_TEMP/replay/consent-differences.json"
+          sha256sum "$tree" "$original" "$report" "$console" > "$RUNNER_TEMP/replay/original-inputs.sha256"
+      - name: Strictly verify the copied canonical 26-cell report
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C product rev-parse HEAD)" = 05f4e18edde2db8ae2d42a36b65deb5c379299ec
+          cmp "$RUNNER_TEMP/replay/release-smoke.original.json" "$RUNNER_TEMP/replay/release-smoke.verification-copy.json"
+          python3 orchestration/.github/scripts/verify-final-release-report.py \
+            "$RUNNER_TEMP/replay/release-smoke.verification-copy.json" \
+            --repo "$GITHUB_WORKSPACE/product" \
+            --sha 05f4e18edde2db8ae2d42a36b65deb5c379299ec \
+            --console "$RUNNER_TEMP/replay/release-smoke-console.log" \
+            --consent-summary "$RUNNER_TEMP/replay/derived-consent-summary.json"
+          jq -e '.scenarios | length == 26' "$RUNNER_TEMP/replay/release-smoke.verification-copy.json"
+      - name: Upload compact replay evidence and provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gnome-consent-historical-replay-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/replay/*.json
+            ${{ runner.temp }}/replay/*.sha256
+          if-no-files-found: error
+          retention-days: 14

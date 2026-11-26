@@ -11,6 +11,39 @@ def is_dialog(role: str, name: str) -> bool:
     return role in ("dialog", "frame") and folded(name) == "remote desktop"
 
 
+def gtk_mnemonic_folded(value: str) -> str:
+    """Case-fold a GTK label after consuming ordinary single-underscore mnemonics."""
+    value = value or ""
+    plain, index = [], 0
+    while index < len(value):
+        if value[index] == "_" and index + 1 < len(value):
+            if value[index + 1] == "_":
+                plain.append("_")
+                index += 2
+                continue
+            index += 1
+            continue
+        plain.append(value[index])
+        index += 1
+    return folded("".join(plain))
+
+
+def remember_controls(facts: list[dict]) -> list[dict]:
+    """Return only the native, showing checkbox with the exact mnemonic label."""
+    return [item for item in _indexed(facts)
+            if item["role"] == "check box"
+            and gtk_mnemonic_folded(item["name"]) == "remember this selection"
+            and "showing" in item["states"]]
+
+
+def remember_checkbox(facts: list[dict]) -> dict | None:
+    """Return the unique checked control; ambiguity and unchecked states prove nothing."""
+    controls = remember_controls(facts)
+    if len(controls) != 1 or "checked" not in controls[0]["states"]:
+        return None
+    return controls[0]
+
+
 def _indexed(facts: list[dict]) -> list[dict]:
     return [dict(item, index=item.get("index", index)) for index, item in enumerate(facts)]
 
