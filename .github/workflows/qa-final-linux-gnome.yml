@@ -11,11 +11,12 @@ permissions:
 
 jobs:
   control:
-    if: startsWith(github.event.head_commit.message, 'Ship final Linux')
+    if: startsWith(github.event.head_commit.message, 'Ship final Linux') || startsWith(github.event.head_commit.message, 'Rehearse Linux release')
     runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.control.outputs.sha }}
       version: ${{ steps.control.outputs.version }}
+      phase: ${{ steps.control.outputs.phase }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -27,7 +28,12 @@ jobs:
           set -euo pipefail
           source .github/release-smoke-hosted.env
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$PHASE" == CANDIDATE ]]
+          if [[ "${{ startsWith(github.event.head_commit.message, 'Rehearse Linux release') }}" == true ]]; then
+            test "$PHASE" = REHEARSAL
+          else
+            test "$PHASE" = CANDIDATE
+          fi
+          echo "phase=$PHASE" >> "$GITHUB_OUTPUT"
           [[ "$RELEASE_VERSION" == 0.10.0 ]]
           printf 'sha=%s\nversion=%s\n' "$CANDIDATE_SHA" "$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 
@@ -39,27 +45,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-24.04
-            release: Noble GNOME 46
-            cell: complete-release-seat
-            mode: qa-final-release-seat
-          - os: ubuntu-24.04
-            release: Noble GNOME 46
-            cell: packaged-region-stills
-            mode: qa-final-region-stills
-          - os: ubuntu-22.04
-            release: Jammy GNOME 42
-            cell: packaged-region-stills
-            mode: qa-final-region-stills
-          - os: ubuntu-24.04
-            release: Noble GNOME 46
-            cell: packaged-dynamic-occlusion-crop
-            mode: cli-recording-live
-          - os: ubuntu-22.04
-            release: Jammy GNOME 42
-            cell: packaged-dynamic-occlusion-crop
-            mode: cli-recording-live
+        include: >-
+          ${{ needs.control.outputs.phase == 'REHEARSAL' && fromJSON('[{"os":"ubuntu-24.04","release":"Noble GNOME 46","cell":"complete-release-seat","mode":"qa-final-release-seat"}]') || fromJSON('[{"os":"ubuntu-24.04","release":"Noble GNOME 46","cell":"complete-release-seat","mode":"qa-final-release-seat"},{"os":"ubuntu-24.04","release":"Noble GNOME 46","cell":"packaged-region-stills","mode":"qa-final-region-stills"},{"os":"ubuntu-22.04","release":"Jammy GNOME 42","cell":"packaged-region-stills","mode":"qa-final-region-stills"},{"os":"ubuntu-24.04","release":"Noble GNOME 46","cell":"packaged-dynamic-occlusion-crop","mode":"cli-recording-live"},{"os":"ubuntu-22.04","release":"Jammy GNOME 42","cell":"packaged-dynamic-occlusion-crop","mode":"cli-recording-live"}]') }}
     steps:
       - name: Check out orchestration without modifying it
         uses: actions/checkout@v6

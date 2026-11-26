@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: ${{ startsWith(github.event.head_commit.message, 'Preserve Openbox') && fromJSON('["openbox"]') || fromJSON('["stock", "openbox"]') }}
+        mode: ${{ startsWith(github.event.head_commit.message, 'Rehearse Linux release') && fromJSON('["stock"]') || startsWith(github.event.head_commit.message, 'Preserve Openbox') && fromJSON('["openbox"]') || fromJSON('["stock", "openbox"]') }}
     # The committed harness owns an unmodified 7,200-second execution budget. Leave
     # enough time around it for a clean checkout, tool installation, and report upload.
     timeout-minutes: 150
