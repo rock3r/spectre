@@ -137,7 +137,7 @@ if [[ "$SMOKE_MODE" == portal || "$SMOKE_MODE" == capture || "$SMOKE_MODE" == ge
   timeout 15s gdbus wait --session --activate org.freedesktop.impl.portal.desktop.gnome
 fi
 
-if [[ "$SMOKE_MODE" == cli-recording-live || "$SMOKE_MODE" == cli-recording-restart ]]; then
+if [[ "$SMOKE_MODE" == cli-recording-live || "$SMOKE_MODE" == cli-recording-restart || "$SMOKE_MODE" == cli-region-stills ]]; then
   export GDK_BACKEND=x11
   gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
     --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled '<true>'

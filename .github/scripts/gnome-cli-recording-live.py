@@ -318,7 +318,10 @@ def main() -> None:
 
     env = os.environ.copy()
     env["SPECTRE_WAYLAND_CONSENT_PROMPT"] = "never"
+    region_mode = os.environ.get("SMOKE_MODE") == "cli-region-stills"
     crop_script = Path(__file__).with_name("gnome-public-window-crop.py")
+    if region_mode:
+        crop_script = Path(__file__).with_name("gnome-cli-region-stills.py")
     capture_started = time.monotonic()
     crop = subprocess.run([sys.executable, str(crop_script)], env=env, text=True,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -356,8 +359,12 @@ def main() -> None:
                     socket_owner(socket) == helper_pid)
     evidence.update({
         "cropExitCode": crop.returncode,
-        "cropEvidence": json.loads((artifacts / "public-window-crop-evidence.json").read_text())
-                        if (artifacts / "public-window-crop-evidence.json").is_file() else None,
+        "cropEvidence": json.loads((artifacts / (
+            "public-region-stills-evidence.json" if region_mode else
+            "public-window-crop-evidence.json")).read_text())
+                        if (artifacts / (
+                            "public-region-stills-evidence.json" if region_mode else
+                            "public-window-crop-evidence.json")).is_file() else None,
         "portalBackendPid": backend,
         "portalObservations": observations,
         "pickerAppearances": nonzero_runs,

@@ -1,0 +1,15 @@
+allprojects { candidate ->
+    if (candidate.path == ':recording') {
+        candidate.plugins.withId('org.jetbrains.kotlin.jvm') {
+            candidate.kotlin.sourceSets.test.kotlin.srcDir(
+                System.getenv('SPECTRE_REGION_VERIFICATION_SOURCE'))
+            candidate.tasks.register('runPublicWaylandRegionStills', JavaExec) {
+                group = 'verification'
+                classpath = candidate.sourceSets.test.runtimeClasspath
+                mainClass = 'verification.PublicWaylandRegionStills'
+                standardOutput = System.out
+                errorOutput = System.err
+            }
+        }
+    }
+}

@@ -1,10 +1,13 @@
-name: Temporary Jammy GNOME public capture
+name: Verify Jammy GNOME public region stills
 on:
   push:
     branches: [release-0.10/gnome-hosted-smoke]
     paths:
       - .github/workflows/gnome-jammy-smoke.yml
-      - .github/smoke-overlays/jammy-identity.patch
+      - .github/scripts/gnome-cli-recording-live.py
+      - .github/scripts/gnome-cli-region-stills.py
+      - .github/scripts/gnome-hosted-smoke-session.sh
+      - .github/verification/wayland-cli-region-stills/**
 permissions:
   contents: read
 jobs:
@@ -15,7 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04]
-        mode: [capture, cli-recording-live]
+        mode: [cli-region-stills]
     timeout-minutes: 55
     steps:
       - name: Check out temporary workflow tooling
@@ -27,24 +30,16 @@ jobs:
       - name: Check out the release candidate
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.candidate_sha || 'da8d1f8d27c2f70c092fae785aef98c9d1c94703' }}
+          ref: 7d1c27a716a95d502d6e90daf684514bc82623dc
           persist-credentials: false
           path: candidate
 
       - name: Verify the immutable public GNOME candidate
         working-directory: candidate
         run: |
-          test "$(git rev-parse HEAD)" = da8d1f8d27c2f70c092fae785aef98c9d1c94703
-          test "$(git write-tree)" = 66b00155aa679348cbfd1cc921210fee4c9fb86c
+          test "$(git rev-parse HEAD)" = 7d1c27a716a95d502d6e90daf684514bc82623dc
+          test "$(git write-tree)" = c2bdbe1c9aa55eb536ee727231d0e33877fbcafd
           test -z "$(git status --porcelain)"
-          overlays="$GITHUB_WORKSPACE/smoke-tooling/.github/smoke-overlays"
-          for entry in '02b05d32ae5e7ce309ff955ab84c70a47f2f55979f63f33652e77ada6b8e8fb3 jammy-identity.patch'; do
-            read -r digest filename <<< "$entry"
-            printf '%s  %s\n' "$digest" "$overlays/$filename" | sha256sum -c -
-            git apply --index "$overlays/$filename"
-          done
-          git diff --cached --stat
-          test "$(git write-tree)" = b04240825d8b9ef45576fcef0121bb7e253f886c
 
       - name: Set up JDK 21 for the project toolchain
         uses: actions/setup-java@v5
@@ -68,7 +63,7 @@ jobs:
           ATSPI_REPO: unused
           FIXTURE_CHECKOUT: unused
           SMOKE_MODE: ${{ matrix.mode }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha || 'da8d1f8d27c2f70c092fae785aef98c9d1c94703' }}
+          CANDIDATE_SHA: 7d1c27a716a95d502d6e90daf684514bc82623dc
           SMOKE_ARTIFACTS: ${{ runner.temp }}/gnome-cli-recording-live
           SMOKE_REPO: ${{ github.workspace }}/candidate
           SMOKE_SESSION_SCRIPT: ${{ github.workspace }}/smoke-tooling/.github/scripts/gnome-hosted-smoke-session.sh
