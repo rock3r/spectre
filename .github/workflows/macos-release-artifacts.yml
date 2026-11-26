@@ -386,6 +386,10 @@ jobs:
             # Each matrix row runs on its own native CPU, including Intel without Rosetta.
             "$published_launcher" --version
             "$published_launcher" --help >/dev/null
+            # Launching restores executable modes in place; prove that this final mutation did
+            # not invalidate either the nested code seal or the stapled notarisation ticket.
+            codesign --verify --deep --strict --verbose=4 "$published_app"
+            xcrun stapler validate "$published_app"
             file "$published_launcher"
             ls -la "$published_app/Contents/MacOS/"
           done

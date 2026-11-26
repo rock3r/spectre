@@ -7,6 +7,16 @@ import org.junit.jupiter.api.Test
 
 class CliRuntimeArchitectureContractTest {
     @Test
+    fun `contributor Linux package requires target helper while release staging requires both`() {
+        assertTrue(
+            VerifyRoastCliNativeLayout.requiredHelpers("linuxX64", false) ==
+                listOf("native/linux/x86_64/spectre-wayland-helper")
+        )
+        assertTrue(VerifyRoastCliNativeLayout.requiredHelpers("linuxX64", true).size == 2)
+        assertTrue(VerifyRoastCliNativeLayout.requiredHelpers("linuxArm64", true).size == 2)
+    }
+
+    @Test
     fun `real little-endian thin Mach headers accept both released CPUs`() {
         assertValid("macosX64", macEntries(thinMach(0x01000007)))
         assertValid("macosArm64", macEntries(thinMach(0x0100000c)))
@@ -18,6 +28,44 @@ class CliRuntimeArchitectureContractTest {
         assertValid("macosX64", macEntries(fatMach(true, 0x01000007, 0x0100000c)))
         val corrupt = fatMach(false, 0x01000007).also { thinMach(0x0100000c).copyInto(it, 64) }
         assertTrue(CliRuntimeArchitectureContract.validate("macosX64", macEntries(corrupt)).isNotEmpty())
+    }
+
+    @Test
+    fun `fat Mach members beyond eight MiB are read without buffering the slice`() {
+        val binary = fatMachWithDistantSecondSlice(0x01000007, 0x0100000c)
+        assertValid("macosArm64", macEntries(binary))
+    }
+
+    @Test
+    fun `truncated fat header and member are rejected`() {
+        assertTrue(
+            CliRuntimeArchitectureContract.validate(
+                    "macosX64",
+                    macEntries(byteArrayOf(0xca.toByte(), 0xfe.toByte(), 0xba.toByte(), 0xbe.toByte())),
+                )
+                .isNotEmpty()
+        )
+        val truncated = fatMach(false, 0x01000007).copyOf(80)
+        assertTrue(CliRuntimeArchitectureContract.validate("macosX64", macEntries(truncated)).isNotEmpty())
+    }
+
+    @Test
+    fun `Unix runtimes require exactly one jspawnhelper while Windows requires none`() {
+        assertTrue(
+            CliRuntimeArchitectureContract.validate(
+                    "linuxX64",
+                    linuxEntries(0x3e).filterKeys { !it.endsWith("/jspawnhelper") },
+                )
+                .any { "jspawnhelper" in it }
+        )
+        assertTrue(
+            CliRuntimeArchitectureContract.validate(
+                    "macosX64",
+                    macEntries(thinMach(0x01000007)).filterKeys { !it.endsWith("/jspawnhelper") },
+                )
+                .any { "jspawnhelper" in it }
+        )
+        assertValid("windowsX64", windowsEntries())
     }
 
     @Test
@@ -68,6 +116,7 @@ class CliRuntimeArchitectureContractTest {
         "bundle/Spectre.app/Contents/Resources/runtime/bin/java" to binary,
         "bundle/Spectre.app/Contents/Resources/runtime/lib/server/libjvm.dylib" to binary,
         "bundle/Spectre.app/Contents/Resources/runtime/lib/libjli.dylib" to binary,
+        "bundle/Spectre.app/Contents/Resources/runtime/lib/jspawnhelper" to binary,
     )
 
     private fun elf(machine: Int) = ByteArray(64).also {
@@ -105,6 +154,18 @@ class CliRuntimeArchitectureContractTest {
             }
             thinMach(cpu).copyInto(bytes, 64 + index * 64)
         }
+        return bytes
+    }
+
+    private fun fatMachWithDistantSecondSlice(firstCpu: Int, secondCpu: Int): ByteArray {
+        val secondOffset = 8 * 1024 * 1024 + 4096
+        val bytes = ByteArray(secondOffset + 32)
+        val b = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN)
+        b.putInt(0xcafebabe.toInt()).putInt(2)
+        b.putInt(8, firstCpu).putInt(16, 64).putInt(20, 32)
+        b.putInt(28, secondCpu).putInt(36, secondOffset).putInt(40, 32)
+        thinMach(firstCpu).copyInto(bytes, 64)
+        thinMach(secondCpu).copyInto(bytes, secondOffset)
         return bytes
     }
 }
