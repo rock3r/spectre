@@ -198,8 +198,8 @@ tasks.shadowJar {
                 "-dontwarn ch.qos.logback.classic.**",
                 "-keepattributes SourceFile,LineNumberTable,InnerClasses,EnclosingMethod," +
                     "RuntimeVisibleAnnotations,AnnotationDefault,Signature",
-                // `java -jar` Main-Class and the daemon spawn launched by string class name
-                // (DaemonProcessLauncher / DaemonJvmProcessDiscovery).
+                // `java -jar` Main-Class and subprocesses launched by string class name
+                // (DaemonProcessLauncher / DaemonJvmProcessDiscovery / WindowsAttachHelper).
                 "-keep class dev.sebastiano.spectre.cli.bootstrap.SpectreBootstrap { " +
                     "public static void main(java.lang.String[]); }",
                 "-keep class dev.sebastiano.spectre.cli.SpectreCliKt { " +
@@ -207,7 +207,6 @@ tasks.shadowJar {
                 "-keep class dev.sebastiano.spectre.cli.daemon.DaemonMainKt { " +
                     "public static void main(java.lang.String[]); }",
                 "-keep class dev.sebastiano.spectre.cli.daemon.DaemonMain { *; }",
-                // Windows package staging launches this helper directly from the optimized jar.
                 "-keep class dev.sebastiano.spectre.agent.WindowsAttachHelper { " +
                     "public static void main(java.lang.String[]); }",
                 // Clikt builds the command tree from constructed classes; keep command types and

@@ -1,6 +1,8 @@
 package dev.sebastiano.spectre.build
 
 import java.io.File
+import java.nio.charset.StandardCharsets
+import java.util.Base64
 import java.util.jar.JarFile
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
@@ -44,6 +46,7 @@ abstract class VerifyCliShadowJar : DefaultTask() {
 
         verifyHelp(jar)
         verifyMcpToolDiscovery(jar)
+        verifyWindowsAttachHelper(jar)
     }
 
     // The jar's main class is the AOT bootstrap: without isolation a verification
@@ -93,6 +96,42 @@ abstract class VerifyCliShadowJar : DefaultTask() {
         }
     }
 
+    private fun verifyWindowsAttachHelper(jar: File) {
+        val encoder = Base64.getUrlEncoder().withoutPadding()
+        val process =
+            ProcessBuilder(
+                    javaExecutable(),
+                    "-cp",
+                    jar.absolutePath,
+                    WINDOWS_ATTACH_HELPER_CLASS,
+                    Long.MAX_VALUE.toString(),
+                    encoder.encodeToString(jar.absolutePath.toByteArray(StandardCharsets.UTF_8)),
+                    "",
+                )
+                .redirectErrorStream(true)
+                .start()
+        try {
+            val output = readUntil(process) { it.lineSequence().any(::isAttachHelperError) }
+            check(process.waitFor(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS) && process.exitValue() == 2) {
+                "$WINDOWS_ATTACH_HELPER_CLASS did not reject an impossible PID with exit 2:\n$output"
+            }
+            check(output.lineSequence().any(::isAttachHelperError)) {
+                "$WINDOWS_ATTACH_HELPER_CLASS did not emit its structured error protocol:\n$output"
+            }
+        } finally {
+            process.destroyForcibly()
+        }
+    }
+
+    private fun isAttachHelperError(line: String): Boolean {
+        val fields = line.split('\t')
+        if (fields.size != ATTACH_HELPER_RESPONSE_FIELD_COUNT || fields[0] != "ERROR") return false
+        return runCatching {
+                fields.drop(1).map { Base64.getUrlDecoder().decode(it) }.first().isNotEmpty()
+            }
+            .getOrDefault(false)
+    }
+
     private fun readUntil(process: Process, complete: (String) -> Boolean): String =
         Executors.newSingleThreadExecutor().let { executor ->
             val output = executor.submit<String> {
@@ -137,6 +176,9 @@ abstract class VerifyCliShadowJar : DefaultTask() {
         private const val AGENT_RUNTIME_ENTRY = "spectre/agent-runtime.jar"
         private const val KTOR_SERVICE_ENTRY = "META-INF/services/io.ktor.server.config.ConfigLoader"
         private const val GUIDE_ENTRY = "spectre-guide/traps.md"
+        private const val WINDOWS_ATTACH_HELPER_CLASS =
+            "dev.sebastiano.spectre.agent.WindowsAttachHelper"
+        private const val ATTACH_HELPER_RESPONSE_FIELD_COUNT = 4
         // The first launch of a jar trains its AOT cache before running the real command: a
         // record run plus a cache-assembly JVM, both synchronous (see SpectreBootstrap.java).
         // That has taken more than 10 s on a slow GitHub-hosted macOS runner (#593), so give
