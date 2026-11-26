@@ -16,14 +16,14 @@ import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LinuxNativeScreenshotterTest {
 
     @Test
-    fun `Wayland captureRegion leaves cursor mode unspecified for the embedded session stream`() {
+    fun `Wayland captureRegion requests the held session's embedded cursor stream`() {
         val tempDir = Files.createTempDirectory("spectre-linux-screenshotter-test-")
         var command: dev.sebastiano.spectre.recording.portal.Command.Screenshot? = null
         val screenshotter =
@@ -43,7 +43,10 @@ class LinuxNativeScreenshotterTest {
 
         try {
             screenshotter.captureRegion(Rectangle(1, 2, 3, 4))
-            assertNull(command?.cursorMode)
+            assertEquals(
+                dev.sebastiano.spectre.recording.portal.CursorMode.EMBEDDED,
+                command?.cursorMode,
+            )
         } finally {
             tempDir.toFile().deleteRecursively()
         }
