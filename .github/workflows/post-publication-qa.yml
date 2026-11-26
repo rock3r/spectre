@@ -136,8 +136,9 @@ jobs:
             gsettings set org.gnome.desktop.interface toolkit-accessibility true
             /usr/bin/python3 "$1" "Spectre PID A Button" "$2/a.pid" & fixture_a=$!
             /usr/bin/python3 "$1" "Spectre PID B Button" "$2/b.pid" & fixture_b=$!
+            fixture_cli=$3
             finish() {
-              "$3" daemon stop >/dev/null 2>&1 || true
+              "$fixture_cli" daemon kill >evidence/daemon-shutdown.log 2>&1 || true
               kill "$fixture_a" "$fixture_b" 2>/dev/null || true
               wait "$fixture_a" "$fixture_b" 2>/dev/null || true
             }

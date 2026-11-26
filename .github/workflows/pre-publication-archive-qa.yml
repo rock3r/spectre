@@ -213,7 +213,8 @@ jobs:
             gsettings set org.gnome.desktop.interface toolkit-accessibility true
             /usr/bin/python3 "$1" "Spectre Prepublication QA Window" "Spectre Prepublication QA Button" "$2" & fixture=$!
             /usr/bin/python3 "$1" "Spectre Wrong Process Window" "Spectre Wrong Process Button" "$3" & counter=$!
-            finish() { "$4" daemon stop >/dev/null 2>&1 || true; kill "$fixture" "$counter" 2>/dev/null || true; wait "$fixture" "$counter" 2>/dev/null || true; }
+            fixture_cli=$4
+            finish() { "$fixture_cli" daemon kill >evidence/daemon-shutdown.log 2>&1 || true; kill "$fixture" "$counter" 2>/dev/null || true; wait "$fixture" "$counter" 2>/dev/null || true; }
             trap finish EXIT
             for i in {1..100}; do test -s "$2" -a -s "$3" && break; sleep .1; done
             pid=$(cat "$2"); counter_pid=$(cat "$3"); test "$pid" = "$fixture"; test "$counter_pid" = "$counter"; test "$pid" != "$counter_pid"
