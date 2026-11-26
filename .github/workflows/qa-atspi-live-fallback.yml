@@ -1,0 +1,93 @@
+name: Scratch real AT-SPI cache fallback acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [release-0.10/gnome-hosted-smoke]
+    paths:
+      - .github/qa-atspi-live-fallback/**
+      - .github/workflows/qa-atspi-live-fallback.yml
+
+permissions:
+  contents: read
+
+jobs:
+  real-cacheless-provider:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: qa
+          persist-credentials: false
+      - name: Validate controls and check out exact reader trees
+        shell: bash
+        run: |
+          set -euo pipefail
+          source qa/.github/qa-atspi-live-fallback/control.env
+          test "$PREFETCH_SHA" = fe9b574d491608522a1caf31e4aab28ef2a22a94
+          test "$PREFETCH_READER_TREE" = 9256292037b240e57f5a4b2f8fc41b0cadc54e4d
+          [[ -z "$CORRECTED_SHA" || "$CORRECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ -z "$CORRECTED_PATCH" || -z "$CORRECTED_SHA" ]]
+          if [[ -n "$CORRECTED_SHA$CORRECTED_PATCH" ]]; then [[ "$CORRECTED_READER_TREE" =~ ^[0-9a-f]{40}$ ]]; fi
+          git clone --filter=blob:none --no-checkout https://github.com/rock3r/spectre.git prefetch
+          git -C prefetch checkout --detach "$PREFETCH_SHA"
+          test "$(git -C prefetch rev-parse HEAD)" = "$PREFETCH_SHA"
+          test "$(git -C prefetch rev-parse HEAD:recording/native/linux)" = "$PREFETCH_READER_TREE"
+          printf '%s\n' "$PREFETCH_SHA" > "$RUNNER_TEMP/prefetch-sha.txt"
+          if [[ -n "$CORRECTED_SHA$CORRECTED_PATCH" ]]; then
+            cp -a prefetch corrected
+            if [[ -n "$CORRECTED_SHA" ]]; then
+              git -C corrected fetch origin "$CORRECTED_SHA"
+              git -C corrected checkout --detach "$CORRECTED_SHA"
+            else
+              test -f "qa/$CORRECTED_PATCH"
+              git -C corrected apply --check "$GITHUB_WORKSPACE/qa/$CORRECTED_PATCH"
+              git -C corrected apply --index "$GITHUB_WORKSPACE/qa/$CORRECTED_PATCH"
+            fi
+            staged_tree=$(git -C corrected write-tree)
+            test "$(git -C corrected rev-parse "$staged_tree:recording/native/linux")" = "$CORRECTED_READER_TREE"
+            git -C corrected rev-parse HEAD > "$RUNNER_TEMP/corrected-sha.txt"
+            git -C corrected write-tree > "$RUNNER_TEMP/corrected-reader-tree.txt"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install genuine X11, GTK, D-Bus and AT-SPI services
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb dbus-x11 at-spi2-core python3-dbus python3-gi gir1.2-gtk-3.0 libgtk-3-0t64 libatspi2.0-dev libdbus-1-dev pkg-config
+      - name: Cargo release tests and exact helper builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --release --locked --manifest-path prefetch/recording/native/linux/Cargo.toml
+          cargo build --release --locked --manifest-path prefetch/recording/native/linux/Cargo.toml
+          if [[ -d corrected ]]; then
+            cargo test --release --locked --manifest-path corrected/recording/native/linux/Cargo.toml
+            cargo build --release --locked --manifest-path corrected/recording/native/linux/Cargo.toml
+          fi
+      - name: Run headed private-session acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/atspi-receipts"
+          corrected=
+          [[ ! -d corrected ]] || corrected="$GITHUB_WORKSPACE/corrected/recording/native/linux/target/release/spectre-wayland-helper"
+          dbus-run-session -- xvfb-run -a env \
+            NO_AT_BRIDGE=0 GTK_MODULES=gail:atk-bridge \
+            QA_ROOT="$GITHUB_WORKSPACE/qa/.github/qa-atspi-live-fallback" \
+            ARTIFACTS="$RUNNER_TEMP/atspi-receipts" \
+            PREFETCH_HELPER="$GITHUB_WORKSPACE/prefetch/recording/native/linux/target/release/spectre-wayland-helper" \
+            CORRECTED_HELPER="$corrected" \
+            "$GITHUB_WORKSPACE/qa/.github/qa-atspi-live-fallback/run-session.sh" \
+            | tee "$RUNNER_TEMP/atspi-receipts/final-stdout.txt"
+      - name: Preserve receipts even when an assertion fails
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: real-atspi-cacheless-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/atspi-receipts
+            ${{ runner.temp }}/*-sha.txt
+            ${{ runner.temp }}/*-tree.txt
+          if-no-files-found: warn
+          retention-days: 14
