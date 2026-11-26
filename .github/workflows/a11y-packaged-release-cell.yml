@@ -1,0 +1,231 @@
+name: Verification-only packaged AccessKit release cell
+
+on:
+  push:
+    branches:
+      - release-0.10/gnome-hosted-smoke
+    paths:
+      - .github/workflows/a11y-packaged-release-cell.yml
+      - .github/reader-overlays/726-packaged-smoke.patch
+
+# This public-repository verification cell neither publishes nor mutates GitHub state.
+permissions: {}
+
+env:
+  TOOLING_REPOSITORY: https://github.com/rock3r/spectre.git
+  CANDIDATE_SHA: 5a39f4ce27486261a7ea7fbee8e3105bd4ec2eb3
+  READER_SHA: ebda65d1c23604dbea9dccc987293259afe3c0ef
+  FIXTURE_SHA: e3368c3c2476f9b955290cfdcb05722908f1f4a5
+  RELEASE_SOURCE_SHA: 7b13b8d1cd9a647ef1869c93411719fe84202bc7
+  READER_PATCH_SHA256: 90eca7faff69cf0d34eeabea06ac13b12bf0ecc1cb3aff57d7781e054212950d
+  READER_TREE: 892a5b54acd8026ff1d0c7a82aaa2d6100e18ac6
+  PACKAGED_SMOKE_PATCH_SHA256: 2f142a2c0619d7e7990f5294d1025a347fbf51358a96aa92afe1369bf253a9a2
+  RELEASE_SMOKE_BLOB: 777453f8c91b0fc4682419499d6d1a5a7c54c91b
+  SMOKE_LIB_BLOB: 4d528623522cd4908d4cd24d4987a6b93a24a06f
+  FIXTURE_LIB_BLOB: 008e813e7f3edf2a658f46606162874ea06b1202
+
+jobs:
+  packaged-accesskit:
+    name: Actual #726 AccessKit smoke / genuine Linux package
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+
+    steps:
+      - name: Create separate immutable public checkouts
+        shell: bash
+        env:
+          TOOLING_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/a11y-packaged-result"
+          checkout_public_commit() {
+            local directory="$1" ref="$2" expected="$3"
+            git init --quiet "$directory"
+            git -C "$directory" remote add origin "$TOOLING_REPOSITORY"
+            # Two commits retain the reader parent needed to derive the exact, parser-only
+            # unknown-geometry patch. The checked-out tip is still verified below.
+            git -C "$directory" fetch --quiet --no-tags --depth=2 origin "$ref"
+            git -C "$directory" checkout --quiet --detach FETCH_HEAD
+            test "$(git -C "$directory" rev-parse HEAD)" = "$expected"
+            test -z "$(git -C "$directory" status --porcelain=v1 --untracked-files=all)"
+          }
+
+          checkout_public_commit tooling \
+            "$TOOLING_SHA" "$TOOLING_SHA"
+          checkout_public_commit candidate "$CANDIDATE_SHA" "$CANDIDATE_SHA"
+          checkout_public_commit reader "$READER_SHA" "$READER_SHA"
+          checkout_public_commit fixture "$FIXTURE_SHA" "$FIXTURE_SHA"
+          checkout_public_commit release-source "$RELEASE_SOURCE_SHA" "$RELEASE_SOURCE_SHA"
+
+      - name: Verify and apply the pinned reader and smoke overlays
+        shell: bash
+        run: |
+          set -euo pipefail
+          reader_patch="$GITHUB_WORKSPACE/tooling/.github/reader-overlays/canonical-atspi.patch"
+          smoke_patch="$GITHUB_WORKSPACE/tooling/.github/reader-overlays/726-packaged-smoke.patch"
+          printf '%s  %s\n' "$READER_PATCH_SHA256" "$reader_patch" | sha256sum --check --strict
+          printf '%s  %s\n' "$PACKAGED_SMOKE_PATCH_SHA256" "$smoke_patch" | sha256sum --check --strict
+
+          git -C reader apply --index "$reader_patch"
+          test "$(git -C reader write-tree)" = "$READER_TREE"
+
+          git -C release-source apply --index "$smoke_patch"
+          test "$(git -C release-source hash-object scripts/release-smoke.py)" = "$RELEASE_SMOKE_BLOB"
+          test "$(git -C release-source hash-object scripts/smoke_lib.py)" = "$SMOKE_LIB_BLOB"
+
+      - name: Assemble the combined candidate without replacing #718 server code
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C fixture hash-object fixtures/accesskit/src/lib.rs)" = "$FIXTURE_LIB_BLOB"
+
+          # #716 can emit null bounds for unknown AT-SPI geometry. Derive its exact parser-only
+          # patch and prove that #718 already contains it. Reverse applicability is the
+          # fail-closed "already applied" check and leaves all #718 daemon/server code intact.
+          git -C reader diff --unified=0 "$READER_SHA^" "$READER_SHA" -- \
+            cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/AccessibilityHelperClient.kt \
+            > "$RUNNER_TEMP/unknown-geometry-client.patch"
+          test -s "$RUNNER_TEMP/unknown-geometry-client.patch"
+          test "$(git -C reader diff "$READER_SHA^" "$READER_SHA" --name-only -- \
+            cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/AccessibilityHelperClient.kt)" = \
+            "cli/src/main/kotlin/dev/sebastiano/spectre/cli/daemon/AccessibilityHelperClient.kt"
+          git -C candidate apply --reverse --check --unidiff-zero \
+            "$RUNNER_TEMP/unknown-geometry-client.patch"
+
+          rm -rf candidate/recording/native/linux candidate/fixtures/accesskit
+          mkdir -p candidate/recording/native candidate/fixtures
+          cp -a reader/recording/native/linux candidate/recording/native/linux
+          cp -a fixture/fixtures/accesskit candidate/fixtures/accesskit
+          cp release-source/scripts/release-smoke.py candidate/scripts/release-smoke.py
+          cp release-source/scripts/smoke_lib.py candidate/scripts/smoke_lib.py
+          git -C candidate add \
+            recording/native/linux fixtures/accesskit \
+            scripts/release-smoke.py scripts/smoke_lib.py
+
+          test "$(git -C candidate hash-object scripts/release-smoke.py)" = "$RELEASE_SMOKE_BLOB"
+          test "$(git -C candidate hash-object scripts/smoke_lib.py)" = "$SMOKE_LIB_BLOB"
+          test "$(git -C candidate hash-object fixtures/accesskit/src/lib.rs)" = "$FIXTURE_LIB_BLOB"
+          combined_tree="$(git -C candidate write-tree)"
+          test -n "$combined_tree"
+
+          mkdir -p "$RUNNER_TEMP/a11y-packaged-result"
+          cat > "$RUNNER_TEMP/a11y-packaged-result/source-fingerprints.json" <<EOF
+          {"tooling":"${GITHUB_SHA}","candidateBase":"${CANDIDATE_SHA}","readerBase":"${READER_SHA}","readerTree":"${READER_TREE}","fixtureBase":"${FIXTURE_SHA}","releaseSourceBase":"${RELEASE_SOURCE_SHA}","releaseSmokeBlob":"${RELEASE_SMOKE_BLOB}","smokeLibBlob":"${SMOKE_LIB_BLOB}","combinedTree":"${combined_tree}"}
+          EOF
+
+      - name: Set up JDK 21 toolchain
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up default JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Gradle with read-only remote caching
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          build-root-directory: candidate
+          cache-read-only: true
+
+      - name: Install documented Linux accessibility and UI dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            at-spi2-core dbus-x11 xvfb xauth x11-utils \
+            libatspi2.0-0 libatspi2.0-dev libdbus-1-dev \
+            libgtk-3-0 libgtk-3-dev libxkbcommon-x11-0 \
+            clang pkg-config python3 python3-pyatspi libpipewire-0.3-dev libspa-0.2-dev \
+            libwayland-dev libx11-dev libxcb1-dev libxkbcommon-dev
+          command -v cargo
+          command -v dbus-run-session
+          command -v Xvfb
+          command -v xvfb-run
+
+      - name: Compile the exact transplanted scripts
+        working-directory: candidate
+        shell: bash
+        run: python3 -m py_compile scripts/release-smoke.py scripts/smoke_lib.py
+
+      - name: Build the genuine 0.10.0 Linux release bundle
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon -PVERSION_NAME=0.10.0 :cli:packageLinuxX64 --console=plain
+          executable=cli/build/construo/linuxX64/roast/spectre
+          test -x "$executable"
+          "$executable" --version | tee "$RUNNER_TEMP/a11y-packaged-result/packaged-version.txt"
+          grep -Eq '(^|[^[:alnum:].])0\.10\.0([^[:alnum:].]|$)' "$RUNNER_TEMP/a11y-packaged-result/packaged-version.txt"
+          package_zip="$(find cli/build/construo/distributions/linuxX64 -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          test -n "$package_zip"
+          sha256sum "$package_zip" > "$RUNNER_TEMP/a11y-packaged-result/package.sha256"
+
+      - name: Run the actual unmodified #726 AccessKit function
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS \
+            SPECTRE_DAEMON_SOCKET_DIR SPECTRE_ACCESSIBILITY_HELPER \
+            SPECTRE_ACCESSIBILITY_HELPER_PATH SPECTRE_ACCESSIBILITY_SOCKET
+          started="$(date +%s)"
+          set +e
+          python3 - <<'PY' \
+            > >(tee "$RUNNER_TEMP/a11y-packaged-result/stdout.log") \
+            2> >(tee "$RUNNER_TEMP/a11y-packaged-result/stderr.log" >&2)
+          import json
+          import runpy
+          import time
+          from pathlib import Path
+
+          script = Path("scripts/release-smoke.py").resolve()
+          executable = Path("cli/build/construo/linuxX64/roast/spectre").resolve()
+          started = time.monotonic()
+          namespace = runpy.run_path(str(script))
+          detail = namespace["_accesskit_cli_smoke"](executable)
+          print(json.dumps({"result": "pass", "detail": detail, "wallSeconds": round(time.monotonic() - started, 3)}))
+          PY
+          status=$?
+          set -e
+          finished="$(date +%s)"
+          printf '{"result":"%s","exitCode":%d,"wallSeconds":%d}\n' \
+            "$([[ $status -eq 0 ]] && printf pass || printf fail)" "$status" "$((finished - started))" \
+            > "$RUNNER_TEMP/a11y-packaged-result/result.json"
+          exit "$status"
+
+      - name: Collect sanitized failure diagnostics
+        if: failure()
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/a11y-packaged-result/diagnostics.log"
+          {
+            printf '%s\n' '=== process summary ==='
+            ps -eo pid,ppid,stat,comm --sort=pid
+            printf '%s\n' '=== candidate status ==='
+            git status --short
+            printf '%s\n' '=== smoke logs ==='
+            find build/smoke -maxdepth 1 -type f -name '*.log' -print -exec tail -n 200 {} \; \
+              2>/dev/null | sed -E 's#(/home/runner/work/)[^ /]+/[^ /]+#\1<workspace>#g' || true
+          } > "$out" 2>&1
+
+      - name: Upload fingerprints, result, and bounded diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a11y-packaged-release-cell-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/a11y-packaged-result
+          if-no-files-found: error
+          retention-days: 7
