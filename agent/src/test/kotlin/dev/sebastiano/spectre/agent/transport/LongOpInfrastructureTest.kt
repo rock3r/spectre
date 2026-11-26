@@ -452,6 +452,73 @@ class LongOpInfrastructureTest {
             }
     }
 
+    @Test
+    fun `running deadline claims timeout before interrupting worker`() {
+        val operationStarted = CountDownLatch(1)
+        val deadlineClaimed = CountDownLatch(1)
+        val allowDeadlineInterrupt = CountDownLatch(1)
+        val workerInterrupted = CountDownLatch(1)
+        val allowWorkerReturn = CountDownLatch(1)
+        IpcServer(
+                udsPath,
+                AgentRequestHandler { request ->
+                    when (request) {
+                        AgentRequest.Windows -> {
+                            operationStarted.countDown()
+                            try {
+                                allowWorkerReturn.await()
+                            } catch (_: InterruptedException) {
+                                workerInterrupted.countDown()
+                                allowWorkerReturn.await()
+                            }
+                            AgentResponse.Windows(emptyList())
+                        }
+                        AgentRequest.Ping -> AgentResponse.Pong
+                        else -> AgentResponse.Ok
+                    }
+                },
+                onDeadlineResponseClaimed = {
+                    deadlineClaimed.countDown()
+                    allowDeadlineInterrupt.await()
+                },
+            )
+            .use {
+                awaitSocket(udsPath)
+                IpcClient(udsPath).use { client ->
+                    val response = AtomicReference<AgentResponse>()
+                    val request = Thread {
+                        response.set(
+                            client.send(
+                                AgentRequest.Windows,
+                                deadlineEpochMs = System.currentTimeMillis() + 1_000,
+                            )
+                        )
+                    }
+                        .apply {
+                            isDaemon = true
+                            start()
+                        }
+                    try {
+                        assertTrue(operationStarted.await(3, TimeUnit.SECONDS))
+                        assertTrue(deadlineClaimed.await(3, TimeUnit.SECONDS))
+                        assertFalse(
+                            workerInterrupted.await(200, TimeUnit.MILLISECONDS),
+                            "deadline must own the response before it interrupts the worker",
+                        )
+                        allowDeadlineInterrupt.countDown()
+                        assertTrue(workerInterrupted.await(3, TimeUnit.SECONDS))
+                    } finally {
+                        allowDeadlineInterrupt.countDown()
+                        allowWorkerReturn.countDown()
+                    }
+                    request.join(3_000)
+                    val error = assertIs<AgentResponse.Error>(response.get())
+                    assertEquals(AgentErrorCategory.Timeout.wireName, error.category)
+                    assertEquals(AgentResponse.Pong, client.send(AgentRequest.Ping))
+                }
+            }
+    }
+
     private fun awaitSocket(path: Path, timeoutMs: Long = 5_000) {
         val deadline = System.nanoTime() + timeoutMs * 1_000_000L
         while (System.nanoTime() < deadline) {
