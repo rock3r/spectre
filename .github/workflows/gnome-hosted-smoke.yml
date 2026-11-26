@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   public-wayland-cli-recording-live:
-    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && github.event.head_commit.message != 'Provision XRandR for live geometry calibration'
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Verify AT-SPI') && github.event.head_commit.message != 'Provision XRandR for live geometry calibration'
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     steps:
@@ -87,7 +87,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [geometry-calibration]
+        mode: [accessibility, atspi-ownership, atspi-distinct-content]
+        replica: [1, 2]
 
     steps:
       - name: Check out temporary workflow tooling
@@ -116,9 +117,9 @@ jobs:
         working-directory: atspi-reader
         run: |
           patch="$GITHUB_WORKSPACE/smoke-tooling/.github/reader-overlays/canonical-atspi.patch"
-          printf '%s  %s\n' 9232c066487bfec91a0c1fe0da71381e5211a690ecdf31f8890ed849c74751ad "$patch" | sha256sum -c -
+          printf '%s  %s\n' 90eca7faff69cf0d34eeabea06ac13b12bf0ecc1cb3aff57d7781e054212950d "$patch" | sha256sum -c -
           git apply --index "$patch"
-          test "$(git write-tree)" = 05e906416b3a28f7001f793edd13f80e03d5daf5
+          test "$(git write-tree)" = 892a5b54acd8026ff1d0c7a82aaa2d6100e18ac6
 
       - name: Check out native accessibility fixture
         if: matrix.mode == 'accessibility' || matrix.mode == 'atspi-ownership' || matrix.mode == 'atspi-distinct-content'
@@ -179,7 +180,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gnome-hosted-smoke-${{ matrix.mode }}-${{ github.run_attempt }}
+          name: gnome-hosted-smoke-${{ matrix.mode }}-replica-${{ matrix.replica }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gnome-hosted-smoke/
           if-no-files-found: error
           retention-days: 7
