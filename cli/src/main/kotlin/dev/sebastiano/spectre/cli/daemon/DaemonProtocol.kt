@@ -192,7 +192,11 @@ public sealed interface DaemonRequest {
     ) : DaemonRequest
 
     @Serializable
-    public data class Hello(public val clientVersion: DaemonProtocolVersion) : DaemonRequest
+    public data class Hello(public val clientVersion: DaemonProtocolVersion) : DaemonRequest {
+        /** Older clients only recognize the original singleton shutdown acknowledgement. */
+        public var acceptsShutdownRecordings: Boolean = false
+            internal set
+    }
 
     @Serializable
     @SerialName("attach")
@@ -445,6 +449,8 @@ public sealed interface DaemonResponse {
     @SerialName("detached")
     public data class Detached(
         public val sessionId: String,
+        /** Recording finalized automatically while detaching, if one was active. */
+        public val finalizedRecordingPath: String? = null,
         /** Captures this session left on disk (existing directories only). */
         public val captureCount: Int = 0,
         public val captureBytes: Long = 0L,
@@ -453,7 +459,13 @@ public sealed interface DaemonResponse {
         public val pruneCommand: String? = null,
         /** Agent skill name that documents capture.json + jq workflows. */
         public val skillHint: String? = null,
-    ) : DaemonResponse
+    ) : DaemonResponse {
+        public var diagnostics: RecordingDiagnostics? = null
+            internal set
+
+        public var recordingError: String? = null
+            internal set
+    }
 
     @Serializable
     @SerialName("sessions")
@@ -523,11 +535,20 @@ public sealed interface DaemonResponse {
     ) : DaemonResponse
 
     @Serializable
+    public data class RecordingDiagnostics(
+        public val droppedFrames: Long? = null,
+        public val cropFixedAtStart: Boolean? = null,
+    )
+
+    @Serializable
     @SerialName("recordingStopped")
     public data class RecordingStopped(
         public val sessionId: String,
         public val outputPath: String,
-    ) : DaemonResponse
+    ) : DaemonResponse {
+        public var diagnostics: RecordingDiagnostics? = null
+            internal set
+    }
 
     @Serializable
     @SerialName("recordingStatus")
@@ -539,6 +560,21 @@ public sealed interface DaemonResponse {
     ) : DaemonResponse
 
     @Serializable @SerialName("shuttingDown") public data object ShuttingDown : DaemonResponse
+
+    @Serializable
+    @SerialName("shuttingDownWithRecordings")
+    public data class ShuttingDownWithRecordings(public val recordings: List<FinalizedRecording>) :
+        DaemonResponse
+
+    @Serializable
+    public data class FinalizedRecording(
+        public val sessionId: String,
+        public val outputPath: String,
+        public val error: String? = null,
+    ) {
+        public var diagnostics: RecordingDiagnostics? = null
+            internal set
+    }
 
     @Serializable
     @SerialName("error")

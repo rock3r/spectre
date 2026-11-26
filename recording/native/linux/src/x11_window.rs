@@ -205,8 +205,7 @@ pub struct FrameCandidate {
 
 /// Picks the one candidate whose geometry equals [frame] within [FRAME_TOLERANCE_PX].
 ///
-/// Candidates whose `_NET_WM_PID` names a process other than [owner_pid] are skipped; a
-/// candidate without `_NET_WM_PID` is kept. No match, several matches, XID 0, or the root
+/// Candidates must have a `_NET_WM_PID` equal to the requested owner. No match, several matches, XID 0, or the root
 /// window all fail closed: `ximagesrc` would otherwise record the whole desktop.
 pub fn select_frame_match(
     candidates: &[FrameCandidate],
@@ -214,13 +213,11 @@ pub fn select_frame_match(
     owner_pid: Option<u32>,
     root: u64,
 ) -> Result<ResolvedX11Window> {
+    let owner = owner_pid.ok_or_else(|| anyhow!("X11 window frame lookup requires owner_pid"))?;
     let near = |actual: i64, expected: i64| (actual - expected).abs() <= FRAME_TOLERANCE_PX as i64;
     let matches: Vec<&FrameCandidate> = candidates
         .iter()
-        .filter(|c| match (owner_pid, c.pid) {
-            (Some(expected), Some(actual)) => expected == actual,
-            _ => true,
-        })
+        .filter(|c| c.pid == Some(owner))
         .filter(|c| {
             near(c.x as i64, frame.x as i64)
                 && near(c.y as i64, frame.y as i64)
@@ -230,14 +227,8 @@ pub fn select_frame_match(
         .collect();
     let describe = || {
         format!(
-            "frame {},{} {}x{} (device pixels){}",
-            frame.x,
-            frame.y,
-            frame.width,
-            frame.height,
-            owner_pid
-                .map(|pid| format!(" owned by pid {pid}"))
-                .unwrap_or_default()
+            "frame {},{} {}x{} (device pixels) owned by pid {owner}",
+            frame.x, frame.y, frame.width, frame.height
         )
     };
     let best = match matches.as_slice() {
@@ -613,11 +604,18 @@ unsafe fn read_cardinal(
     value
 }
 
-pub fn find_window_by_title(display_name: Option<&str>, title: &str) -> Result<ResolvedX11Window> {
-    let title = title.trim();
-    if title.is_empty() {
+pub fn find_window_by_title(
+    display_name: Option<&str>,
+    title: &str,
+    owner_pid: Option<u32>,
+) -> Result<ResolvedX11Window> {
+    if title.trim().is_empty() {
         bail!("X11 window capture requires a non-blank window title");
     }
+    let owner_pid = owner_pid.ok_or_else(|| {
+        anyhow!("X11 window capture by title requires owner_pid; refusing to search every process")
+    })?;
+    let owner_pid = Some(owner_pid);
     let api = X11Api::load().context("loading libX11.so.6 for named-window lookup")?;
     let display_cstr = match display_name.map(str::trim).filter(|s| !s.is_empty()) {
         Some(name) => Some(CString::new(name).context("DISPLAY name contains an interior NUL")?),
@@ -643,33 +641,90 @@ pub fn find_window_by_title(display_name: Option<&str>, title: &str) -> Result<R
              Named-window capture cannot fall back to the root/desktop."
         );
     }
-    let result = unsafe { find_on_open_display(&api, display, title) };
+    let result = unsafe { find_on_open_display(&api, display, title, owner_pid) };
     unsafe {
         (api.close_display)(display);
     }
     result
 }
 
+/// Reject an invalid region before `ximagesrc` can fall back to the whole desktop.
+pub fn validate_region_in_root(display_name: Option<&str>, region: Region) -> Result<()> {
+    let api = X11Api::load().context("loading libX11.so.6 for region bounds validation")?;
+    with_display(
+        &api,
+        display_name,
+        "the X11 root window",
+        |display| unsafe {
+            let root = (api.default_root_window)(display);
+            let (width, height, _) = window_geometry(&api, display, root)?
+                .ok_or_else(|| anyhow!("X11 root window has no geometry"))?;
+            validate_region_bounds(region, width, height)
+        },
+    )
+}
+
+fn validate_region_bounds(region: Region, root_width: u32, root_height: u32) -> Result<()> {
+    let right = region.x as i64 + region.width as i64;
+    let bottom = region.y as i64 + region.height as i64;
+    if region.x < 0
+        || region.y < 0
+        || region.width <= 0
+        || region.height <= 0
+        || right > root_width as i64
+        || bottom > root_height as i64
+    {
+        bail!(
+            "X11 region ({}, {}, {}x{}) must be fully inside root window (0, 0, {}x{}); refusing ximagesrc full-screen fallback",
+            region.x, region.y, region.width, region.height, root_width, root_height
+        );
+    }
+    Ok(())
+}
+
 unsafe fn find_on_open_display(
     api: &X11Api,
     display: *mut c_void,
     title: &str,
+    owner_pid: Option<u32>,
 ) -> Result<ResolvedX11Window> {
     let root = (api.default_root_window)(display);
     let net_wm_name = intern_atom(api, display, "_NET_WM_NAME");
     let mut matches = Vec::new();
-    collect_matches(api, display, root, root, title, net_wm_name, &mut matches)?;
-    let best = matches
-        .into_iter()
-        .min_by_key(|m| m.width.saturating_mul(m.height))
-        .ok_or_else(|| {
-            anyhow!(
+    let net_wm_pid = intern_atom(api, display, "_NET_WM_PID");
+    collect_matches(
+        api,
+        display,
+        root,
+        root,
+        title,
+        owner_pid,
+        net_wm_name,
+        net_wm_pid,
+        &mut matches,
+    )?;
+    let best = match matches.as_slice() {
+        [] => {
+            return Err(anyhow!(
                 "X11 window titled {title:?} was not found (checked WM_NAME and _NET_WM_NAME). \
                  GStreamer ximagesrc xname= would silently record the root/desktop; Spectre \
                  fails closed instead. Use the exact mapped window title, or startRegion(...) \
                  if framebuffer capture is what you want."
-            )
-        })?;
+            ))
+        }
+        [only] => *only,
+        many => bail!(
+            "{} visible X11 windows titled {title:?}{} match; cannot select one. Candidates: {}",
+            many.len(),
+            owner_pid
+                .map(|pid| format!(" owned by pid {pid}"))
+                .unwrap_or_default(),
+            many.iter()
+                .map(|item| format!("0x{:x} {}x{}", item.xid, item.width, item.height))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
     if best.xid == 0 || best.xid == root {
         bail!(
             "X11 window lookup for {title:?} resolved to the root window; refusing silent \
@@ -685,11 +740,21 @@ unsafe fn collect_matches(
     root: c_ulong,
     window: c_ulong,
     title: &str,
+    owner_pid: Option<u32>,
     net_wm_name: Option<c_ulong>,
+    net_wm_pid: Option<c_ulong>,
     out: &mut Vec<ResolvedX11Window>,
 ) -> Result<()> {
     if window != root {
-        if let Some(resolved) = match_window(api, display, window, title, net_wm_name)? {
+        if let Some(resolved) = match_window(
+            api,
+            display,
+            window,
+            title,
+            owner_pid,
+            net_wm_name,
+            net_wm_pid,
+        )? {
             out.push(resolved);
         }
     }
@@ -711,7 +776,17 @@ unsafe fn collect_matches(
     if !children.is_null() && nchildren > 0 {
         let slice = std::slice::from_raw_parts(children, nchildren as usize);
         for child in slice {
-            collect_matches(api, display, root, *child, title, net_wm_name, out)?;
+            collect_matches(
+                api,
+                display,
+                root,
+                *child,
+                title,
+                owner_pid,
+                net_wm_name,
+                net_wm_pid,
+                out,
+            )?;
         }
     }
     if !children.is_null() {
@@ -725,8 +800,15 @@ unsafe fn match_window(
     display: *mut c_void,
     window: c_ulong,
     title: &str,
+    owner_pid: Option<u32>,
     net_wm_name: Option<c_ulong>,
+    net_wm_pid: Option<c_ulong>,
 ) -> Result<Option<ResolvedX11Window>> {
+    if let Some(expected) = owner_pid {
+        if net_wm_pid.and_then(|atom| read_cardinal(api, display, window, atom)) != Some(expected) {
+            return Ok(None);
+        }
+    }
     let net_name = net_wm_name
         .map(|atom| read_text_property(api, display, window, atom))
         .transpose()?
@@ -865,21 +947,15 @@ unsafe fn window_geometry(
 }
 
 fn titles_match(expected: &str, actual: &str) -> bool {
-    expected.trim() == actual.trim()
+    expected == actual
 }
 
 fn decode_x_text(bytes: &[u8]) -> String {
     let bytes = bytes.strip_suffix(&[0]).unwrap_or(bytes);
     if let Ok(text) = std::str::from_utf8(bytes) {
-        return text.trim().to_string();
+        return text.to_string();
     }
-    bytes
-        .iter()
-        .copied()
-        .map(char::from)
-        .collect::<String>()
-        .trim()
-        .to_string()
+    bytes.iter().copied().map(char::from).collect()
 }
 
 impl X11Api {
@@ -1022,8 +1098,8 @@ mod tests {
     }
 
     #[test]
-    fn titles_match_after_trim() {
-        assert!(titles_match(
+    fn titles_preserve_significant_whitespace() {
+        assert!(!titles_match(
             "bioparco · grabby stepper",
             " bioparco · grabby stepper "
         ));
@@ -1035,9 +1111,18 @@ mod tests {
 
     #[test]
     fn blank_title_fails_closed_without_opening_x() {
-        let err = find_window_by_title(None, "   ").unwrap_err();
+        let err = find_window_by_title(None, "   ", None).unwrap_err();
         assert!(
             err.to_string().contains("non-blank"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn title_lookup_requires_an_owner_pid_without_opening_x() {
+        let err = find_window_by_title(None, "shared title", None).unwrap_err();
+        assert!(
+            err.to_string().contains("requires owner_pid"),
             "unexpected error: {err:#}"
         );
     }
@@ -1089,7 +1174,7 @@ mod tests {
 
     #[test]
     fn frame_selector_tolerates_one_device_pixel_of_rounding() {
-        let candidates = [candidate(0x200, 101, 119, 299, 201, None)];
+        let candidates = [candidate(0x200, 101, 119, 299, 201, Some(42))];
         let resolved =
             select_frame_match(&candidates, frame(100, 120, 300, 200), Some(42), 1).unwrap();
         assert_eq!(resolved.xid, 0x200);
@@ -1126,7 +1211,7 @@ mod tests {
     fn frame_selector_fails_when_two_windows_share_the_geometry() {
         let candidates = [
             candidate(0x200, 100, 120, 300, 200, Some(42)),
-            candidate(0x300, 100, 120, 300, 200, None),
+            candidate(0x300, 100, 120, 300, 200, Some(42)),
         ];
         let err =
             select_frame_match(&candidates, frame(100, 120, 300, 200), Some(42), 1).unwrap_err();
@@ -1136,14 +1221,14 @@ mod tests {
 
     #[test]
     fn frame_selector_refuses_the_root_window_and_xid_zero() {
-        let root = [candidate(1, 0, 0, 300, 200, None)];
-        let err = select_frame_match(&root, frame(0, 0, 300, 200), None, 1).unwrap_err();
+        let root = [candidate(1, 0, 0, 300, 200, Some(42))];
+        let err = select_frame_match(&root, frame(0, 0, 300, 200), Some(42), 1).unwrap_err();
         assert!(
             format!("{err:#}").contains("root"),
             "unexpected error: {err:#}"
         );
-        let zero = [candidate(0, 0, 0, 300, 200, None)];
-        let err = select_frame_match(&zero, frame(0, 0, 300, 200), None, 1).unwrap_err();
+        let zero = [candidate(0, 0, 0, 300, 200, Some(42))];
+        let err = select_frame_match(&zero, frame(0, 0, 300, 200), Some(42), 1).unwrap_err();
         assert!(
             format!("{err:#}").contains("root"),
             "unexpected error: {err:#}"
@@ -1231,7 +1316,8 @@ mod tests {
             Ok(value) if !value.trim().is_empty() => value,
             _ => return,
         };
-        let err = find_window_by_title(Some(&display), "spectre-no-such-window-513").unwrap_err();
+        let err =
+            find_window_by_title(Some(&display), "spectre-no-such-window-513", Some(std::process::id())).unwrap_err();
         let message = format!("{err:#}");
         assert!(
             message.contains("was not found"),
@@ -1241,5 +1327,12 @@ mod tests {
             message.contains("root") || message.contains("desktop"),
             "error must mention the silent-root hazard, got: {message}"
         );
+    }
+
+    #[test]
+    fn region_bounds_reject_ximagesrc_overshoot() {
+        assert!(validate_region_bounds(frame(0, 0, 1920, 1080), 1920, 1080).is_ok());
+        let error = validate_region_bounds(frame(1800, 0, 200, 100), 1920, 1080).unwrap_err();
+        assert!(format!("{error:#}").contains("full-screen fallback"));
     }
 }

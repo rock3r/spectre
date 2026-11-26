@@ -86,9 +86,9 @@ problem rather than forcing recovery while the owner can still acknowledge clean
 uncoordinated behaviour. Changing that default requires the full cross-platform release-smoke
 evidence and a separate stability decision.
 
-`Auto` never blocks the AWT event-dispatch thread to establish a new coordinator session. If no
-session is already connected, an EDT operation proceeds uncoordinated; use `Required`, acquire an
-exclusive scope off the EDT, or use JUnit per-test isolation when that fallback is unacceptable.
+On the EDT, a coordinated operation needs an immediately available lease. With a provider installed,
+a missing session or a busy lease fails the operation. Acquire an exclusive scope off the EDT or
+use JUnit per-test isolation. Explicit `Auto` permits uncoordinated input only if the provider is missing.
 
 For a multi-step transaction, hold one reentrant lease so another process cannot run between the
 steps:
@@ -185,10 +185,8 @@ as long as it is in force.
     look like anything but their cause. Use this only when you know your coordinator is broken
     **and** you know nothing else is automating this desktop, and take it back out afterwards.
 
-`Auto` is deliberately not the answer here. It degrades for exactly two error codes —
-`COORDINATOR_PROVIDER_MISSING` and `COORDINATOR_SESSION_UNAVAILABLE` — and a coordinator that
-cannot be reached reports `COORDINATOR_IO`, so `Auto` would fail this case anyway while weakening
-every other one.
+`Auto` permits uncoordinated input only for `COORDINATOR_PROVIDER_MISSING`. A provider that
+cannot establish a session reports an error.
 
 ## JUnit 4 and JUnit 5
 

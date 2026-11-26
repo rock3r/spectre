@@ -183,6 +183,7 @@ public constructor(
             client.use { channel ->
                 val input = Channels.newInputStream(channel)
                 val output = Channels.newOutputStream(channel)
+                var acceptsShutdownRecordings = false
                 var handshakeComplete = false
                 var handshakeVersion: DaemonProtocolVersion? = null
                 while (running.get()) {
@@ -191,6 +192,8 @@ public constructor(
                     val response = handleRequest(request, handshakeComplete, handshakeVersion)
                     if (request is DaemonRequest.Hello) {
                         handshakeComplete = response is DaemonResponse.Hello
+                        acceptsShutdownRecordings =
+                            handshakeComplete && request.acceptsShutdownRecordings
                         handshakeVersion = request.clientVersion.takeIf { handshakeComplete }
                     }
                     val isShutdown = request is DaemonRequest.Shutdown && handshakeComplete
@@ -199,7 +202,14 @@ public constructor(
                         // listening after Shutdown (registry is already closed by handleRequest).
                         shutdownAfterResponse = true
                     }
-                    runCatching { DaemonWireCodec.writeResponse(output, response) }
+                    val wireResponse =
+                        if (
+                            response is DaemonResponse.ShuttingDownWithRecordings &&
+                                !acceptsShutdownRecordings
+                        )
+                            DaemonResponse.ShuttingDown
+                        else response
+                    runCatching { DaemonWireCodec.writeResponse(output, wireResponse) }
                     if (isShutdown) break
                 }
             }

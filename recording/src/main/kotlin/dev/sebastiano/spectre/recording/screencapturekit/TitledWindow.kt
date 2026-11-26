@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording.screencapturekit
 
+import dev.sebastiano.spectre.recording.NativeWindowCaptureBridge
 import java.awt.Dialog
 import java.awt.EventQueue
 import java.awt.Frame
@@ -8,18 +9,13 @@ import java.awt.Window
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Minimal view onto a window object that exposes a mutable title. Lives as an interface so
- * [TitleDiscriminator] can be tested without an AWT/Compose window. The [asTitledWindow] adapters
- * bind Compose/Swing [Frame] and [Dialog] hosts to this surface.
+ * Minimal view onto a window object that exposes a mutable title. Lives as an interface so The
+ * [asTitledWindow] adapters bind Compose/Swing [Frame] and [Dialog] hosts to this surface.
  */
 public interface TitledWindow {
     public var title: String?
 
     public val bounds: Rectangle
-}
-
-internal interface TitleDiscriminationAware {
-    val requiresTitleDiscriminator: Boolean
 }
 
 /**
@@ -29,6 +25,27 @@ internal interface TitleDiscriminationAware {
  */
 internal interface AwtWindowBacked {
     val awtWindow: Window?
+}
+
+/** Resolve an AWT frame when the backend cannot uniquely select the window by title. */
+internal fun TitledWindow.ownerScopedFrame(
+    ownerPid: Long,
+    matchesSubstring: Boolean,
+): FramedWindow? {
+    val awt = (this as? AwtWindowBacked)?.awtWindow ?: return this as? FramedWindow
+    require(ownerPid == ProcessHandle.current().pid()) {
+        "The AWT capture target belongs to this JVM"
+    }
+    return onEdt {
+        check(awt.isShowing) { "Native window capture target is not showing" }
+        when {
+            this is FramedWindow -> this
+            title.isNullOrBlank() ||
+                NativeWindowCaptureBridge.isSharedTitle(awt, title, matchesSubstring) ->
+                awt.asFramedWindow()
+            else -> null
+        }
+    }
 }
 
 /**
@@ -42,7 +59,7 @@ internal interface AwtWindowBacked {
  * behaviour for `Frame.setTitle(null)`.
  */
 public fun Frame.asTitledWindow(): TitledWindow =
-    object : TitledWindow, TitleDiscriminationAware, AwtWindowBacked {
+    object : TitledWindow, AwtWindowBacked {
         override val awtWindow: Window
             get() = this@asTitledWindow
 
@@ -54,14 +71,11 @@ public fun Frame.asTitledWindow(): TitledWindow =
 
         override val bounds: Rectangle
             get() = onEdt { this@asTitledWindow.bounds }
-
-        override val requiresTitleDiscriminator: Boolean
-            get() = onEdt { requiresDiscriminator(this@asTitledWindow, title) }
     }
 
 /** Adapt an AWT [Dialog] (including `JDialog`) to the native capture window surface. */
 public fun Dialog.asTitledWindow(): TitledWindow =
-    object : TitledWindow, TitleDiscriminationAware, AwtWindowBacked {
+    object : TitledWindow, AwtWindowBacked {
         override val awtWindow: Window
             get() = this@asTitledWindow
 
@@ -73,33 +87,7 @@ public fun Dialog.asTitledWindow(): TitledWindow =
 
         override val bounds: Rectangle
             get() = onEdt { this@asTitledWindow.bounds }
-
-        override val requiresTitleDiscriminator: Boolean
-            get() = onEdt { requiresDiscriminator(this@asTitledWindow, title) }
     }
-
-private fun requiresDiscriminator(target: Window, title: String?): Boolean {
-    val otherTitles =
-        Window.getWindows()
-            .filter { candidate -> candidate !== target && candidate.isShowing }
-            .mapNotNull { candidate ->
-                when (candidate) {
-                    is Frame -> candidate.title
-                    is Dialog -> candidate.title
-                    else -> null
-                }
-            }
-    return titleNeedsDiscriminator(title, otherTitles)
-}
-
-/**
- * The native helper matches `--title-contains` as a substring of each window title, so [title] is
- * only safe to pass as-is when it is not blank and no title in [otherTitles] contains it.
- */
-internal fun titleNeedsDiscriminator(title: String?, otherTitles: List<String?>): Boolean {
-    if (title.isNullOrBlank()) return true
-    return otherTitles.any { other -> other?.contains(title) == true }
-}
 
 /**
  * Run [block] on the AWT EDT and return its result. If already on the EDT, runs inline. Any

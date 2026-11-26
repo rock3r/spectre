@@ -22,6 +22,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.io.TempDir
 
 /**
  * #605: every macOS window still used to start a new helper and a new ScreenCaptureKit capture,
@@ -30,6 +31,21 @@ import kotlin.test.assertTrue
  * `--mode stills` helper per window and asks it for each still.
  */
 class ScreenCaptureKitStillSessionsTest {
+    @TempDir lateinit var tempDir: Path
+
+    @Test
+    fun `direct AWT stills reuse the session for each shared-title frame`() {
+        withSharedSckFrames { left, right ->
+            val factory = StillsProcessFactory { StillsHelper(frames = listOf(frame(), frame())) }
+            val stills = screenshotter(factory)
+            for (window in listOf(left, right, left)) {
+                stills.captureWindow(window.asTitledWindow(), ProcessHandle.current().pid())
+            }
+            assertEquals(2, factory.started.size)
+            assertContainsSequence(factory.started[0], listOf("--frame", "10,20,300,200"))
+            assertContainsSequence(factory.started[1], listOf("--frame", "410,20,300,200"))
+        }
+    }
 
     @Test
     fun `repeated stills of an untitled window reuse one helper and one permission check`() {
@@ -73,17 +89,44 @@ class ScreenCaptureKitStillSessionsTest {
     }
 
     @Test
-    fun `a window that needs a title discriminator keeps the one-shot helper`() {
-        // The discriminator changes the title for every still, so a session could not find the
-        // window again by the same selector.
-        val factory = StillsProcessFactory { StillsHelper() }
-        val window = SharedTitleWindow("Shared")
+    fun `shared-title windows with distinct frames keep and reuse separate sessions`() {
+        val helpers =
+            ArrayDeque(
+                listOf(
+                    StillsHelper(frames = listOf(solidFrame(0x11), solidFrame(0x12))),
+                    StillsHelper(frames = listOf(solidFrame(0x21))),
+                )
+            )
+        val factory = StillsProcessFactory { helpers.removeFirst() }
+        val screenshotter = screenshotter(factory)
+        val left = framedWindow(Rectangle(10, 20, 300, 200))
+        val right = framedWindow(Rectangle(410, 20, 300, 200))
 
-        val image = screenshotter(factory).captureWindow(window, 4242L)
+        val leftFirst = screenshotter.captureWindow(left, 4242L)
+        val rightFirst = screenshotter.captureWindow(right, 4242L)
+        val leftSecond = screenshotter.captureWindow(left, 4242L)
 
-        assertContainsSequence(factory.started.single(), listOf("--mode", "screenshot"))
-        assertEquals(4, image.width)
-        assertEquals("Shared", window.title)
+        assertEquals(2, factory.started.size)
+        assertContainsSequence(factory.started[0], listOf("--frame", "10,20,300,200"))
+        assertContainsSequence(factory.started[1], listOf("--frame", "410,20,300,200"))
+        assertEquals(0xFF000011.toInt(), leftFirst.getRGB(0, 0))
+        assertEquals(0xFF000021.toInt(), rightFirst.getRGB(0, 0))
+        assertEquals(0xFF000012.toInt(), leftSecond.getRGB(0, 0))
+    }
+
+    @Test
+    fun `a frame timeout kills the normal stills-session helper`() {
+        val helper = StillsHelper(respondToCaptures = false)
+        val factory = StillsProcessFactory { helper }
+
+        val error =
+            assertFailsWith<IllegalStateException> {
+                screenshotter(factory, frameTimeoutMillis = 20)
+                    .captureWindow(framedWindow(Rectangle(10, 20, 300, 200)), 4242L)
+            }
+
+        assertContains(error.message.orEmpty(), "Timed out after 20ms")
+        assertTrue(helper.destroyed, "a timed-out stills helper must be killed")
     }
 
     @Test
@@ -147,10 +190,11 @@ class ScreenCaptureKitStillSessionsTest {
         screenshotter(factory, stillSessions = sessions)
             .captureWindow(UniqueTitledWindow("Spectre"), 4242L)
         val output = Files.createTempFile("spectre-sck-after-stills-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         try {
             recorder(factory, sessions)
                 .start(UniqueTitledWindow("Spectre"), 4242L, output, RecordingOptions())
-                .stop()
+                .use { Files.write(output, byteArrayOf(1, 2)) }
         } finally {
             output.deleteIfExists()
         }
@@ -159,63 +203,50 @@ class ScreenCaptureKitStillSessionsTest {
     }
 
     @Test
-    fun `a one-shot still stops the open stills sessions before it starts its capture`() {
-        val stills = StillsHelper(frames = listOf(frame()))
-        var stillsAliveAtOneShotStart: Boolean? = null
-        val factory =
-            StillsProcessFactory(onOneShot = { stillsAliveAtOneShotStart = stills.isAlive }) {
-                stills
-            }
-        val screenshotter = screenshotter(factory)
-        screenshotter.captureWindow(UniqueTitledWindow("Spectre"), 4242L)
-
-        screenshotter.captureWindow(SharedTitleWindow("Shared"), 4242L)
-
-        assertEquals(false, stillsAliveAtOneShotStart)
-    }
-
-    @Test
-    fun `a stills helper that does not stop in time is killed before a new capture`() {
+    fun `recording kills a prior stills session that does not shut down`() {
         val stills = StillsHelper(frames = listOf(frame()), exitsOnQuit = false)
-        val factory = StillsProcessFactory { stills }
-        val screenshotter = screenshotter(factory, stopWaitMillis = 50)
-        screenshotter.captureWindow(UniqueTitledWindow("Spectre"), 4242L)
-
-        screenshotter.captureWindow(SharedTitleWindow("Shared"), 4242L)
-
-        assertTrue(stills.destroyed, "a stills helper still holding its stream must be killed")
-    }
-
-    @Test
-    fun `an interrupt while stills sessions stop kills them and cancels the new capture`() {
-        val stills = StillsHelper(frames = listOf(frame()), exitsOnQuit = false)
-        val factory = StillsProcessFactory { stills }
-        val screenshotter = screenshotter(factory)
-        screenshotter.captureWindow(UniqueTitledWindow("Spectre"), 4242L)
-
-        Thread.currentThread().interrupt()
-        var stillInterrupted = false
+        val recording = StillsHelper()
+        val helpers = ArrayDeque(listOf(stills, recording))
+        val factory = StillsProcessFactory { helpers.removeFirst() }
+        val sessions = stillSessions(stopWaitMillis = 20)
+        val screenshotter = ScreenCaptureKitScreenshotter(fakeExtractor(), factory, {}, sessions)
+        screenshotter.captureWindow(framedWindow(Rectangle(10, 20, 300, 200)), 4242L)
+        val output = Files.createTempFile("spectre-sck-kill-stills-", ".mp4")
         try {
-            assertFailsWith<InterruptedException> {
-                screenshotter.captureWindow(SharedTitleWindow("Shared"), 4242L)
-            }
-            stillInterrupted = Thread.currentThread().isInterrupted
+            recorder(factory, sessions)
+                .start(UniqueTitledWindow("Spectre"), 4242L, output, RecordingOptions())
+                .use { Files.write(output, byteArrayOf(1)) }
         } finally {
-            // Clear the flag so it does not leak into other tests on this thread.
-            Thread.interrupted()
+            output.deleteIfExists()
         }
 
-        assertTrue(stillInterrupted, "the caller must still see the interrupt")
-        assertTrue(stills.destroyed, "an interrupted stop must not leave the stills helper running")
-        assertEquals(1, factory.started.size, "a cancelled capture must not start its helper")
+        assertTrue(stills.destroyed, "a stuck prior stills session must be killed")
+    }
+
+    @Test
+    fun `interruption while stopping prior stills kills the helper`() {
+        val stills = StillsHelper(frames = listOf(frame()), exitsOnQuit = false)
+        val factory = StillsProcessFactory { stills }
+        val sessions = stillSessions(stopWaitMillis = 5_000)
+        screenshotter(factory, stillSessions = sessions)
+            .captureWindow(framedWindow(Rectangle(10, 20, 300, 200)), 4242L)
+        try {
+            Thread.currentThread().interrupt()
+            assertFailsWith<InterruptedException> { sessions.stopAll() }
+            assertTrue(stills.destroyed, "an interrupted shutdown must kill the prior helper")
+        } finally {
+            Thread.interrupted()
+        }
     }
 
     private fun screenshotter(
         factory: StillsProcessFactory,
         idleCloseMillis: Long = 60_000,
         stopWaitMillis: Long = 5_000,
+        frameTimeoutMillis: Long = 5_000,
         onAccessCheck: () -> Unit = {},
-        stillSessions: HelperStillSessions = stillSessions(idleCloseMillis, stopWaitMillis),
+        stillSessions: HelperStillSessions =
+            stillSessions(idleCloseMillis, stopWaitMillis, frameTimeoutMillis),
     ): ScreenCaptureKitScreenshotter =
         ScreenCaptureKitScreenshotter(
             helperExtractor = fakeExtractor(),
@@ -238,12 +269,13 @@ class ScreenCaptureKitStillSessionsTest {
     private fun stillSessions(
         idleCloseMillis: Long = 60_000,
         stopWaitMillis: Long = 5_000,
+        frameTimeoutMillis: Long = 5_000,
     ): HelperStillSessions =
         HelperStillSessions(
             helper = ScreenCaptureKitStillHelper,
             idleCloseMillis = idleCloseMillis,
             readyTimeoutMillis = 5_000,
-            frameTimeoutMillis = 5_000,
+            frameTimeoutMillis = frameTimeoutMillis,
             stopWaitMillis = stopWaitMillis,
         )
 
@@ -252,7 +284,7 @@ class ScreenCaptureKitStillSessionsTest {
             envLookup = { null },
             sysPropLookup = { null },
             materialLocator = { helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf()) },
-            targetDirProvider = { Path.of("/tmp") },
+            targetDirProvider = { tempDir },
         )
 }
 
@@ -263,16 +295,16 @@ private fun frame(): ByteArray =
     "FRAME 2 1\n".toByteArray(Charsets.US_ASCII) +
         byteArrayOf(0x01, 0x02, 0x03, 0xFF.toByte(), 0x10, 0x20, 0x30, 0x55)
 
-private class UniqueTitledWindow(title: String) : TitledWindow, TitleDiscriminationAware {
-    override var title: String? = title
-    override val bounds: Rectangle = Rectangle(0, 0, 100, 100)
-    override val requiresTitleDiscriminator: Boolean = false
-}
+private fun solidFrame(blue: Int): ByteArray =
+    "FRAME 2 1\n".toByteArray(Charsets.US_ASCII) +
+        byteArrayOf(blue.toByte(), 0, 0, 0xFF.toByte(), blue.toByte(), 0, 0, 0xFF.toByte())
 
-private class SharedTitleWindow(title: String) : TitledWindow, TitleDiscriminationAware {
+private fun framedWindow(frame: Rectangle): FramedWindow =
+    FramedWindow(logicalFrame = frame, deviceFrame = Rectangle(frame))
+
+private class UniqueTitledWindow(title: String) : TitledWindow {
     override var title: String? = title
     override val bounds: Rectangle = Rectangle(0, 0, 100, 100)
-    override val requiresTitleDiscriminator: Boolean = true
 }
 
 private class StillsProcessFactory(
@@ -323,6 +355,7 @@ private class StillsHelper(
     frames: List<ByteArray> = emptyList(),
     private val exitBeforeReady: Int? = null,
     private val exitsOnQuit: Boolean = true,
+    private val respondToCaptures: Boolean = true,
 ) : Process() {
     private val answers = ArrayDeque(frames)
     private val toHelper = PipedInputStream()
@@ -350,8 +383,10 @@ private class StillsHelper(
                 val line = runCatching { commands.readLine() }.getOrNull()
                 if (line == null || line == "q") break
                 if (line == "c") {
-                    toJvm.write(answers.removeFirstOrNull() ?: frame())
-                    toJvm.flush()
+                    if (respondToCaptures) {
+                        toJvm.write(answers.removeFirstOrNull() ?: frame())
+                        toJvm.flush()
+                    }
                 }
             }
             quit.countDown()

@@ -1,5 +1,6 @@
 package dev.sebastiano.spectre.recording.portal
 
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonClassDiscriminator
@@ -34,6 +35,8 @@ internal sealed interface Command {
         @SerialName("source_types") val sourceTypes: List<SourceType>,
         @SerialName("display_name") val displayName: String? = null,
         @SerialName("window_title") val windowTitle: String? = null,
+        @SerialName("window_owner_pid") val windowOwnerPid: Long? = null,
+        @SerialName("window_frame") val windowFrame: Region? = null,
         @SerialName("cursor_mode") val cursorMode: CursorMode,
         @SerialName("frame_rate") val frameRate: Int,
         @SerialName("region") val region: Region,
@@ -53,7 +56,10 @@ internal sealed interface Command {
         /** Untitled-window selector: root coordinates, device pixels. X11 only. */
         @SerialName("window_frame") val windowFrame: Region? = null,
         @SerialName("window_owner_pid") val windowOwnerPid: Long? = null,
-        @SerialName("cursor_mode") val cursorMode: CursorMode,
+        /** Explicit requirement; null accepts an existing session stream's cursor semantics. */
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        @SerialName("cursor_mode")
+        val cursorMode: CursorMode? = null,
         @SerialName("region") val region: Region,
         @SerialName("screen_size") val screenSize: List<Int>? = null,
         @SerialName("output") val output: String,
@@ -161,7 +167,11 @@ internal sealed interface Event {
 
     @Serializable
     @SerialName("screenshot_saved")
-    data class ScreenshotSaved(@SerialName("output_size_bytes") val outputSizeBytes: Long) : Event
+    data class ScreenshotSaved(
+        @SerialName("output_size_bytes") val outputSizeBytes: Long,
+        /** Stream-relative crop proven by the helper before it started the PNG pipeline. */
+        @SerialName("capture_region") val captureRegion: List<Int>? = null,
+    ) : Event
 
     @Serializable
     @SerialName("error")

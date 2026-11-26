@@ -24,12 +24,12 @@ class DuplicateTitleNativeCaptureTest {
         val first =
             Frame("same title").apply {
                 setBounds(10, 20, 100, 80)
-                addNotify()
+                isVisible = true
             }
         val second =
             Frame("same title").apply {
                 setBounds(120, 30, 100, 80)
-                addNotify()
+                isVisible = true
             }
         val captured = mutableListOf<Window>()
         val backend =
@@ -57,12 +57,12 @@ class DuplicateTitleNativeCaptureTest {
         val first =
             Frame("same title").apply {
                 setBounds(10, 20, 100, 80)
-                addNotify()
+                isVisible = true
             }
         val second =
             Frame("same title").apply {
                 setBounds(10, 20, 100, 80)
-                addNotify()
+                isVisible = true
             }
         val backend =
             PlatformScreenCaptureBackend(

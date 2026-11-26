@@ -10,8 +10,9 @@ import java.lang.reflect.Method
  *
  * Uses public Compose Desktop `windowHandle` when present and non-zero; otherwise reflects into the
  * AWT peer (HWND / NSWindow* / X11 Window) the same way IntelliJ Platform does. Returns `null` when
- * the peer is missing or the platform path is unknown — callers must treat null as "no handle" and
- * fall back (title+pid window match, or region capture).
+ * the peer is missing or the platform path is unknown. Callers decide whether another native
+ * identifier is available or the requested operation must fail; a missing handle must not silently
+ * change the capture surface.
  *
  * **Module opens:** peer reflection needs `java.desktop` packages opened to Spectre core
  * (`sun.awt`, `sun.lwawt`, `sun.awt.X11`, …). The agent runtime opens them via

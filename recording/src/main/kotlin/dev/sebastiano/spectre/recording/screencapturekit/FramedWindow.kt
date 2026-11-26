@@ -12,8 +12,8 @@ import kotlin.math.roundToInt
  * Native capture identity for a host that has no title: a Swing `JWindow` or a plain AWT [Window].
  *
  * The native helpers find a titled window by its title. AWT has no title for these hosts, and
- * cannot set one, so a [TitleDiscriminator] cannot work. Instead the helpers select the window of
- * the owner process whose on-screen frame equals this one:
+ * cannot set one. Instead the helpers select the window of the owner process whose on-screen frame
+ * equals this one:
  * - macOS matches [logicalFrame] in points (the same space as AWT bounds).
  * - Windows and Linux X11 match [deviceFrame] in device pixels.
  *
@@ -24,7 +24,7 @@ internal class FramedWindow(
     val logicalFrame: Rectangle,
     val deviceFrame: Rectangle,
     override val awtWindow: Window? = null,
-) : TitledWindow, TitleDiscriminationAware, AwtWindowBacked {
+) : TitledWindow, AwtWindowBacked {
 
     override var title: String?
         get() = null
@@ -36,8 +36,6 @@ internal class FramedWindow(
 
     override val bounds: Rectangle
         get() = Rectangle(logicalFrame)
-
-    override val requiresTitleDiscriminator: Boolean = false
 
     override fun toString(): String =
         "FramedWindow(logicalFrame=$logicalFrame, deviceFrame=$deviceFrame)"

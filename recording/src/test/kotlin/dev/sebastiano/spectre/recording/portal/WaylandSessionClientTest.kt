@@ -1,21 +1,58 @@
 package dev.sebastiano.spectre.recording.portal
 
+import java.awt.Rectangle
+import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.io.TempDir
 
 /** Session helper start-up: consent memo (#634) and runtime-dir environment (#635). */
 class WaylandSessionClientTest {
 
     @TempDir lateinit var tempDir: Path
+
+    @Test
+    fun `screenshot leaves cursor mode unspecified because the session stream is embedded`() {
+        var command: Command.Screenshot? = null
+        val client =
+            WaylandSessionClient(
+                helperExtractor = extractor(),
+                envLookup = sessionDirEnv(),
+                processFactory = RecordingProcessFactory(exitCode = 0),
+                waitForSocket = { _, _ -> false },
+                screenshotSender = {
+                    command = it as Command.Screenshot
+                    ImageIO.write(
+                        BufferedImage(2, 3, BufferedImage.TYPE_INT_ARGB),
+                        "png",
+                        Path.of(it.output).toFile(),
+                    )
+                    Event.ScreenshotSaved(
+                        outputSizeBytes = Files.size(Path.of(it.output)),
+                        captureRegion = listOf(0, 0, 2, 3),
+                    )
+                },
+            )
+
+        val image = client.screenshot(Rectangle(10, 20, 2, 3))
+
+        assertEquals(2, image.width)
+        assertEquals(3, image.height)
+        assertEquals(null, command?.cursorMode)
+        val payload = Json.encodeToString<Command>(requireNotNull(command))
+        assertTrue(!payload.contains("cursor_mode"), payload)
+    }
 
     @Test
     fun `a consent timeout or denial is not prompted again in the same client`() {

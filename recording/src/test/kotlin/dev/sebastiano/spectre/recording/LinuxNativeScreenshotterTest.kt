@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.recording.portal.WaylandHelperBinaryExtractor
 import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
 import java.awt.Rectangle
+import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -16,9 +17,37 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LinuxNativeScreenshotterTest {
+
+    @Test
+    fun `Wayland captureRegion leaves cursor mode unspecified for the embedded session stream`() {
+        val tempDir = Files.createTempDirectory("spectre-linux-screenshotter-test-")
+        var command: dev.sebastiano.spectre.recording.portal.Command.Screenshot? = null
+        val screenshotter =
+            linuxScreenshotter(
+                tempDir,
+                processFactory =
+                    object : LinuxNativeScreenshotter.ProcessFactory {
+                        override fun start(helperPath: Path): Process =
+                            error("session capture must not start a one-shot helper")
+                    },
+                isWayland = true,
+                waylandRegionCapture = {
+                    command = it
+                    BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
+                },
+            )
+
+        try {
+            screenshotter.captureRegion(Rectangle(1, 2, 3, 4))
+            assertNull(command?.cursorMode)
+        } finally {
+            tempDir.toFile().deleteRecursively()
+        }
+    }
 
     @Test
     fun `captureRegion destroys helper when command write fails`() {
@@ -86,6 +115,30 @@ class LinuxNativeScreenshotterTest {
     }
 
     @Test
+    fun `X11 captureWindow scopes a title to its owner process`() {
+        val tempDir = Files.createTempDirectory("spectre-linux-screenshotter-test-")
+        val stdin = ByteArrayOutputStream()
+        val process =
+            FakeScreenshotHelperProcess(stdin = stdin, stdout = "not-json\n".byteInputStream())
+        val screenshotter = linuxScreenshotter(tempDir, process)
+        val window =
+            object : TitledWindow {
+                override var title: String? = "Shared title"
+                override val bounds: Rectangle = Rectangle(10, 20, 300, 200)
+            }
+
+        try {
+            assertFailsWith<RuntimeException> { screenshotter.captureWindow(window, 4242L) }
+
+            val command = stdin.toString(Charsets.UTF_8)
+            assertTrue(command.contains("\"window_title\":\"Shared title\""), command)
+            assertTrue(command.contains("\"window_owner_pid\":4242"), command)
+        } finally {
+            tempDir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `Wayland captureWindow never starts a portal window-source helper`() {
         val tempDir = Files.createTempDirectory("spectre-linux-screenshotter-test-")
         val screenshotter =
@@ -136,6 +189,9 @@ class LinuxNativeScreenshotterTest {
         tempDir: Path,
         processFactory: LinuxNativeScreenshotter.ProcessFactory,
         isWayland: Boolean = false,
+        waylandRegionCapture:
+            ((dev.sebastiano.spectre.recording.portal.Command.Screenshot) -> BufferedImage)? =
+            null,
     ): LinuxNativeScreenshotter =
         LinuxNativeScreenshotter(
             helperExtractor =
@@ -149,6 +205,7 @@ class LinuxNativeScreenshotterTest {
             isWayland = { isWayland },
             displayNameProvider = { ":99" },
             waylandWindowCapture = { error("no Mutter window stream in unit tests") },
+            waylandRegionCapture = waylandRegionCapture,
         )
 }
 

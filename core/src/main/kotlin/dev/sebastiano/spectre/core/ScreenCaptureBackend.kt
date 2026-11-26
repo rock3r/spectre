@@ -55,10 +55,12 @@ internal data class WindowCapture(val image: BufferedImage, val boundsOnScreen: 
  */
 internal fun windowStillForRegion(capture: WindowCapture, region: Rectangle): WindowCapture {
     if (capture.boundsOnScreen == region) return capture
-    val visibleRegion = region.intersection(capture.boundsOnScreen)
+    require(capture.boundsOnScreen.contains(region)) {
+        "Requested region $region must be fully inside captured window ${capture.boundsOnScreen}."
+    }
     return WindowCapture(
-        image = cropImageToScreenRegion(capture.image, visibleRegion, capture.boundsOnScreen),
-        boundsOnScreen = visibleRegion,
+        image = cropImageToScreenRegion(capture.image, region, capture.boundsOnScreen),
+        boundsOnScreen = region,
     )
 }
 
@@ -145,7 +147,7 @@ internal class PlatformScreenCaptureBackend(
     private fun ambiguousNativeIdentity(window: Window, selectsByFrame: Boolean): List<String>? {
         val title = window.title
         if (title.isNullOrBlank()) return null
-        val sameTitle = Window.getWindows().filter { it.isDisplayable && it.title == title }
+        val sameTitle = Window.getWindows().filter { it.isShowing && it.title == title }
         val matches =
             if (selectsByFrame) sameTitle.filter { it.bounds == window.bounds } else sameTitle
         return matches
@@ -164,11 +166,10 @@ internal class PlatformScreenCaptureBackend(
         }
 
         /**
-         * macOS tells shared titles apart in its helper. Linux Wayland binds a Mutter window stream
-         * to the window itself, so titles do not select anything there.
+         * Linux Wayland binds a Mutter window stream to the window itself, so titles do not select
+         * anything there. Every title-selecting backend must reject ambiguous identities.
          */
-        fun defaultNativeCaptureDisambiguatesTitles(): Boolean =
-            System.getProperty("os.name").contains("mac", ignoreCase = true) || isWaylandSession()
+        fun defaultNativeCaptureDisambiguatesTitles(): Boolean = isWaylandSession()
     }
 }
 
@@ -277,6 +278,48 @@ internal fun nativeWindowCaptureFor(classLoader: ClassLoader): ((Window) -> Buff
         }
     }
 }
+
+internal fun nativeScreenRegionCaptureFor(
+    classLoader: ClassLoader
+): ((Rectangle) -> BufferedImage)? {
+    val bridge =
+        try {
+            Class.forName(NATIVE_WINDOW_CAPTURE_BRIDGE, false, classLoader)
+        } catch (_: ClassNotFoundException) {
+            return null
+        }
+    val capture =
+        try {
+            bridge.getMethod("captureScreenRegion", Rectangle::class.java)
+        } catch (_: NoSuchMethodException) {
+            return null
+        }
+    return { region ->
+        try {
+            capture.invoke(null, region) as BufferedImage
+        } catch (e: InvocationTargetException) {
+            val cause = e.cause ?: e
+            if (cause is RuntimeException) throw cause
+            throw IllegalStateException("Native screen-region capture bridge failed", cause)
+        }
+    }
+}
+
+internal fun BufferedImage.scaledTo(width: Int, height: Int): BufferedImage {
+    if (this.width == width && this.height == height) return this
+    val scaled = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+    val graphics = scaled.createGraphics()
+    try {
+        graphics.drawImage(this, 0, 0, width, height, null)
+    } finally {
+        graphics.dispose()
+    }
+    return scaled
+}
+
+internal fun macOsRegionCaptureUnavailable(): String =
+    "macOS screen-region capture requires spectre-recording and spectre-recording-macos " +
+        "on the runtime classpath."
 
 private val Window.title: String?
     get() =

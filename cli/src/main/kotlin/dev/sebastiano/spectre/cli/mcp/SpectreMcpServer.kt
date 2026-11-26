@@ -520,7 +520,8 @@ public object SpectreMcpServer {
         }
         server.addTool(
             name = "record_stop",
-            description = "Stop the active recording and return its final output path.",
+            description =
+                "Stop the active recording and return its final output path and backend diagnostics.",
             inputSchema = sessionSchema(),
         ) { call ->
             request(DaemonRequest.StopRecording(call.requiredSessionId())).asResult {

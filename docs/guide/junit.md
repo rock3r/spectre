@@ -532,14 +532,17 @@ JUnit 4 `Assume` also write none.
 
 On JUnit 5, each written window directory is published as a report entry under the key
 `spectre.failureArtifact` (path string). JUnit 4 has no report-entry API; inspect disk under
-`build/reports/spectre/` (or a custom `reportsRoot`).
+`build/reports/spectre/` (or a custom `reportsRoot`). If no requested still is produced, JUnit 5
+publishes `spectre.failureArtifactMissing` with the discovery, capture, or write reason. JUnit 4
+prints the equivalent diagnostic to stderr.
 
 ### Caveats
 
 - Capture happens **after** the exception. Animations may advance a few frames past the failing
   assertion; treat the PNG as “state at capture time,” not a perfect freeze of the assert line.
-- Capture is **best-effort**. A secondary capture error must never replace the original test
-  failure; if capture cannot run, the test report retains the original failure.
+- Capture is **best-effort**, but not silent. A secondary capture error never replaces the original
+  test failure; the report explains which requested evidence is missing. Teardown errors are added
+  as suppressed exceptions to the original failure.
 - With multiple JUnit rules, keep `ComposeAutomatorRule` **innermost** (last `.around(...)` in
   a `RuleChain`) so outer rules do not close UI or process state before capture runs.
 
@@ -547,7 +550,10 @@ Point CI at the reports tree with a single upload glob; see [Running on CI](ci.m
 
 ## Failure video
 
-Failure video records the **whole test** and decides whether to keep the file afterward.
+Failure video starts observing when the test wrapper starts. By default, recording begins when
+a tracked non-popup window appears. If no window appears, there is no window video.
+To record desktop pixels explicitly, call `FailureVideoConfig.withRegion(bounds)` or
+`withDisplay(index)`. These scopes can include unrelated applications.
 Configure `FailureVideoConfig` beside still image settings on `ComposeAutomatorExtension`
 or `ComposeAutomatorRule`.
 
@@ -557,7 +563,7 @@ Select a policy for each suite:
 | Policy | Behaviour |
 | --- | --- |
 | `Off` | The default policy starts no recording. |
-| `OnFailureKeep` | Record the whole test; **delete** the finalised file on pass; **keep** on fail. |
+| `OnFailureKeep` | **Delete** the finalised file on pass; **keep** on fail. |
 | `Always` | Keep the finalised video on pass and fail; assumption/abort skips produce no kept video. |
 
 ### Runtime dependency (required for video)
@@ -582,9 +588,13 @@ dependencies {
 }
 ```
 
-Without the OS helper, the recorder fails to start and video is **skipped best-effort** (the
-test outcome is never replaced by a recorder error). Stills (`FailureArtifactsConfig`) do not
-require these helpers for Robot-region fallbacks. Native window stills require them; see
+If the selected scope cannot start, JUnit preserves the test outcome. When the policy calls
+for a video and none was kept, JUnit 5 publishes `spectre.failureVideoMissing` and both
+JUnit versions print the reason to stderr.
+
+Failure stills are enabled by default and use native window capture. If a requested still is
+missing, check `spectre.failureArtifactMissing` in JUnit 5 or stderr in JUnit 4. To diagnose
+capture directly, call `automator.capture(windowIndex)` while the window is open. See
 [Recording](recording.md). Full per-OS packaging and permission notes:
 [Recording limitations](../RECORDING-LIMITATIONS.md).
 
@@ -640,12 +650,12 @@ CI artefact upload examples for **every** policy (`Off`, `OnFailureKeep`, `Alway
 Recording every test uses CPU, helper processes, and disk.
 Use `Off` on CI unless a suite needs video diagnostics.
 
-- **CPU / helper process** — a platform recorder runs for the full test duration (ScreenCaptureKit
+- **CPU / helper process** — a platform recorder runs while video is being captured (ScreenCaptureKit
   helper on macOS, Windows Graphics Capture helper on Windows, GStreamer / portal paths on Linux).
   See [Recording limitations](../RECORDING-LIMITATIONS.md) for per-OS backend behaviour and
   permissions.
-- **Disk under `OnFailureKeep`** — the file is written for **every** invocation (including green
-  tests) and only deleted after the recorder stops and finalises. Parallel suites and long tests
+- **Disk under `OnFailureKeep`** — a passing test also writes a video file. The wrapper deletes it after the
+  recorder stops and finalises. Parallel suites and long tests
   can spike disk during the run even when nothing is left on pass.
 - **Permissions** — macOS Screen Recording TCC, Windows helper packaging, and Wayland
   portal consent still apply. If the backend cannot start, Spectre skips video

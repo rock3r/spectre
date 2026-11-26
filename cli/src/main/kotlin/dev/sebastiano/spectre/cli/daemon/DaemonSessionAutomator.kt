@@ -5,6 +5,7 @@ import dev.sebastiano.spectre.agent.AttachedAutomator
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
+import dev.sebastiano.spectre.recording.RecordingResult
 import java.io.IOException
 import java.time.Clock
 
@@ -105,7 +106,7 @@ internal interface DaemonSessionAutomator : AutoCloseable {
         fullscreen: Boolean = false,
     ): String
 
-    @Throws(IOException::class) fun stopRecording(liveSessionIds: Set<String>): String
+    @Throws(IOException::class) fun stopRecording(liveSessionIds: Set<String>): RecordingResult
 
     /** Active recording path, or null when idle. */
     fun recordingStatus(): RecordingStatus
@@ -114,7 +115,7 @@ internal interface DaemonSessionAutomator : AutoCloseable {
      * Finalize any active recording before the session is dropped. [remainingLiveSessionIds] must
      * be every other still-attached session so retention does not delete their capture dirs.
      */
-    fun finalizeRecording(remainingLiveSessionIds: Set<String>)
+    fun finalizeRecording(remainingLiveSessionIds: Set<String>): RecordingResult?
 }
 
 @OptIn(ExperimentalSpectreAgentApi::class)
@@ -235,13 +236,13 @@ internal class AttachedDaemonSession(
         fullscreen: Boolean,
     ): String = recording.start(outputPath, windowIndex, fullscreen)
 
-    override fun stopRecording(liveSessionIds: Set<String>): String = recording.stop(liveSessionIds)
+    override fun stopRecording(liveSessionIds: Set<String>): RecordingResult =
+        recording.stop(liveSessionIds)
 
     override fun recordingStatus(): RecordingStatus = recording.status()
 
-    override fun finalizeRecording(remainingLiveSessionIds: Set<String>) {
+    override fun finalizeRecording(remainingLiveSessionIds: Set<String>): RecordingResult? =
         recording.finalizeIfActive(remainingLiveSessionIds)
-    }
 
     override fun close() {
         try {

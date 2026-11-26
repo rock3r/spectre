@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.core
 import java.nio.file.Path
 import kotlin.io.path.readText
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DocsGuidanceContractTest {
@@ -40,6 +41,23 @@ class DocsGuidanceContractTest {
         assertContains(docs, "never substitutes")
         assertContains(docs, "legacy real-OS driver")
         assertContains(docs, "does not rewrite the Windows ACL")
+    }
+
+    @Test
+    fun `capture KDoc does not promise silent region fallbacks`() {
+        val sources =
+            listOf(
+                    "core/src/main/kotlin/dev/sebastiano/spectre/core/RobotDriver.kt",
+                    "core/src/main/kotlin/dev/sebastiano/spectre/core/DeviceScaleScreenCapture.kt",
+                    "core/src/main/kotlin/dev/sebastiano/spectre/core/NativeWindowHandle.kt",
+                )
+                .joinToString(separator = "\n") { root.resolve(it).readText() }
+
+        assertFalse(sources.contains("until Spectre grows native window-capture backends"))
+        assertFalse(sources.contains("Robot fallback used when it is absent"))
+        assertFalse(sources.contains("the window still is a Robot region capture too"))
+        assertFalse(sources.contains("or region capture"))
+        assertContains(sources, "fails instead of substituting a Robot region")
     }
 
     private fun assertContains(haystack: String, needle: String) {
