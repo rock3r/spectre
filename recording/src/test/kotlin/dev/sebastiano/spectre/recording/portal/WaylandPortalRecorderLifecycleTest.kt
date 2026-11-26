@@ -53,6 +53,7 @@ class WaylandPortalRecorderLifecycleTest {
         assertEquals(false, fake.destroyForciblyCalled.get())
         assertEquals(true, fake.isAlive())
         // Stop the recording so the test doesn't leave a thread/process running.
+        Files.write(handle.output, byteArrayOf(1, 2))
         fake.runStopConcurrently { handle.stop() }
     }
 
@@ -105,6 +106,7 @@ class WaylandPortalRecorderLifecycleTest {
         val fake = FakeHelperProcess()
         val recorder = recorder(fake)
         val handle = fake.runStartConcurrently { recorder.start(REGION, output(), OPTIONS) }
+        Files.write(handle.output, byteArrayOf(1, 2))
         fake.runStopConcurrently { handle.stop() }
         assertEquals(true, handle.isStopped)
         assertEquals(false, fake.destroyForciblyCalled.get(), "graceful stop must not force-kill")
@@ -135,13 +137,18 @@ class WaylandPortalRecorderLifecycleTest {
         val fake = FakeHelperProcess()
         val recorder = recorder(fake)
         val handle = fake.runStartConcurrently { recorder.start(REGION, output(), OPTIONS) }
+        Files.write(handle.output, byteArrayOf(1, 2))
         fake.runStopConcurrently { handle.stop() }
         // Second stop is a no-op; should not re-touch the (already exited) fake process.
         handle.stop()
         assertEquals(true, handle.isStopped)
     }
 
-    private fun output(): Path = Files.createTempFile("spectre-r2", ".mp4").also(tempOutputs::add)
+    private fun output(): Path =
+        Files.createTempFile("spectre-r2", ".mp4").also {
+            Files.write(it, byteArrayOf(1))
+            tempOutputs.add(it)
+        }
 
     private fun recorder(
         fake: FakeHelperProcess,
@@ -397,6 +404,6 @@ private class FakeHelperProcess : Process() {
                 "\"stream_position\":[0,0],\"gst_pid\":1}"
         const val ERROR_EVENT: String =
             "{\"event\":\"error\",\"kind\":\"PortalRejected\",\"message\":\"user dismissed\"}"
-        const val STOPPED_EVENT: String = "{\"event\":\"stopped\",\"output_size_bytes\":1024}"
+        const val STOPPED_EVENT: String = "{\"event\":\"stopped\",\"output_size_bytes\":2}"
     }
 }

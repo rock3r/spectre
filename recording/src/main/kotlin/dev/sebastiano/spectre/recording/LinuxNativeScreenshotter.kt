@@ -9,11 +9,8 @@ import dev.sebastiano.spectre.recording.portal.DefaultWaylandSessionClient
 import dev.sebastiano.spectre.recording.portal.DefaultWaylandWindowStreams
 import dev.sebastiano.spectre.recording.portal.Event
 import dev.sebastiano.spectre.recording.portal.Region
-import dev.sebastiano.spectre.recording.portal.SourceType
 import dev.sebastiano.spectre.recording.portal.WaylandCaptureUnavailableException
 import dev.sebastiano.spectre.recording.portal.WaylandHelperBinaryExtractor
-import dev.sebastiano.spectre.recording.portal.awtDisplayBoundsContaining
-import dev.sebastiano.spectre.recording.portal.toWire
 import dev.sebastiano.spectre.recording.screencapturekit.AwtWindowBacked
 import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
@@ -45,6 +42,9 @@ internal constructor(
     private val waylandWindowCapture: (Window) -> BufferedImage = {
         DefaultWaylandWindowStreams.instance.capture(it)
     },
+    private val waylandRegionCapture: (Rectangle) -> BufferedImage = {
+        DefaultWaylandSessionClient.instance.screenshot(it)
+    },
 ) : WindowScreenshotter, RegionScreenshotter {
 
     public constructor() :
@@ -70,6 +70,7 @@ internal constructor(
                 target = CaptureTarget.WINDOW,
                 displayName = displayNameProvider()?.takeIf { it.isNotBlank() },
                 windowTitle = title,
+                windowOwnerPid = windowOwnerPid,
                 cursorMode = CursorMode.HIDDEN,
                 region = window.bounds.toProtocolRegion(),
                 screenSize = null,
@@ -112,28 +113,21 @@ internal constructor(
 
     override fun captureRegion(region: Rectangle): BufferedImage {
         val wayland = isWayland()
+        if (wayland) return waylandRegionCapture(region)
         return capture(
             Command.Screenshot(
-                backend = if (wayland) CaptureBackend.WAYLAND_PORTAL else CaptureBackend.X11,
+                backend = CaptureBackend.X11,
                 target = CaptureTarget.REGION,
-                sourceTypes = if (wayland) listOf(SourceType.MONITOR) else emptyList(),
-                displayName =
-                    if (wayland) null else displayNameProvider()?.takeIf { it.isNotBlank() },
+                displayName = displayNameProvider()?.takeIf { it.isNotBlank() },
                 cursorMode = CursorMode.HIDDEN,
                 region = region.toProtocolRegion(),
-                screenSize = if (wayland) awtDisplayBoundsContaining(region)?.toWire() else null,
+                screenSize = null,
                 output = tempPng().toAbsolutePath().toString(),
             )
         )
     }
 
     private fun capture(command: Command.Screenshot): BufferedImage {
-        if (
-            command.backend == CaptureBackend.WAYLAND_PORTAL &&
-                command.target == CaptureTarget.REGION
-        ) {
-            return captureViaSession(command)
-        }
         val output = Path.of(command.output)
         var process: Process? = null
         var readerThread: Thread? = null
@@ -189,18 +183,6 @@ internal constructor(
         } catch (e: IllegalArgumentException) {
             cleanupFailedCapture(process, readerThread)
             throw e
-        } finally {
-            output.deleteIfExists()
-        }
-    }
-
-    private fun captureViaSession(command: Command.Screenshot): BufferedImage {
-        val output = Path.of(command.output)
-        try {
-            output.toAbsolutePath().parent?.let(Files::createDirectories)
-            DefaultWaylandSessionClient.instance.send(command)
-            return ImageIO.read(output.toFile())
-                ?: error("Linux screenshot helper did not produce a readable PNG at $output")
         } finally {
             output.deleteIfExists()
         }

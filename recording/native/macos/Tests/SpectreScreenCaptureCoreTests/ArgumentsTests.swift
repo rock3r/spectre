@@ -92,6 +92,47 @@ final class ArgumentsTests: XCTestCase {
         XCTAssertEqual(args.crop?.height, 200)
     }
 
+
+    func testWindowCropMustFitTheSelectedWindow() {
+        XCTAssertThrowsError(
+            try validateWindowCrop(
+                CaptureRegion(x: 50, y: 20, width: 200, height: 100),
+                windowSize: CGSize(width: 240, height: 200)
+            )
+        )
+    }
+
+    func testWindowCropClampsEverySinglePixelEdgeInset() throws {
+        let window = CGSize(width: 240, height: 200)
+        XCTAssertEqual(
+            try validateWindowCrop(
+                CaptureRegion(x: -1, y: 20, width: 101, height: 100), windowSize: window),
+            CaptureRegion(x: 0, y: 20, width: 100, height: 100))
+        XCTAssertEqual(
+            try validateWindowCrop(
+                CaptureRegion(x: 20, y: -1, width: 100, height: 101), windowSize: window),
+            CaptureRegion(x: 20, y: 0, width: 100, height: 100))
+        XCTAssertEqual(
+            try validateWindowCrop(
+                CaptureRegion(x: 140, y: 20, width: 101, height: 100), windowSize: window),
+            CaptureRegion(x: 140, y: 20, width: 100, height: 100))
+        XCTAssertEqual(
+            try validateWindowCrop(
+                CaptureRegion(x: 20, y: 100, width: 100, height: 101), windowSize: window),
+            CaptureRegion(x: 20, y: 100, width: 100, height: 100))
+    }
+
+    func testWindowCropRejectsEmptyIntersectionAndOverflowingArithmetic() {
+        XCTAssertThrowsError(
+            try validateWindowCrop(
+                CaptureRegion(x: -1, y: 0, width: 1, height: 10),
+                windowSize: CGSize(width: 240, height: 200)))
+        XCTAssertThrowsError(
+            try validateWindowCrop(
+                CaptureRegion(x: Int.max, y: 0, width: 2, height: 10),
+                windowSize: CGSize(width: 240, height: 200)))
+    }
+
     func testArgumentsRejectCropOnRegionSource() {
         XCTAssertThrowsError(
             try Arguments.parse([

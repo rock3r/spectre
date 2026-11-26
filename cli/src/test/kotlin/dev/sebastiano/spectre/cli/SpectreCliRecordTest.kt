@@ -52,16 +52,19 @@ class SpectreCliRecordTest {
             SpectreCli(
                 request = { request ->
                     assertEquals(DaemonRequest.StopRecording("pid-42"), request)
-                    DaemonResponse.RecordingStopped("pid-42", "/tmp/capture.mp4")
+                    DaemonResponse.RecordingStopped("pid-42", "/tmp/capture.mp4").also {
+                        it.diagnostics = DaemonResponse.RecordingDiagnostics(7, true)
+                    }
                 },
                 output = output,
             )
 
         assertEquals(0, cli.run(listOf("record", "stop", "pid-42", "--json")))
-        assertEquals(
-            "{\"version\":1,\"id\":\"pid-42\",\"path\":\"/tmp/capture.mp4\"}\n",
-            output.toString(),
-        )
+        val stopped = Json.parseToJsonElement(output.toString()).jsonObject
+        assertEquals("/tmp/capture.mp4", stopped.getValue("path").jsonPrimitive.content)
+        val diagnostics = stopped.getValue("diagnostics").jsonObject
+        assertEquals("7", diagnostics.getValue("droppedFrames").jsonPrimitive.content)
+        assertEquals("true", diagnostics.getValue("cropFixedAtStart").jsonPrimitive.content)
     }
 
     @Test

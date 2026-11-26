@@ -68,9 +68,12 @@ internal sealed interface FfmpegBackend {
             checkNotWayland(defaultLinuxSessionEnvLookup)
             // X11's display name is conventionally read from the `DISPLAY` env var. Most desktop
             // sessions set it (`:0`, `:0.0`, `:1`, etc.); over SSH-without-X-forwarding it's
-            // unset. Fall back to `:0.0` so a misconfigured environment produces a clear
-            // ffmpeg-side "cannot open display" error rather than a confusing argv NPE.
-            val display = System.getenv("DISPLAY")?.takeIf { it.isNotBlank() } ?: ":0.0"
+            // unset. Never guess :0.0: it can name a real, unrelated display and silently record
+            // the wrong desktop (particularly in CI and nested X servers).
+            val display =
+                requireNotNull(System.getenv("DISPLAY")?.takeIf { it.isNotBlank() }) {
+                    "DISPLAY is unset; ffmpeg x11grab cannot identify the X11 display to record."
+                }
             return FfmpegCli.x11grabRegionCapture(ffmpegPath, region, output, options, display)
         }
     }

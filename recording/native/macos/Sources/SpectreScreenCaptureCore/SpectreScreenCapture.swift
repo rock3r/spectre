@@ -22,9 +22,8 @@ import UniformTypeIdentifiers
 //   --pid <jvm pid>            Required for window source. Filters CGWindowList by owner PID so we never
 //                              capture another process's window matching the discriminator.
 //   --title-contains <suffix>  Window source selector. Substring match on the target window's kCGWindowName.
-//                              Spectre stamps a `Spectre/<uuid>` suffix on the ComposeWindow's
-//                              title for the recording's lifetime so this is unique.
-//   --frame <x,y,w,h>          Window source selector for untitled windows (JWindow, plain AWT
+//                              Ambiguous substring matches fail with exit 7.
+//   --frame <x,y,w,h>          Window source selector for untitled or shared-title windows (JWindow, plain AWT
 //                              Window). Matches the on-screen window of --pid whose frame equals
 //                              this rect within 1 point. Global CG coordinates in points, top-left
 //                              origin (the same space as AWT bounds). x/y may be negative.
@@ -421,7 +420,7 @@ enum RecordingFileType: String {
     }
 }
 
-struct CaptureRegion {
+struct CaptureRegion: Equatable {
     let x: Int
     let y: Int
     let width: Int
@@ -509,9 +508,8 @@ struct WindowCandidate<ID> {
 
 /// Returns the selected window, or nil when no window matches yet (the caller keeps polling).
 ///
-/// A title selector keeps the first window whose title contains the discriminator. A frame
-/// selector must match exactly one window: two windows with the same frame would make the
-/// capture a guess, so that fails with exit 7 instead.
+/// Every selector must match exactly one owned window. More than one match would make capture a
+/// guess, so ambiguity fails with exit 7 instead.
 func selectWindow<ID>(
     _ candidates: [WindowCandidate<ID>],
     pid: pid_t,
@@ -520,10 +518,18 @@ func selectWindow<ID>(
     let owned = candidates.filter { $0.pid == pid }
     switch selector {
     case .titleContains(let titleContains):
-        return owned.first(where: { candidate in
+        let matches = owned.filter { candidate in
             guard let title = candidate.title, !title.isEmpty else { return false }
             return title.contains(titleContains)
-        })?.id
+        }
+        if matches.count > 1 {
+            throw CLIError(
+                code: 7,
+                message:
+                    "\(matches.count) windows with pid=\(pid) have titles containing '\(titleContains)'; "
+                    + "cannot select one of them")
+        }
+        return matches.first?.id
     case .frame(let frame):
         let matches = owned.filter { frame.matches($0.frame) }
         if matches.count > 1 {
@@ -556,6 +562,9 @@ func staleSelectorReason<ID: Equatable>(
     case .titleContains(let titleContains):
         guard let title = current.title, title.contains(titleContains) else {
             return "the window title changed"
+        }
+        if owned.filter({ $0.title?.contains(titleContains) == true }).count > 1 {
+            return "another window now has a matching title"
         }
         return nil
     case .frame(let frame):
@@ -611,6 +620,7 @@ final class Recorder {
     private var sessionStarted = false
     private var pipelineError: Error?
     private var framesSeen: Int = 0
+    private var recordingFile: URL?
     private var framesAppended: Int = 0
     // Wakes startup after either its first successfully appended frame or a terminal pipeline
     // error. The waiter inspects the protected state to distinguish the two outcomes.
@@ -656,6 +666,9 @@ final class Recorder {
         // + window discovery cost. Pure precondition check, doesn't depend on a window
         // existing.
         try validateOutputPath(args.output)
+        defer {
+            if let recordingFile { _ = unlink(recordingFile.path) }
+        }
 
         let target = try await discoverTarget()
         try await startCapture(target: target)
@@ -670,38 +683,73 @@ final class Recorder {
             }
         }
         try await finalize()
+        let (seen, appended, dropped) = frameCounts()
         // Diagnostic counters always printed to stderr so the JVM-side smoke can see whether
         // the helper actually saw frames or was just sat there idle.
         FileHandle.standardError.write(
             Data(
-                "spectre-screencapture: frames seen=\(framesSeen) accepted=\(framesAppended) dropped=\(framesDropped)\n"
+                "spectre-screencapture: frames seen=\(seen) accepted=\(appended) dropped=\(dropped)\n"
                     .utf8)
         )
-        if let pipelineError {
+        if let pipelineError = currentPipelineError() {
             throw CLIError(
                 code: 5, message: "capture pipeline error: \(pipelineError.localizedDescription)")
         }
         if let waitError {
             throw waitError
         }
+        if let recordingFile {
+            guard rename(recordingFile.path, args.output.path) == 0 else {
+                throw CLIError(code: 5, message: "cannot install finalized recording: \(String(cString: strerror(errno)))")
+            }
+        }
+        if args.mode == .recording && ProcessInfo.processInfo.environment["SPECTRE_RECORDING_RESULT"] == "1" {
+            FileHandle.standardOutput.write(Data("RECORDING_RESULT \(dropped) \(args.crop != nil)\n".utf8))
+        }
     }
 
     /// Pick the backing-scale factor of the NSScreen with the largest overlap area with the
     /// target window. For windows that straddle displays in a mixed-DPI setup (Retina laptop +
     /// non-Retina external), `NSScreen.screens` ordering would otherwise let us pick the wrong
-    /// scale and produce stretched / cropped output. Falls back to NSScreen.main, then to a
-    /// 2.0 default for environments where AppKit isn't initialised yet.
-    private func backingScaleFactor(for windowFrame: CGRect) -> CGFloat {
+    /// scale and produce stretched / cropped output. SCWindow and CGDisplayBounds both use the
+    /// top-left global coordinate space; AppKit screen frames do not.
+    private func backingScaleFactor(for windowFrame: CGRect) throws -> CGFloat {
         let dominant = NSScreen.screens
             .map { screen -> (NSScreen, CGFloat) in
-                let overlap = windowFrame.intersection(screen.frame)
+                guard
+                    let number = screen.deviceDescription[
+                        NSDeviceDescriptionKey("NSScreenNumber")
+                    ] as? NSNumber
+                else { return (screen, 0) }
+                let overlap = windowFrame.intersection(
+                    CGDisplayBounds(CGDirectDisplayID(number.uint32Value)))
                 let area = overlap.isNull ? 0 : overlap.width * overlap.height
                 return (screen, area)
             }
             .filter { $0.1 > 0 }
             .max(by: { $0.1 < $1.1 })?
             .0
-        return dominant?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+        guard let dominant else {
+            throw CLIError(code: 5, message: "cannot determine backing scale for target window")
+        }
+        return dominant.backingScaleFactor
+    }
+
+    /// Match an SCDisplay to NSScreen by the stable Core Graphics display identifier rather than
+    /// intersecting frames expressed in ScreenCaptureKit's top-left and AppKit's bottom-left
+    /// coordinate systems.
+    private func backingScaleFactor(for display: SCDisplay) throws -> CGFloat {
+        guard let screen = NSScreen.screens.first(where: { candidate in
+            guard let number = candidate.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
+                as? NSNumber
+            else { return false }
+            return CGDirectDisplayID(number.uint32Value) == display.displayID
+        }) else {
+            throw CLIError(
+                code: 5,
+                message: "cannot determine backing scale for display id \(display.displayID)")
+        }
+        return screen.backingScaleFactor
     }
 
     /// Refuse to overwrite a directory if the caller mistakenly passed one as `--output`.
@@ -830,28 +878,29 @@ final class Recorder {
             // Use the backing-scale of the screen the target window actually lives on, not
             // `NSScreen.main`'s. Mixed-DPI setups (Retina laptop + non-Retina external) would
             // otherwise pick the wrong scale and produce stretched / cropped output for windows
-            // off the main screen. Falls back to NSScreen.main and finally a hardcoded 2.0 if
-            // neither lookup succeeds — neither degrades worse than the previous behaviour.
-            let scale = backingScaleFactor(for: targetWindow.frame)
+            // off the main screen. Never guess a scale when the display cannot be identified.
+            let scale = try backingScaleFactor(for: targetWindow.frame)
 
             // Window-attached filter — output is the target window's pixels (optionally cropped
             // via sourceRect for embedded Compose surfaces / handle-less panels, issue #186).
             // Display-mode filters leave large black areas outside the window in the buffer.
             filter = SCContentFilter(desktopIndependentWindow: targetWindow)
             if let crop = args.crop {
+                let validatedCrop = try validateWindowCrop(crop, windowSize: targetWindow.frame.size)
                 // Crop is window-relative points (same space as SCWindow.frame / AWT user space).
                 // Fixed at start for v1 — mid-recording resize/move of the surface is not followed.
-                sourceRect = crop.sourceRect()
-                width = max(2, Int((CGFloat(crop.width) * scale).rounded()))
-                height = max(2, Int((CGFloat(crop.height) * scale).rounded()))
+                sourceRect = validatedCrop.sourceRect()
+                width = max(2, Int((CGFloat(validatedCrop.width) * scale).rounded()))
+                height = max(2, Int((CGFloat(validatedCrop.height) * scale).rounded()))
             } else {
                 sourceRect = nil
                 width = max(2, Int((targetWindow.frame.width * scale).rounded()))
                 height = max(2, Int((targetWindow.frame.height * scale).rounded()))
             }
         case .region(let display, let region):
-            width = max(2, region.width)
-            height = max(2, region.height)
+            let scale = try backingScaleFactor(for: display)
+            width = max(2, Int((CGFloat(region.width) * scale).rounded()))
+            height = max(2, Int((CGFloat(region.height) * scale).rounded()))
             filter = SCContentFilter(display: display, excludingWindows: [])
             sourceRect = region.sourceRect()
         }
@@ -872,14 +921,18 @@ final class Recorder {
         // Without this re-check, the unconditional `removeItem` would silently `rm -rf`
         // that directory tree — the destructive failure mode the guard is supposed to
         // prevent. Cheap stat call; runs once per recording start.
-        if args.mode != .stills {
+        if args.mode == .screenshot {
             try validateOutputPath(args.output)
             try? FileManager.default.removeItem(at: args.output)
         }
 
         if args.mode == .recording {
+            // Publish only after a frame was accepted and AVAssetWriter finished successfully.
+            let temporary = args.output.deletingLastPathComponent()
+                .appendingPathComponent(".spectre-\(UUID().uuidString).\(args.output.pathExtension)")
+            recordingFile = temporary
             let writer = try AVAssetWriter(
-                outputURL: args.output, fileType: args.fileType.assetWriterFileType)
+                outputURL: temporary, fileType: args.fileType.assetWriterFileType)
             let videoSettings: [String: Any] = [
                 AVVideoCodecKey: AVVideoCodecType.h264,
                 AVVideoWidthKey: width,
@@ -1302,6 +1355,12 @@ final class Recorder {
         }
     }
 
+    private func frameCounts() -> (Int, Int, Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (framesSeen, framesAppended, framesDropped)
+    }
+
     private func didAppendFrame() -> Bool {
         lock.lock()
         let didAppendFrame = framesAppended > 0
@@ -1353,10 +1412,15 @@ final class Recorder {
         self.pixelBufferAdaptor = nil
         lock.unlock()
 
-        guard let writer, let videoInput else { return }
+        guard let writer, let videoInput else {
+            if args.mode == .recording {
+                throw CLIError(code: 5, message: "missing recording writer at finalization")
+            }
+            return
+        }
         videoInput.markAsFinished()
         await writer.finishWriting()
-        if writer.status == .failed {
+        if writer.status != .completed {
             throw CLIError(
                 code: 5,
                 message:
@@ -1364,6 +1428,40 @@ final class Recorder {
             )
         }
     }
+}
+
+func validateWindowCrop(_ crop: CaptureRegion, windowSize: CGSize) throws -> CaptureRegion {
+    guard crop.width > 0, crop.height > 0, windowSize.width > 0, windowSize.height > 0,
+        windowSize.width.isFinite, windowSize.height.isFinite,
+        windowSize.width <= CGFloat(Int.max), windowSize.height <= CGFloat(Int.max)
+    else { throw CLIError(code: 2, message: "window crop and window must have positive finite dimensions") }
+    let (right, rightOverflow) = crop.x.addingReportingOverflow(crop.width)
+    let (bottom, bottomOverflow) = crop.y.addingReportingOverflow(crop.height)
+    guard !rightOverflow, !bottomOverflow else {
+        throw CLIError(code: 2, message: "window crop coordinate arithmetic overflowed")
+    }
+    let windowWidth = Int(windowSize.width)
+    let windowHeight = Int(windowSize.height)
+    let overflow = max(
+        max(max(-min(CGFloat(crop.x), 0), -min(CGFloat(crop.y), 0)),
+            max(CGFloat(right) - CGFloat(windowWidth), 0)),
+        max(CGFloat(bottom) - CGFloat(windowHeight), 0)
+    )
+    if overflow > 1 {
+        throw CLIError(
+            code: 2,
+            message: "window crop \(crop.x),\(crop.y) \(crop.width)x\(crop.height) is not fully inside " +
+                "window 0,0 \(Int(windowSize.width))x\(Int(windowSize.height)); overflow=\(overflow)px"
+        )
+    }
+    let left = max(0, crop.x)
+    let top = max(0, crop.y)
+    let clippedRight = min(windowWidth, right)
+    let clippedBottom = min(windowHeight, bottom)
+    guard clippedRight > left, clippedBottom > top else {
+        throw CLIError(code: 2, message: "window crop has an empty intersection with the selected window")
+    }
+    return CaptureRegion(x: left, y: top, width: clippedRight - left, height: clippedBottom - top)
 }
 
 // SCStreamOutput needs an NSObject conforming class. Hand the buffer off synchronously so the

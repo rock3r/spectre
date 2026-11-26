@@ -350,6 +350,8 @@ fn append_x11_source(
         // XDamage can skip unchanged regions in a way that is efficient for live display but
         // brittle for short smoke recordings and one-frame screenshots. Force full-frame reads.
         "use-damage=false".to_string(),
+        // Without MIT-SHM, use XGetSubImage to populate the buffer GStreamer exports.
+        "remote=true".to_string(),
     ]);
     Ok(())
 }
@@ -667,8 +669,8 @@ mod tests {
     }
 
     #[test]
-    fn argv_clamps_negative_origin_that_still_intersects_the_stream() {
-        let argv = build_pipewire_argv(
+    fn argv_rejects_negative_origin_that_still_intersects_the_stream() {
+        let error = build_pipewire_argv(
             42,
             17,
             region(-20, -10, 100, 100),
@@ -678,18 +680,13 @@ mod tests {
             &PathBuf::from("/tmp/x"),
             "libx264",
         )
-        .expect("partially off-stream origin should clamp");
-        assert_contains_sequence(
-            &argv,
-            &["videocrop", "top=0", "bottom=990", "left=0", "right=1840"],
-        );
+        .unwrap_err();
+        assert!(error.to_string().contains("not fully inside"));
     }
 
     #[test]
-    fn argv_clamps_region_that_overflows_stream_bounds() {
-        // A leftover overflow after mixed-space conversion, or a window larger than the
-        // granted stream, must crop rather than fail the recording.
-        let argv = build_pipewire_argv(
+    fn argv_rejects_region_that_overflows_stream_bounds() {
+        let error = build_pipewire_argv(
             42,
             17,
             region(1362, 0, 480, 240),
@@ -699,11 +696,8 @@ mod tests {
             &PathBuf::from("/tmp/x"),
             "libx264",
         )
-        .expect("overflowing region should clamp to the visible stream");
-        assert_contains_sequence(
-            &argv,
-            &["videocrop", "top=0", "bottom=624", "left=1362", "right=0"],
-        );
+        .unwrap_err();
+        assert!(error.to_string().contains("not fully inside"));
     }
 
     #[test]
@@ -800,6 +794,7 @@ mod tests {
                 "xid=44040203",
                 "show-pointer=true",
                 "use-damage=false",
+                "remote=true",
             ],
         );
         assert!(

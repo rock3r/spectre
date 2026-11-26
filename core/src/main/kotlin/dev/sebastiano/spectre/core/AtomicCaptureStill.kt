@@ -222,8 +222,8 @@ private fun checkedExternalStill(
  * Titles of other windows in this process that a native capture helper, searching by [targetTitle],
  * could select instead of the target.
  *
- * The macOS ScreenCaptureKit helper selects the first window whose title contains [targetTitle].
- * The Windows helper selects a window whose title equals [targetTitle]. [others] must cover every
+ * The macOS ScreenCaptureKit helper matches visible windows whose titles contain [targetTitle]. The
+ * Windows helper selects a window whose title equals [targetTitle]. [others] must cover every
  * native window of this process except the target, including plain Swing windows, so the check sees
  * the same candidates as the helper.
  */
@@ -232,13 +232,11 @@ internal fun remoteCaptureTitleCollisions(
     others: List<CaptureTitleCandidate>,
     osName: String = System.getProperty("os.name").orEmpty(),
 ): List<String> {
-    // The Windows helper enumerates every top-level window of the process and compares titles
-    // exactly. The macOS helper only considers on-screen windows and matches "title contains".
-    val windows = osName.startsWith("Windows", ignoreCase = true)
+    val mac = osName.startsWith("Mac", ignoreCase = true)
     return others
-        .filter { windows || it.isShowing }
+        .filter { it.isShowing }
         .mapNotNull { it.title }
-        .filter { title -> if (windows) title == targetTitle else title.contains(targetTitle) }
+        .filter { title -> if (mac) title.contains(targetTitle) else title == targetTitle }
 }
 
 /** Another window of this process, as a native capture helper could see it. */

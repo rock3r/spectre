@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.recording.portal
 
 import dev.sebastiano.spectre.recording.RecordingHandle
 import dev.sebastiano.spectre.recording.RecordingOptions
+import dev.sebastiano.spectre.recording.recordingFileStamp
 import dev.sebastiano.spectre.recording.screencapturekit.asFramedWindow
 import java.awt.Dimension
 import java.awt.EventQueue
@@ -517,7 +518,8 @@ internal class HelperWindowStreamSession(private val client: WaylandSessionClien
         output: Path,
     ): RecordingHandle {
         output.toAbsolutePath().parent?.let(Files::createDirectories)
-        return SessionRecordingHandle(mutterCall { client.startHeld(command) }, output)
+        val previous = recordingFileStamp(output)
+        return SessionRecordingHandle(mutterCall { client.startHeld(command) }, output, previous)
     }
 
     private fun <T> withFrameFile(block: (String) -> T): T {

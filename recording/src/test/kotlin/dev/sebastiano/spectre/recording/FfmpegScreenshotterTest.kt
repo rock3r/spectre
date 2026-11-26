@@ -78,7 +78,7 @@ class FfmpegScreenshotterTest {
     }
 
     @Test
-    fun `region screenshotter falls back to default display when display name is unset`() {
+    fun `region screenshotter rejects an unset display before spawning ffmpeg`() {
         val factory = ScreenshotProcessFactory()
         val screenshotter =
             FfmpegRegionScreenshotter(
@@ -88,9 +88,10 @@ class FfmpegScreenshotterTest {
                 getenv = fakeEnv("SPECTRE_CAPTURE_BACKEND" to "x11"),
             )
 
-        screenshotter.captureRegion(Rectangle(0, 0, 10, 10))
-
-        assertContainsSequence(factory.lastArgv, listOf("-i", ":0.0+0,0"))
+        assertFailsWith<IllegalArgumentException> {
+            screenshotter.captureRegion(Rectangle(0, 0, 10, 10))
+        }
+        assertTrue(factory.lastArgv.isEmpty())
     }
 
     @Test
