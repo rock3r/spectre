@@ -4,11 +4,16 @@ package dev.sebastiano.spectre.input
 
 import java.io.IOException
 import java.io.InterruptedIOException
+import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.channels.SocketChannel
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
+import java.nio.file.attribute.BasicFileAttributes
 import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -92,8 +97,10 @@ public interface CoordinatedInputLease : AutoCloseable {
     /**
      * Releases this hold.
      *
-     * @throws InputCoordinatorException when release persistence fails. The client retains the
-     *   exact release request and retries it in the background while its session is connected.
+     * @throws IOException when the coordinator does not acknowledge release after one retry.
+     * @throws InputCoordinatorException when the coordinator rejects release. For a persistence
+     *   failure, the client retains the exact request and retries it in the background while its
+     *   session is connected.
      */
     override fun close()
 }
@@ -436,7 +443,10 @@ private constructor(
 
             closed.set(true)
             releaseRegistration(registration)
-            if (failure != null) this@LocalInputCoordinatorClient.disconnect()
+            if (failure != null) {
+                this@LocalInputCoordinatorClient.disconnect()
+                throw failure
+            }
         }
 
         private fun Throwable?.isRetryableReleaseFailure(): Boolean =
@@ -503,6 +513,7 @@ private constructor(
                 CoordinatorSocketDiscovery.firstReachable(
                     CoordinatorSocketCandidates.candidates(endpoint.socketPath)
                 ) { path ->
+                    if (path.isPositivelyUnusableSocketCandidate()) return@firstReachable null
                     val channel = SocketChannel.open(StandardProtocolFamily.UNIX)
                     try {
                         runCoordinatorIo(SESSION_OPEN_TIMEOUT) {
@@ -513,13 +524,12 @@ private constructor(
                         // Being interrupted is a real failure, not an empty candidate.
                         runCatching { channel.close() }
                         throw interrupted
-                    } catch (_: IOException) {
-                        // Nothing is listening here; keep walking.
+                    } catch (failure: IOException) {
                         runCatching { channel.close() }
-                        null
+                        if (failure.isCoordinatorNotListening()) null else throw failure
                     }
                 }
-                    ?: throw IOException(
+                    ?: throw ConnectException(
                         "No coordinator is listening at ${endpoint.socketPath} or its fallbacks"
                     )
             val session = located.channel
@@ -527,7 +537,7 @@ private constructor(
             try {
                 val response =
                     runCoordinatorIo(SESSION_OPEN_TIMEOUT) {
-                        codec.write(
+                        codec.writeThenRead(
                             session,
                             CoordinatorWireMessage(
                                 kind = CoordinatorWireKind.SESSION_OPEN,
@@ -536,7 +546,6 @@ private constructor(
                                 ownerLabel = ownerLabel,
                             ),
                         )
-                        codec.read(session)
                     }
                 response.requireSuccess()
                 val client =
@@ -588,7 +597,7 @@ public class LocalInputCoordinatorControl(
                         resourceKey = resourceKey.value,
                     )
                 )
-            } catch (_: IOException) {
+            } catch (_: CoordinatorNotListeningException) {
                 return CoordinatorControlResult.NoActiveCoordinator
             }
         response.requireSuccess()
@@ -641,7 +650,7 @@ public class LocalInputCoordinatorControl(
                 }
             }
         return response
-            ?: throw IOException(
+            ?: throw CoordinatorNotListeningException(
                 "No coordinator is listening at ${endpoint.socketPath} or its fallbacks",
                 firstFailure,
             )
@@ -660,6 +669,7 @@ public class LocalInputCoordinatorControl(
         message: CoordinatorWireMessage,
         onNotListening: (IOException) -> Unit,
     ): CoordinatorWireMessage? {
+        if (path.isPositivelyUnusableSocketCandidate()) return null
         val channel = SocketChannel.open(StandardProtocolFamily.UNIX)
         try {
             try {
@@ -669,8 +679,11 @@ public class LocalInputCoordinatorControl(
             } catch (interrupted: InterruptedIOException) {
                 throw interrupted
             } catch (failure: IOException) {
-                onNotListening(failure)
-                return null
+                if (failure.isCoordinatorNotListening()) {
+                    onNotListening(failure)
+                    return null
+                }
+                throw failure
             }
             return runCoordinatorIo(CONTROL_RESPONSE_TIMEOUT) {
                 codec.write(channel, message)
@@ -683,6 +696,53 @@ public class LocalInputCoordinatorControl(
 
     private companion object {
         val CONTROL_RESPONSE_TIMEOUT: Duration = Duration.ofSeconds(5)
+    }
+}
+
+private class CoordinatorNotListeningException(message: String, cause: IOException?) :
+    IOException(message, cause)
+
+private fun IOException.isCoordinatorNotListening(): Boolean {
+    if (this is InterruptedIOException) return false
+    if (this is ConnectException) return true
+    val reason = message?.substringAfterLast(": ")?.trim()
+    return reason == "No such file or directory" || reason == "Connection refused"
+}
+
+/**
+ * Identifies existing file types that cannot possibly accept a Unix-domain socket connection.
+ *
+ * This check deliberately does not follow links and only recognizes file types for which the basic
+ * attributes provide positive evidence. Missing candidates still go through connect so the
+ * platform's normal absence handling remains authoritative; access and other metadata failures are
+ * allowed to propagate.
+ */
+internal fun Path.isPositivelyUnusableSocketCandidate(): Boolean {
+    val attributes =
+        try {
+            Files.readAttributes(
+                this,
+                BasicFileAttributes::class.java,
+                LinkOption.NOFOLLOW_LINKS,
+            )
+        } catch (_: NoSuchFileException) {
+            return false
+        }
+    return attributes.isDirectory || attributes.isRegularFile || attributes.isSymbolicLink
+}
+
+private fun CoordinatorWireCodec.writeThenRead(
+    channel: SocketChannel,
+    message: CoordinatorWireMessage,
+): CoordinatorWireMessage {
+    val writeFailure = runCatching { write(channel, message) }.exceptionOrNull()
+    if (writeFailure == null) return read(channel)
+    if (writeFailure !is IOException) throw writeFailure
+    return try {
+        read(channel)
+    } catch (readFailure: IOException) {
+        writeFailure.addSuppressed(readFailure)
+        throw writeFailure
     }
 }
 

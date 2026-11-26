@@ -73,6 +73,7 @@ internal constructor(
     private val leaseFactory: InputTestLeaseFactory = ProductionInputTestLeaseFactory,
     private val acquireBeforeAutoFactory: Boolean = false,
     private val managedFactory: ManagedAutomatorFactory? = null,
+    private val enforceFactoryPolicy: Boolean = false,
     private val factory: AutomatorFactory,
 ) :
     BeforeEachCallback,
@@ -99,6 +100,7 @@ internal constructor(
         inputIsolation = inputIsolation,
         acquireBeforeAutoFactory = true,
         managedFactory = defaultManagedAutomatorFactory(inputIsolation),
+        enforceFactoryPolicy = true,
         factory = { ComposeAutomator.inProcess() },
     )
 
@@ -113,6 +115,7 @@ internal constructor(
         failureVideo = failureVideo,
         videoStarter = AutoFailureVideoStarter,
         inputIsolation = inputIsolation,
+        enforceFactoryPolicy = true,
         factory = factory,
     )
 
@@ -172,6 +175,7 @@ internal constructor(
                 acquireBeforeAutoFactory = acquireBeforeAutoFactory,
                 ownerLabel = ownerLabel(context),
                 leaseFactory = leaseFactory,
+                enforceFactoryPolicy = enforceFactoryPolicy,
             )
         val isolationKey = isolationStoreKey(context)
         store.put(isolationKey, isolation)
