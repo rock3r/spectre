@@ -88,7 +88,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             xvfb xauth x11-utils xdotool ffmpeg libxkbcommon-x11-0 python3-pyatspi \
-            libdbus-1-dev pkg-config \
+            libdbus-1-dev pkg-config dbus-x11 dbus-user-session openbox at-spi2-core \
+            libatk-wrapper-java libatk-wrapper-java-jni libatspi2.0-dev libxcursor1 \
+            libxrandr2 libxinerama1 libxi6 libxtst6 libgl1-mesa-dri libgtk-3-0t64 \
+            libpipewire-0.3-dev libspa-0.2-dev gstreamer1.0-libav \
             gstreamer1.0-tools \
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \
@@ -97,7 +100,36 @@ jobs:
           command -v Xvfb
           command -v xauth
           command -v ffmpeg
-          gst-inspect-1.0 ximagesrc
+          for element in ximagesrc x264enc h264parse mp4mux pngenc; do
+            gst-inspect-1.0 "$element" > "$RUNNER_TEMP/release-smoke-identity/gstreamer-$element.txt"
+          done
+          dpkg -L libatk-wrapper-java libatk-wrapper-java-jni > "$RUNNER_TEMP/release-smoke-identity/java-atk-packages.txt"
+          # The harness requests "xvfb-run -a" for each independent headed cell.
+          # Start its window manager and accessibility bus inside each new display.
+          mkdir -p "$RUNNER_TEMP/x11-session-tools"
+          cat > "$RUNNER_TEMP/x11-session-tools/xvfb-run" <<'LAUNCHER'
+          #!/usr/bin/env bash
+          set -eu
+          if [[ ${1-} != -a ]]; then exec /usr/bin/xvfb-run "$@"; fi
+          shift
+          exec /usr/bin/xvfb-run -a dbus-run-session -- x11-smoke-session "$@"
+          LAUNCHER
+          cat > "$RUNNER_TEMP/x11-session-tools/x11-smoke-session" <<'SESSION'
+          #!/usr/bin/env bash
+          set -eu
+          openbox >"$RUNNER_TEMP/release-smoke-identity/openbox-${DISPLAY#:}-$BASHPID.log" 2>&1 &
+          wm_pid=$!
+          trap 'kill "$wm_pid" 2>/dev/null || true' EXIT
+          for _ in {1..100}; do
+            if xprop -root _NET_SUPPORTING_WM_CHECK | grep -q 'window id'; then break; fi
+            sleep 0.05
+          done
+          xprop -root _NET_SUPPORTING_WM_CHECK | grep 'window id'
+          gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.a11y.Bus.GetAddress
+          "$@"
+          SESSION
+          chmod +x "$RUNNER_TEMP/x11-session-tools/"*
+          echo "$RUNNER_TEMP/x11-session-tools" >> "$GITHUB_PATH"
 
       - name: Set up stable Rust for the Linux native helper
         uses: dtolnay/rust-toolchain@stable
@@ -115,7 +147,10 @@ jobs:
           path: |
             candidate/build/smoke/release-smoke.json
             candidate/build/smoke/release-smoke.md
-            candidate/build/smoke/*.log
+            candidate/build/smoke/**/*.log
+            candidate/**/build/test-results/**/*.xml
+            ${{ runner.temp }}/release-smoke-identity/*.txt
+            ${{ runner.temp }}/release-smoke-identity/openbox-*.log
             ${{ runner.temp }}/release-smoke-identity/exact-sha.txt
             ${{ runner.temp }}/release-smoke-identity/phase.txt
           if-no-files-found: error
