@@ -397,12 +397,20 @@ jobs:
           ref: e3368c3c2476f9b955290cfdcb05722908f1f4a5
           path: fixture
           persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: 07507bc9175b6391d6594ff175dff233e34a0675
+          path: baseline-control
+          persist-credentials: false
       - name: Verify exact product tree and stage the existing cloud benchmark
         env:
           LARGE_FIXTURE: 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
           LARGE_HARNESS: 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
         run: |
           set -euo pipefail
+          git -C product worktree add --detach ../baseline HEAD
+          git -C baseline apply --index "$GITHUB_WORKSPACE/baseline-control/.github/reader-overlays/716-b1-cached-owner.patch"
+          test "$(git -C baseline write-tree)" = 93dcbb2ae2302e04ca0a3f316b1a90b669cef7fe
           git -C product apply --index "$GITHUB_WORKSPACE/control/.github/reader-overlays/716-b1-cached-owner.patch"
           test "$(git -C product write-tree)" = 773be33dd27e34a7178341197bf714ce52a7bd02
           mkdir -p "$RUNNER_TEMP/atspi-results"
@@ -415,7 +423,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y at-spi2-core xvfb xauth dbus-x11 pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libxcursor1 libxi6 libxrandr2 libxinerama1 libxkbcommon-x11-0
+          sudo apt-get install -y at-spi2-core xvfb xauth dbus-x11 python3-dbus pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libxcursor1 libxi6 libxrandr2 libxinerama1 libxkbcommon-x11-0
+          cargo build --release --locked --manifest-path baseline/recording/native/linux/Cargo.toml
           cargo test --release --locked --manifest-path product/recording/native/linux/Cargo.toml | tee "$RUNNER_TEMP/atspi-results/native-tests.txt"
           cargo build --release --locked --manifest-path product/recording/native/linux/Cargo.toml
           cargo build --release --locked --manifest-path fixture/fixtures/accesskit/Cargo.toml
@@ -434,8 +443,44 @@ jobs:
           hook = 'def percentile95(values):'
           auditor = """original_request = request
           capture_dir = Path(os.environ['RUNNER_TEMP']) / 'atspi-results'
+          from runpy import run_path
+          initial_pid = None
           def request(*args, **kwargs):
+              global initial_pid
+              pid = args[1]
+              if initial_pid is None:
+                  initial_pid = pid
+                  os.environ.update(SMOKE_ARTIFACTS=str(capture_dir), ATSPI_REPO=os.environ['GITHUB_WORKSPACE']+'/product')
+                  original_argv = sys.argv
+                  try:
+                      sys.argv = ['provider-diagnostic']
+                      api = run_path(os.environ['GITHUB_WORKSPACE'] + '/control/.github/scripts/gnome-observe-roles.py')
+                  finally:
+                      sys.argv = original_argv
+                  service, path = api['application_root'](pid)
+                  iface = api['accessible']
+                  connection = api['bus']
+                  windows = []
+                  for name, child in api['dbus'].Interface(connection.get_object(service, path), iface).GetChildren():
+                      props = api['dbus'].Interface(connection.get_object(name, child), 'org.freedesktop.DBus.Properties')
+                      windows.append({'path': str(child), 'name':str(props.Get(iface, 'Name')), 'service':str(name)})
+                  raw = {'pid':int(api['bus_admin'].GetConnectionUnixProcessID(service)), 'service':str(service),'path':str(path),'windows':windows}
+                  (capture_dir/'provider-owner.json').write_text(json.dumps(raw))
+                  assert raw['pid'] == pid and any('AccessKit' in item['name'] for item in windows), raw
+                  control = Path(os.environ['GITHUB_WORKSPACE']) / 'baseline/recording/native/linux/target/release/spectre-wayland-helper'
+                  for iteration in range(6):
+                      latency, baseline, err = original_request(control, pid, 5000, args[3])
+                      receipt = {'iteration':iteration,'pid':pid,'elapsed':latency,'error':err,'replyError':(baseline or {}).get('error'),'nodes':len((baseline or {}).get('snapshot',{}).get('nodes',[]))}
+                      with (capture_dir/'baseline.jsonl').open('a') as output:
+                          output.write(json.dumps(receipt) + chr(10))
+                      if baseline and baseline.get('ok'):
+                          with (capture_dir/'baseline-fields.jsonl').open('a') as output:
+                              output.write(json.dumps(baseline['snapshot']['nodes'],sort_keys=True) + chr(10))
+              assert initial_pid == pid
               elapsed, response, error = original_request(*args, **kwargs)
+              if not response or not response.get('ok'):
+                  with (capture_dir/'candidate-errors.jsonl').open('a') as output:
+                      output.write(json.dumps({'pid':pid,'timeout':args[2],'elapsed':elapsed,'error':error,'reply':response}) + chr(10))
               if response and response.get('ok'):
                   nodes = response['snapshot']['nodes']
                   fields = ('key', 'parentKey', 'id', 'role', 'platformRole', 'name', 'value', 'states', 'actions', 'bounds')
@@ -448,7 +493,7 @@ jobs:
           assert hook in s
           p.write_text(s.replace(hook, auditor + hook))
           PYTHON
-          dbus-run-session -- xvfb-run -a bash -c 'set -e; gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled "<true>"; exec "$@"' bash python3 "$RUNNER_TEMP/benchmark.py" --fixture "$GITHUB_WORKSPACE/fixture/fixtures/accesskit/target/release/spectre-accesskit-fixture" --helper "$GITHUB_WORKSPACE/product/recording/native/linux/target/release/spectre-wayland-helper" --timeouts 750,5000 --calls 5 | tee "$RUNNER_TEMP/atspi-results/latencies.jsonl"
+          dbus-run-session -- xvfb-run -a bash -c 'set -e; gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled "<true>"; exec "$@"' bash /usr/bin/python3 "$RUNNER_TEMP/benchmark.py" --fixture "$GITHUB_WORKSPACE/fixture/fixtures/accesskit/target/release/spectre-accesskit-fixture" --helper "$GITHUB_WORKSPACE/product/recording/native/linux/target/release/spectre-wayland-helper" --timeouts 750,5000 --calls 5 | tee "$RUNNER_TEMP/atspi-results/latencies.jsonl"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
