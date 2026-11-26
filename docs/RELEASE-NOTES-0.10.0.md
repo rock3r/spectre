@@ -64,6 +64,9 @@ opt-in. See [failure artifacts](guide/junit.md#failure-artifacts),
 
 ## Compatibility
 
+This release fixes the incorrect bundled JVM that prevented the Spectre 0.9 standalone CLI from
+starting on Windows x64, Linux arm64, and Intel macOS.
+
 The previous three-argument `waitForVisualIdle` JVM entry point remains available for binary
 consumers and uses the fail-closed default. Keep attached CLI and target-core versions aligned;
 typed failures replace inexact results rather than changing the requested scope.

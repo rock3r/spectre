@@ -182,13 +182,24 @@ jobs:
           fi
 
   mac-cli-bundles:
-    name: Build, sign, and notarise macOS CLI bundles
-    runs-on: macos-latest
+    name: Build, sign, and notarise macOS CLI (${{ matrix.target }})
+    strategy:
+      matrix:
+        include:
+          - target: macosX64
+            task-suffix: MacosX64
+            runner: macos-15-intel
+          - target: macosArm64
+            task-suffix: MacosArm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
     needs:
       - validate
       - mac-helper
     env:
       RELEASE_VERSION: ${{ inputs.version }}
+      TARGET: ${{ matrix.target }}
+      TARGET_TASK_SUFFIX: ${{ matrix.task-suffix }}
 
     steps:
       - name: Check out repository
@@ -269,12 +280,11 @@ jobs:
           echo "$APPLE_NOTARY_API_KEY" | base64 --decode > "$API_KEY_PATH"
 
           ./gradlew \
-            :cli:packageMacosX64 \
-            :cli:packageMacosArm64 \
+            ":cli:package${TARGET_TASK_SUFFIX}" \
             -PVERSION_NAME="$RELEASE_VERSION" \
             -PprebuiltMacHelperPath="$RUNNER_TEMP/mac-helper/SpectreCaptureHelper.app"
 
-          for target in macosX64 macosArm64; do
+          for target in "$TARGET"; do
             archive="cli/build/construo/distributions/${target}/spectre-${target}.zip"
             workspace="$RUNNER_TEMP/spectre-${target}"
             root="$workspace/spectre-cli-$RELEASE_VERSION"
@@ -373,9 +383,13 @@ jobs:
             test -f "$published_launcher"
             test -x "$published_launcher"
             .github/scripts/verify-macos-cli-bundle.sh "$archive" "$RELEASE_VERSION"
-            # Do not execute the launcher in CI: macosX64 cannot run on arm64 runners without
-            # Rosetta. The verifier above checks the final extracted archive with codesign,
-            # stapler, and Gatekeeper instead.
+            # Each matrix row runs on its own native CPU, including Intel without Rosetta.
+            "$published_launcher" --version
+            "$published_launcher" --help >/dev/null
+            # Launching restores executable modes in place; prove that this final mutation did
+            # not invalidate either the nested code seal or the stapled notarisation ticket.
+            codesign --verify --deep --strict --verbose=4 "$published_app"
+            xcrun stapler validate "$published_app"
             file "$published_launcher"
             ls -la "$published_app/Contents/MacOS/"
           done
@@ -383,7 +397,7 @@ jobs:
           # Flatten zip names for mac-cli-bundles so B16 download stays
           # build/notarized-smoke/mac-cli-bundles/spectre-${target}.zip.
           mkdir -p "$RUNNER_TEMP/mac-cli-bundles"
-          for target in macosX64 macosArm64; do
+          for target in "$TARGET"; do
             cp "cli/build/construo/distributions/${target}/spectre-${target}.zip" \
               "$RUNNER_TEMP/mac-cli-bundles/spectre-${target}.zip"
           done
@@ -391,10 +405,8 @@ jobs:
       - name: Upload signed and notarised macOS CLI bundles
         uses: actions/upload-artifact@v4
         with:
-          name: mac-cli-bundles
-          path: |
-            ${{ runner.temp }}/mac-cli-bundles/spectre-macosX64.zip
-            ${{ runner.temp }}/mac-cli-bundles/spectre-macosArm64.zip
+          name: mac-cli-${{ matrix.target }}
+          path: ${{ runner.temp }}/mac-cli-bundles/spectre-${{ matrix.target }}.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -412,3 +424,26 @@ jobs:
             rm -f "$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_API_KEY_ID}.p8"
           fi
 
+
+  merge-mac-cli-bundles:
+    name: Merge notarised macOS CLI bundles
+    needs: mac-cli-bundles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download both native-CPU bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mac-cli-macos*
+          merge-multiple: true
+          path: ${{ runner.temp }}/mac-cli-bundles
+      - name: Require both release targets
+        run: |
+          test -f "$RUNNER_TEMP/mac-cli-bundles/spectre-macosX64.zip"
+          test -f "$RUNNER_TEMP/mac-cli-bundles/spectre-macosArm64.zip"
+      - name: Upload merged macOS CLI bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-cli-bundles
+          path: ${{ runner.temp }}/mac-cli-bundles/
+          if-no-files-found: error
+          retention-days: 7
