@@ -60,6 +60,8 @@ final class PermissionGuideTests: XCTestCase {
         XCTAssertTrue(
             PermissionGuideCopy.firstRunBody.contains("Spectre Capture Helper")
         )
+        XCTAssertTrue(PermissionGuideCopy.firstRunBody.contains("Accessibility"))
+        XCTAssertTrue(PermissionGuideCopy.dragHint.contains("Accessibility"))
     }
 
     func testBarPlacementFallsBackToBottomCenterWithoutAnchor() {
