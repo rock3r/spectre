@@ -1,0 +1,219 @@
+name: Scratch pre-publication exact archive QA
+
+on:
+  push:
+    branches: [release-0.10/gnome-hosted-smoke]
+    paths: [.github/pre-publication-archive-qa/control.env]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: scratch-pre-publication-archive-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    outputs:
+      ready: ${{ steps.control.outputs.ready }}
+      version: ${{ steps.control.outputs.version }}
+      run_id: ${{ steps.control.outputs.run_id }}
+      source_sha: ${{ steps.control.outputs.source_sha }}
+      upstream_sha: ${{ steps.control.outputs.upstream_sha }}
+      x64_id: ${{ steps.control.outputs.x64_id }}
+      arm64_id: ${{ steps.control.outputs.arm64_id }}
+      x64_sha: ${{ steps.control.outputs.x64_sha }}
+      arm64_sha: ${{ steps.control.outputs.arm64_sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with: {persist-credentials: false, fetch-depth: 2}
+      - id: control
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          control=.github/pre-publication-archive-qa/control.env
+          test "$GITHUB_REPOSITORY" = rock3r/spectre
+          test "$GITHUB_REF" = refs/heads/release-0.10/gnome-hosted-smoke
+          test "$(sed '/^#/d;/^$/d' "$control" | wc -l)" -eq 10
+          ! grep -qvE '^(#.*|$|[A-Z0-9_]+=[a-zA-Z0-9./-]+)$' "$control"
+          test "$(sed '/^#/d;/^$/d;s/=.*//' "$control" | sort -u | wc -l)" -eq 10
+          source "$control"
+          case "$PHASE" in
+            HOLD)
+              echo 'PHASE=HOLD: scratch workflow is intentionally held before candidate IDs are required'
+              echo 'ready=false' >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            READY) ;;
+            *) echo "invalid PHASE: $PHASE" >&2; exit 1 ;;
+          esac
+          test "$(git diff-tree --no-commit-id --name-only -r HEAD)" = "$control"
+          test "$(git show -s --format=%s HEAD)" = 'Stage candidate Linux archives'
+          test "$VERSION" = 0.10.0
+          test "$REPOSITORY" = rock3r/spectre
+          [[ "$WORKFLOW_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$X64_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ARM64_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$UPSTREAM_RUN_HEAD_SHA" =~ ^[0-9a-f]{40}$ && "$UPSTREAM_RUN_HEAD_SHA" != 0000000000000000000000000000000000000000 ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ && "$SOURCE_SHA" != 0000000000000000000000000000000000000000 ]]
+          [[ "$X64_ZIP_SHA256" =~ ^[0-9a-f]{64}$ && "$X64_ZIP_SHA256" != 0000000000000000000000000000000000000000000000000000000000000000 ]]
+          [[ "$ARM64_ZIP_SHA256" =~ ^[0-9a-f]{64}$ && "$ARM64_ZIP_SHA256" != 0000000000000000000000000000000000000000000000000000000000000000 ]]
+
+          commit_json=$(gh api "repos/$REPOSITORY/commits/$SOURCE_SHA")
+          test "$(jq -r .sha <<<"$commit_json")" = "$SOURCE_SHA"
+          run_json=$(gh api "repos/$REPOSITORY/actions/runs/$WORKFLOW_RUN_ID")
+          test "$(jq -r .repository.full_name <<<"$run_json")" = "$REPOSITORY"
+          test "$(jq -r .head_sha <<<"$run_json")" = "$UPSTREAM_RUN_HEAD_SHA"
+          run_status=$(jq -r .status <<<"$run_json")
+          run_conclusion=$(jq -r '.conclusion // ""' <<<"$run_json")
+          if test "$run_status" = completed; then test "$run_conclusion" = success; fi
+          [[ "$run_status" == queued || "$run_status" == in_progress || "$run_status" == pending || "$run_status" == waiting || "$run_status" == requested || "$run_status" == completed ]]
+          for id in $(printf '%s\n' "$X64_ARTIFACT_ID" "$ARM64_ARTIFACT_ID" | sort -u); do
+            artifact=$(gh api "repos/$REPOSITORY/actions/artifacts/$id")
+            test "$(jq -r .workflow_run.id <<<"$artifact")" = "$WORKFLOW_RUN_ID"
+            test "$(jq -r .workflow_run.head_sha <<<"$artifact")" = "$UPSTREAM_RUN_HEAD_SHA"
+            test "$(jq -r .expired <<<"$artifact")" = false
+          done
+          mkdir -p evidence
+          jq -n --arg qa "$GITHUB_SHA" --arg upstream "$UPSTREAM_RUN_HEAD_SHA" --arg source "$SOURCE_SHA" \
+            --arg status "$run_status" --arg conclusion "$run_conclusion" \
+            '{qaCheckoutSha:$qa,upstreamRunHeadSha:$upstream,productSourceSha:$source,runStatus:$status,runConclusion:$conclusion}' \
+            > evidence/gate-receipt.json
+          {
+            echo ready=true; echo "version=$VERSION"; echo "run_id=$WORKFLOW_RUN_ID"
+            echo "source_sha=$SOURCE_SHA"; echo "upstream_sha=$UPSTREAM_RUN_HEAD_SHA"
+            echo "x64_id=$X64_ARTIFACT_ID"; echo "arm64_id=$ARM64_ARTIFACT_ID"
+            echo "x64_sha=$X64_ZIP_SHA256"; echo "arm64_sha=$ARM64_ZIP_SHA256"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v6
+        if: always() && steps.control.outputs.ready == 'true'
+        with:
+          name: prepublication-gate-${{ github.sha }}
+          path: evidence/gate-receipt.json
+          if-no-files-found: error
+
+  exact-archive:
+    needs: gate
+    if: needs.gate.outputs.ready == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: x64, runner: ubuntu-24.04, machine: x86_64, elf: '62', basename: spectre-linuxX64.zip}
+          - {arch: arm64, runner: ubuntu-24.04-arm, machine: aarch64, elf: '183', basename: spectre-linuxArm64.zip}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+        with: {persist-credentials: false, ref: '${{ github.sha }}'}
+      - name: Download pinned Actions artifact by immutable ID
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ matrix.arch == 'x64' && needs.gate.outputs.x64_id || needs.gate.outputs.arm64_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/candidate"
+          gh api "repos/rock3r/spectre/actions/artifacts/$ARTIFACT_ID/zip" > "$RUNNER_TEMP/artifact-$ARTIFACT_ID.zip"
+          python3 - "$RUNNER_TEMP/artifact-$ARTIFACT_ID.zip" "$RUNNER_TEMP/candidate" <<'PY'
+          import pathlib,sys
+          sys.path.insert(0,'.github/post-publication-qa')
+          from verify_native_archive import extract_zip_preserving_unix
+          extract_zip_preserving_unix(pathlib.Path(sys.argv[1]),pathlib.Path(sys.argv[2]))
+          PY
+      - name: Inspect every packaged ELF before starting the archive CLI
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ matrix.arch == 'x64' && needs.gate.outputs.x64_sha || needs.gate.outputs.arm64_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/native "$RUNNER_TEMP/unpacked"
+          trap 'status=$?; printf "%s\n" "$status" > evidence/inspection-status.txt; exit "$status"' EXIT
+          mapfile -d '' archives < <(find "$RUNNER_TEMP/candidate" -type f -name '${{ matrix.basename }}' -print0)
+          test "${#archives[@]}" -eq 1
+          archive=${archives[0]}
+          test ! -L "$archive"
+          case "$(realpath "$archive")" in "$RUNNER_TEMP/candidate"/*) ;; *) exit 1;; esac
+          actual=$(sha256sum "$archive" | cut -d' ' -f1); test "$actual" = "$EXPECTED_SHA"
+          printf '%s  %s\n' "$actual" '${{ matrix.basename }}' > evidence/zip.sha256
+          test "$(uname -m)" = '${{ matrix.machine }}'
+          python3 - "$archive" "$RUNNER_TEMP/unpacked" '${{ matrix.elf }}' > evidence/packaged-elf.json <<'PY'
+          import hashlib,json,pathlib,struct,sys
+          sys.path.insert(0,'.github/post-publication-qa')
+          from verify_native_archive import extract_zip_preserving_unix
+          archive,out,expected=pathlib.Path(sys.argv[1]),pathlib.Path(sys.argv[2]),int(sys.argv[3])
+          extract_zip_preserving_unix(archive,out)
+          rows=[]
+          for path in sorted(p for p in out.rglob('*') if p.is_file() and not p.is_symlink()):
+              with path.open('rb') as stream: header=stream.read(20)
+              if header[:4]!=b'\x7fELF': continue
+              machine=struct.unpack_from('<H',header,18)[0]
+              digest=hashlib.sha256(path.read_bytes()).hexdigest()
+              rows.append({'path':str(path.relative_to(out)),'sha256':digest,'elfMachine':machine})
+          launchers=[r for r in rows if pathlib.PurePosixPath(r['path']).name=='spectre']
+          jvms=[r for r in rows if pathlib.PurePosixPath(r['path']).name=='libjvm.so']
+          wrong=[r for r in rows if r['elfMachine']!=expected]
+          receipt={'expectedElfMachine':expected,'elfCount':len(rows),'launcherCount':len(launchers),'libjvmCount':len(jvms),'files':rows}
+          print(json.dumps(receipt,indent=2))
+          if not rows or len(launchers)!=1 or len(jvms)!=1 or wrong:
+              raise SystemExit(f'ELF inventory rejected: count={len(rows)} launchers={len(launchers)} libjvms={len(jvms)} wrong={[(r["path"],r["elfMachine"]) for r in wrong]}')
+          PY
+          # Optional producer receipt is independent corroboration of product source identity.
+          mapfile -d '' provenance < <(find "$RUNNER_TEMP/candidate" -type f -name source-sha.txt -print0)
+          test "${#provenance[@]}" -le 1
+          if test "${#provenance[@]}" -eq 1; then
+            test ! -L "${provenance[0]}"
+            test "$(tr -d '\r\n' < "${provenance[0]}")" = '${{ needs.gate.outputs.source_sha }}'
+            cp "${provenance[0]}" evidence/upstream-source-sha.txt
+          fi
+          test "$(sha256sum "$archive" | cut -d' ' -f1)" = "$EXPECTED_SHA"
+      - name: Verify positive native archive behavior
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ matrix.arch == 'x64' && needs.gate.outputs.x64_sha || needs.gate.outputs.arm64_sha }}
+        run: |
+          set -euo pipefail
+          archive=$(find "$RUNNER_TEMP/candidate" -type f -name '${{ matrix.basename }}' -print -quit)
+          python3 .github/post-publication-qa/verify_native_archive.py --version '${{ needs.gate.outputs.version }}' --arch '${{ matrix.arch }}' --archive "$archive" --evidence evidence/native
+          test "$(sha256sum "$archive" | cut -d' ' -f1)" = "$EXPECTED_SHA"
+      - name: Install private GTK accessibility fixture dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth dbus-x11 at-spi2-core python3 python3-gi gir1.2-gtk-3.0 libgtk-3-0
+      - name: Exercise public PID-scoped accessibility invocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          spectre=$(find "$RUNNER_TEMP/unpacked" -type f -name spectre -perm -u+x -print -quit); test -n "$spectre"
+          cat > "$RUNNER_TEMP/fixture.py" <<'PY'
+          import gi,os,pathlib,sys
+          gi.require_version('Gtk','3.0'); from gi.repository import Gtk
+          title,label,pidfile=sys.argv[1:]
+          window=Gtk.Window(title=title); window.set_default_size(420,180)
+          window.add(Gtk.Button(label=label)); window.connect('destroy',Gtk.main_quit)
+          window.show_all(); pathlib.Path(pidfile).write_text(str(os.getpid())); Gtk.main()
+          PY
+          socket=/tmp/sp-${{ matrix.arch }}-$$; install -d -m 700 "$socket"; export SPECTRE_DAEMON_SOCKET_DIR=$socket
+          trap 'rm -rf "$socket"' EXIT
+          dbus-run-session -- xvfb-run -a --server-args='-screen 0 1024x768x24 -nolisten tcp' bash -euo pipefail -c '
+            export NO_AT_BRIDGE=0 GTK_MODULES=gail:atk-bridge
+            gsettings set org.gnome.desktop.interface toolkit-accessibility true
+            /usr/bin/python3 "$1" "Spectre Prepublication QA Window" "Spectre Prepublication QA Button" "$2" & fixture=$!
+            /usr/bin/python3 "$1" "Spectre Wrong Process Window" "Spectre Wrong Process Button" "$3" & counter=$!
+            finish() { "$4" daemon stop >/dev/null 2>&1 || true; kill "$fixture" "$counter" 2>/dev/null || true; wait "$fixture" "$counter" 2>/dev/null || true; }
+            trap finish EXIT
+            for i in {1..100}; do test -s "$2" -a -s "$3" && break; sleep .1; done
+            pid=$(cat "$2"); counter_pid=$(cat "$3"); test "$pid" = "$fixture"; test "$counter_pid" = "$counter"; test "$pid" != "$counter_pid"
+            "$4" a11y tree --pid "$pid" > "$5"
+            /usr/bin/python3 "$PWD/.github/post-publication-qa/verify_accessibility.py" --snapshot "$5" --pid "$pid" --title "Spectre Prepublication QA Window" --button "Spectre Prepublication QA Button" --forbid-button "Spectre Wrong Process Button" > evidence/accessibility-receipt.json
+          ' _ "$RUNNER_TEMP/fixture.py" "$RUNNER_TEMP/fixture.pid" "$RUNNER_TEMP/counter.pid" "$spectre" "$PWD/evidence/tree.json"
+          rm -f evidence/tree.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: prepublication-receipt-${{ matrix.arch }}-${{ needs.gate.outputs.source_sha }}
+          path: evidence
+          if-no-files-found: error
