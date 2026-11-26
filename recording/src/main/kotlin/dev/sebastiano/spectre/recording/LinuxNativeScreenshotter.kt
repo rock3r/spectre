@@ -120,7 +120,7 @@ internal constructor(
                 sourceTypes = if (wayland) listOf(SourceType.MONITOR) else emptyList(),
                 displayName =
                     if (wayland) null else displayNameProvider()?.takeIf { it.isNotBlank() },
-                cursorMode = if (wayland) null else CursorMode.HIDDEN,
+                cursorMode = if (wayland) CursorMode.EMBEDDED else CursorMode.HIDDEN,
                 region = region.toProtocolRegion(),
                 screenSize = if (wayland) awtDisplayBoundsContaining(region)?.toWire() else null,
                 output = tempPng().toAbsolutePath().toString(),

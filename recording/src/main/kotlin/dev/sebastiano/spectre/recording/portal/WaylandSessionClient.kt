@@ -85,6 +85,7 @@ internal constructor(
                     backend = CaptureBackend.WAYLAND_PORTAL,
                     target = CaptureTarget.REGION,
                     sourceTypes = listOf(SourceType.MONITOR),
+                    cursorMode = CursorMode.EMBEDDED,
                     region = Region(region.x, region.y, region.width, region.height),
                     screenSize = awtDisplayBoundsContaining(region)?.toWire(),
                     output = output.toAbsolutePath().toString(),
