@@ -1,5 +1,5 @@
 diff --git a/recording/native/linux/src/accessibility.rs b/recording/native/linux/src/accessibility.rs
-index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7b4038ef1 100644
+index 596b071a88de84de52353ca7cef9ee8a974fe227..333266f35e03084ac892d0281b1861724ce6a48c 100644
 --- a/recording/native/linux/src/accessibility.rs
 +++ b/recording/native/linux/src/accessibility.rs
 @@ -7,6 +7,7 @@
@@ -266,7 +266,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
      Ok(snapshot)
  }
  
-@@ -292,6 +408,467 @@ struct NodeData {
+@@ -292,6 +408,493 @@ struct NodeData {
      value: Option<String>,
      bounds: Option<Rect>,
      children: Vec<Address>,
@@ -575,9 +575,17 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
 +        .collect();
 +    let mut replies = HashMap::with_capacity(calls.len());
 +    while replies.len() < calls.len() {
-+        let timeout = call_timeout_anyhow(deadline)?;
-+        let Some(mut message) = bus.channel().blocking_pop_message(timeout)? else {
-+            anyhow::bail!("deadline exceeded waiting for cached AT-SPI enrichment replies")
++        let mut message = loop {
++            match bus
++                .channel()
++                .blocking_pop_message(call_timeout_anyhow(deadline)?)?
++            {
++                Some(message) => break message,
++                None if Instant::now() >= deadline => {
++                    anyhow::bail!("deadline exceeded waiting for cached AT-SPI enrichment replies")
++                }
++                None => continue,
++            }
 +        };
 +        if !matches!(
 +            message.msg_type(),
@@ -599,10 +607,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
 +        };
 +        let reply = match message.as_result() {
 +            Ok(message) => decode_cached_reply(message, call.kind)?,
-+            Err(error) if is_dbus_timeout_error(&error) || Instant::now() >= deadline => {
-+                return Err(error.into())
-+            }
-+            Err(_) => CachedReply::Unsupported,
++            Err(error) => classify_cached_error(&error, call.kind, deadline)?,
 +        };
 +        replies.insert(serial, reply);
 +    }
@@ -610,12 +615,33 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
 +}
 +
 +fn cached_reply_matches(kind: MessageType, sender: Option<&str>, owner: &str) -> bool {
-+    match kind {
-+        // Errors such as LimitsExceeded and NoReply can be synthesized by the bus daemon, so
-+        // their sender is not the destination owner. The reply serial still identifies our call.
-+        MessageType::Error => true,
-+        MessageType::MethodReturn => sender == Some(owner),
-+        _ => false,
++    matches!(kind, MessageType::MethodReturn | MessageType::Error)
++        && matches!(sender, Some(value) if value == owner || (kind == MessageType::Error && value == "org.freedesktop.DBus"))
++}
++
++fn classify_cached_error(
++    error: &dbus::Error,
++    kind: CachedCallKind,
++    deadline: Instant,
++) -> Result<CachedReply> {
++    if is_dbus_timeout_error(error) || Instant::now() >= deadline {
++        return Err(dbus::Error::new_custom(
++            error.name().unwrap_or("org.freedesktop.DBus.Error.Failed"),
++            &error.to_string(),
++        )
++        .into());
++    }
++    match error.name() {
++        Some(
++            "org.freedesktop.DBus.Error.UnknownInterface"
++            | "org.freedesktop.DBus.Error.UnknownMethod"
++            | "org.freedesktop.DBus.Error.UnknownObject",
++        ) => Ok(CachedReply::Unsupported),
++        // AT-SPI providers commonly use these for an optional attribute unavailable on one node.
++        Some("org.a11y.atspi.Error.NotImplemented" | "org.a11y.atspi.Error.NotSupported") => {
++            Ok(CachedReply::Unsupported)
++        }
++        _ => anyhow::bail!("cached AT-SPI {kind:?} call failed: {error}"),
 +    }
 +}
 +
@@ -734,7 +760,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
  }
  
  fn find_window(
-@@ -369,10 +946,12 @@ fn find_window(
+@@ -369,10 +972,12 @@ fn find_window(
                  match &request.target {
                      Target::ProcessId { .. } => return Ok(window),
                      Target::WindowTitle { value, .. } => {
@@ -751,7 +777,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
                          }
                      }
                      Target::WindowId { .. } => unreachable!(),
-@@ -475,8 +1054,12 @@ fn is_transient_registration_error(error: &anyhow::Error) -> bool {
+@@ -475,8 +1080,12 @@ fn is_transient_registration_error(error: &anyhow::Error) -> bool {
  }
  
  fn is_transient_selected_root_error(error: &anyhow::Error) -> bool {
@@ -766,7 +792,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
  }
  
  fn retry_selected_root_read<T>(
-@@ -561,20 +1144,32 @@ fn connection_pid(
+@@ -561,20 +1170,32 @@ fn connection_pid(
      }
  }
  
@@ -803,7 +829,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
  fn optional_find_read<T>(
      deadline: Instant,
      error: dbus::Error,
-@@ -599,6 +1194,89 @@ fn parse_window_id(id: &str) -> Option<Address> {
+@@ -599,6 +1220,89 @@ fn parse_window_id(id: &str) -> Option<Address> {
      })
  }
  
@@ -893,7 +919,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
  #[allow(clippy::too_many_arguments)]
  fn walk(
      bus: &Arc<SyncConnection>,
-@@ -789,20 +1467,23 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
+@@ -789,20 +1493,23 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
                  .unwrap_or_default()
              });
              let role = scope.spawn(|| {
@@ -927,7 +953,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
              });
              let children_result = scope.spawn(|| children(bus, a, deadline));
              let state_words = scope.spawn(|| {
-@@ -869,17 +1550,17 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
+@@ -869,17 +1576,17 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
      } else {
          None
      };
@@ -949,7 +975,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
      })
  }
  
-@@ -926,6 +1607,63 @@ fn property_string_sync(p: &Proxy<&SyncConnection>, interface: &str, name: &str)
+@@ -926,6 +1633,63 @@ fn property_string_sync(p: &Proxy<&SyncConnection>, interface: &str, name: &str)
          .ok()?;
      Some(value.0)
  }
@@ -1013,7 +1039,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
  fn remaining(deadline: Instant) -> Duration {
      deadline
          .saturating_duration_since(Instant::now())
-@@ -934,16 +1672,7 @@ fn remaining(deadline: Instant) -> Duration {
+@@ -934,16 +1698,7 @@ fn remaining(deadline: Instant) -> Duration {
  fn timed_err(deadline: Instant, error: impl Into<anyhow::Error>) -> CaptureError {
      let error = error.into();
      // libdbus uses millisecond timeouts and can report expiration before the Rust deadline.
@@ -1031,7 +1057,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
      if dbus_timeout || Instant::now() >= deadline {
          ("timeout", "accessibility snapshot timed out".into(), None)
      } else {
-@@ -1367,7 +2096,8 @@ mod tests {
+@@ -1367,7 +2122,8 @@ mod tests {
                  Err(anyhow::Error::new(dbus::Error::new_custom(
                      "org.freedesktop.DBus.Error.UnknownInterface",
                      "No such interface 'org.a11y.atspi.Accessible'",
@@ -1041,7 +1067,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
              } else {
                  Ok(42)
              }
-@@ -1384,11 +2114,18 @@ mod tests {
+@@ -1384,11 +2140,18 @@ mod tests {
                  "org.freedesktop.DBus.Error.AccessDenied",
                  "org.a11y.atspi.Accessible",
              ),
@@ -1061,7 +1087,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
              });
              assert!(result.is_err());
              assert_eq!(calls, 1);
-@@ -1423,6 +2160,144 @@ mod tests {
+@@ -1423,6 +2186,144 @@ mod tests {
          assert!(restore_result(true, Err("read failed".into())).is_err());
      }
  
@@ -1206,7 +1232,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
      #[test]
      fn unknown_interface_is_transient_only_during_registration() {
          let unknown = anyhow::Error::new(dbus::Error::new_custom(
-@@ -1503,6 +2378,268 @@ mod tests {
+@@ -1503,6 +2404,291 @@ mod tests {
          assert!(parse_window_id("org.example.App|/window/7").is_none());
          assert!(parse_window_id(":1.42|not-a-path").is_none());
      }
@@ -1417,7 +1443,7 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
 +    }
 +
 +    #[test]
-+    fn cached_pipeline_accepts_daemon_errors_but_not_foreign_returns() {
++    fn cached_pipeline_rejects_foreign_errors_and_returns() {
 +        assert!(cached_reply_matches(
 +            MessageType::Error,
 +            Some("org.freedesktop.DBus"),
@@ -1425,12 +1451,12 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
 +        ));
 +        assert!(cached_reply_matches(
 +            MessageType::Error,
-+            Some(":1.0"),
++            Some(":1.42"),
 +            ":1.42"
 +        ));
-+        assert!(cached_reply_matches(
-+            MessageType::MethodReturn,
-+            Some(":1.42"),
++        assert!(!cached_reply_matches(
++            MessageType::Error,
++            Some(":1.99"),
 +            ":1.42"
 +        ));
 +        assert!(!cached_reply_matches(
@@ -1438,6 +1464,29 @@ index 596b071a88de84de52353ca7cef9ee8a974fe227..c9a37c3f6756bae5018fc03ea47c2cc7
 +            Some(":1.99"),
 +            ":1.42"
 +        ));
++    }
++
++    #[test]
++    fn cached_pipeline_only_hides_optional_provider_errors() {
++        let deadline = Instant::now() + Duration::from_secs(30);
++        for name in [
++            "org.freedesktop.DBus.Error.UnknownMethod",
++            "org.a11y.atspi.Error.NotImplemented",
++        ] {
++            let error = dbus::Error::new_custom(name, "optional field unavailable");
++            assert!(matches!(
++                classify_cached_error(&error, CachedCallKind::RoleName, deadline).unwrap(),
++                CachedReply::Unsupported
++            ));
++        }
++        for name in [
++            "org.freedesktop.DBus.Error.LimitsExceeded",
++            "org.freedesktop.DBus.Error.Disconnected",
++            "org.freedesktop.DBus.Error.ServiceUnknown",
++        ] {
++            let error = dbus::Error::new_custom(name, "required route failed");
++            assert!(classify_cached_error(&error, CachedCallKind::Attributes, deadline).is_err());
++        }
 +    }
 +
 +    #[test]

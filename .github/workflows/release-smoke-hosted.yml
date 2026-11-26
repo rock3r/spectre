@@ -412,7 +412,7 @@ jobs:
           git -C baseline apply --index "$GITHUB_WORKSPACE/baseline-control/.github/reader-overlays/716-b1-cached-owner.patch"
           test "$(git -C baseline write-tree)" = 93dcbb2ae2302e04ca0a3f316b1a90b669cef7fe
           git -C product apply --index "$GITHUB_WORKSPACE/control/.github/reader-overlays/716-b1-cached-owner.patch"
-          test "$(git -C product write-tree)" = f27d8f9585dd129f48563a639a58d3fa33baed2b
+          test "$(git -C product write-tree)" = 97b3c15a0c0d15b8d964c10c6f60c58d0d53b8cb
           mkdir -p "$RUNNER_TEMP/atspi-results"
           git -C product write-tree > "$RUNNER_TEMP/atspi-results/product-tree.txt"
           printf '%s' "$LARGE_FIXTURE" | base64 -d | gzip -dc > "$RUNNER_TEMP/benchmark-fixture.diff"
