@@ -127,6 +127,7 @@ internal object CaptureArtifactStore {
                 imageWidth = image.width,
                 imageHeight = image.height,
                 captureDurationMs = 0,
+                notes = snapshot.notes,
             )
         } catch (exception: java.io.IOException) {
             directory.toFile().deleteRecursively()

@@ -186,7 +186,10 @@ spectre a11y tree --pid <pid>
 spectre a11y tree --window "<window title>"
 ```
 
-The MCP `accessibility_tree` tool takes the same `pid` or `window` target. For an attached session, CLI `capture --source accessibility` and MCP `capture` with
+The MCP `accessibility_tree` tool takes the same `pid` or `window` target. On Linux, temporary
+AT-SPI enablement is an explicit opt-in: pass CLI `--allow-accessibility-enable` or MCP
+`allowAccessibilityEnable: true`; the default never enables it and returns `accessibility-disabled`.
+For an attached session, CLI `capture --source accessibility` and MCP `capture` with
 `source: "accessibility"` store `accessibility.json` beside the screenshot; `compose` is the default. Accessibility keys belong to one
 snapshot only: re-read and resolve by `id`, name, role, and bounds after the UI changes. On GNOME
 Wayland, heed the output's `window-relative` bounds marker and never use those bounds directly as

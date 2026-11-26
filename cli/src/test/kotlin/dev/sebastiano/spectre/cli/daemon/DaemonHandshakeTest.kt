@@ -144,6 +144,15 @@ class DaemonHandshakeTest {
             ),
         )
         assertEquals(
+            DaemonProtocolVersion(major = 1, minor = 18),
+            DaemonProtocol.clientHandshakeVersion(
+                DaemonRequest.AccessibilityTree(
+                    processId = 1234,
+                    allowAccessibilityEnable = true,
+                )
+            ),
+        )
+        assertEquals(
             DaemonProtocolVersion(major = 1, minor = 17),
             DaemonProtocol.clientHandshakeVersion(
                 DaemonRequest.Capture(

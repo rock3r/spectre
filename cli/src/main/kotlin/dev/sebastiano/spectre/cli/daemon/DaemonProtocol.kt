@@ -12,7 +12,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 17)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 18)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -49,7 +49,10 @@ public object DaemonProtocol {
 
     internal fun minimumDaemonVersion(request: DaemonRequest): DaemonProtocolVersion =
         if (request is DaemonRequest.AccessibilityTree) {
-            versionFor(ACCESSIBILITY_INTRODUCED_MINOR)
+            versionFor(
+                if (request.allowAccessibilityEnable) ACCESSIBILITY_ENABLE_INTRODUCED_MINOR
+                else ACCESSIBILITY_INTRODUCED_MINOR
+            )
         } else {
             minimumDaemonVersionBeforeAccessibility(request)
         }
@@ -130,7 +133,9 @@ public object DaemonProtocol {
 
     /** Accessibility is a 1.17 source; Compose keeps its historical screen-pixel floor. */
     private fun captureVersion(request: DaemonRequest.Capture): DaemonProtocolVersion =
-        if (request.source == DaemonCaptureSource.Accessibility) {
+        if (request.allowAccessibilityEnable) {
+            versionFor(ACCESSIBILITY_ENABLE_INTRODUCED_MINOR)
+        } else if (request.source == DaemonCaptureSource.Accessibility) {
             versionFor(ACCESSIBILITY_INTRODUCED_MINOR)
         } else {
             versionFor(maxOf(CAPTURE_INTRODUCED_MINOR, SCREEN_PIXEL_STILLS_INTRODUCED_MINOR))
@@ -191,6 +196,8 @@ public object DaemonProtocol {
     private const val RECORDING_RESULTS_INTRODUCED_MINOR: Int = 16
     /** Native accessibility snapshots and accessibility-backed captures (#718). */
     private const val ACCESSIBILITY_INTRODUCED_MINOR: Int = 17
+    /** Explicit permission to temporarily enable a disabled platform accessibility service. */
+    private const val ACCESSIBILITY_ENABLE_INTRODUCED_MINOR: Int = 18
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -218,6 +225,7 @@ public sealed interface DaemonRequest {
         public val maximumDepth: Int = 64,
         public val maximumNodeCount: Int = 10_000,
         public val timeoutMs: Long = 750,
+        public val allowAccessibilityEnable: Boolean = false,
     ) : DaemonRequest
 
     @Serializable
@@ -417,6 +425,7 @@ public sealed interface DaemonRequest {
         public val windowIndex: Int = 0,
         public val outDir: String? = null,
         public val source: DaemonCaptureSource = DaemonCaptureSource.Compose,
+        public val allowAccessibilityEnable: Boolean = false,
     ) : SessionRequest
 
     @Serializable
@@ -575,6 +584,7 @@ public sealed interface DaemonResponse {
         public val imageWidth: Int,
         public val imageHeight: Int,
         public val captureDurationMs: Long,
+        public val notes: List<String> = emptyList(),
     ) : DaemonResponse
 
     @Serializable

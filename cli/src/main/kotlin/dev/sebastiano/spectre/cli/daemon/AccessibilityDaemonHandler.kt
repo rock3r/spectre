@@ -100,6 +100,7 @@ internal class AccessibilityDaemonHandler(private val client: AccessibilityHelpe
                             request.maximumDepth,
                             request.maximumNodeCount,
                             request.timeoutMs,
+                            request.allowAccessibilityEnable,
                         )
                     )
             ) {

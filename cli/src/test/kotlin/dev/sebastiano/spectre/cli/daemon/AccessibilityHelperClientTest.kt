@@ -220,6 +220,23 @@ class AccessibilityHelperClientTest {
 
         assertIs<AccessibilitySnapshotResponse.Failure>(response)
         assertTrue(stdin.contains("\"maximumNodeCount\":5"))
+        assertTrue(!stdin.contains("allowAccessibilityEnable"))
+    }
+
+    @Test
+    fun `passes explicit accessibility enable permission to helper`() {
+        var stdin = ""
+        val client = AccessibilityHelperClient { _, input, _ ->
+            stdin = input
+            """{"ok":false,"error":{"code":"accessibility-disabled","message":"off"}}"""
+        }
+
+        client.snapshot(
+            AccessibilitySnapshotRequest(Target.ProcessId(42), 4, 5, 100, true),
+            java.nio.file.Path.of("helper"),
+        )
+
+        assertTrue(stdin.contains("\"allowAccessibilityEnable\":true"))
     }
 
     @Test

@@ -82,6 +82,24 @@ class DaemonWireCodecTest {
     }
 
     @Test
+    fun `accessibility enable permission survives the daemon wire round trip`() {
+        val output = ByteArrayOutputStream()
+        DaemonWireCodec.writeRequest(
+            output,
+            DaemonRequest.AccessibilityTree(
+                processId = 42,
+                allowAccessibilityEnable = true,
+            ),
+        )
+
+        val decoded =
+            assertIs<DaemonRequest.AccessibilityTree>(
+                DaemonWireCodec.readRequest(ByteArrayInputStream(output.toByteArray()))
+            )
+        assertTrue(decoded.allowAccessibilityEnable)
+    }
+
+    @Test
     fun `writes and reads framed daemon responses`() {
         val output = ByteArrayOutputStream()
         val response =

@@ -780,6 +780,12 @@ internal fun writeCapture(
     sessionTarget: ((Int) -> SessionAccessibilityTarget?)? = null,
     verifyAccessibilityTarget: (() -> DaemonResponse?)? = null,
 ): DaemonResponse {
+    if (request.allowAccessibilityEnable && request.source != DaemonCaptureSource.Accessibility) {
+        return DaemonResponse.Error(
+            DaemonErrorCode.ProtocolError,
+            "allowAccessibilityEnable requires the accessibility capture source",
+        )
+    }
     if (request.source == DaemonCaptureSource.Compose) {
         return CaptureArtifactStore.write(
             request.sessionId,
@@ -792,6 +798,7 @@ internal fun writeCapture(
         DaemonRequest.AccessibilityTree(
             sessionId = request.sessionId,
             windowIndex = request.windowIndex,
+            allowAccessibilityEnable = request.allowAccessibilityEnable,
         )
     val tree =
         sessionTarget?.let { resolver ->

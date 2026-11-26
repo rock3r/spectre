@@ -2,6 +2,7 @@ package dev.sebastiano.spectre.cli.mcp
 
 import dev.sebastiano.spectre.cli.daemon.AccessibilityError
 import dev.sebastiano.spectre.cli.daemon.AccessibilityErrorCode
+import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import io.modelcontextprotocol.kotlin.sdk.server.ClientConnection
 import io.modelcontextprotocol.kotlin.sdk.shared.RequestOptions
@@ -35,6 +36,40 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 class AccessibilityMcpTransportTest {
+    @Test
+    fun `MCP explicit enable permission is source scoped and defaults false`() = runBlocking {
+        val seen = mutableListOf<DaemonRequest>()
+        val server = SpectreMcpServer.create { request ->
+            seen += request
+            DaemonResponse.AccessibilityErrorResult(
+                AccessibilityError(AccessibilityErrorCode.AccessibilityDisabled, "off")
+            )
+        }
+
+        invokeTool(server, "accessibility_tree", buildJsonObject { put("pid", 42) })
+        invokeTool(
+            server,
+            "accessibility_tree",
+            buildJsonObject {
+                put("pid", 42)
+                put("allowAccessibilityEnable", true)
+            },
+        )
+        invokeTool(
+            server,
+            "capture",
+            buildJsonObject {
+                put("session_id", "pid-42")
+                put("source", "accessibility")
+                put("allowAccessibilityEnable", true)
+            },
+        )
+
+        assertEquals(false, (seen[0] as DaemonRequest.AccessibilityTree).allowAccessibilityEnable)
+        assertEquals(true, (seen[1] as DaemonRequest.AccessibilityTree).allowAccessibilityEnable)
+        assertEquals(true, (seen[2] as DaemonRequest.Capture).allowAccessibilityEnable)
+    }
+
     @Test
     fun `accessibility errors stay structured failures through both MCP entry points`() =
         runBlocking {

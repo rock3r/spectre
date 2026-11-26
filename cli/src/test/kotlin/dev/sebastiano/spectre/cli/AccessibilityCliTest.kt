@@ -40,6 +40,53 @@ class AccessibilityCliTest {
         Json.parseToJsonElement(stdout.toString())
         assertEquals(42, seen?.processId)
         assertTrue(stderr.contains("notice: bus enabled"))
+        assertEquals(false, seen?.allowAccessibilityEnable)
+    }
+
+    @Test
+    fun `explicit enable permission reaches direct and attached accessibility requests only`() {
+        val seen = mutableListOf<DaemonRequest>()
+        val cli =
+            SpectreCli(
+                request = { request ->
+                    seen += request
+                    if (request is DaemonRequest.AccessibilityTree) {
+                        DaemonResponse.AccessibilitySnapshotResult(
+                            AccessibilitySnapshot(
+                                2,
+                                "os-accessibility",
+                                "2026-11-25T12:34:56Z",
+                                emptyList(),
+                                emptyList(),
+                            )
+                        )
+                    } else {
+                        DaemonResponse.Error(
+                            dev.sebastiano.spectre.cli.daemon.DaemonErrorCode.OperationFailed,
+                            "stop after request",
+                        )
+                    }
+                },
+                output = StringBuilder(),
+                errorOutput = StringBuilder(),
+            )
+
+        assertEquals(
+            0,
+            cli.run(
+                listOf(
+                    "a11y",
+                    "tree",
+                    "--pid",
+                    "42",
+                    "--allow-accessibility-enable",
+                )
+            ),
+        )
+        assertEquals(
+            true,
+            assertIs<DaemonRequest.AccessibilityTree>(seen.single()).allowAccessibilityEnable,
+        )
     }
 
     @Test
