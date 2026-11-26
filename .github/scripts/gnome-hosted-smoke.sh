@@ -43,6 +43,21 @@ systemctl is-active --quiet systemd-logind || { echo "systemd-logind is not acti
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
+final_qa_packages=()
+start_budget=45min
+stop_budget=45min
+if [[ "${SMOKE_HOSTED_FINAL_QA:-0}" == 1 ]]; then
+  # The final release cell compiles winit/accesskit and exercises every packaged
+  # recording path. Keep this additive so the established hosted smokes retain
+  # their package set and 45-minute service budget.
+  final_qa_packages=(
+    dbus-x11 gstreamer1.0-libav libatk-wrapper-java libatk-wrapper-java-jni
+    libatspi2.0-dev libglx-dev libxcursor-dev libxi-dev libxinerama-dev
+    libxrandr-dev libxtst-dev openbox xvfb
+  )
+  start_budget=125min
+  stop_budget=10min
+fi
 apt-get install -y --no-install-recommends \
   at-spi2-core dbus-user-session ffmpeg git gnome-shell gnome-shell-extension-prefs \
   libdbus-1-dev libpipewire-0.3-dev mutter pipewire pipewire-audio-client-libraries \
@@ -51,7 +66,8 @@ apt-get install -y --no-install-recommends \
   python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-gtk-4.0 python3-pil python3-pyatspi \
   libgl1-mesa-dri libegl-mesa0 libxkbcommon-x11-0 xdg-desktop-portal-gnome \
   gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
-  gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-pipewire
+  gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-pipewire \
+  "${final_qa_packages[@]}"
 
 id "$SMOKE_USER"
 [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "CANDIDATE_SHA must be a full lowercase SHA" >&2; exit 1; }
@@ -63,7 +79,7 @@ SMOKE_HOME=$(getent passwd "$SMOKE_USER" | cut -d: -f6)
 chown "$SMOKE_USER" "$SMOKE_ARTIFACTS"
 chmod 0755 "$SMOKE_SESSION_SCRIPT"
 systemd-run \
-  --wait --collect --pipe --service-type=simple --property=TimeoutStartSec=45min --property=TimeoutStopSec=45min \
+  --wait --collect --pipe --service-type=simple --property="TimeoutStartSec=$start_budget" --property="TimeoutStopSec=$stop_budget" \
   --uid="$SMOKE_USER" --property=PAMName=login \
   --setenv="HOME=$SMOKE_HOME" \
   --setenv="SMOKE_JAVA_HOME=$selected_jdk" \
@@ -72,6 +88,7 @@ systemd-run \
   --setenv="SMOKE_REPO=$SMOKE_REPO" \
   --setenv="SMOKE_MODE=$SMOKE_MODE" \
   --setenv="CANDIDATE_SHA=$CANDIDATE_SHA" \
+  --setenv="SMOKE_HOSTED_FINAL_QA=${SMOKE_HOSTED_FINAL_QA:-0}" \
   --setenv="ATSPI_REPO=$ATSPI_REPO" \
   --setenv="FIXTURE_CHECKOUT=$FIXTURE_CHECKOUT" \
   --setenv="BASELINE_REPO=${BASELINE_REPO:-}" \

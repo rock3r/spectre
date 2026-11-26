@@ -1,0 +1,157 @@
+name: Temporary final Linux GNOME QA
+
+on:
+  push:
+    branches: [release-0.10/gnome-hosted-smoke]
+    paths: [.github/release-smoke-hosted.env]
+
+# Verification only: no publication, branch updates, credentials, or overlays.
+permissions:
+  contents: read
+
+jobs:
+  control:
+    if: startsWith(github.event.head_commit.message, 'Ship final Linux')
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.control.outputs.sha }}
+      version: ${{ steps.control.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - id: control
+        name: Validate the established immutable control record
+        shell: bash
+        run: |
+          set -euo pipefail
+          source .github/release-smoke-hosted.env
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PHASE" == CANDIDATE ]]
+          [[ "$RELEASE_VERSION" == 0.10.0 ]]
+          printf 'sha=%s\nversion=%s\n' "$CANDIDATE_SHA" "$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+
+  linux-qa:
+    needs: control
+    name: ${{ matrix.release }} / ${{ matrix.cell }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 140
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            release: Noble GNOME 46
+            cell: complete-release-seat
+            mode: qa-final-release-seat
+          - os: ubuntu-24.04
+            release: Noble GNOME 46
+            cell: packaged-region-stills
+            mode: qa-final-region-stills
+          - os: ubuntu-22.04
+            release: Jammy GNOME 42
+            cell: packaged-region-stills
+            mode: qa-final-region-stills
+          - os: ubuntu-24.04
+            release: Noble GNOME 46
+            cell: packaged-dynamic-occlusion-crop
+            mode: cli-recording-live
+          - os: ubuntu-22.04
+            release: Jammy GNOME 42
+            cell: packaged-dynamic-occlusion-crop
+            mode: cli-recording-live
+    steps:
+      - name: Check out orchestration without modifying it
+        uses: actions/checkout@v6
+        with:
+          path: orchestration
+          persist-credentials: false
+      - name: Check out the exact published candidate and all history
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.control.outputs.sha }}
+          fetch-depth: 0
+          clean: true
+          path: candidate
+          persist-credentials: false
+      - name: Prove clean pinned identity and the explicit baseline tag
+        working-directory: candidate
+        env:
+          EXPECTED_SHA: ${{ needs.control.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git rev-parse --verify refs/tags/v0.9.0^{commit} > /dev/null
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          mkdir -p "$RUNNER_TEMP/final-linux-qa"
+          git rev-parse HEAD > "$RUNNER_TEMP/final-linux-qa/candidate-sha.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final-linux-qa/candidate-tree.txt"
+          git status --porcelain=v1 --untracked-files=all > "$RUNNER_TEMP/final-linux-qa/candidate-status.txt"
+          git tag --points-at refs/tags/v0.9.0^{commit} > "$RUNNER_TEMP/final-linux-qa/base-tags.txt"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          build-root-directory: candidate
+          cache-read-only: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run the genuine PAM/logind GNOME seat
+        working-directory: orchestration
+        env:
+          ATSPI_REPO: unused
+          FIXTURE_CHECKOUT: unused
+          SMOKE_MODE: ${{ matrix.mode }}
+          CANDIDATE_SHA: ${{ needs.control.outputs.sha }}
+          SMOKE_ARTIFACTS: ${{ runner.temp }}/final-linux-qa
+          SMOKE_REPO: ${{ github.workspace }}/candidate
+          SMOKE_SESSION_SCRIPT: ${{ github.workspace }}/orchestration/.github/scripts/gnome-hosted-smoke-session.sh
+          SMOKE_HOSTED_FINAL_QA: '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SMOKE_USER="$(id -un)" RUST_BIN="$(dirname "$(command -v cargo)")"
+          sudo --preserve-env=ATSPI_REPO,FIXTURE_CHECKOUT,SMOKE_MODE,SMOKE_USER,RUST_BIN,CANDIDATE_SHA,JAVA_HOME,SMOKE_ARTIFACTS,SMOKE_REPO,SMOKE_SESSION_SCRIPT,SMOKE_HOSTED_FINAL_QA \
+            .github/scripts/gnome-hosted-smoke.sh "$JAVA_HOME"
+      - name: Validate the canonical complete-seat report
+        if: always() && matrix.mode == 'qa-final-release-seat'
+        working-directory: orchestration
+        shell: bash
+        run: |
+          python3 .github/scripts/verify-final-release-report.py \
+            "$GITHUB_WORKSPACE/candidate/build/smoke/release-smoke.json" \
+            --repo "$GITHUB_WORKSPACE/candidate" \
+            --sha "${{ needs.control.outputs.sha }}" \
+            --console "$RUNNER_TEMP/final-linux-qa/release-smoke-console.log" \
+            --consent-summary "$RUNNER_TEMP/final-linux-qa/consent-summary.json"
+      - name: Re-prove the published checkout stayed clean
+        if: always()
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ needs.control.outputs.sha }}"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+      - name: Upload reports, per-step logs, session evidence, and JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-linux-${{ matrix.os }}-${{ matrix.cell }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/final-linux-qa/
+            candidate/build/smoke/release-smoke.md
+            candidate/build/smoke/release-smoke.json
+            candidate/build/smoke/**/*.log
+            candidate/**/build/test-results/**/*.xml
+          if-no-files-found: error
+          retention-days: 14

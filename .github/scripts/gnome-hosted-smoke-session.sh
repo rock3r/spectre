@@ -130,11 +130,28 @@ gst-inspect-1.0 pipewiresrc >"$SMOKE_ARTIFACTS/gst-inspect-pipewiresrc.txt"
 # accessibility bus is enabled. Do this before either grant, and wait for both
 # the public broker and GNOME implementation rather than relying on activation
 # races hidden inside the test client.
-if [[ "$SMOKE_MODE" == portal || "$SMOKE_MODE" == capture || "$SMOKE_MODE" == geometry-calibration || "$SMOKE_MODE" == public-window-crop || "$SMOKE_MODE" == locate-window-724 ]]; then
+if [[ "$SMOKE_MODE" == portal || "$SMOKE_MODE" == capture || "$SMOKE_MODE" == geometry-calibration || "$SMOKE_MODE" == public-window-crop || "$SMOKE_MODE" == locate-window-724 || "$SMOKE_MODE" == qa-final-release-seat ]]; then
   gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
     --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled '<true>'
   timeout 15s gdbus wait --session --activate org.freedesktop.portal.Desktop
   timeout 15s gdbus wait --session --activate org.freedesktop.impl.portal.desktop.gnome
+fi
+
+if [[ "$SMOKE_MODE" == qa-final-release-seat ]]; then
+  export GDK_BACKEND=x11
+  {
+    printf 'uid=%s\nsession_id=%s\nXDG_RUNTIME_DIR=%s\nWAYLAND_DISPLAY=%s\nDISPLAY=%s\nDBUS_SESSION_BUS_ADDRESS=%s\n' \
+      "$(id -u)" "$session_id" "$XDG_RUNTIME_DIR" "$WAYLAND_DISPLAY" "$DISPLAY" \
+      "$DBUS_SESSION_BUS_ADDRESS"
+    stat "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
+  } >"$SMOKE_ARTIFACTS/seat-session-environment.txt"
+  gdbus call --session --dest org.gnome.Mutter.DisplayConfig \
+    --object-path /org/gnome/Mutter/DisplayConfig \
+    --method org.gnome.Mutter.DisplayConfig.GetCurrentState \
+    >"$SMOKE_ARTIFACTS/seat-monitor-state.txt"
+  cd "$SMOKE_REPO"
+  /usr/bin/python3 "$(dirname "$0")/gnome-final-release-smoke.py"
+  exit 0
 fi
 
 if [[ "$SMOKE_MODE" == locate-window-724 ]]; then
@@ -187,7 +204,7 @@ if [[ "$SMOKE_MODE" == locate-window-724 ]]; then
   exit 0
 fi
 
-if [[ "$SMOKE_MODE" == cli-recording-live || "$SMOKE_MODE" == cli-recording-restart || "$SMOKE_MODE" == cli-region-stills ]]; then
+if [[ "$SMOKE_MODE" == cli-recording-live || "$SMOKE_MODE" == cli-recording-restart || "$SMOKE_MODE" == cli-region-stills || "$SMOKE_MODE" == qa-final-region-stills ]]; then
   export GDK_BACKEND=x11
   gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
     --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled '<true>'
@@ -205,8 +222,13 @@ if [[ "$SMOKE_MODE" == cli-recording-live || "$SMOKE_MODE" == cli-recording-rest
   export SPECTRE_WAYLAND_SESSION_DIR="$XDG_RUNTIME_DIR/spectre-cli-live-session"
   export SPECTRE_WAYLAND_RESTORE_TOKEN_DIR="$XDG_RUNTIME_DIR/spectre-cli-live-tokens"
   mkdir -m 0700 "$SPECTRE_WAYLAND_SESSION_DIR" "$SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"
-  /usr/bin/python3 "$(dirname "$0")/gnome-cli-recording-live.py" \
-    2> >(tee "$SMOKE_ARTIFACTS/cli-recording-live.stderr" >&2)
+  if [[ "$SMOKE_MODE" == qa-final-region-stills ]]; then
+    /usr/bin/python3 "$(dirname "$0")/gnome-cli-region-stills.py" \
+      2> >(tee "$SMOKE_ARTIFACTS/cli-region-stills.stderr" >&2)
+  else
+    /usr/bin/python3 "$(dirname "$0")/gnome-cli-recording-live.py" \
+      2> >(tee "$SMOKE_ARTIFACTS/cli-recording-live.stderr" >&2)
+  fi
   if [[ "$SMOKE_MODE" == cli-recording-restart ]]; then
     /usr/bin/python3 "$(dirname "$0")/gnome-jammy-post-capture-restart.py" \
       2> >(tee "$SMOKE_ARTIFACTS/post-restart-diagnostic.stderr" >&2)

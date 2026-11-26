@@ -168,7 +168,7 @@ def wait_for_dialog(pid: int, artifact: Path, timeout: float = 45):
          f"complete sanitized backend subtree and counts saved at {artifact}")
 
 
-def accept_dialog(pid: int, artifact: Path) -> dict:
+def accept_dialog(pid: int, artifact: Path, *, approve_remember: bool = False) -> dict:
     nodes, dialog = wait_for_dialog(pid, artifact)
     dialog_nodes = list(descendants(dialog))
     dialog_facts = facts(dialog_nodes)
@@ -199,13 +199,28 @@ def accept_dialog(pid: int, artifact: Path) -> dict:
         time.sleep(0.1)
     if "checked" not in state_names(remote_input):
         fail("GNOME did not acknowledge the requested remote interaction")
+    remember = [node for node, item in zip(dialog_nodes, dialog_facts)
+                if semantics.folded(item["name"]) == "remember this selection"
+                and item["role"] in ("check box", "toggle button", "switch")]
+    if approve_remember and len(remember) > 1:
+        fail(f"found multiple Remember controls; see {artifact}")
+    if approve_remember and remember and "checked" not in state_names(remember[0]):
+        invoke(remember[0], accepted=("toggle",))
+        deadline = time.monotonic() + 5
+        while "checked" not in state_names(remember[0]) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if "checked" not in state_names(remember[0]):
+            fail("GNOME did not acknowledge Remember this selection")
     if not (set(state_names(selected_source)) & {"checked", "selected", "pressed"}):
         fail(f"expected one selected physical monitor for {matched_profile}; see {artifact}")
     if "sensitive" not in state_names(share):
         fail(f"Share is not uniquely enabled after singular monitor selection; see {artifact}")
 
     selected = {"profile": matched_profile, "role": selected_source.getRoleName(),
-                "name": clean(selected_source.name), "states": state_names(selected_source)}
+                "name": clean(selected_source.name), "states": state_names(selected_source),
+                "remoteInteractionApproved": "checked" in state_names(remote_input),
+                "rememberAvailable": bool(remember),
+                "rememberApproved": bool(remember and "checked" in state_names(remember[0]))}
     invoke(share, accepted=("click",))
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
