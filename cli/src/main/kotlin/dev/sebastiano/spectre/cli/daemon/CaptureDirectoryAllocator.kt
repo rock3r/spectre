@@ -17,8 +17,9 @@ internal object CaptureDirectoryAllocator {
         DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmssSSS'Z'").withZone(ZoneOffset.UTC)
 
     fun allocate(root: Path, clock: Clock = Clock.systemUTC()): Path {
+        val rootCreated = Files.notExists(root)
         Files.createDirectories(root)
-        hardenDirectoryPermissions(root)
+        if (rootCreated) hardenDirectoryPermissions(root)
         var nextSequence = nextSequenceNumber(root)
         repeat(MAX_ALLOCATION_ATTEMPTS) {
             val name =

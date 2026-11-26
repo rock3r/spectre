@@ -31,6 +31,7 @@ internal constructor(
         AttachedDaemonSession(delegate = automator, sessionId = "pid-$targetPid")
     },
 ) : AutoCloseable {
+    private val startupConfiguration: Map<String, String?> = daemonConfiguration()
     private val sessionsByPid: MutableMap<Long, DaemonSession> = linkedMapOf()
     /**
      * PIDs whose agent teardown is still running after the session left [sessionsByPid]. Same-PID
@@ -77,6 +78,22 @@ internal constructor(
                     // Resolved from this JVM's properties, which do not change while it lives, so
                     // this is the mode every attach this daemon makes will use.
                     inputCoordination = AttachInputCoordination.fromProperty().wireValue,
+                    configuration =
+                        if (request.configuration.isEmpty()) emptyMap() else startupConfiguration,
+                    warnings =
+                        if (
+                            System.getProperty(
+                                DaemonProcessLauncher.PROCESS_GROUP_ISOLATED_PROPERTY
+                            ) == "false"
+                        ) {
+                            listOf(
+                                "The daemon could not start in an independent process group; " +
+                                    "install setsid or /usr/bin/perl to keep it alive when the " +
+                                    "launching shell exits."
+                            )
+                        } else {
+                            emptyList()
+                        },
                 )
             is DaemonRequest.Attach -> error("attach must use attach() outside the monitor")
             is DaemonRequest.Detach -> error("detach must use handleDetachOutsideLock")
@@ -191,7 +208,8 @@ internal constructor(
                 DaemonResponse.Completed(request.sessionId)
             }
             is DaemonRequest.WaitForReloadSettled -> {
-                val hotReload = session.hotReloadSession
+                val hotReload =
+                    session.hotReloadSession ?: discoverHotReload(session, hotReloadSessionFactory)
                 if (hotReload == null) {
                     DaemonResponse.Error(
                         code = DaemonErrorCode.HotReloadUnavailable,
@@ -310,6 +328,7 @@ internal constructor(
                 return@synchronized DaemonResponse.Attached(
                     sessionId = session.summary.sessionId,
                     targetPid = session.summary.targetPid,
+                    sessionInfo = session.summary.sessionInfo,
                 )
             }
             // Another detach may have started after we waited; re-check under the monitor.
@@ -344,11 +363,11 @@ internal constructor(
             }
         val keyGuard = if (hotReload != null) ReloadAwareKeyGuard() else null
         // Wire invalidation before the reconnect loop connects so the first settle is not missed.
-        hotReload?.setReloadSettledListener { keyGuard?.onReload() }
+        hotReload?.setReloadSettledListener(RequestDiagnostics.route { keyGuard?.onReload() })
         (hotReload as? HotReloadSession)?.start()
         val session =
             DaemonSession(
-                summary = sessionSummaryFor(targetPid),
+                summary = sessionSummaryFor(targetPid, attached.sessionInfo),
                 automator = attached,
                 hotReloadSession = hotReload,
                 keyGuard = keyGuard,
@@ -357,6 +376,7 @@ internal constructor(
         return DaemonResponse.Attached(
             sessionId = session.summary.sessionId,
             targetPid = session.summary.targetPid,
+            sessionInfo = session.summary.sessionInfo,
         )
     }
 
@@ -390,16 +410,18 @@ internal constructor(
             session = checkNotNull(sessionsByPid.remove(targetPid))
             detachingByPid[targetPid] = gate
         }
+        val hotReload = session.retire()
         try {
             // Finalize while other sessions remain known live (#185); then close so in-flight waits
             // observe a closed automator and fail closed instead of hanging on the full wait
             // budget.
             session.automator.finalizeRecording(remainingLive)
-            session.hotReloadSession?.close()
+            hotReload?.close()
             session.automator.close()
             session.awaitIdleWaits()
             return CaptureSessionReport.forDetach(sessionId)
         } finally {
+            RequestDiagnostics.forget(sessionId)
             synchronized(this) {
                 if (detachingByPid[targetPid] === gate) detachingByPid.remove(targetPid)
             }
@@ -551,6 +573,7 @@ internal constructor(
     }
 
     override fun close() {
+        RequestDiagnostics.clear()
         val snapshot: List<Pair<Long, DaemonSession>>
         val ownedGates: List<Pair<Long, CountDownLatch>>
         val waitGates: List<CountDownLatch>
@@ -575,9 +598,10 @@ internal constructor(
         snapshot.forEach { (pid, session) ->
             if (pid !in ownedPids) return@forEach
             val ownedGate = ownedGates.first { it.first == pid }.second
+            val hotReload = session.retire()
             try {
                 runCatching { session.automator.finalizeRecording(emptySet()) }
-                session.hotReloadSession?.close()
+                hotReload?.close()
                 session.automator.close()
                 session.awaitIdleWaits()
             } finally {
@@ -605,11 +629,29 @@ private const val ATTACH_WAIT_DETACH_TIMEOUT_MS: Long =
     WAIT_DRAIN_TIMEOUT_MS + WAIT_DRAIN_MARGIN_MS + 120_000
 private const val NANOS_PER_MS: Long = 1_000_000
 
+private fun discoverHotReload(
+    session: DaemonSession,
+    factory: (Long) -> HotReloadCapability?,
+): HotReloadCapability? =
+    synchronized(session) {
+        session.hotReloadSession?.let {
+            return@synchronized it
+        }
+        if (session.retired) return@synchronized null
+        val discovered = factory(session.summary.targetPid) ?: return@synchronized null
+        val guard = session.keyGuard ?: ReloadAwareKeyGuard().also { session.keyGuard = it }
+        discovered.setReloadSettledListener { guard.onReload() }
+        (discovered as? HotReloadSession)?.start()
+        session.hotReloadSession = discovered
+        discovered
+    }
+
 private data class DaemonSession(
     val summary: DaemonSessionSummary,
     val automator: DaemonSessionAutomator,
-    val hotReloadSession: HotReloadCapability? = null,
-    val keyGuard: ReloadAwareKeyGuard? = null,
+    var hotReloadSession: HotReloadCapability? = null,
+    var keyGuard: ReloadAwareKeyGuard? = null,
+    var retired: Boolean = false,
     val activeWaits: java.util.concurrent.atomic.AtomicInteger =
         java.util.concurrent.atomic.AtomicInteger(0),
     /** Absolute nanoTime deadline for the longest currently tracked outside-lock wait. */
@@ -623,6 +665,12 @@ private data class DaemonSession(
         val candidate = System.nanoTime() + timeoutMs.coerceAtLeast(0) * NANOS_PER_MS
         waitDeadlineNs.updateAndGet { current -> maxOf(current, candidate) }
     }
+
+    fun retire(): HotReloadCapability? =
+        synchronized(this) {
+            retired = true
+            hotReloadSession
+        }
 
     fun awaitIdleWaits(timeoutMs: Long = WAIT_DRAIN_TIMEOUT_MS) {
         val trackedRemainingMs =
@@ -710,5 +758,12 @@ private fun awaitCountDownLatch(timeoutMs: Long, latch: () -> CountDownLatch?): 
     }
 }
 
-private fun sessionSummaryFor(targetPid: Long): DaemonSessionSummary =
-    DaemonSessionSummary(sessionId = "pid-$targetPid", targetPid = targetPid)
+private fun sessionSummaryFor(
+    targetPid: Long,
+    sessionInfo: DaemonSessionInfo? = null,
+): DaemonSessionSummary =
+    DaemonSessionSummary(
+        sessionId = "pid-$targetPid",
+        targetPid = targetPid,
+        sessionInfo = sessionInfo,
+    )

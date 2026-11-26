@@ -64,3 +64,5 @@ recording/native/linux/Cargo.lock
 # which silently drops new build-logic sources. Re-include the source tree explicitly.
 !buildSrc/src/main/kotlin/dev/sebastiano/spectre/build/
 !buildSrc/src/test/kotlin/dev/sebastiano/spectre/build/
+
+/fixtures/accesskit/target/

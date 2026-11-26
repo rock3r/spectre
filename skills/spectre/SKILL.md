@@ -154,7 +154,9 @@ IntelliJ EDT dispatchers, wrap waits in `withContext(Dispatchers.Default) { ... 
   `allNodes()`, `roots()`); in-process Spectre tree state only.
 - `waitForIdle()` — semantics fingerprint + `AutomatorIdlingResource`s (`registerIdlingResource` /
   `unregisterIdlingResource` in `try/finally`).
-- `waitForVisualIdle(stableFrames = 3)` — consecutive pixel-stable frames; use before screenshots or after animations.
+- `waitForVisualIdle(stableFrames = 3)` — consecutive pixel-stable frames using required native
+  window capture; use before screenshots or after animations. Missing helpers fail immediately.
+  Use `allowScreenRegionFallback = true` only when occlusion-sensitive desktop crops are acceptable.
   Uses native window capture when `:recording` and a runnable helper exist, falls back to `Robot` region capture when
   `:recording` is absent or the helper cannot launch, and fails fast on missing Wayland grants or unsupported Wayland
   `JWindow` popups (`#640`).
@@ -215,4 +217,4 @@ Load only the reference matching the task:
   `executeOnPooledThread`, `synthetic(rootWindow = ideFrame)`, popup layers)** → `references/intellij.md`
 - **Programmatic `AgentAttach`, `AttachedAutomator`, `AttachOptions`, `spectre-agent`/`spectre-agent-runtime`
   dependencies, or zero-dependency `inject-runtime.jar` bootstrap** → `references/agent.md`
-- **Querying, diffing, or pruning `capture.json` (`schemaVersion 1`) with `jq`** → sibling skill `spectre-capture`
+- **Querying, diffing, or pruning `capture.json` (`schemaVersion 2`) with `jq`** → sibling skill `spectre-capture`

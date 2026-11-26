@@ -130,6 +130,7 @@ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/Au
 	public static synthetic fun findByText$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;ZILjava/lang/Object;)Ljava/util/List;
 	public final fun focusWindow (Ljava/lang/String;)V
 	public final fun getPid ()J
+	public final fun getSessionInfo ()Ldev/sebastiano/spectre/agent/AttachedSessionInfo;
 	public final fun longClick (Ljava/lang/String;J)V
 	public static synthetic fun longClick$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;JILjava/lang/Object;)V
 	public final fun pressKey (II)V
@@ -149,12 +150,34 @@ public final class dev/sebastiano/spectre/agent/AttachedAutomator : java/lang/Au
 	public final fun waitForNode (Ljava/lang/String;Ljava/lang/String;JJ)Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;
 	public static synthetic fun waitForNode$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;Ljava/lang/String;JJILjava/lang/Object;)Ldev/sebastiano/spectre/agent/transport/NodeSnapshotDto;
 	public final fun waitForVisualIdle (JIJ)V
+	public final fun waitForVisualIdle (JIJZ)V
 	public static synthetic fun waitForVisualIdle$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;JIJILjava/lang/Object;)V
+	public static synthetic fun waitForVisualIdle$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;JIJZILjava/lang/Object;)V
 	public final fun waitUntilGone (Ljava/lang/String;Ljava/lang/String;JJ)V
 	public static synthetic fun waitUntilGone$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/String;Ljava/lang/String;JJILjava/lang/Object;)V
 	public final fun windowIdentities (Ljava/lang/Integer;)Ljava/util/List;
 	public static synthetic fun windowIdentities$default (Ldev/sebastiano/spectre/agent/AttachedAutomator;Ljava/lang/Integer;ILjava/lang/Object;)Ljava/util/List;
 	public final fun windows ()Ljava/util/List;
+}
+
+public final class dev/sebastiano/spectre/agent/AttachedSessionInfo {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Ljava/util/List;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;)Ldev/sebastiano/spectre/agent/AttachedSessionInfo;
+	public static synthetic fun copy$default (Ldev/sebastiano/spectre/agent/AttachedSessionInfo;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;ILjava/lang/Object;)Ldev/sebastiano/spectre/agent/AttachedSessionInfo;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCoreProvenance ()Ljava/lang/String;
+	public final fun getCoreVersion ()Ljava/lang/String;
+	public final fun getDriverKind ()Ljava/lang/String;
+	public final fun getInputLeasePolicy ()Ljava/lang/String;
+	public final fun getWarnings ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public abstract interface annotation class dev/sebastiano/spectre/agent/ExperimentalSpectreAgentApi : java/lang/annotation/Annotation {

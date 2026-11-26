@@ -49,6 +49,8 @@ on:
       - "recording-windows/**"
       - "sample-desktop/**"
       - "testing/**"
+      - "fixtures/accesskit/**"
+      - "tests/test_accesskit_fixture.py"
       # Broad gradle/** rather than just libs.versions.toml so wrapper bumps and any other
       # ./gradle/-resident config changes still trigger this validation job. Mirrors the
       # filter shape of windows.yml + macos-check.yml so configuration drift surfaces here
@@ -75,6 +77,8 @@ on:
       - "recording-windows/**"
       - "sample-desktop/**"
       - "testing/**"
+      - "fixtures/accesskit/**"
+      - "tests/test_accesskit_fixture.py"
       - "gradle/**"
       - "settings.gradle.kts"
       - "build.gradle.kts"
@@ -105,6 +109,20 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and read AccessKit fixture through UI Automation
+        shell: pwsh
+        run: |
+          cargo build --locked --manifest-path fixtures/accesskit/Cargo.toml
+          $process = Start-Process -FilePath "fixtures/accesskit/target/debug/spectre-accesskit-fixture.exe" -PassThru
+          try {
+            fixtures/accesskit/readers/windows.ps1 -ProcessId $process.Id -Golden fixtures/accesskit/golden/windows.json
+          } finally {
+            Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
+          }
 
       - name: Run validation tests
         # Shorter than the job timeout so setup plus dump-jvm-stacks.sh still

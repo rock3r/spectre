@@ -492,6 +492,8 @@ public final class dev/sebastiano/spectre/input/InputCoordinatorClientFactory {
 	public static final field INSTANCE Ldev/sebastiano/spectre/input/InputCoordinatorClientFactory;
 	public final fun connectOrStart (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ldev/sebastiano/spectre/input/DesktopResourceKey;Ljava/lang/String;)Ldev/sebastiano/spectre/input/LocalInputCoordinatorClient;
 	public static synthetic fun connectOrStart$default (Ldev/sebastiano/spectre/input/InputCoordinatorClientFactory;Ldev/sebastiano/spectre/input/CoordinatorEndpoint;Ldev/sebastiano/spectre/input/DesktopResourceKey;Ljava/lang/String;ILjava/lang/Object;)Ldev/sebastiano/spectre/input/LocalInputCoordinatorClient;
+	public final fun hasExistingSocketCandidate (Ldev/sebastiano/spectre/input/CoordinatorEndpoint;)Z
+	public final fun isProviderInstalled ()Z
 }
 
 public abstract interface class dev/sebastiano/spectre/input/InputCoordinatorClientProvider {

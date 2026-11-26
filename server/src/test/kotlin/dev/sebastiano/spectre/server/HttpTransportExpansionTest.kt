@@ -21,6 +21,39 @@ import kotlin.test.assertTrue
  * class.
  */
 class HttpTransportExpansionTest {
+    @Test
+    fun `all GET routes reject unknown and duplicate query arguments`() = testApplication {
+        application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
+        listOf(
+                "/spectre/windows?unknown=x",
+                "/spectre/nodes?text=x&text=y",
+                "/spectre/tree?windowIndex=0&windowIndex=1",
+                "/spectre/printTree?unknown=x",
+                "/spectre/screenshot?fullscreen=true&fullscreen=true",
+            )
+            .forEach { path ->
+                val response = client.testGet(path)
+                assertEquals(HttpStatusCode.BadRequest, response.status, path)
+                assertEquals(SpectreErrorCategory.InvalidSelector.wireName, response.bodyAsText())
+            }
+    }
+
+    @Test
+    fun `screenshot requires one explicit valid scope`() = testApplication {
+        application { installSpectreRoutes(headlessAutomator(), testHttpSecurity()) }
+        listOf(
+                "/spectre/screenshot",
+                "/spectre/screenshot?fullscreen=false",
+                "/spectre/screenshot?fullscreen=True",
+                "/spectre/screenshot?nodeKey=main:0:1&fullscreen=true",
+                "/spectre/screenshot?nodeKey=",
+            )
+            .forEach { path ->
+                val response = client.testGet(path)
+                assertEquals(HttpStatusCode.BadRequest, response.status, path)
+                assertEquals(SpectreErrorCategory.InvalidSelector.wireName, response.bodyAsText())
+            }
+    }
 
     private fun headlessAutomator(): ComposeAutomator =
         ComposeAutomator.inProcess(robotDriver = RobotDriver.headless(), discoverWindows = false)

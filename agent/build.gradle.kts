@@ -22,6 +22,7 @@ kotlin {
 dependencies {
     // Attaching-side runtime owns availability of the external desktop input coordinator.
     implementation(projects.inputCoordinatorServer)
+    implementation(libs.jna.platform)
 
     // Wire-protocol serialization. CBOR is the only kotlinx-serialization format used by
     // the agent transport; JSON is intentionally not on the agent runtime classpath.
@@ -79,6 +80,7 @@ abstract class AttachSpikeArgumentProvider @Inject constructor() : CommandLineAr
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    systemProperty("spectre.test.gradleHome", requireNotNull(gradle.gradleHomeDir).absolutePath)
 
     // Expose the freshly-built agent runtime JAR to AgentAttachIntegrationTest. The test reads
     // this system property and skips itself (via JUnit `assumeFalse`) if it's not set.

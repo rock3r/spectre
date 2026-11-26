@@ -75,9 +75,10 @@ quietly stopping policing the desktop. When the coordinator itself is broken and
 that leaves you with no way forward, there is one deliberate opt-out; see
 [When the coordinator cannot be reached](input-coordination.md#coordinator-unreachable).
 
-The exception is a target whose preinstalled Spectre core predates `InputLeasePolicy`. The agent
-falls back to the legacy no-argument driver there, which coordinates nothing — see
-[Attach](agent.md). Injected targets and current-core targets are unaffected.
+A target whose preinstalled Spectre core predates `InputLeasePolicy` or
+`RobotDriver.synthetic(policy)` is incompatible with current attach and fails with the missing
+capability named. The agent never silently selects the legacy real-OS driver or discards the lease
+policy — see [Attach](agent.md).
 
 ## Mouse: clicks and drags
 
@@ -225,11 +226,20 @@ mask into the right modifier-key presses around the main `keyCode`.
 intentionally conservative: ASCII letters, digits, space, newline, and common
 US-keyboard punctuation. Requested letter case is independent of ambient Caps Lock:
 Spectre reads the Caps Lock LED and inverts Shift on letter strokes when it is on
-(global lock state is left unchanged). Use `pasteText` for large strings or arbitrary
-Unicode; it stashes the previous clipboard contents, writes the requested text,
+(global lock state is left unchanged). A real-OS driver rejects text containing letters before
+dispatch when the LED state cannot be read; digits and punctuation remain safe, and synthetic
+input has deterministic case. `clearAndTypeText` performs this preflight before it selects or
+deletes existing content. It uses only the full-field select-all chord, so a successful multiline
+selection is never narrowed to the current line. A backend must guarantee that it preserves the
+select-all modifier; otherwise the operation fails before dispatching any key and leaves the field
+untouched. The current Wayland portal and seat-socket helpers cannot make that guarantee because
+they deliver modifier and character keys as separate messages, so `clearAndTypeText` refuses there;
+`typeText` and the other Wayland input operations remain supported. Use `pasteText` for large strings or arbitrary
+Unicode; it stashes the previous clipboard contents (including an empty clipboard), writes the requested text,
 dispatches the platform paste shortcut (<kbd>Cmd</kbd>+<kbd>V</kbd> on macOS,
 <kbd>Ctrl</kbd>+<kbd>V</kbd> elsewhere), waits for the paste handler to drain, then
-restores the previous clipboard contents. See [Troubleshooting](troubleshooting.md) for
+restores the previous clipboard contents. A save/read/settle failure occurs before the shortcut;
+a restore failure is reported, or suppressed on the primary operation failure. See [Troubleshooting](troubleshooting.md) for
 macOS clipboard and `apple.awt.UIElement=true` caveats.
 
 ## Screenshots

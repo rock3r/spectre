@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "limit-reached",
+    "message": "maximumNodeCount 1 reached",
+    "partialSnapshot": {
+      "schemaVersion": 2,
+      "source": "os-accessibility",
+      "capturedAt": "2026-11-25T12:34:56.789Z",
+      "windows": [{"key":"w0","title":null,"bounds":{"x":0,"y":0,"width":10,"height":10},"boundsSpace":"screen"}],
+      "nodes": [{"key":"w0/root","parentKey":null,"id":null,"platformRole":null,"role":null,"name":"partial","states":[],"value":null,"bounds":{"x":0,"y":0,"width":10,"height":10},"onScreen":true}],
+      "notes": []
+    }
+  }
+}

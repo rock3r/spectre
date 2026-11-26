@@ -6,6 +6,7 @@ import dev.sebastiano.spectre.agent.transport.AgentErrorCategory
 import dev.sebastiano.spectre.agent.transport.AgentRequest
 import dev.sebastiano.spectre.agent.transport.AgentRequestHandler
 import dev.sebastiano.spectre.agent.transport.AgentResponse
+import dev.sebastiano.spectre.agent.transport.AgentSessionInfoDto
 import dev.sebastiano.spectre.agent.transport.ProtocolVersion
 
 /**
@@ -16,6 +17,7 @@ internal class ConnectedAutomator(
     val automator: Any,
     val handler: AgentRequestHandler,
     val targetInputResource: AutoCloseable?,
+    val sessionInfo: AgentSessionInfoDto = AgentSessionInfoDto("unknown", "unknown", "unknown"),
 )
 
 /**
@@ -103,10 +105,10 @@ internal class DeferredAutomatorHandler(
             is AgentRequest.FindByRole -> AgentResponse.Nodes(emptyList())
             is AgentRequest.WindowIdentity -> AgentResponse.WindowIdentities(emptyList())
             AgentRequest.PrintTree -> AgentResponse.TreeDump("")
-            // With no Compose UI nothing can match, change, or animate.
             is AgentRequest.WaitUntilGone,
             is AgentRequest.WaitForIdle,
-            is AgentRequest.WaitForVisualIdle,
+            is AgentRequest.WaitForVisualIdle ->
+                errorResponse(AgentErrorCategory.InternalError, NO_COMPOSE_YET)
             is AgentRequest.Cancel -> AgentResponse.Ok
             is AgentRequest.WaitForNode -> waitForComposeThen(request)
             is AgentRequest.Click,

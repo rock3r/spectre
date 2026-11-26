@@ -5,12 +5,12 @@ package dev.sebastiano.spectre.agent.transport
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 
 /**
- * Prints the frame budget this JVM resolved at class-initialization time.
+ * Prints the frame budget this JVM resolves, optionally after applying an explicit value.
  *
- * Spawned by [FrameLimitsEnvTest]. The environment is only read inside `FrameLimits`' own
- * initializer, so the override path can only be exercised in a process that started with the
- * variable already set — an in-process test always finds the class initialized.
+ * Spawned by [FrameLimitsEnvTest]. Process-start environment combinations require a real child JVM
+ * because tests cannot change their own environment reliably.
  */
-public fun main() {
+public fun main(arguments: Array<String>) {
+    arguments.singleOrNull()?.let { FrameLimits.configure(FrameLimits.parseMaxFrameBytes(it)!!) }
     println("budget=${FrameLimits.maxFrameBytes}")
 }
