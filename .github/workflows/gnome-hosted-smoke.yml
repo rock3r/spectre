@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   public-wayland-cli-recording-live:
-    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Verify AT-SPI') && !startsWith(github.event.head_commit.message, 'Calibrate') && github.event.head_commit.message != 'Provision XRandR for live geometry calibration'
+    if: github.ref == 'refs/heads/release-0.10/gnome-hosted-smoke' && !startsWith(github.event.head_commit.message, 'Verify AT-SPI') && !startsWith(github.event.head_commit.message, 'Calibrate') && !startsWith(github.event.head_commit.message, 'Capture original') && github.event.head_commit.message != 'Provision XRandR for live geometry calibration'
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     steps:
@@ -44,7 +44,7 @@ jobs:
             git -C "$GITHUB_WORKSPACE/candidate" apply --3way --index "$PWD/$overlay"
           done < SHA256SUMS
           git -C "$GITHUB_WORKSPACE/candidate" diff --cached --check
-          test "$(git -C "$GITHUB_WORKSPACE/candidate" write-tree)" = 832a2a3a87b3d99025e5b31cb8e3761b4bc3c580
+          test "$(git -C "$GITHUB_WORKSPACE/candidate" write-tree)" = 173d9f56978389110520e7a2b2ba61b6827c455c
 
       - name: Set up JDK 25
         uses: actions/setup-java@v5
@@ -87,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [geometry-calibration]
+        mode: [capture]
         replica: [1]
 
     steps:
@@ -138,7 +138,7 @@ jobs:
             git -C "$GITHUB_WORKSPACE/candidate" apply --3way --index "$PWD/$overlay"
           done < SHA256SUMS
           git -C "$GITHUB_WORKSPACE/candidate" diff --cached --check
-          test "$(git -C "$GITHUB_WORKSPACE/candidate" write-tree)" = 832a2a3a87b3d99025e5b31cb8e3761b4bc3c580
+          test "$(git -C "$GITHUB_WORKSPACE/candidate" write-tree)" = 173d9f56978389110520e7a2b2ba61b6827c455c
           git -C "$GITHUB_WORKSPACE/candidate" diff --cached --stat
 
       - name: Apply standalone caller-owned window identity candidate

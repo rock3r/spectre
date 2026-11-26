@@ -1,31 +1,8 @@
 diff --git a/recording-linux/build.gradle.kts b/recording-linux/build.gradle.kts
-index b9ba853fa88be7c58c48167142111536447c6af1..af1a4c84f04a45b7e88d1f27a5967d1009d55be0 100644
+index b9ba853f..af1a4c84 100644
 --- a/recording-linux/build.gradle.kts
 +++ b/recording-linux/build.gradle.kts
-@@ -14,114 +14,132 @@ plugins {
- 
- kotlin {
-     jvmToolchain(21)
-     explicitApi()
- }
- 
- dependencies {
-     runtimeOnly(projects.recording)
- 
-     detektPlugins(libs.compose.rules.detekt)
- 
-     testImplementation(libs.kotlin.testJunit5)
- }
- 
- tasks.withType<Test>().configureEach { useJUnitPlatform() }
- 
- val linuxFamily = objects.named<OperatingSystemFamily>(OperatingSystemFamily.LINUX)
- 
- configurations
-     .matching { it.name == "apiElements" || it.name == "runtimeElements" }
-     .configureEach {
-         attributes.attribute(OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE, linuxFamily)
-     }
+@@ -37,4 +37,18 @@ configurations
  
  val recordingProject = project(":recording")
 +val testGnomeWindowIdentity =
@@ -44,91 +21,13 @@ index b9ba853fa88be7c58c48167142111536447c6af1..af1a4c84f04a45b7e88d1f27a5967d10
 +
  val prebuiltLinuxHelpersDir = providers.gradleProperty("prebuiltLinuxHelpersDir")
  val useAllLinuxArches = providers.gradleProperty("allLinuxArches").isPresent
- val shouldVerifyLinuxHelpers =
-     prebuiltLinuxHelpersDir.isPresent || OperatingSystem.current().isLinux
- val expectedLinuxHelperPaths =
-     if (prebuiltLinuxHelpersDir.isPresent || useAllLinuxArches) {
-         listOf(
-             "native/linux/x86_64/spectre-wayland-helper",
-             "native/linux/aarch64/spectre-wayland-helper",
-         )
-     } else {
-         val arch =
-             when (System.getProperty("os.arch").orEmpty().lowercase()) {
-                 "amd64",
-                 "x86_64",
-                 "x64" -> "x86_64"
-                 "aarch64",
-                 "arm64" -> "aarch64"
-                 else -> System.getProperty("os.arch").orEmpty().lowercase()
-             }
-         listOf("native/linux/$arch/spectre-wayland-helper")
-     }
- 
- tasks.named<ProcessResources>("processResources") {
-     from(recordingProject.layout.buildDirectory.dir("generated/waylandHelper"))
-     from(recordingProject.layout.projectDirectory.dir("native/linux/gnome-shell-extension")) {
-         into("native/linux/gnome-shell-extension")
-     }
-     when {
-         prebuiltLinuxHelpersDir.isPresent ->
-             dependsOn(recordingProject.tasks.named("stagePrebuiltLinuxHelpers"))
-         OperatingSystem.current().isLinux && useAllLinuxArches ->
-             dependsOn(recordingProject.tasks.named("assembleWaylandHelperAllArches"))
-         OperatingSystem.current().isLinux ->
-             dependsOn(recordingProject.tasks.named("assembleWaylandHelper"))
-     }
- }
- 
- tasks.register("verifyRecordingLinuxHelpers") {
-     group = "verification"
-     description = "Verifies the Linux helper resources are packaged in spectre-recording-linux."
-     enabled = shouldVerifyLinuxHelpers
-     dependsOn(tasks.named("jar"))
- 
-     val jarFile = tasks.named<Jar>("jar").flatMap { it.archiveFile }
-     val expectedHelpers = expectedLinuxHelperPaths
-     val expectedExtensionPaths =
-         listOf(
+@@ -87,4 +101,5 @@ tasks.register("verifyRecordingLinuxHelpers") {
              "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/metadata.json",
              "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension.js",
 +            "native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js",
          )
      doLast {
-         val jar = jarFile.get().asFile
-         val entries = ZipFile(jar).use { zip -> zip.entries().asSequence().map { it.name }.toSet() }
-         val missing = (expectedHelpers + expectedExtensionPaths).filter { it !in entries }
-         if (missing.isNotEmpty()) {
-             throw GradleException(
-                 "spectre-recording-linux jar is missing helper resources: " + missing.joinToString()
-             )
-         }
-         ZipFile(jar).use { zip ->
-             val metadata =
-                 JsonSlurper().parse(zip.getInputStream(zip.getEntry(expectedExtensionPaths[0])))
-                     as Map<*, *>
-             val supported = (metadata["shell-version"] as List<*>).map(Any?::toString)
-             val expected = (45..50).map(Int::toString)
-             if (supported != expected) {
-                 throw GradleException(
-                     "GNOME identity extension supports $supported; expected $expected"
-                 )
-             }
-             val source =
-                 zip.getInputStream(zip.getEntry(expectedExtensionPaths[1])).bufferedReader().use {
-                     it.readText()
-                 }
-             val requiredAsyncReplies =
-                 listOf("return_value", "return_dbus_error", ".AccessDenied", ".NotFound")
-             val missingReplies = requiredAsyncReplies.filter { it !in source }
-             if (missingReplies.isNotEmpty()) {
-                 throw GradleException(
-                     "GNOME identity extension is missing explicit async D-Bus replies: " +
-                         missingReplies.joinToString()
-                 )
-             }
-         }
-     }
+@@ -125,3 +140,6 @@ tasks.register("verifyRecordingLinuxHelpers") {
  }
  
 -tasks.named("check") { dependsOn("verifyRecordingLinuxHelpers") }
@@ -138,7 +37,7 @@ index b9ba853fa88be7c58c48167142111536447c6af1..af1a4c84f04a45b7e88d1f27a5967d10
 +}
 diff --git a/recording/native/linux/Cargo.lock b/recording/native/linux/Cargo.lock
 new file mode 100644
-index 0000000000000000000000000000000000000000..5397f122f6dec4cf06c109dce7d34214a436dec3
+index 00000000..5397f122
 --- /dev/null
 +++ b/recording/native/linux/Cargo.lock
 @@ -0,0 +1,202 @@
@@ -345,205 +244,242 @@ index 0000000000000000000000000000000000000000..5397f122f6dec4cf06c109dce7d34214
 +source = "registry+https://github.com/rust-lang/crates.io-index"
 +checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 diff --git a/recording/native/linux/Cargo.toml b/recording/native/linux/Cargo.toml
-index 2063be0397457954d5a8330af5d63ef58d0b198e..d99b2ae316b0551a5af855d824cc57aa29d8513c 100644
+index 2063be03..d99b2ae3 100644
 --- a/recording/native/linux/Cargo.toml
 +++ b/recording/native/linux/Cargo.toml
-@@ -8,38 +8,38 @@ description = "Native helper for Spectre's Linux Wayland recording path. Runs th
- 
- [[bin]]
- name = "spectre-wayland-helper"
- path = "src/main.rs"
- 
- [dependencies]
- # dbus-rs — thin wrapper over libdbus (C library). Picked over zbus because the zbus 4.x and
- # 3.x trees both pull transitive deps (toml_datetime, indexmap) that have bumped to
- # edition2024 and require Rust 1.85+. Our toolchain floor is 1.75 (Ubuntu 22.04 jammy-
- # backports). dbus-rs has been stable since 2018, has a much smaller dep graph, and uses
- # the system libdbus which is available on every modern Linux distro. Trade-off: links a
- # C library at runtime (libdbus-1.so.3, ubiquitous on Linux desktops; also a zbus runtime
- # requirement transitively, just less obvious). We use the sync API — the portal flow is
- # request/response + signal-wait, all straightforward sync code.
- dbus = "0.9"
- 
- # serde — JSON DTOs for the JVM↔helper protocol. Newline-delimited JSON over stdin/stdout
- # keeps the wire format simple and the JVM-side parsing trivial (kotlinx.serialization).
- serde = { version = "1", features = ["derive"] }
- serde_json = "1"
- 
- # nix — POSIX-y syscalls. Used for `fcntl(F_SETFD, ...)` clearing on the portal-granted
- # PipeWire FD before spawning gst-launch (so the FD survives exec(2)). Pinned to 0.27 (the
+@@ -31,5 +31,5 @@ serde_json = "1"
  # last 0.x line that doesn't pull edition2024 transitives on this Rust version). Default-
  # features off to keep the binary lean — we only use the fcntl + signal subsets.
 -nix = { version = "=0.27.1", default-features = false, features = ["fs", "process", "signal"] }
 +nix = { version = "=0.27.1", default-features = false, features = ["fs", "process", "signal", "socket", "user"] }
  
  # anyhow — for error propagation up to the protocol-error event. The helper is a thin
- # orchestrator; we don't need fine-grained error types, but we do want context-preserving
- # `?` propagation. anyhow gets us that without a custom error enum per module.
- anyhow = "1"
- 
- [profile.release]
- # Strip symbols + LTO for distribution: cuts the binary from ~6 MB to ~1.5 MB. Helper is
- # tiny enough that LTO compile time isn't a concern.
- strip = "symbols"
- lto = "thin"
- codegen-units = 1
 diff --git a/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension.js b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension.js
-index 46b277f8792ce7bb1e5b443b03755ae31b3446d4..b49ba369ac7b0227ed695e5c14fea46d6c27e6f6 100644
+index 46b277f8..565c4508 100644
 --- a/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension.js
 +++ b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/extension.js
-@@ -1,73 +1,20 @@
+@@ -1,9 +1,11 @@
  import Gio from 'gi://Gio';
  import GLib from 'gi://GLib';
 +import Meta from 'gi://Meta';
  import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
--
 +import {OneTimeBindings, windowMatchesXid} from './windowIdentity.js';
+ 
  const XML = `<node><interface name="dev.sebastiano.Spectre.WindowIdentity">
 -  <method name="LookupWindow"><arg type="u" direction="in" name="owner_pid"/>
 -  <arg type="t" direction="in" name="xid"/><arg type="u" direction="out" name="window_id"/></method>
 +  <method name="LookupWindow"><arg type="u" direction="in" name="owner_pid"/><arg type="t" direction="in" name="xid"/><arg type="s" direction="out" name="binding_token"/></method>
 +  <method name="RedeemWindow"><arg type="s" direction="in" name="binding_token"/><arg type="u" direction="in" name="owner_pid"/><arg type="t" direction="out" name="window_id"/></method>
  </interface></node>`;
--const BUS = 'dev.sebastiano.Spectre.WindowIdentity';
--const PATH = '/dev/sebastiano/Spectre/WindowIdentity';
--const ERROR = `${BUS}.Error`;
--
--function parentPid(pid) {
--    try {
--        const [, bytes] = GLib.file_get_contents(`/proc/${pid}/status`);
--        const match = new TextDecoder().decode(bytes).match(/^PPid:\s+(\d+)$/m);
--        return match ? Number(match[1]) : 0;
+ const BUS = 'dev.sebastiano.Spectre.WindowIdentity';
+@@ -16,5 +18,7 @@ function parentPid(pid) {
+         const match = new TextDecoder().decode(bytes).match(/^PPid:\s+(\d+)$/m);
+         return match ? Number(match[1]) : 0;
 -    } catch (_) { return 0; }
--}
--
--function isAncestor(ancestor, child) {
--    for (let pid = child, depth = 0; pid > 1 && depth < 32; depth++) {
--        if (pid === ancestor) return true;
--        pid = parentPid(pid);
--    }
--    return false;
--}
--
-+const BUS = 'dev.sebastiano.Spectre.WindowIdentity'; const PATH = '/dev/sebastiano/Spectre/WindowIdentity'; const ERROR = `${BUS}.Error`;
-+function parentPid(pid) { try { const [, bytes] = GLib.file_get_contents(`/proc/${pid}/status`); const match = new TextDecoder().decode(bytes).match(/^PPid:\s+(\d+)$/m); return match ? Number(match[1]) : 0; } catch (_) { return 0; } }
-+function isAncestor(ancestor, child) { for (let pid = child, depth = 0; pid > 1 && depth < 32; depth++) { if (pid === ancestor) return true; pid = parentPid(pid); } return false; }
-+async function senderPid(invocation) { const sender = invocation.get_sender(); const reply = await Gio.DBus.session.call('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'GetConnectionUnixProcessID', new GLib.Variant('(s)', [sender]), new GLib.VariantType('(u)'), Gio.DBusCallFlags.NONE, 3000, null); return reply.deepUnpack()[0]; }
++    } catch (_) {
++        return 0;
++    }
+ }
+ 
+@@ -27,34 +31,58 @@ function isAncestor(ancestor, child) {
+ }
+ 
++async function senderPid(invocation) {
++    const sender = invocation.get_sender();
++    const reply = await Gio.DBus.session.call(
++        'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
++        'GetConnectionUnixProcessID', new GLib.Variant('(s)', [sender]),
++        new GLib.VariantType('(u)'), Gio.DBusCallFlags.NONE, 3000, null,
++    );
++    return reply.deepUnpack()[0];
++}
++
  export default class SpectreWindowIdentity extends Extension {
--    enable() {
--        const service = {
--            LookupWindowAsync: async ([ownerPid, xid], invocation) => {
--                try {
+     enable() {
++        this._bindings = new OneTimeBindings();
+         const service = {
+             LookupWindowAsync: async ([ownerPid, xid], invocation) => {
+                 try {
 -                    const sender = invocation.get_sender();
 -                    const reply = await Gio.DBus.session.call(
 -                        'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
 -                        'GetConnectionUnixProcessID', new GLib.Variant('(s)', [sender]),
 -                        new GLib.VariantType('(u)'), Gio.DBusCallFlags.NONE, 3000, null);
 -                    const callerPid = reply.deepUnpack()[0];
--                    if (!isAncestor(ownerPid, callerPid)) {
++                    const callerPid = await senderPid(invocation);
+                     if (!isAncestor(ownerPid, callerPid)) {
 -                        invocation.return_dbus_error(`${ERROR}.AccessDenied`,
 -                            `PID ${ownerPid} is not the caller or its ancestor`);
--                        return;
--                    }
++                        invocation.return_dbus_error(
++                            `${ERROR}.AccessDenied`,
++                            `PID ${ownerPid} is not the caller or its ancestor`,
++                        );
+                         return;
+                     }
 -                    const matches = global.get_window_actors().map(a => a.meta_window).filter(w => {
 -                        const windowXid = w.get_xwindow();
 -                        return w.get_pid() === ownerPid && windowXid !== null &&
 -                            BigInt(windowXid) === BigInt(xid);
 -                    });
--                    if (matches.length !== 1) {
++                    const matches = global.get_window_actors()
++                        .map(actor => actor.meta_window)
++                        .filter(window => windowMatchesXid(
++                            window, ownerPid, xid, Meta.WindowClientType.X11));
+                     if (matches.length !== 1) {
 -                        invocation.return_dbus_error(`${ERROR}.NotFound`,
 -                            `expected exactly one owned window for PID ${ownerPid}, XID ${xid}; found ${matches.length}`);
--                        return;
--                    }
++                        invocation.return_dbus_error(
++                            `${ERROR}.NotFound`,
++                            `expected exactly one owned window for PID ${ownerPid}, XID ${xid}; found ${matches.length}`,
++                        );
+                         return;
+                     }
 -                    invocation.return_value(new GLib.Variant('(u)', [matches[0].get_id()]));
--                } catch (error) {
++                    const token = GLib.uuid_string_random();
++                    this._bindings.put(token, ownerPid, matches[0].get_id());
++                    invocation.return_value(new GLib.Variant('(s)', [token]));
++                } catch (error) {
++                    invocation.return_dbus_error(`${ERROR}.Failed`, `${error}`);
++                }
++            },
++            RedeemWindowAsync: async ([token, ownerPid], invocation) => {
++                try {
++                    const windowId = this._bindings.redeem(token, ownerPid);
++                    if (windowId === null) {
++                        invocation.return_dbus_error(
++                            `${ERROR}.AccessDenied`,
++                            'unknown, expired, replayed, or mismatched window binding',
++                        );
++                        return;
++                    }
++                    invocation.return_value(new GLib.Variant('(t)', [windowId]));
+                 } catch (error) {
 -                    // An Async wrapper must complete the invocation itself on every path. Merely
 -                    // rejecting this promise leaves gdbus callers waiting until their timeout.
--                    invocation.return_dbus_error(`${ERROR}.Failed`, `${error}`);
--                }
--            },
--        };
--        this._object = Gio.DBusExportedObject.wrapJSObject(XML, service);
--        this._object.export(Gio.DBus.session, PATH);
+                     invocation.return_dbus_error(`${ERROR}.Failed`, `${error}`);
+                 }
+@@ -63,6 +91,8 @@ export default class SpectreWindowIdentity extends Extension {
+         this._object = Gio.DBusExportedObject.wrapJSObject(XML, service);
+         this._object.export(Gio.DBus.session, PATH);
 -        this._name = Gio.bus_own_name_on_connection(Gio.DBus.session, BUS, Gio.BusNameOwnerFlags.NONE, null, null);
--    }
--    disable() {
--        if (this._name) Gio.bus_unown_name(this._name);
--        this._name = 0;
--        this._object?.unexport();
--        this._object = null;
--    }
-+ enable() { this._bindings = new OneTimeBindings(); const service = {
-+  LookupWindowAsync: async ([ownerPid, xid], invocation) => { try { const callerPid = await senderPid(invocation); if (!isAncestor(ownerPid, callerPid)) { invocation.return_dbus_error(`${ERROR}.AccessDenied`, `PID ${ownerPid} is not the caller or its ancestor`); return; } const matches = global.get_window_actors().map(a => a.meta_window).filter(w => windowMatchesXid(w, ownerPid, xid, Meta.WindowClientType.X11)); if (matches.length !== 1) { invocation.return_dbus_error(`${ERROR}.NotFound`, `expected exactly one owned window for PID ${ownerPid}, XID ${xid}; found ${matches.length}`); return; } const token = GLib.uuid_string_random(); this._bindings.put(token, ownerPid, matches[0].get_id()); invocation.return_value(new GLib.Variant('(s)', [token])); } catch (error) { invocation.return_dbus_error(`${ERROR}.Failed`, `${error}`); } },
-+  RedeemWindowAsync: async ([token, ownerPid], invocation) => { const windowId = this._bindings.redeem(token, ownerPid); if (windowId === null) { invocation.return_dbus_error(`${ERROR}.AccessDenied`, 'unknown, expired, replayed, or mismatched window binding'); return; } invocation.return_value(new GLib.Variant('(t)', [windowId])); },
-+ }; this._object = Gio.DBusExportedObject.wrapJSObject(XML, service); this._object.export(Gio.DBus.session, PATH); this._name = Gio.bus_own_name_on_connection(Gio.DBus.session, BUS, Gio.BusNameOwnerFlags.NONE, null, null); }
-+ disable() { if (this._name) Gio.bus_unown_name(this._name); this._name = 0; this._object?.unexport(); this._object = null; this._bindings?.clear(); }
++        this._name = Gio.bus_own_name_on_connection(
++            Gio.DBus.session, BUS, Gio.BusNameOwnerFlags.NONE, null, null);
+     }
++
+     disable() {
+         if (this._name) Gio.bus_unown_name(this._name);
+@@ -70,4 +100,5 @@ export default class SpectreWindowIdentity extends Extension {
+         this._object?.unexport();
+         this._object = null;
++        this._bindings?.clear();
+     }
  }
 diff --git a/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..cf396751bffb2674e7f7e1c0f9a8a2a47861141e
+index 00000000..1e319b19
 --- /dev/null
 +++ b/recording/native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev/windowIdentity.js
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,51 @@
 +const X11_DESCRIPTION = /^0x([0-9a-fA-F]+)(?: \([\s\S]*\))?$/;
++
 +export function parseX11WindowDescription(description) {
 +    if (typeof description !== 'string') return null;
 +    const match = description.match(X11_DESCRIPTION);
 +    return match === null ? null : BigInt(`0x${match[1]}`);
 +}
++
 +export function windowMatchesXid(window, ownerPid, xid, x11ClientType) {
 +    if (window.get_client_type() !== x11ClientType || window.get_pid() !== ownerPid) return false;
 +    const windowXid = parseX11WindowDescription(window.get_description());
 +    return windowXid !== null && windowXid === BigInt(xid);
 +}
++
++/**
++ * Short-lived handoffs from an authenticated lookup caller to the authenticated session client.
++ * A token belongs to one JVM PID, expires, and is consumed by every redemption attempt (including
++ * an owner mismatch), so it can never be probed and replayed.
++ */
 +export class OneTimeBindings {
-+    constructor(now = Date.now, ttlMs = 30_000, maximum = 256) { this.values = new Map(); this.now = now; this.ttlMs = ttlMs; this.maximum = maximum; }
-+    cleanup() { const now = this.now(); for (const [key, value] of this.values) if (value.expiresAt <= now) this.values.delete(key); }
-+    put(token, ownerPid, windowId) { this.cleanup(); if (this.values.size >= this.maximum) throw new Error('too many pending window bindings'); this.values.set(token, {ownerPid, windowId, expiresAt: this.now() + this.ttlMs}); }
-+    redeem(token, ownerPid) { this.cleanup(); const value = this.values.get(token); this.values.delete(token); return value?.ownerPid === ownerPid ? value.windowId : null; }
-+    clear() { this.values.clear(); }
++    constructor(now = Date.now, ttlMs = 30_000, maximum = 256) {
++        this.values = new Map();
++        this.now = now;
++        this.ttlMs = ttlMs;
++        this.maximum = maximum;
++    }
++
++    cleanup() {
++        const now = this.now();
++        for (const [key, value] of this.values) {
++            if (value.expiresAt <= now) this.values.delete(key);
++        }
++    }
++
++    put(token, ownerPid, windowId) {
++        this.cleanup();
++        if (this.values.size >= this.maximum) throw new Error('too many pending window bindings');
++        this.values.set(token, {ownerPid, windowId, expiresAt: this.now() + this.ttlMs});
++    }
++
++    redeem(token, ownerPid) {
++        this.cleanup();
++        const value = this.values.get(token);
++        this.values.delete(token);
++        return value?.ownerPid === ownerPid ? value.windowId : null;
++    }
++
++    clear() {
++        this.values.clear();
++    }
 +}
 diff --git a/recording/native/linux/gnome-shell-extension/windowIdentity.test.mjs b/recording/native/linux/gnome-shell-extension/windowIdentity.test.mjs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c7fc0fabe0310d125b5fa99bf05f7565fdc55a31
+index 00000000..d608f587
 --- /dev/null
 +++ b/recording/native/linux/gnome-shell-extension/windowIdentity.test.mjs
-@@ -0,0 +1,7 @@
+@@ -0,0 +1,38 @@
 +import assert from 'node:assert/strict';
-+import {OneTimeBindings, parseX11WindowDescription, windowMatchesXid} from './spectre-window-identity@sebastiano.dev/windowIdentity.js';
-+const X11=1, WAYLAND=0; const window=({clientType=X11,description='0x2a',pid=1234}={})=>({get_client_type:()=>clientType,get_description:()=>description,get_pid:()=>pid});
-+assert.equal(parseX11WindowDescription('0x2a'),42n); assert.equal(parseX11WindowDescription('0x2a (title)'),42n);
-+for (const value of ['2a','prefix 0x2a','0x2a title','0x2a (title) trailing','0x2aZZ']) assert.equal(parseX11WindowDescription(value),null,value);
-+assert(windowMatchesXid(window(),1234,42n,X11)); assert(!windowMatchesXid(window({clientType:WAYLAND}),1234,42n,X11)); assert(!windowMatchesXid(window({pid:7}),1234,42n,X11));
-+let now=100; const bindings=new OneTimeBindings(()=>now,10,2); bindings.put('good',1234,2n); assert.equal(bindings.redeem('good',7),null); assert.equal(bindings.redeem('good',1234),null); bindings.put('once',1234,2n); assert.equal(bindings.redeem('once',1234),2n); assert.equal(bindings.redeem('once',1234),null); bindings.put('expires',1234,3n); now=111; assert.equal(bindings.redeem('expires',1234),null); bindings.put('a',1,1n); bindings.put('b',1,1n); assert.throws(()=>bindings.put('c',1,1n),/too many/);
++import {
++    OneTimeBindings,
++    parseX11WindowDescription,
++    windowMatchesXid,
++} from './spectre-window-identity@sebastiano.dev/windowIdentity.js';
++
++const X11 = 1;
++const WAYLAND = 0;
++const window = ({clientType = X11, description = '0x2a', pid = 1234} = {}) => ({
++    get_client_type: () => clientType,
++    get_description: () => description,
++    get_pid: () => pid,
++});
++
++assert.equal(parseX11WindowDescription('0x2a'), 42n);
++assert.equal(parseX11WindowDescription('0x2a (title)'), 42n);
++for (const value of ['2a', 'prefix 0x2a', '0x2a title', '0x2a (title) trailing', '0x2aZZ']) {
++    assert.equal(parseX11WindowDescription(value), null, value);
++}
++assert(windowMatchesXid(window(), 1234, 42n, X11));
++assert(!windowMatchesXid(window({clientType: WAYLAND}), 1234, 42n, X11));
++assert(!windowMatchesXid(window({pid: 7}), 1234, 42n, X11));
++
++let now = 100;
++const bindings = new OneTimeBindings(() => now, 10, 2);
++bindings.put('good', 1234, 2n);
++assert.equal(bindings.redeem('good', 7), null);
++assert.equal(bindings.redeem('good', 1234), null);
++bindings.put('once', 1234, 2n);
++assert.equal(bindings.redeem('once', 1234), 2n);
++assert.equal(bindings.redeem('once', 1234), null);
++bindings.put('expires', 1234, 3n);
++now = 111;
++assert.equal(bindings.redeem('expires', 1234), null);
++bindings.put('a', 1, 1n);
++bindings.put('b', 1, 1n);
++assert.throws(() => bindings.put('c', 1, 1n), /too many/);
 diff --git a/recording/native/linux/src/main.rs b/recording/native/linux/src/main.rs
-index 0679383332459c65b9b6c32571ce9181b72cc695..6883d7e461797a7e25898abb3167fbe3c0eaefad 100644
+index 06793833..6883d7e4 100644
 --- a/recording/native/linux/src/main.rs
 +++ b/recording/native/linux/src/main.rs
-@@ -34,71 +34,78 @@ use anyhow::Result;
- use protocol::{Command, Event};
- use std::env;
- use std::io::BufRead;
- use std::sync::mpsc;
- use std::thread;
- 
- fn main() -> Result<()> {
-     if env::args().any(|a| a == "--session") {
-         return session::serve();
-     }
- 
-     // Set up the writer thread FIRST so any error — including a malformed Start command on
-     // stdin — surfaces as an Event::Error to the JVM instead of an unceremonious exit code
-     // the JVM has to guess at. The protocol's contract is "events over stdout, terminal
-     // event signals end-of-recording"; we honour it even for early-protocol errors.
-     let (event_tx, event_rx) = mpsc::channel::<Event>();
-     let writer_handle = thread::Builder::new()
-         .name("event-writer".into())
-         .spawn(move || writer_loop(event_rx))?;
- 
-     // Read the Start command. If parsing fails (EOF, malformed JSON, Stop-without-Start),
-     // emit a Protocol error event and exit cleanly via the writer thread.
-     let outcome: Result<()> = match read_first_command() {
+@@ -57,4 +57,10 @@ fn main() -> Result<()> {
          Ok(Command::Start(start)) => recorder::run(start, event_tx.clone()),
          Ok(Command::Screenshot(screenshot)) => screenshot::run(screenshot, event_tx.clone()),
 +        Ok(Command::LocateWindow { owner_pid, frame }) => {
@@ -554,21 +490,7 @@ index 0679383332459c65b9b6c32571ce9181b72cc695..6883d7e461797a7e25898abb3167fbe3
 +        }
          Ok(Command::Stop) => {
              let _ = event_tx.send(Event::Error {
-                 kind: "Protocol".into(),
-                 message: "received Stop on stdin before any capture command".into(),
-             });
-             Ok(())
-         }
-         Ok(Command::PointerMove { .. })
-         | Ok(Command::PointerButton { .. })
-         | Ok(Command::Key { .. })
-         | Ok(Command::PointerAxis { .. })
-         | Ok(Command::BindFocusedWindow { .. })
-         | Ok(Command::BindWindow { .. })
-         | Ok(Command::WindowScreenshot { .. })
-         | Ok(Command::StartWindowRecording(_))
-         | Ok(Command::UnbindWindow { .. })
-         | Ok(Command::ActivateWindow { .. }) => {
+@@ -76,6 +82,7 @@ fn main() -> Result<()> {
              let _ = event_tx.send(Event::Error {
                  kind: "Protocol".into(),
 -                message: "input and window-stream commands require spectre-wayland-helper --session"
@@ -578,41 +500,11 @@ index 0679383332459c65b9b6c32571ce9181b72cc695..6883d7e461797a7e25898abb3167fbe3
 +                        .into(),
              });
              Ok(())
-         }
-         Err(e) => {
-             let _ = event_tx.send(Event::Error {
-                 kind: "Protocol".into(),
-                 message: format!("{e:#}"),
-             });
-             Ok(()) // Error already reported via the event channel — don't double-report.
-         }
-     };
- 
-     // recorder::run can fail without having reported the error itself (e.g. portal
-     // handshake exception bubbles up). Cover that case too.
-     if let Err(e) = outcome {
-         let _ = event_tx.send(Event::Error {
-             kind: "Helper".into(),
-             message: format!("{e:#}"),
-         });
-     }
-     drop(event_tx); // close the channel so the writer thread exits
-     let _ = writer_handle.join();
-     Ok(())
- }
- 
 diff --git a/recording/native/linux/src/mutter_window.rs b/recording/native/linux/src/mutter_window.rs
-index 8900c3d14c5bea6b5155705df964c48dae8a3049..78cac0c19ad7c2f78b11f62b1d95912e07bcb704 100644
+index 8900c3d1..78cac0c1 100644
 --- a/recording/native/linux/src/mutter_window.rs
 +++ b/recording/native/linux/src/mutter_window.rs
-@@ -1,38 +1,37 @@
- //! Window streams through GNOME Mutter's own `org.gnome.Mutter.ScreenCast` API.
- //!
- //! The portal's window source asks the user to pick a window, and its restore token cannot match
- //! a new Java window (GNOME gives a window without a `.desktop` match a new `window:<n>` app id),
- //! so it shows a dialog for every window. Mutter's API shows no dialog: Mutter only checks that the
- //! caller owns the session. `RecordWindow` renders that one window into its own buffer, so a
- //! frame is a real window capture: other windows on top of it do not show, and the stream follows
+@@ -8,8 +8,7 @@
  //! the window when it moves.
  //!
 -//! Mutter selects the window by its internal id, and only `xdg-desktop-portal-gnome` may list
@@ -624,53 +516,7 @@ index 8900c3d14c5bea6b5155705df964c48dae8a3049..78cac0c19ad7c2f78b11f62b1d95912e
 +//! path is used only by the explicit `BindFocusedWindow` command.
  
  use crate::portal::{make_options, variant};
- use crate::protocol::CursorMode;
- use anyhow::{anyhow, bail, Context, Result};
- use dbus::arg::{PropMap, RefArg};
- use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
- use dbus::blocking::Connection;
- use dbus::Path as DBusPath;
- use std::collections::HashMap;
- use std::sync::{Arc, Mutex};
- use std::time::{Duration, Instant};
- 
- pub const MUTTER_SCREEN_CAST_BUS: &str = "org.gnome.Mutter.ScreenCast";
- const MUTTER_SCREEN_CAST_PATH: &str = "/org/gnome/Mutter/ScreenCast";
- const SESSION_INTERFACE: &str = "org.gnome.Mutter.ScreenCast.Session";
- const STREAM_INTERFACE: &str = "org.gnome.Mutter.ScreenCast.Stream";
- const IDENTITY_BUS: &str = "dev.sebastiano.Spectre.WindowIdentity";
- const IDENTITY_PATH: &str = "/dev/sebastiano/Spectre/WindowIdentity";
- const IDENTITY_INTERFACE: &str = "dev.sebastiano.Spectre.WindowIdentity";
- const CALL_TIMEOUT: Duration = Duration::from_secs(10);
- const STREAM_ADDED_TIMEOUT: Duration = Duration::from_secs(10);
- /// Mutter's `cursor-mode`: 0 hidden, 1 embedded in the frames, 2 as PipeWire metadata.
- fn mutter_cursor_mode(mode: CursorMode) -> u32 {
-     match mode {
-         CursorMode::Hidden => 0,
-@@ -52,50 +51,59 @@ pub const ERROR_KIND_WINDOW_NOT_BOUND: &str = "WindowNotBound";
- pub struct WindowStreamError {
-     pub kind: &'static str,
-     pub message: String,
- }
- 
- impl std::fmt::Display for WindowStreamError {
-     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-         f.write_str(&self.message)
-     }
- }
- 
- impl std::error::Error for WindowStreamError {}
- 
- /// The protocol error kind for `err`: a [`WindowStreamError`]'s kind, or `Helper`.
- pub fn error_kind(err: &anyhow::Error) -> &'static str {
-     err.chain()
-         .find_map(|cause| cause.downcast_ref::<WindowStreamError>())
-         .map(|typed| typed.kind)
-         .unwrap_or("Helper")
- }
- 
- fn typed(kind: &'static str, message: String) -> anyhow::Error {
-     anyhow::Error::new(WindowStreamError { kind, message })
+@@ -75,4 +74,13 @@ fn typed(kind: &'static str, message: String) -> anyhow::Error {
  }
  
 +/// Validate an XID while this process is still a child of its owning JVM.
@@ -684,60 +530,14 @@ index 8900c3d14c5bea6b5155705df964c48dae8a3049..78cac0c19ad7c2f78b11f62b1d95912e
 +
  /// True when `message` (a D-Bus error) says nobody owns Mutter's ScreenCast name.
  pub fn is_service_missing(message: &str) -> bool {
-     message.contains("ServiceUnknown")
-         || message.contains("NameHasNoOwner")
-         || message.contains("was not provided by any .service files")
- }
- 
- /// One bound window: its Mutter session and the PipeWire node of its stream.
- #[derive(Debug, Clone)]
- pub struct BoundWindow {
-     session_path: String,
-     pub node_id: u32,
-     pub logical_size: (i32, i32),
-     pub owner: u64,
- }
- 
- /// Mutter window streams of this session helper, keyed by the JVM's window key.
- pub struct MutterWindowStreams {
-     connection: Option<Connection>,
-     windows: HashMap<String, BoundWindow>,
- }
- 
- impl Default for MutterWindowStreams {
-     fn default() -> Self {
-         Self::new()
-@@ -126,60 +134,60 @@ impl MutterWindowStreams {
-                 ERROR_KIND_WINDOW_NOT_BOUND,
-                 format!("no Mutter window stream is bound under '{key}'"),
-             )
-         })
-     }
- 
-     /// Bind a new Mutter window stream to the window that has keyboard focus now.
-     pub fn bind_focused(
-         &mut self,
-         key: &str,
-         owner: u64,
-         cursor_mode: CursorMode,
-     ) -> Result<BoundWindow> {
-         self.unbind(key);
-         let conn = self.connection()?;
-         let bound = bind_focused_window(conn, owner, cursor_mode)?;
-         self.windows.insert(key.to_string(), bound.clone());
-         Ok(bound)
-     }
- 
-     pub fn bind_identity(
-         &mut self,
-         key: &str,
+@@ -149,5 +157,5 @@ impl MutterWindowStreams {
          owner: u64,
          owner_pid: u32,
 -        xid: u64,
 +        binding_token: &str,
          cursor_mode: CursorMode,
      ) -> Result<BoundWindow> {
-         self.unbind(key);
+@@ -155,8 +163,8 @@ impl MutterWindowStreams {
          let conn = self.connection()?;
          let proxy = conn.with_proxy(IDENTITY_BUS, IDENTITY_PATH, CALL_TIMEOUT);
 -        let (window_id,): (u32,) = proxy
@@ -749,89 +549,14 @@ index 8900c3d14c5bea6b5155705df964c48dae8a3049..78cac0c19ad7c2f78b11f62b1d95912e
 +                "GNOME window identity service rejected the binding for PID {owner_pid}: {e}. Install and enable the bundled spectre-window-identity GNOME Shell extension."
              )))?;
          let bound = bind_window_id(conn, owner, cursor_mode, window_id)?;
-         self.windows.insert(key.to_string(), bound.clone());
-         Ok(bound)
-     }
- 
-     /// Stop the stream bound under `key`. Returns false when nothing was bound.
-     pub fn unbind(&mut self, key: &str) -> bool {
-         let Some(bound) = self.windows.remove(key) else {
-             return false;
-         };
-         if let Some(conn) = self.connection.as_ref() {
-             stop_session(conn, &bound.session_path);
-         }
-         true
-     }
- 
-     /// Stop every stream bound by the client `owner`, for example when its JVM disconnected.
-     pub fn unbind_owner(&mut self, owner: u64) {
-         let keys = keys_owned_by(&self.windows, owner);
-         for key in keys {
-             self.unbind(&key);
-         }
-     }
- }
-@@ -219,166 +227,188 @@ fn bind_focused_window(
-                     ERROR_KIND_MUTTER_UNAVAILABLE,
-                     format!(
-                         "this Wayland desktop has no GNOME Mutter ScreenCast API ({message}). \
-                          Spectre captures windows on Wayland only through it, and does not \
-                          fall back to the portal's per-window Share dialog."
-                     ),
-                 )
-             } else {
-                 anyhow!("org.gnome.Mutter.ScreenCast.CreateSession: {message}")
-             }
-         })?;
-     let session_path = session_path.to_string();
-     match record_and_start(conn, &session_path, owner, cursor_mode) {
-         Ok(bound) => Ok(bound),
-         Err(e) => {
-             stop_session(conn, &session_path);
-             Err(e)
-         }
-     }
- }
- 
- fn bind_window_id(
-     conn: &Connection,
+@@ -242,5 +250,5 @@ fn bind_window_id(
      owner: u64,
      cursor_mode: CursorMode,
 -    window_id: u32,
 +    window_id: u64,
  ) -> Result<BoundWindow> {
      let manager = conn.with_proxy(
-         MUTTER_SCREEN_CAST_BUS,
-         MUTTER_SCREEN_CAST_PATH,
-         CALL_TIMEOUT,
-     );
-     let empty: PropMap = HashMap::new();
-     let (session_path,): (DBusPath,) = manager
-         .method_call(MUTTER_SCREEN_CAST_BUS, "CreateSession", (empty,))
-         .map_err(|e| anyhow!("org.gnome.Mutter.ScreenCast.CreateSession: {e}"))?;
-     let session_path = session_path.to_string();
-     match record_and_start_with_id(conn, &session_path, owner, cursor_mode, Some(window_id)) {
-         Ok(bound) => Ok(bound),
-         Err(e) => {
-             stop_session(conn, &session_path);
-             Err(e)
-         }
-     }
- }
- 
- fn record_and_start(
-     conn: &Connection,
-     session_path: &str,
-     owner: u64,
-     cursor_mode: CursorMode,
- ) -> Result<BoundWindow> {
-     record_and_start_with_id(conn, session_path, owner, cursor_mode, None)
- }
- 
- fn record_and_start_with_id(
-     conn: &Connection,
-     session_path: &str,
+@@ -277,12 +285,8 @@ fn record_and_start_with_id(
      owner: u64,
      cursor_mode: CursorMode,
 -    window_id: Option<u32>,
@@ -846,37 +571,7 @@ index 8900c3d14c5bea6b5155705df964c48dae8a3049..78cac0c19ad7c2f78b11f62b1d95912e
 +    let properties = record_window_properties(cursor_mode, window_id);
      let (stream_path,): (DBusPath,) = session
          .method_call(SESSION_INTERFACE, "RecordWindow", (properties,))
-         .map_err(|e| anyhow!("org.gnome.Mutter.ScreenCast.Session.RecordWindow: {e}"))?;
-     let stream_path = stream_path.to_string();
- 
-     // Subscribe before Start: Mutter announces the PipeWire node once the stream is running.
-     let node: Arc<Mutex<Option<u32>>> = Arc::new(Mutex::new(None));
-     let node_slot = Arc::clone(&node);
-     let mut rule = dbus::message::MatchRule::new_signal(STREAM_INTERFACE, "PipeWireStreamAdded");
-     rule.path = Some(stream_path.clone().into());
-     let token = conn
-         .add_match(rule, move |(node_id,): (u32,), _conn, _msg| {
-             *node_slot.lock().unwrap() = Some(node_id);
-             true
-         })
-         .context("subscribing to PipeWireStreamAdded")?;
-     let started = session
-         .method_call::<(), _, _, _>(SESSION_INTERFACE, "Start", ())
-         .map_err(|e| anyhow!("org.gnome.Mutter.ScreenCast.Session.Start: {e}"));
-     let node_id = started.and_then(|()| wait_for_node(conn, &node, &stream_path));
-     let _ = conn.remove_match(token);
-     let node_id = node_id?;
- 
-     let stream = conn.with_proxy(MUTTER_SCREEN_CAST_BUS, &stream_path, CALL_TIMEOUT);
-     let parameters: PropMap = stream
-         .get(STREAM_INTERFACE, "Parameters")
-         .unwrap_or_default();
-     Ok(BoundWindow {
-         session_path: session_path.to_string(),
-         node_id,
-         logical_size: parse_size(&parameters).unwrap_or((0, 0)),
-         owner,
-     })
+@@ -320,4 +324,12 @@ fn record_and_start_with_id(
  }
  
 +fn record_window_properties(cursor_mode: CursorMode, window_id: Option<u64>) -> PropMap {
@@ -889,40 +584,7 @@ index 8900c3d14c5bea6b5155705df964c48dae8a3049..78cac0c19ad7c2f78b11f62b1d95912e
 +
  fn wait_for_node(conn: &Connection, node: &Mutex<Option<u32>>, stream_path: &str) -> Result<u32> {
      let deadline = Instant::now() + STREAM_ADDED_TIMEOUT;
-     loop {
-         if let Some(node_id) = *node.lock().unwrap() {
-             return Ok(node_id);
-         }
-         let remaining = deadline.saturating_duration_since(Instant::now());
-         if remaining.is_zero() {
-             bail!(
-                 "Mutter did not announce a PipeWire node for {stream_path} within {:?}",
-                 STREAM_ADDED_TIMEOUT
-             );
-         }
-         conn.process(remaining.min(Duration::from_millis(250)))
-             .context("D-Bus message processing")?;
-     }
- }
- 
- /// The `size` entry of a Mutter stream's `Parameters`, as `(width, height)`.
- fn parse_size(parameters: &PropMap) -> Option<(i32, i32)> {
-     let value = parameters.get("size")?;
-     let mut fields = value.0.as_iter()?;
-     let first = fields.next()?;
-     // `(ii)` inside a variant: either the struct itself or its two fields.
-     if let Some(mut inner) = first.as_iter() {
-         let width = inner.next()?.as_i64()?;
-         let height = inner.next()?.as_i64()?;
-         return Some((width as i32, height as i32));
-     }
-     let width = first.as_i64()?;
-     let height = fields.next()?.as_i64()?;
-     Some((width as i32, height as i32))
- }
- 
- #[cfg(test)]
- mod tests {
+@@ -358,4 +370,22 @@ mod tests {
      use super::*;
  
 +    #[test]
@@ -945,57 +607,11 @@ index 8900c3d14c5bea6b5155705df964c48dae8a3049..78cac0c19ad7c2f78b11f62b1d95912e
 +
      fn bound(owner: u64) -> BoundWindow {
          BoundWindow {
-             session_path: format!("/org/gnome/Mutter/ScreenCast/Session/u{owner}"),
-             node_id: 61,
-             logical_size: (2560, 1440),
-             owner,
-         }
-     }
- 
-     #[test]
-     fn a_missing_mutter_service_is_recognised() {
-         assert!(is_service_missing(
-             "org.freedesktop.DBus.Error.ServiceUnknown: The name org.gnome.Mutter.ScreenCast was \
-              not provided by any .service files"
-         ));
-         assert!(is_service_missing(
-             "org.freedesktop.DBus.Error.NameHasNoOwner"
-         ));
-         assert!(!is_service_missing(
-             "org.freedesktop.DBus.Error.Failed: Window not found"
-         ));
-     }
- 
-     #[test]
-     fn typed_errors_keep_their_kind_under_context() {
 diff --git a/recording/native/linux/src/portal.rs b/recording/native/linux/src/portal.rs
-index 8a5c6511203b42af96f52ee1c6f04f4f91de8153..38441474e5a519bc149d7c14589275b993396e71 100644
+index 8a5c6511..38441474 100644
 --- a/recording/native/linux/src/portal.rs
 +++ b/recording/native/linux/src/portal.rs
-@@ -78,80 +78,85 @@ pub fn consent_prompt_allowed_from(value: Option<&str>) -> bool {
-         Some("never" | "no" | "off" | "false" | "0")
-     )
- }
- 
- /// [`consent_timeout_from`] for this process's environment.
- pub fn consent_timeout() -> Duration {
-     consent_timeout_from(std::env::var(CONSENT_TIMEOUT_ENV).ok().as_deref())
- }
- 
- /// [`consent_prompt_allowed_from`] for this process's environment.
- pub fn consent_prompt_allowed() -> bool {
-     consent_prompt_allowed_from(std::env::var(CONSENT_PROMPT_ENV).ok().as_deref())
- }
- 
- /// The error for a portal request Spectre may not open because [`CONSENT_PROMPT_ENV`] forbids a
- /// dialog. `what` names the grant, `why` says why a dialog would be needed.
- pub fn prompt_forbidden_error(what: &str, why: &str) -> anyhow::Error {
-     anyhow::Error::new(ConsentNotGranted(format!(
-         "{what}: {why}, and {CONSENT_PROMPT_ENV}=never forbids opening the Share dialog. \
-          Run `spectre permissions request` once while someone is at the seat."
-     )))
- }
- 
+@@ -101,5 +101,6 @@ pub fn prompt_forbidden_error(what: &str, why: &str) -> anyhow::Error {
  /// Install the `.desktop` and `Registry.Register` this connection before any portal method.
  pub fn register_host_app(conn: &Connection, timeout: Duration) -> Result<()> {
 -    crate::identity::install_desktop_file().context("installing Spectre .desktop for portal app_id")?;
@@ -1003,11 +619,7 @@ index 8a5c6511203b42af96f52ee1c6f04f4f91de8153..38441474e5a519bc149d7c14589275b9
 +        .context("installing Spectre .desktop for portal app_id")?;
      let proxy = conn.with_proxy(PORTAL_BUS, PORTAL_PATH, timeout);
      let options: PropMap = HashMap::new();
-     match proxy.method_call::<(), _, _, _>(
-         HOST_REGISTRY_INTERFACE,
-         "Register",
-         (crate::identity::SPECTRE_APP_ID.to_string(), options),
-     ) {
+@@ -111,9 +112,5 @@ pub fn register_host_app(conn: &Connection, timeout: Duration) -> Result<()> {
          Ok(()) => Ok(()),
          Err(e) => {
 -            let msg = e.to_string();
@@ -1018,17 +630,14 @@ index 8a5c6511203b42af96f52ee1c6f04f4f91de8153..38441474e5a519bc149d7c14589275b9
 +            if is_optional_host_registry_error(&e) {
                  eprintln!(
                      "spectre-wayland-helper: org.freedesktop.host.portal.Registry.Register is \
-                      unavailable ({e:#}). Continuing without a host app_id — restore tokens \
-                      may not stick across processes on this portal version."
+@@ -122,6 +119,4 @@ pub fn register_host_app(conn: &Connection, timeout: Duration) -> Result<()> {
                  );
                  Ok(())
 -            } else if msg.to_lowercase().contains("already") {
 -                Ok(())
              } else {
                  Err(anyhow::Error::from(e).context("Registry.Register"))
-             }
-         }
-     }
+@@ -131,4 +126,14 @@ pub fn register_host_app(conn: &Connection, timeout: Duration) -> Result<()> {
  }
  
 +fn is_optional_host_registry_error(error: &dbus::Error) -> bool {
@@ -1043,53 +652,7 @@ index 8a5c6511203b42af96f52ee1c6f04f4f91de8153..38441474e5a519bc149d7c14589275b9
 +
  /// One stream returned by `Start.Response.streams[]`. Spectre uses the first (and on
  /// `monitor` source type, only) stream.
- #[derive(Debug, Clone)]
- pub struct StreamMetadata {
-     pub node_id: u32,
-     pub position: (i32, i32),
-     pub size: (u32, u32),
-     pub source_type: Option<u32>,
- }
- 
- pub const SOURCE_TYPE_WINDOW: u32 = 2;
- 
- /// Active screen-cast session. Owns the D-Bus connection (closing it tears the session down)
- /// and the PipeWire FD (a Unix FD authorising a client to read the granted node).
- pub struct ScreenCastSession {
-     pub session_handle: String,
-     pub stream: StreamMetadata,
-     /// The PipeWire FD as a raw int. Marked CLOEXEC by the kernel; the caller must clear
-     /// the flag with `fcntl(F_SETFD, ...)` before passing it to a subprocess via inheritance.
-     pub pipewire_fd: i32,
-     /// D-Bus connection that owns the portal session. Held alive by this struct so the
-     /// compositor doesn't drop the screen-cast on us mid-recording. Dropping the struct
-     /// closes the connection (RAII) which releases the session.
-     _connection: Connection,
- }
-@@ -391,77 +396,77 @@ fn open_screen_cast_session_inner(
-     })
- }
- 
- /// `persist_mode` value: keep the grant until the user revokes it (cross-session restore).
- const PERSIST_MODE_PERSISTENT: u32 = 2;
- 
- pub fn extract_restore_token(results: &PropMap) -> Option<String> {
-     results
-         .get("restore_token")
-         .and_then(|v| v.0.as_str())
-         .map(str::to_string)
- }
- 
- /// Directory for the persisted ScreenCast restore token (mode 0700).
- pub fn restore_token_state_dir() -> PathBuf {
-     if let Some(override_path) = non_empty_env("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR") {
-         return PathBuf::from(override_path);
-     }
-     if let Ok(state_home) = std::env::var("XDG_STATE_HOME") {
-         if !state_home.is_empty() {
-             return PathBuf::from(state_home).join("spectre");
-         }
-     }
+@@ -414,5 +419,8 @@ pub fn restore_token_state_dir() -> PathBuf {
      if let Ok(home) = std::env::var("HOME") {
          if !home.is_empty() {
 -            return PathBuf::from(home).join(".local").join("state").join("spectre");
@@ -1099,24 +662,7 @@ index 8a5c6511203b42af96f52ee1c6f04f4f91de8153..38441474e5a519bc149d7c14589275b9
 +                .join("spectre");
          }
      }
-     // Fail closed: never store a bearer restore_token under a shared /tmp path.
-     PathBuf::from("/var/empty/spectre-no-home")
- }
- 
- fn restore_token_file(token_key: &str) -> PathBuf {
-     restore_token_file_named("wayland-screencast-restore-token", token_key)
- }
- 
- /// An env var's value, or `None` when it is unset or empty. A shell `VAR=` must not
- /// count as an override: an empty path would resolve against the working directory.
- fn non_empty_env(name: &str) -> Option<String> {
-     std::env::var(name).ok().filter(|value| !value.is_empty())
- }
- 
- pub fn restore_token_file_named(prefix: &str, token_key: &str) -> PathBuf {
-     if let Some(override_path) = non_empty_env("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH") {
-         // Always a file base path (not a directory). Append -{token_key} so keys stay separate.
-         // Use SPECTRE_WAYLAND_RESTORE_TOKEN_DIR for directory-only overrides.
+@@ -437,8 +445,5 @@ pub fn restore_token_file_named(prefix: &str, token_key: &str) -> PathBuf {
          let base = PathBuf::from(override_path);
          let parent = base.parent().unwrap_or_else(|| Path::new("."));
 -        let name = base
@@ -1126,53 +672,7 @@ index 8a5c6511203b42af96f52ee1c6f04f4f91de8153..38441474e5a519bc149d7c14589275b9
 +        let name = base.file_name().and_then(|s| s.to_str()).unwrap_or(prefix);
          // An operator who pasted the full token file path must not get `…-{key}-{key}`. Match
          // the whole `{prefix}-{key}` name: a bare key suffix would let the ScreenCast key
-         // `monitor-embedded` reuse the RemoteDesktop `…-rd-monitor-embedded` file.
-         if name == format!("{prefix}-{token_key}") {
-             return base;
-         }
-         return parent.join(format!("{name}-{token_key}"));
-     }
-     restore_token_state_dir().join(format!("{prefix}-{token_key}"))
- }
- 
- pub fn load_restore_token(token_key: &str) -> Result<Option<String>> {
-     load_restore_token_named("wayland-screencast-restore-token", token_key)
- }
- 
- pub fn load_restore_token_named(prefix: &str, token_key: &str) -> Result<Option<String>> {
-     let path = restore_token_file_named(prefix, token_key);
-     if !path.is_file() {
-         return Ok(None);
-     }
-     let raw = fs::read_to_string(&path)
-         .with_context(|| format!("reading restore_token from {}", path.display()))?;
-     let token = raw.trim().to_string();
-     if token.is_empty() {
-         Ok(None)
-@@ -992,91 +997,88 @@ mod restore_token_tests {
-         assert_eq!(
-             restore_token_file_named("wayland-rd-restore-token", "rd-monitor-embedded"),
-             full
-         );
-         // The ScreenCast key `monitor-embedded` is a suffix of the RemoteDesktop file name, but
-         // it must not share that file: the screenshot path could clear the RemoteDesktop grant.
-         let screencast =
-             restore_token_file_named("wayland-screencast-restore-token", "monitor-embedded");
-         assert_ne!(screencast, full);
-         assert_eq!(
-             screencast,
-             dir.join("wayland-rd-restore-token-rd-monitor-embedded-monitor-embedded")
-         );
-         // A plain base path still gets the key appended, so keys stay separate.
-         let base = dir.join("tokens");
-         std::env::set_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH", &base);
-         assert_eq!(
-             restore_token_file_named("wayland-rd-restore-token", "rd-monitor-embedded"),
-             dir.join("tokens-rd-monitor-embedded")
-         );
-         std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH");
-     }
- 
+@@ -1015,6 +1020,5 @@ mod restore_token_tests {
      #[test]
      fn restore_token_key_is_stable_per_source_and_cursor() {
 -        let monitor_embedded =
@@ -1180,26 +680,7 @@ index 8a5c6511203b42af96f52ee1c6f04f4f91de8153..38441474e5a519bc149d7c14589275b9
 +        let monitor_embedded = restore_token_key(&[SourceType::Monitor], CursorMode::Embedded);
          let monitor_hidden = restore_token_key(&[SourceType::Monitor], CursorMode::Hidden);
          let window_embedded = restore_token_key(&[SourceType::Window], CursorMode::Embedded);
-         assert_eq!(monitor_embedded, "monitor-embedded");
-         assert_eq!(monitor_hidden, "monitor-hidden");
-         assert_eq!(window_embedded, "window-embedded");
-         assert_ne!(monitor_embedded, monitor_hidden);
-         assert_ne!(monitor_embedded, window_embedded);
-     }
- 
-     #[test]
-     fn is_restore_token_rejection_only_matches_select_or_start_token_failures() {
-         assert!(is_restore_token_rejection(&anyhow::anyhow!(
-             "SelectSources rejected (response code 2): stored restore_token"
-         )));
-         assert!(is_restore_token_rejection(&anyhow::anyhow!(
-             "Start rejected: restore_token no longer valid"
-         )));
-         // Timeouts and CreateSession failures must NOT clear a still-valid grant.
-         assert!(!is_restore_token_rejection(&anyhow::anyhow!(
-             "Timed out after 60s waiting for Response signal"
-         )));
-         assert!(!is_restore_token_rejection(&anyhow::anyhow!(
+@@ -1041,19 +1045,17 @@ mod restore_token_tests {
              "CreateSession rejected (response code 2)"
          )));
 -    assert!(!is_restore_token_rejection(&anyhow::anyhow!(
@@ -1228,53 +709,7 @@ index 8a5c6511203b42af96f52ee1c6f04f4f91de8153..38441474e5a519bc149d7c14589275b9
 +            std::env::temp_dir().join(format!("spectre-restore-atomic-{}", std::process::id()));
          let _ = fs::remove_dir_all(&dir);
          fs::create_dir_all(&dir).unwrap();
-         std::env::set_var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR", &dir);
-         std::env::remove_var("SPECTRE_WAYLAND_RESTORE_TOKEN_PATH");
- 
-         save_restore_token("monitor-embedded", "first").unwrap();
-         save_restore_token("monitor-embedded", "second-overwrite").unwrap();
-         assert_eq!(
-             load_restore_token("monitor-embedded").unwrap().as_deref(),
-             Some("second-overwrite")
-         );
-         // write_private_file temps are named ".{name}.tmp.{pid}" (extension is the pid, not "tmp").
-         let leftovers: Vec<_> = fs::read_dir(&dir)
-             .unwrap()
-             .filter_map(|e| e.ok())
-             .filter(|e| {
-                 e.file_name()
-                     .to_str()
-                     .is_some_and(|name| name.starts_with('.') && name.contains(".tmp."))
-             })
-             .collect();
-         assert!(leftovers.is_empty(), "tmp leftovers: {leftovers:?}");
- 
-         save_restore_token_named(
-             "wayland-rd-restore-token",
-@@ -1111,53 +1113,85 @@ mod consent_tests {
-     #[test]
-     fn a_response_timeout_is_a_consent_failure() {
-         let err = response_timeout_error(Duration::from_secs(60), "/request/path");
-         assert!(is_consent_not_granted(&err));
-         assert!(format!("{err:#}").contains("Timed out after 60s waiting for Response signal"));
-     }
- 
-     #[test]
-     fn a_consent_failure_is_found_under_added_context() {
-         let err = response_timeout_error(Duration::from_secs(1), "/request/path")
-             .context("interactive RemoteDesktop retry after invalid restore_token also failed");
-         assert!(is_consent_not_granted(&err));
-     }
- 
-     #[test]
-     fn other_errors_are_not_consent_failures() {
-         assert!(!is_consent_not_granted(&anyhow!("opening session bus")));
-     }
- 
-     #[test]
-     fn consent_timeout_defaults_to_sixty_seconds() {
-         assert_eq!(consent_timeout_from(None), DEFAULT_RESPONSE_TIMEOUT);
-         assert_eq!(consent_timeout_from(Some("")), DEFAULT_RESPONSE_TIMEOUT);
+@@ -1134,5 +1136,8 @@ mod consent_tests {
          assert_eq!(consent_timeout_from(Some("soon")), DEFAULT_RESPONSE_TIMEOUT);
          assert_eq!(consent_timeout_from(Some("0")), DEFAULT_RESPONSE_TIMEOUT);
 -        assert_eq!(consent_timeout_from(Some("86400")), DEFAULT_RESPONSE_TIMEOUT);
@@ -1284,7 +719,7 @@ index 8a5c6511203b42af96f52ee1c6f04f4f91de8153..38441474e5a519bc149d7c14589275b9
 +        );
      }
  
-     #[test]
+@@ -1140,5 +1145,8 @@ mod consent_tests {
      fn consent_timeout_accepts_an_attended_wait() {
          assert_eq!(consent_timeout_from(Some("300")), Duration::from_secs(300));
 -        assert_eq!(consent_timeout_from(Some(" 600 ")), Duration::from_secs(600));
@@ -1294,23 +729,7 @@ index 8a5c6511203b42af96f52ee1c6f04f4f91de8153..38441474e5a519bc149d7c14589275b9
 +        );
      }
  
-     #[test]
-     fn only_explicit_never_values_forbid_the_dialog() {
-         assert!(consent_prompt_allowed_from(None));
-         assert!(consent_prompt_allowed_from(Some("")));
-         assert!(consent_prompt_allowed_from(Some("allow")));
-         for value in ["never", "NEVER", " no ", "off", "false", "0"] {
-             assert!(!consent_prompt_allowed_from(Some(value)), "{value}");
-         }
-     }
- 
-     #[test]
-     fn a_forbidden_prompt_is_a_consent_failure_that_names_the_fix() {
-         let err = prompt_forbidden_error("RemoteDesktop", "no stored restore_token");
-         assert!(is_consent_not_granted(&err));
-         let message = format!("{err:#}");
-         assert!(message.contains("spectre permissions request"), "{message}");
-         assert!(message.contains(CONSENT_PROMPT_ENV), "{message}");
+@@ -1162,2 +1170,28 @@ mod consent_tests {
      }
  }
 +
@@ -1340,33 +759,10 @@ index 8a5c6511203b42af96f52ee1c6f04f4f91de8153..38441474e5a519bc149d7c14589275b9
 +    }
 +}
 diff --git a/recording/native/linux/src/protocol.rs b/recording/native/linux/src/protocol.rs
-index 9390afddba89b5d3d20f46ae3189105a951612e1..f8f232cb33c0e0158cea1da5289f63d04fbdeb59 100644
+index 9390afdd..f8f232cb 100644
 --- a/recording/native/linux/src/protocol.rs
 +++ b/recording/native/linux/src/protocol.rs
-@@ -23,54 +23,59 @@ pub enum Command {
-         button: i32,
-         pressed: bool,
-     },
-     Key {
-         key_code: i32,
-         pressed: bool,
-     },
-     PointerAxis {
-         axis: u32,
-         steps: i32,
-     },
-     /// Session only. Bind a GNOME Mutter window stream to the window that has keyboard focus now,
-     /// keep it under `key`, and write its first frame to `output` as an RGBA PNG. The JVM focuses
-     /// the window first and checks the frame before it trusts the binding.
-     BindFocusedWindow {
-         key: String,
-         output: String,
-         /// Mutter fixes the cursor mode when it binds the stream.
-         #[serde(default = "hidden_cursor")]
-         cursor_mode: CursorMode,
-     },
-     BindWindow {
-         key: String,
+@@ -46,8 +46,13 @@ pub enum Command {
          output: String,
          owner_pid: u32,
 -        frame: Region,
@@ -1381,87 +777,18 @@ index 9390afddba89b5d3d20f46ae3189105a951612e1..f8f232cb33c0e0158cea1da5289f63d0
 +    },
      /// Session only. Write one RGBA PNG frame of the window bound under `key` to `output`.
      WindowScreenshot {
-         key: String,
-         output: String,
-     },
-     /// Session only. Record the window bound under `key`, cropped to `region` in stream pixels.
-     StartWindowRecording(WindowRecordingCommand),
-     /// Session only. Stop the Mutter stream bound under `key`.
-     UnbindWindow {
-         key: String,
-     },
-     /// Session only. Ask the window manager to activate the Xwayland client window whose
-     /// root-relative geometry is `frame` (device pixels, client area), owned by `owner_pid`.
-     /// GNOME ignores a Java window's own focus requests once another window holds focus; the
-     /// JVM sends this when `toFront`/`requestFocus` did not give the window focus.
-     ActivateWindow {
-         #[serde(default)]
-         display_name: Option<String>,
-         frame: Region,
-         #[serde(default)]
-         owner_pid: Option<u32>,
-     },
- }
- 
- /// Recording of a bound Mutter window stream. `region` and `stream_size` are in stream pixels:
-@@ -208,42 +213,44 @@ pub enum Event {
-         stream_position: [i32; 2],
-         gst_pid: u32,
-     },
-     /// Optional periodic update for long recordings. The recorder lifecycle doesn't currently
-     /// publish these, but the variant exists so a future stage can stream progress without a
-     /// protocol bump.
-     FrameProgress { frames: u64 },
-     /// Recording stopped cleanly: gst-launch exited 0, the mux finalised, the file is on disk.
-     Stopped { output_size_bytes: u64 },
-     /// One-shot screenshot command completed and wrote a readable image file.
-     ScreenshotSaved { output_size_bytes: u64 },
-     /// Pointer/key command applied on the held RemoteDesktop session.
-     InputAck,
-     /// A Mutter window stream is bound under `key`. `logical_size` is the stream's `size`
-     /// parameter: on GNOME 50 the size of the monitor, not of the window.
-     WindowBound {
-         key: String,
-         node_id: u32,
-         logical_size: [i32; 2],
-     },
-     /// The Mutter stream under `key` is stopped (`was_bound` false when nothing was bound).
-     WindowUnbound { key: String, was_bound: bool },
-     /// The window manager was asked to activate the X11 window `xid`. The JVM still confirms
+@@ -231,4 +236,6 @@ pub enum Event {
      /// focus itself: the request can be refused.
      WindowActivated { xid: u64 },
 +    /// Opaque, one-use GNOME window binding created by the owning process (or its child).
 +    WindowLocated { binding_token: String },
      /// Anything that didn't reach a Stopped state. `kind` is a coarse category the JVM can
      /// pattern-match for surfacing the right exception type; `message` is the human-readable
-     /// detail.
-     Error { kind: String, message: String },
- }
- 
- fn default_capture_backend() -> CaptureBackend {
-     CaptureBackend::WaylandPortal
- }
- 
- fn default_capture_target() -> CaptureTarget {
-     CaptureTarget::Region
- }
- 
- fn hidden_cursor() -> CursorMode {
-     CursorMode::Hidden
- }
 diff --git a/recording/native/linux/src/session.rs b/recording/native/linux/src/session.rs
-index 706598be41f82423564a433b229b62cb1c295e03..360c62657056b7a08819c0293db019597270e81a 100644
+index 706598be..360c6265 100644
 --- a/recording/native/linux/src/session.rs
 +++ b/recording/native/linux/src/session.rs
-@@ -1,36 +1,37 @@
- //! Long-lived Spectre Wayland session: one RemoteDesktop grant, unix-socket RPC.
- 
- use crate::input_map::{awt_button_mask_to_evdev, vk_to_keysym};
- use crate::mutter_window::{error_kind, MutterWindowStreams};
- use crate::protocol::{Command, Event, ScreenshotCommand, StartCommand, WindowRecordingCommand};
- use crate::remote_desktop::{open_remote_desktop_session, RemoteDesktopSession};
- use crate::session_lock::{self, acquire_session_lock, SessionLock};
- use anyhow::{Context, Result};
+@@ -9,5 +9,6 @@ use anyhow::{Context, Result};
  use nix::fcntl::{fcntl, FcntlArg, FdFlag};
  use nix::sys::signal::{kill, Signal};
 -use nix::unistd::Pid;
@@ -1469,53 +796,7 @@ index 706598be41f82423564a433b229b62cb1c295e03..360c62657056b7a08819c0293db01959
 +use nix::unistd::{geteuid, Pid};
  use std::collections::{BTreeSet, HashMap};
  use std::io::{BufRead, BufReader, Write};
- use std::os::fd::{AsRawFd, FromRawFd};
- use std::os::unix::net::{UnixListener, UnixStream};
- use std::path::PathBuf;
- use std::process::{Child, Command as ProcessCommand, Stdio};
- use std::sync::atomic::{AtomicU64, Ordering};
- use std::sync::{Arc, Mutex};
- 
- static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
- 
- /// Exit status when the portal session could not open because nobody answered the consent dialog
- /// in time or the user denied it (sysexits `EX_NOPERM`). The JVM remembers it and stops starting
- /// new helpers, and so new dialogs, for every capture (#634). Mirrors
- /// `WAYLAND_SESSION_CONSENT_EXIT` in the recording module's `WaylandHelperProtocol.kt`.
- pub const CONSENT_NOT_GRANTED_EXIT: i32 = 77;
- 
- /// Exit status for a failed portal handshake: [`CONSENT_NOT_GRANTED_EXIT`] for a consent failure,
- /// `None` to keep the generic error exit.
- fn portal_failure_exit_code(err: &anyhow::Error) -> Option<i32> {
-     crate::portal::is_consent_not_granted(err).then_some(CONSENT_NOT_GRANTED_EXIT)
- }
- 
- pub fn serve() -> Result<()> {
-     let dir = session_lock::session_dir();
-@@ -231,67 +232,76 @@ fn maybe_daemonize() {
-         .as_deref()
-         == Some("1")
-     {
-         return;
-     }
-     // noclose=false redirects stdio to /dev/null so piped parents (Gradle, portal-token-warmup)
-     // still observe EOF after this process becomes a session daemon.
-     if let Err(e) = nix::unistd::daemon(true, false) {
-         eprintln!("spectre-wayland-helper: daemonize failed ({e}); staying in foreground");
-     }
- }
- 
- fn dup_keep_pipewire_fd(fd: i32) -> Result<()> {
-     let mut flags = FdFlag::from_bits_truncate(fcntl(fd, FcntlArg::F_GETFD).context("F_GETFD")?);
-     flags.remove(FdFlag::FD_CLOEXEC);
-     fcntl(fd, FcntlArg::F_SETFD(flags)).context("F_SETFD")?;
-     Ok(())
- }
- 
- fn handle_client(
-     stream: UnixStream,
-     state: &Mutex<SessionState>,
-     windows: &Mutex<MutterWindowStreams>,
+@@ -254,4 +255,13 @@ fn handle_client(
      client_id: u64,
  ) -> Result<()> {
 +    let credentials =
@@ -1529,89 +810,20 @@ index 706598be41f82423564a433b229b62cb1c295e03..360c62657056b7a08819c0293db01959
 +    let peer_pid = u32::try_from(credentials.pid()).context("invalid session peer pid")?;
      let _reap = DisconnectReap {
          state,
-         windows,
-         client_id,
-     };
-     let mut reader = BufReader::new(stream.try_clone()?);
-     let mut writer = stream;
-     let mut line = String::new();
-     loop {
-         line.clear();
-         let n = reader.read_line(&mut line)?;
-         if n == 0 {
-             return Ok(());
-         }
+@@ -270,5 +280,5 @@ fn handle_client(
          let command: Command = serde_json::from_str(line.trim())
              .with_context(|| format!("parsing session command: {}", line.trim()))?;
 -        let event = dispatch(command, state, windows, client_id);
 +        let event = dispatch(command, state, windows, client_id, peer_pid);
          write_event(&mut writer, event)?;
      }
- }
- 
- struct DisconnectReap<'a> {
-     state: &'a Mutex<SessionState>,
-     windows: &'a Mutex<MutterWindowStreams>,
-     client_id: u64,
- }
- 
- impl Drop for DisconnectReap<'_> {
-     fn drop(&mut self) {
-         let reap_recording = release_held_input(self.state, self.client_id);
-         if reap_recording {
-             let _ = stop_recording(self.state);
-         }
-         if let Ok(mut windows) = self.windows.lock() {
-             windows.unbind_owner(self.client_id);
-         }
-     }
- }
- 
- fn release_held_input(state: &Mutex<SessionState>, client_id: u64) -> bool {
-     let mut guard = match state.lock() {
-         Ok(guard) => guard,
-@@ -299,78 +309,94 @@ fn release_held_input(state: &Mutex<SessionState>, client_id: u64) -> bool {
-     };
-     let owner = guard.recording.as_ref().map(|r| r.owner);
-     let cleanup = disconnect_cleanup(owner, client_id, &mut guard.input_holds);
-     for button in &cleanup.portal_releases.buttons {
-         if let Err(e) = guard.session.notify_pointer_button(*button, false) {
-             eprintln!(
-                 "spectre-wayland-helper: failed to release held button {button} on disconnect: {e:#}"
-             );
-         }
-     }
-     for key in &cleanup.portal_releases.keys {
-         if let Err(e) = guard.session.notify_keyboard_keysym(*key, false) {
-             eprintln!(
-                 "spectre-wayland-helper: failed to release held key {key} on disconnect: {e:#}"
-             );
-         }
-     }
-     cleanup.reap_recording
- }
- 
- fn dispatch(
-     command: Command,
-     state: &Mutex<SessionState>,
+@@ -322,4 +332,5 @@ fn dispatch(
      windows: &Mutex<MutterWindowStreams>,
      client_id: u64,
 +    peer_pid: u32,
  ) -> Event {
      match command {
-         Command::BindFocusedWindow {
-             key,
-             output,
-             cursor_mode,
-         } => window_event(bind_focused_window(
-             windows,
-             &key,
-             &output,
-             cursor_mode,
-             client_id,
-         )),
-         Command::BindWindow {
-             key,
+@@ -339,15 +350,30 @@ fn dispatch(
              output,
              owner_pid,
 -            frame,
@@ -1652,53 +864,7 @@ index 706598be41f82423564a433b229b62cb1c295e03..360c62657056b7a08819c0293db01959
 +        },
          Command::WindowScreenshot { key, output } => {
              window_event(window_screenshot(windows, &key, &output))
-         }
-         Command::StartWindowRecording(start) => {
-             window_event(run_window_recording_start(state, windows, start, client_id))
-         }
-         Command::ActivateWindow {
-             display_name,
-             frame,
-             owner_pid,
-         } => window_event(
-             crate::x11_window::activate_window_by_frame(display_name.as_deref(), frame, owner_pid)
-                 .map(|window| Event::WindowActivated { xid: window.xid }),
-         ),
-         Command::UnbindWindow { key } => match windows.lock() {
-             Ok(mut guard) => Event::WindowUnbound {
-                 was_bound: guard.unbind(&key),
-                 key,
-             },
-             Err(e) => Event::Error {
-                 kind: "Helper".into(),
-                 message: format!("window stream mutex poisoned: {e}"),
-             },
-         },
-         Command::PointerMove { x, y } => with_session(state, |s| {
-@@ -572,60 +598,59 @@ fn bind_focused_window(
-     let bound = {
-         let mut guard = windows
-             .lock()
-             .map_err(|e| anyhow::anyhow!("window stream mutex poisoned: {e}"))?;
-         guard.bind_focused(key, client_id, cursor_mode)?
-     };
-     let output = PathBuf::from(output);
-     if let Err(e) = write_window_frame(bound.node_id, &output) {
-         if let Ok(mut guard) = windows.lock() {
-             guard.unbind(key);
-         }
-         return Err(e.context("reading the first frame of the bound window"));
-     }
-     Ok(Event::WindowBound {
-         key: key.to_string(),
-         node_id: bound.node_id,
-         logical_size: [bound.logical_size.0, bound.logical_size.1],
-     })
- }
- 
- fn bind_identity_window(
-     windows: &Mutex<MutterWindowStreams>,
-     key: &str,
+@@ -595,14 +621,13 @@ fn bind_identity_window(
      output: &str,
      owner_pid: u32,
 -    frame: crate::protocol::Region,
@@ -1715,57 +881,11 @@ index 706598be41f82423564a433b229b62cb1c295e03..360c62657056b7a08819c0293db01959
 +        guard.bind_identity(key, client_id, owner_pid, binding_token, cursor_mode)?
      };
      let output = PathBuf::from(output);
-     if let Err(e) = write_window_frame(bound.node_id, &output) {
-         if let Ok(mut guard) = windows.lock() {
-             guard.unbind(key);
-         }
-         return Err(e.context("reading the first frame of the identity-bound window"));
-     }
-     Ok(Event::WindowBound {
-         key: key.to_string(),
-         node_id: bound.node_id,
-         logical_size: [bound.logical_size.0, bound.logical_size.1],
-     })
- }
- 
- fn window_screenshot(
-     windows: &Mutex<MutterWindowStreams>,
-     key: &str,
-     output: &str,
- ) -> Result<Event> {
-     let node_id = windows
-         .lock()
-         .map_err(|e| anyhow::anyhow!("window stream mutex poisoned: {e}"))?
-         .get(key)?
-         .node_id;
 diff --git a/recording/src/main/kotlin/dev/sebastiano/spectre/recording/LinuxNativeScreenshotter.kt b/recording/src/main/kotlin/dev/sebastiano/spectre/recording/LinuxNativeScreenshotter.kt
-index b5d24ea6d4c078424f9e5ace14aa50d437816d70..3892132f988d5fb76bed23632a16333cacb9341f 100644
+index b5d24ea6..3892132f 100644
 --- a/recording/src/main/kotlin/dev/sebastiano/spectre/recording/LinuxNativeScreenshotter.kt
 +++ b/recording/src/main/kotlin/dev/sebastiano/spectre/recording/LinuxNativeScreenshotter.kt
-@@ -244,51 +244,52 @@ internal constructor(
-             // Closing stdout is best-effort cleanup. The process kill above is the real guard.
-         }
-         @Suppress("SwallowedException")
-         try {
-             process?.waitFor(FORCED_EXIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-             readerThread?.join(READER_JOIN_TIMEOUT_MS)
-         } catch (_: InterruptedException) {
-             Thread.currentThread().interrupt()
-         }
-     }
- 
-     private fun readScreenshotTerminalEvent(reader: BufferedReader): Event {
-         while (true) {
-             val line = reader.readLine() ?: error("helper closed stdout before screenshot result")
-             if (line.isBlank()) continue
-             val event = json.decodeFromString(Event.serializer(), line)
-             when (event) {
-                 is Event.ScreenshotSaved,
-                 is Event.Error -> return event
-                 is Event.Started,
-                 is Event.Stopped,
-                 is Event.FrameProgress,
-                 is Event.InputAck,
+@@ -267,5 +267,6 @@ internal constructor(
                  is Event.WindowBound,
                  is Event.WindowUnbound,
 -                is Event.WindowActivated -> {
@@ -1773,57 +893,11 @@ index b5d24ea6d4c078424f9e5ace14aa50d437816d70..3892132f988d5fb76bed23632a16333c
 +                is Event.WindowLocated -> {
                      // Ignore recording/input-only events until a terminal screenshot event arrives.
                  }
-             }
-         }
-     }
- 
-     private fun writeCommand(stream: OutputStream, command: Command) {
-         val line = json.encodeToString(Command.serializer(), command) + "\n"
-         stream.write(line.toByteArray(StandardCharsets.UTF_8))
-         stream.flush()
-     }
- 
-     internal interface ProcessFactory {
-         fun start(helperPath: Path): Process
-     }
- 
-     internal object SystemProcessFactory : ProcessFactory {
-         override fun start(helperPath: Path): Process =
-             ProcessBuilder(helperPath.toString())
-                 .withWaylandHelperEnvironment()
-                 .redirectInput(ProcessBuilder.Redirect.PIPE)
-                 .redirectOutput(ProcessBuilder.Redirect.PIPE)
-                 .redirectError(ProcessBuilder.Redirect.INHERIT)
-                 .start()
-     }
 diff --git a/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandHelperProtocol.kt b/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandHelperProtocol.kt
-index 206f588340fea53ae4279237a6e12299b1a7aa70..e6aefda4dc39b746aefdda4cd7c187d953b22c32 100644
+index 206f5883..e6aefda4 100644
 --- a/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandHelperProtocol.kt
 +++ b/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandHelperProtocol.kt
-@@ -82,54 +82,62 @@ internal sealed interface Command {
-     @Serializable
-     @SerialName("pointer_axis")
-     data class PointerAxis(@SerialName("axis") val axis: Int, @SerialName("steps") val steps: Int) :
-         Command
- 
-     /**
-      * Session only. Binds a GNOME Mutter window stream to the window that has keyboard focus and
-      * writes its first frame to [output] as an RGBA PNG.
-      */
-     @Serializable
-     @SerialName("bind_focused_window")
-     data class BindFocusedWindow(
-         @SerialName("key") val key: String,
-         @SerialName("output") val output: String,
-         /** Mutter fixes the cursor mode when it binds the stream. */
-         @SerialName("cursor_mode") val cursorMode: CursorMode = CursorMode.HIDDEN,
-     ) : Command
- 
-     /** Binds the window resolved by the Spectre GNOME Shell identity service. */
-     @Serializable
-     @SerialName("bind_window")
-     data class BindWindow(
-         @SerialName("key") val key: String,
+@@ -105,8 +105,16 @@ internal sealed interface Command {
          @SerialName("output") val output: String,
          @SerialName("owner_pid") val ownerPid: Long,
 -        @SerialName("frame") val frame: Region,
@@ -1841,53 +915,7 @@ index 206f588340fea53ae4279237a6e12299b1a7aa70..e6aefda4dc39b746aefdda4cd7c187d9
 +
      /** Session only. Writes one RGBA PNG frame of the window bound under [key]. */
      @Serializable
-     @SerialName("window_screenshot")
-     data class WindowScreenshot(
-         @SerialName("key") val key: String,
-         @SerialName("output") val output: String,
-     ) : Command
- 
-     /** Session only. Records the window bound under [key], cropped to [region] (stream pixels). */
-     @Serializable
-     @SerialName("start_window_recording")
-     data class StartWindowRecording(
-         @SerialName("key") val key: String,
-         @SerialName("region") val region: Region,
-         @SerialName("stream_size") val streamSize: List<Int>,
-         @SerialName("frame_rate") val frameRate: Int,
-         @SerialName("output") val output: String,
-         @SerialName("codec") val codec: String,
-     ) : Command
- 
-     /** Session only. Stops the Mutter stream bound under [key]. */
-     @Serializable
-     @SerialName("unbind_window")
-     data class UnbindWindow(@SerialName("key") val key: String) : Command
- 
-@@ -181,50 +189,54 @@ internal sealed interface Event {
-         @SerialName("message") val message: String,
-     ) : Event
- 
-     @Serializable @SerialName("input_ack") data object InputAck : Event
- 
-     @Serializable
-     @SerialName("window_bound")
-     data class WindowBound(
-         @SerialName("key") val key: String,
-         @SerialName("node_id") val nodeId: Long,
-         /** Mutter's stream `size`: on GNOME 50 the monitor's logical size, not the window's. */
-         @SerialName("logical_size") val logicalSize: List<Int>,
-     ) : Event
- 
-     @Serializable
-     @SerialName("window_unbound")
-     data class WindowUnbound(
-         @SerialName("key") val key: String,
-         @SerialName("was_bound") val wasBound: Boolean,
-     ) : Event
- 
-     /** The window manager was asked to activate X11 window [xid]; focus is still unconfirmed. */
-     @Serializable
+@@ -204,4 +212,8 @@ internal sealed interface Event {
      @SerialName("window_activated")
      data class WindowActivated(@SerialName("xid") val xid: Long) : Event
 +
@@ -1896,57 +924,11 @@ index 206f588340fea53ae4279237a6e12299b1a7aa70..e6aefda4dc39b746aefdda4cd7c187d9
 +    data class WindowLocated(@SerialName("binding_token") val bindingToken: String) : Event
  }
  
- /** Helper error kind for a desktop without GNOME Mutter's ScreenCast API. */
- internal const val HELPER_ERROR_MUTTER_UNAVAILABLE: String = "MutterUnavailable"
- 
- /** Helper error kind for a window key the session helper has no stream for. */
- internal const val HELPER_ERROR_WINDOW_NOT_BOUND: String = "WindowNotBound"
- 
- /** An `Event.Error` from the session helper, with its [kind] kept for callers that branch on it. */
- internal class WaylandHelperErrorException(val kind: String, helperMessage: String) :
-     IllegalStateException("spectre-wayland-helper session error: kind=$kind message=$helperMessage")
- 
- @Serializable
- internal enum class CaptureBackend {
-     @SerialName("wayland_portal") WAYLAND_PORTAL,
-     @SerialName("x11") X11,
- }
- 
- @Serializable
- internal enum class CaptureTarget {
-     @SerialName("region") REGION,
-     @SerialName("window") WINDOW,
- }
- 
- @Serializable
 diff --git a/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandPortalRecorder.kt b/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandPortalRecorder.kt
-index 59b2bb722bbff7364ec5c713d529dfd3f617069d..e172f8c93b4177cfd69081fbe7921ee3a174f697 100644
+index 59b2bb72..e172f8c9 100644
 --- a/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandPortalRecorder.kt
 +++ b/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandPortalRecorder.kt
-@@ -240,51 +240,52 @@ private constructor(
-                 is Event.Stopped -> {
-                     stopped.set(event)
-                     stoppedLatch.countDown()
-                 }
-                 is Event.Error -> {
-                     errorEvent.compareAndSet(null, event)
-                     startedLatch.countDown()
-                     stoppedLatch.countDown()
-                 }
-                 is Event.ScreenshotSaved -> {
-                     errorEvent.compareAndSet(
-                         null,
-                         Event.Error(
-                             kind = "ProtocolUnexpectedEvent",
-                             message = "helper emitted screenshot_saved during recording start",
-                         ),
-                     )
-                     startedLatch.countDown()
-                     stoppedLatch.countDown()
-                     return
-                 }
-                 is Event.FrameProgress,
-                 is Event.InputAck,
+@@ -263,5 +263,6 @@ private constructor(
                  is Event.WindowBound,
                  is Event.WindowUnbound,
 -                is Event.WindowActivated -> {
@@ -1954,258 +936,153 @@ index 59b2bb722bbff7364ec5c713d529dfd3f617069d..e172f8c93b4177cfd69081fbe7921ee3
 +                is Event.WindowLocated -> {
                      // Reserved for a future progress-streaming UX / session input acks.
                  }
-             }
-         }
-         // EOF on helper stdout. If we never saw a Started event, synthesise an error so the
-         // start-side latch unblocks instead of waiting out its timeout.
-         if (started.get() == null && errorEvent.get() == null) {
-             errorEvent.compareAndSet(
-                 null,
-                 Event.Error(
-                     kind = "HelperEofBeforeStarted",
-                     message =
-                         "helper closed stdout without emitting a Started or Error event — " +
-                             "usually means it crashed during the portal handshake. Check the " +
-                             "helper's stderr (forwarded to this process's stderr).",
-                 ),
-             )
-         }
-         startedLatch.countDown()
-         stoppedLatch.countDown()
-     }
- 
-     private fun writeCommand(stream: OutputStream, command: Command) {
-         val line = json.encodeToString(Command.serializer(), command) + "\n"
-         stream.write(line.toByteArray(StandardCharsets.UTF_8))
 diff --git a/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClient.kt b/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClient.kt
-index 6de68e344a70e06947d7902f2d41bd7510ece5af..f85476be145782db5a24868cd260d566233d4d4a 100644
+index 6de68e34..7e91ad68 100644
 --- a/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClient.kt
 +++ b/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClient.kt
-@@ -7,51 +7,51 @@ import java.awt.image.BufferedImage
- import java.io.IOException
- import java.net.StandardProtocolFamily
- import java.net.UnixDomainSocketAddress
- import java.nio.ByteBuffer
- import java.nio.channels.SocketChannel
- import java.nio.charset.StandardCharsets
- import java.nio.file.Files
- import java.nio.file.Path
- import java.util.concurrent.TimeUnit
- import javax.imageio.ImageIO
- import kotlin.io.path.deleteIfExists
+@@ -18,4 +18,67 @@ import kotlin.io.path.deleteIfExists
  import kotlinx.serialization.json.Json
  
++private fun locateWindow(
++    identity: MutterWindowIdentity,
++    process: Process,
++    json: Json,
++    timeoutSeconds: Long,
++    destroyTimeoutMs: Long,
++): String {
++    var restoreInterrupt = false
++    try {
++        process.outputWriter(StandardCharsets.UTF_8).use { writer ->
++            writer.appendLine(
++                json.encodeToString(
++                    Command.serializer(),
++                    Command.LocateWindow(identity.ownerPid, identity.frame),
++                )
++            )
++        }
++        check(process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
++            "window identity helper timed out"
++        }
++        val line = process.inputReader(StandardCharsets.UTF_8).use { it.readLine() }
++        check(process.exitValue() == 0 && line != null) { "window identity helper failed" }
++        return when (val event = json.decodeFromString(Event.serializer(), line)) {
++            is Event.WindowLocated -> event.bindingToken
++            is Event.Error -> throw WaylandHelperErrorException(event.kind, event.message)
++            else -> error("unexpected reply to locate_window: $event")
++        }
++    } catch (error: InterruptedException) {
++        restoreInterrupt = true
++        throw error
++    } finally {
++        closeAndReapIdentityProcess(process, destroyTimeoutMs, restoreInterrupt)
++    }
++}
++
++private fun closeAndReapIdentityProcess(
++    process: Process,
++    destroyTimeoutMs: Long,
++    restoreInterrupt: Boolean,
++) {
++    var interrupted = Thread.interrupted() || restoreInterrupt
++    runCatching { process.outputStream.close() }
++    runCatching { process.inputStream.close() }
++    runCatching { process.errorStream.close() }
++    if (process.isAlive) process.destroy()
++    try {
++        if (!process.waitFor(destroyTimeoutMs, TimeUnit.MILLISECONDS)) {
++            process.destroyForcibly()
++            process.waitFor(destroyTimeoutMs, TimeUnit.MILLISECONDS)
++        }
++    } catch (_: InterruptedException) {
++        interrupted = true
++        process.destroyForcibly()
++        try {
++            process.waitFor(destroyTimeoutMs, TimeUnit.MILLISECONDS)
++        } catch (_: InterruptedException) {
++            interrupted = true
++        }
++    } finally {
++        if (interrupted) Thread.currentThread().interrupt()
++    }
++}
++
  /**
   * Client for the long-lived `spectre-wayland-helper --session` process.
-  *
-  * One helper owns the RemoteDesktop portal session for the user seat. Parallel JVMs connect to the
-  * same unix socket instead of each opening `java.awt.Robot`'s portal.
-  *
-  * [envLookup] should include the runtime-dir and D-Bus fallbacks of
-  * [dev.sebastiano.spectre.recording.linuxSessionEnvLookup]: it picks the session directory and the
-  * variables passed to the helper process.
-  */
+@@ -30,5 +93,5 @@ import kotlinx.serialization.json.Json
  internal class WaylandSessionClient
  internal constructor(
 -    helperExtractor: WaylandHelperBinaryExtractor,
 +    private val helperExtractor: WaylandHelperBinaryExtractor,
      private val envLookup: (String) -> String?,
      processFactory: SessionProcessFactory,
-     waitForSocket: (Path, Long) -> Boolean = ::waitUntilExists,
-     private val consentPrompt: () -> WaylandConsentPrompt = {
+@@ -37,4 +100,12 @@ internal constructor(
          waylandConsentPrompt(System::getProperty, envLookup)
      },
++    identityProcessFactory: (Path, Map<String, String>) -> Process =
++        fun(helper, environment): Process =
++            ProcessBuilder(helper.toString())
++                .apply { environment().putAll(environment) }
++                .redirectError(ProcessBuilder.Redirect.INHERIT)
++                .start(),
++    identityTimeoutSeconds: Long = IDENTITY_TIMEOUT_SECONDS,
++    identityDestroyTimeoutMs: Long = IDENTITY_DESTROY_TIMEOUT_MS,
  ) {
      constructor() :
-         this(
-             helperExtractor = DefaultWaylandHelperBinaryExtractor.instance,
-             envLookup = defaultLinuxSessionEnvLookup,
-             processFactory = SystemSessionProcessFactory,
-         )
- 
-     private val json = Json { ignoreUnknownKeys = true }
-     private val lock = Any()
-     private val inputConnection = WaylandSessionInputConnection(json)
-     private val consentMemo = WaylandSessionConsentMemo()
- 
-     private val starter =
-         WaylandSessionStarter(helperExtractor, envLookup, processFactory, waitForSocket)
- 
-     fun mouseMove(x: Int, y: Int) {
-         send(Command.PointerMove(x, y))
-     }
-@@ -78,50 +78,90 @@ internal constructor(
- 
-     fun screenshot(region: Rectangle): BufferedImage {
-         val output = Files.createTempFile("spectre-wayland-session-", ".png")
-         try {
-             send(
-                 Command.Screenshot(
-                     backend = CaptureBackend.WAYLAND_PORTAL,
-                     target = CaptureTarget.REGION,
-                     sourceTypes = listOf(SourceType.MONITOR),
-                     cursorMode = CursorMode.HIDDEN,
-                     region = Region(region.x, region.y, region.width, region.height),
-                     screenSize = awtDisplayBoundsContaining(region)?.toWire(),
-                     output = output.toAbsolutePath().toString(),
-                 )
-             )
-             return ImageIO.read(output.toFile())
-                 ?: error("Wayland session helper did not produce a readable PNG at $output")
-         } finally {
-             output.deleteIfExists()
-         }
-     }
- 
-     fun send(command: Command): Event =
+@@ -101,4 +172,22 @@ internal constructor(
          synchronized(lock) { inputConnection.send(ensureSocket(), command) }
  
-+    /** Resolves identity in a bounded short-lived child while GNOME can prove ownership. */
++    /**
++     * Resolves identity in a bounded short-lived child while it remains a descendant of the JVM.
++     * The returned token is then redeemed once by the UID/PID-authenticated session connection.
++     */
 +    val locateWindow: (MutterWindowIdentity) -> String =
-+        fun(identity: MutterWindowIdentity): String {
-+            val process =
-+                ProcessBuilder(helperExtractor.extract().toString())
-+                    .apply { environment().putAll(waylandHelperEnvironment(envLookup)) }
-+                    .redirectError(ProcessBuilder.Redirect.INHERIT)
-+                    .start()
-+            try {
-+                process.outputWriter(StandardCharsets.UTF_8).use { writer ->
-+                    writer.appendLine(
-+                        json.encodeToString(
-+                            Command.serializer(),
-+                            Command.LocateWindow(identity.ownerPid, identity.frame),
-+                        )
-+                    )
-+                }
-+                check(process.waitFor(IDENTITY_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-+                    "window identity helper timed out"
-+                }
-+                val line = process.inputReader(StandardCharsets.UTF_8).use { it.readLine() }
-+                check(process.exitValue() == 0 && line != null) { "window identity helper failed" }
-+                return when (val event = json.decodeFromString(Event.serializer(), line)) {
-+                    is Event.WindowLocated -> event.bindingToken
-+                    is Event.Error -> throw WaylandHelperErrorException(event.kind, event.message)
-+                    else -> error("unexpected reply to locate_window: $event")
-+                }
-+            } finally {
-+                if (process.isAlive) {
-+                    process.destroy()
-+                    if (!process.waitFor(IDENTITY_DESTROY_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-+                        process.destroyForcibly()
-+                    }
-+                }
-+                runCatching { process.outputStream.close() }
-+                runCatching { process.inputStream.close() }
-+                runCatching { process.errorStream.close() }
-+            }
-+        }
++        fun(identity): String =
++            locateWindow(
++                identity = identity,
++                process =
++                    identityProcessFactory(
++                        helperExtractor.extract(),
++                        waylandHelperEnvironment(envLookup),
++                    ),
++                json = json,
++                timeoutSeconds = identityTimeoutSeconds,
++                destroyTimeoutMs = identityDestroyTimeoutMs,
++            )
 +
      /** The session socket path for this environment, or null without a runtime directory. */
      fun sessionSocketPath(): Path? = sessionDirOrNull()?.let { waylandSessionPaths(it).socket }
- 
-     /**
-      * Starts the session helper for an attended `spectre permissions request`, or joins the running
-      * one. The helper may open the Share dialog and waits [consentTimeoutSeconds] for each portal
-      * step. Unlike captures, this ignores the consent memo and [WaylandConsentPrompt.NEVER]: a
-      * person asked for the dialog.
-      */
-     fun openSessionForRequest(consentTimeoutSeconds: Long): Path =
-         synchronized(lock) {
-             starter.startOrJoin(
-                 waylandSessionPaths(sessionDir()),
-                 SessionStart(WaylandConsentPrompt.ALLOW, consentTimeoutSeconds, attended = true),
-             )
-         }
- 
-     fun startHeld(command: Command): HeldRecordingSession {
-         val socket = synchronized(lock) { ensureSocket() }
-         val channel = SocketChannel.open(StandardProtocolFamily.UNIX)
-         var transferred = false
-         try {
-             val event = connectAndExchange(channel, socket, command)
-             check(event is Event.Started) {
-                 "spectre-wayland-helper session did not start recording: $event"
-@@ -195,50 +235,52 @@ internal constructor(
-         val consentTimeoutSeconds: Long? = null,
-         /** A person asked for the dialog: an earlier dialog that timed out must not block it. */
-         val attended: Boolean = false,
-     ) {
-         val extraEnvironment: Map<String, String>
-             get() = buildMap {
-                 // Always explicit: the helper inherits this JVM's environment, and an exported
-                 // SPECTRE_WAYLAND_CONSENT_PROMPT=never must not block an attended request.
-                 put(WAYLAND_CONSENT_PROMPT_ENV, prompt.envValue)
-                 consentTimeoutSeconds?.let { put(WAYLAND_CONSENT_TIMEOUT_ENV, it.toString()) }
-             }
- 
-         /** The helper waits for up to [PORTAL_CONSENT_STEPS] portal responses in a row. */
-         val socketTimeoutMs: Long
-             get() =
-                 consentTimeoutSeconds?.let {
-                     TimeUnit.SECONDS.toMillis(it * PORTAL_CONSENT_STEPS + SOCKET_MARGIN_SECONDS)
-                 } ?: SESSION_SOCKET_TIMEOUT_MS
-     }
- 
-     private companion object {
-         const val SESSION_SOCKET_TIMEOUT_MS: Long = 90_000
-         const val SOCKET_POLL_MS: Long = 50
+@@ -218,4 +307,6 @@ internal constructor(
          const val PORTAL_CONSENT_STEPS: Long = 3
          const val SOCKET_MARGIN_SECONDS: Long = 30
 +        const val IDENTITY_TIMEOUT_SECONDS: Long = 10
 +        const val IDENTITY_DESTROY_TIMEOUT_MS: Long = 500
  
          fun waitUntilExists(path: Path, timeoutMs: Long): Boolean {
-             val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
-             while (System.nanoTime() < deadline) {
-                 Thread.sleep(SOCKET_POLL_MS)
-                 if (Files.exists(path)) return true
-             }
-             return Files.exists(path)
-         }
-     }
- }
- 
- /**
-  * Starts the session helper, or joins one that is starting. Not thread-safe: [WaylandSessionClient]
-  * calls it under its own lock.
-  */
- internal class WaylandSessionStarter(
-     private val helperExtractor: WaylandHelperBinaryExtractor,
-     private val envLookup: (String) -> String?,
-     private val processFactory: WaylandSessionClient.SessionProcessFactory,
-     private val waitForSocket: (Path, Long) -> Boolean,
- ) {
-     /**
-      * The helper started here that has not bound its socket yet, usually because its Share dialog
-      * is still open. A capture whose own time budget runs out (a 5 s visual-idle sample, for
 diff --git a/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreams.kt b/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreams.kt
-index 143cb0f60ceaf6734568456f718ea8f5e5035cfc..7f6bc85fa1d3d3c67a3fafccb92f82f130909981 100644
+index 143cb0f6..741db676 100644
 --- a/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreams.kt
 +++ b/recording/src/main/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreams.kt
-@@ -443,53 +443,54 @@ internal class HelperWindowActivator(
-                     frame = Region(frame.x, frame.y, frame.width, frame.height),
-                     ownerPid = ProcessHandle.current().pid(),
-                 )
-             )
-         check(event is Event.WindowActivated) { "unexpected reply to activate_window: $event" }
-     }
+@@ -185,5 +185,11 @@ internal interface WaylandWindowStreamSession {
  }
  
- /** [WaylandWindowStreamSession] over the session helper's unix socket. */
- internal class HelperWindowStreamSession(private val client: WaylandSessionClient) :
-     WaylandWindowStreamSession {
-     override fun bindFocused(
-         key: String,
-         cursorMode: CursorMode,
-     ): Pair<Event.WindowBound, BufferedImage> = withFrameFile { output ->
-         val event = mutterCall { client.send(Command.BindFocusedWindow(key, output, cursorMode)) }
-         check(event is Event.WindowBound) { "unexpected reply to bind_focused_window: $event" }
-         event to readFrame(output)
-     }
+-internal data class MutterWindowIdentity(val ownerPid: Long, val frame: Region)
++internal data class MutterWindowIdentity(
++    val ownerPid: Long,
++    /** X11 client-area geometry used only to resolve the verified XID. */
++    val frame: Region,
++    /** Public AWT Window geometry: includes decorations when the Window does. */
++    val windowSize: Dimension = Dimension(frame.width, frame.height),
++)
  
-     override fun bindWindow(
-         key: String,
-         identity: MutterWindowIdentity,
+ /** Binds by the target's PID and X11 client frame; it never reads or changes keyboard focus. */
+@@ -201,5 +207,5 @@ internal class IdentityWindowStreamBinder<W : Any>(
+                         "its first frame was transparent."
+                 )
+-        val awtSize = Dimension(expected.frame.width, expected.frame.height)
++        val awtSize = expected.windowSize
+         val scale =
+             matchingScale(content, awtSize, streamScale(frame, event))
+@@ -466,7 +472,8 @@ internal class HelperWindowStreamSession(private val client: WaylandSessionClien
          cursorMode: CursorMode,
      ): Pair<Event.WindowBound, BufferedImage> = withFrameFile { output ->
 +        val bindingToken = client.locateWindow(identity)
@@ -2215,57 +1092,17 @@ index 143cb0f60ceaf6734568456f718ea8f5e5035cfc..7f6bc85fa1d3d3c67a3fafccb92f82f1
 +                Command.BindWindow(key, output, identity.ownerPid, bindingToken, cursorMode)
              )
          }
-         check(event is Event.WindowBound) { "unexpected reply to bind_window: $event" }
-         event to readFrame(output)
-     }
- 
-     override fun screenshot(key: String): BufferedImage = withFrameFile { output ->
-         mutterCall { client.send(Command.WindowScreenshot(key, output)) }
-         readFrame(output)
-     }
- 
-     override fun unbind(key: String) {
-         client.send(Command.UnbindWindow(key))
-     }
- 
-     override fun startRecording(
-         command: Command.StartWindowRecording,
-         output: Path,
-     ): RecordingHandle {
-         output.toAbsolutePath().parent?.let(Files::createDirectories)
-         return SessionRecordingHandle(mutterCall { client.startHeld(command) }, output)
-     }
- 
-     private fun <T> withFrameFile(block: (String) -> T): T {
-         val file = Files.createTempFile("spectre-wayland-window-", ".png")
+@@ -621,4 +628,5 @@ internal object DefaultWaylandWindowStreams {
+                         ProcessHandle.current().pid(),
+                         Region(frame.x, frame.y, frame.width, frame.height),
++                        onEdt { window.size },
+                     )
+                 },
 diff --git a/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandHelperProtocolTest.kt b/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandHelperProtocolTest.kt
-index 2705f5e666e61ff356a10e2e993af9a578bda3ec..c8d1e5c1a0e7864c2f69e25654ebf26880e3d2b4 100644
+index 2705f5e6..c8d1e5c1 100644
 --- a/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandHelperProtocolTest.kt
 +++ b/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandHelperProtocolTest.kt
-@@ -79,26 +79,46 @@ class WaylandHelperProtocolTest {
-         )
-     }
- 
-     @Test
-     fun `input ack event is distinct from capture events`() {
-         val line = """{"event":"input_ack"}"""
-         val event = json.decodeFromString(Event.serializer(), line)
-         assertEquals(Event.InputAck, event)
-     }
- 
-     @Test
-     fun `remote desktop token filename is not the AWT robot properties path`() {
-         val name = remoteDesktopTokenFileName("rd-monitor-embedded")
-         assertEquals("wayland-rd-restore-token-rd-monitor-embedded", name)
-         assertFalse(name.contains(".java"))
-         assertFalse(name.contains("robot"))
-         assertFalse(name.contains("screencast"))
-     }
- 
-     @Test
-     fun `flock-loser exit is not a fatal helper handshake failure`() {
-         assertTrue(isFatalWaylandHelperExit(1))
-         assertFalse(isFatalWaylandHelperExit(0))
+@@ -102,3 +102,23 @@ class WaylandHelperProtocolTest {
          assertFalse(isFatalWaylandHelperExit(WAYLAND_SESSION_OWNED_EXIT))
      }
 +
@@ -2289,3 +1126,178 @@ index 2705f5e666e61ff356a10e2e993af9a578bda3ec..c8d1e5c1a0e7864c2f69e25654ebf268
 +        )
 +    }
  }
+diff --git a/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClientTest.kt b/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClientTest.kt
+index 6d016f42..07842784 100644
+--- a/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClientTest.kt
++++ b/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandSessionClientTest.kt
+@@ -9,4 +9,5 @@ import kotlin.test.Test
+ import kotlin.test.assertEquals
+ import kotlin.test.assertFailsWith
++import kotlin.test.assertFalse
+ import kotlin.test.assertSame
+ import kotlin.test.assertTrue
+@@ -18,4 +19,31 @@ class WaylandSessionClientTest {
+     @TempDir lateinit var tempDir: Path
+ 
++    @Test
++    fun `nonresponsive identity helper is forcibly reaped and all streams close`() {
++        val process = IdentityProcess(interruptWait = false)
++        val client = identityClient(process)
++
++        val failure = assertFailsWith<IllegalStateException> { client.locateWindow(IDENTITY) }
++
++        assertTrue(failure.message.orEmpty().contains("timed out"))
++        assertTrue(process.destroyed)
++        assertTrue(process.forciblyDestroyed)
++        assertFalse(process.isAlive)
++        assertTrue(process.allStreamsClosed)
++    }
++
++    @Test
++    fun `interrupted identity wait preserves interruption while reaping the helper`() {
++        val process = IdentityProcess(interruptWait = true)
++        val client = identityClient(process)
++
++        assertFailsWith<InterruptedException> { client.locateWindow(IDENTITY) }
++
++        assertTrue(Thread.interrupted(), "the caller's interrupted status must be restored")
++        assertTrue(process.forciblyDestroyed)
++        assertFalse(process.isAlive)
++        assertTrue(process.allStreamsClosed)
++    }
++
+     @Test
+     fun `a consent timeout or denial is not prompted again in the same client`() {
+@@ -333,4 +361,77 @@ class WaylandSessionClientTest {
+         )
+ 
++    private fun identityClient(process: Process): WaylandSessionClient =
++        WaylandSessionClient(
++            helperExtractor = extractor(),
++            envLookup = { null },
++            processFactory = SupplyingProcessFactory { ExitedProcess(0) },
++            identityProcessFactory =
++                fun(helperPath, environment): Process {
++                    assertTrue(helperPath.isAbsolute)
++                    assertTrue(environment.isEmpty())
++                    return process
++                },
++            identityTimeoutSeconds = 0,
++            identityDestroyTimeoutMs = 0,
++        )
++
++    private class CloseTrackingOutputStream : OutputStream() {
++        var closed = false
++
++        override fun write(value: Int) = Unit
++
++        override fun close() {
++            closed = true
++        }
++    }
++
++    private class CloseTrackingInputStream : InputStream() {
++        var closed = false
++
++        override fun read(): Int = -1
++
++        override fun close() {
++            closed = true
++        }
++    }
++
++    private class IdentityProcess(private val interruptWait: Boolean) : Process() {
++        private val output = CloseTrackingOutputStream()
++        private val input = CloseTrackingInputStream()
++        private val error = CloseTrackingInputStream()
++        private var alive = true
++        var destroyed = false
++        var forciblyDestroyed = false
++        val allStreamsClosed: Boolean
++            get() = output.closed && input.closed && error.closed
++
++        override fun getOutputStream(): OutputStream = output
++
++        override fun getInputStream(): InputStream = input
++
++        override fun getErrorStream(): InputStream = error
++
++        override fun waitFor(): Int = error("not used")
++
++        override fun waitFor(timeout: Long, unit: java.util.concurrent.TimeUnit): Boolean {
++            if (interruptWait && !destroyed) throw InterruptedException("test interruption")
++            return !alive
++        }
++
++        override fun exitValue(): Int = if (alive) throw IllegalThreadStateException() else 0
++
++        override fun isAlive(): Boolean = alive
++
++        override fun destroy() {
++            destroyed = true
++        }
++
++        override fun destroyForcibly(): Process {
++            forciblyDestroyed = true
++            alive = false
++            return this
++        }
++    }
++
+     private class SupplyingProcessFactory(private val supply: () -> Process) :
+         WaylandSessionClient.SessionProcessFactory {
+@@ -402,4 +503,5 @@ class WaylandSessionClientTest {
+     private companion object {
+         val PING: Command = Command.PointerMove(1, 1)
++        val IDENTITY = MutterWindowIdentity(7720, Region(10, 20, 300, 200))
+     }
+ }
+diff --git a/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreamsTest.kt b/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreamsTest.kt
+index e684b6fd..0e355c5f 100644
+--- a/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreamsTest.kt
++++ b/recording/src/test/kotlin/dev/sebastiano/spectre/recording/portal/WaylandWindowStreamsTest.kt
+@@ -37,4 +37,44 @@ class WaylandWindowStreamsTest {
+     }
+ 
++    @Test
++    fun `identity binder validates a decorated stream against the outer AWT window`() {
++        val session = FakeSession(frameWindow = Rectangle(25, 25, 480, 320))
++        val identity =
++            MutterWindowIdentity(
++                ownerPid = 7722,
++                frame = Region(200, 237, 480, 283),
++                windowSize = Dimension(480, 320),
++            )
++
++        val stream =
++            IdentityWindowStreamBinder<String>(session) { identity }
++                .bind("decorated", "k1", CursorMode.HIDDEN)
++
++        assertEquals(1.0, stream.scale)
++    }
++
++    @Test
++    fun `identity binder accepts an undecorated frame whose client and outer sizes coincide`() {
++        val session = FakeSession(frameWindow = Rectangle(0, 0, 480, 283))
++        val identity = MutterWindowIdentity(7722, Region(200, 237, 480, 283), Dimension(480, 283))
++
++        val stream =
++            IdentityWindowStreamBinder<String>(session) { identity }
++                .bind("plain", "k1", CursorMode.HIDDEN)
++
++        assertEquals(1.0, stream.scale)
++    }
++
++    @Test
++    fun `identity binder still refuses a stale or resized window`() {
++        val session = FakeSession(frameWindow = Rectangle(0, 0, 490, 310))
++        val identity = MutterWindowIdentity(7722, Region(200, 237, 480, 283), Dimension(480, 320))
++
++        assertFailsWith<WaylandCaptureUnavailableException> {
++            IdentityWindowStreamBinder<String>(session) { identity }
++                .bind("stale", "k1", CursorMode.HIDDEN)
++        }
++    }
++
+     @Test
+     fun `finds the window in a transparent monitor-sized Mutter frame`() {
