@@ -521,9 +521,10 @@ internal object LaunchReadiness {
                 nameFilter = nameFilter,
                 clientStart = clientStart,
                 ownsLaunch =
-                    launchMarker?.let { marker ->
-                        { pid -> LaunchDescendantDiscovery.commandLineContains(pid, marker) }
-                    } ?: { true },
+                    launchMarker?.let { marker -> { pid -> hasLaunchMarker(pid, marker) } }
+                        ?: {
+                            true
+                        },
                 onDiagnostics = { captured.append(it.format()) },
             )
         }

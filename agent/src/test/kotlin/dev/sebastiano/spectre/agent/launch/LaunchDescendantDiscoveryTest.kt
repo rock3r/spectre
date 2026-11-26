@@ -4,8 +4,6 @@ package dev.sebastiano.spectre.agent.launch
 
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.JvmProcessInfo
-import java.nio.file.Files
-import java.nio.file.Path
 import java.time.Instant
 import kotlin.io.path.readText
 import kotlin.test.Test
@@ -15,32 +13,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LaunchDescendantDiscoveryTest {
-    @Test
-    fun `Gradle launch marker is injected into the JavaExec argv instead of JAVA_TOOL_OPTIONS`() {
-        val captureDir = Files.createTempDirectory("spectre-marker-command-")
-        try {
-            val prepared =
-                prepareGradleLaunchCommand(
-                    command = listOf("./gradlew", ":app:run", "--no-daemon"),
-                    captureDirectory = captureDir,
-                    marker = "launch-proof",
-                )
-
-            assertEquals("./gradlew", prepared.first())
-            assertEquals("--init-script", prepared[1])
-            assertEquals(":app:run", prepared[3])
-            assertEquals("--no-daemon", prepared[4])
-            val script = Path.of(prepared[2]).readText()
-            assertTrue(script.contains("JavaExec"))
-            assertTrue(
-                script.contains("-Ddev.sebastiano.spectre.launch.id=launch-proof"),
-                "marker must become a real JavaExec JVM argument: $script",
-            )
-        } finally {
-            captureDir.toFile().deleteRecursively()
-        }
-    }
-
     @Test
     fun `ties among owned listed JVMs remain ambiguous rather than choosing max pid`() {
         val launchedAt = Instant.parse("2026-11-05T13:59:50Z")
@@ -546,6 +518,29 @@ class LaunchDescendantDiscoveryTest {
                 namedMatches = listOf(12_672L),
                 javaDescendants = listOf(12_320L, 12_672L),
             ),
+        )
+    }
+
+    @Test
+    fun `native fallback treats a duplicated pid as one process`() {
+        assertEquals(
+            12_672L,
+            pickNativeTreeJvm(
+                nameFilter = "ComposeFixtureMain",
+                namedMatches = listOf(12_672L, 12_672L),
+                javaDescendants = listOf(12_672L, 12_672L),
+            ),
+        )
+    }
+
+    @Test
+    fun `native fallback rejects two distinct matching processes`() {
+        assertNull(
+            pickNativeTreeJvm(
+                nameFilter = "ComposeFixtureMain",
+                namedMatches = listOf(12_672L, 12_900L),
+                javaDescendants = listOf(12_672L, 12_900L),
+            )
         )
     }
 
