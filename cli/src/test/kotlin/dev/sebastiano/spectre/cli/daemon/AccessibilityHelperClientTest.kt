@@ -92,6 +92,7 @@ class AccessibilityHelperClientTest {
                 "accessibility-disabled",
                 "target-not-found",
                 "no-accessibility-tree",
+                "restore-failed",
                 "unsupported-target",
             )
             .forEach { code ->
@@ -166,6 +167,21 @@ class AccessibilityHelperClientTest {
             )
         assertEquals(AccessibilityErrorCode.Unknown, failure.error.code)
         assertEquals("reader-busy", failure.error.rawCode)
+        assertNull(failure.error.partialSnapshot)
+    }
+
+    @Test
+    fun `restore failure is a known native failure without a stale partial snapshot`() {
+        val failure =
+            assertIs<AccessibilitySnapshotResponse.Failure>(
+                AccessibilityHelperClient { _, _, _ ->
+                        """{"ok":false,"error":{"code":"restore-failed","message":"restore denied"}}"""
+                    }
+                    .snapshot(request, helper)
+            )
+
+        assertEquals(AccessibilityErrorCode.RestoreFailed, failure.error.code)
+        assertNull(failure.error.rawCode)
         assertNull(failure.error.partialSnapshot)
     }
 

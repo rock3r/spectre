@@ -116,6 +116,7 @@ public enum class AccessibilityErrorCode {
     @SerialName("no-accessibility-tree") NoAccessibilityTree,
     @SerialName("limit-reached") LimitReached,
     @SerialName("timeout") Timeout,
+    @SerialName("restore-failed") RestoreFailed,
     @SerialName("unsupported-target") UnsupportedTarget,
     @SerialName("unknown") Unknown,
 }
@@ -248,6 +249,7 @@ private fun knownErrorCode(raw: String): AccessibilityErrorCode =
         "no-accessibility-tree" -> AccessibilityErrorCode.NoAccessibilityTree
         "limit-reached" -> AccessibilityErrorCode.LimitReached
         "timeout" -> AccessibilityErrorCode.Timeout
+        "restore-failed" -> AccessibilityErrorCode.RestoreFailed
         "unsupported-target" -> AccessibilityErrorCode.UnsupportedTarget
         else -> AccessibilityErrorCode.Unknown
     }
