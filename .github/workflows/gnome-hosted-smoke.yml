@@ -88,8 +88,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [public-window-crop]
-        replica: [1]
+        mode: [atspi-ownership, accessibility, atspi-distinct-content]
+        replica: [1, 2]
 
     steps:
       - name: Check out temporary workflow tooling
@@ -109,7 +109,7 @@ jobs:
         if: matrix.mode == 'accessibility' || matrix.mode == 'atspi-ownership' || matrix.mode == 'atspi-distinct-content'
         uses: actions/checkout@v6
         with:
-          ref: 6ba287814779aaaecd3501edc288bba7f3e31b1f
+          ref: b1c85111241558431a7ccd939b98dfbda08473c7
           persist-credentials: false
           path: atspi-reader
 
@@ -117,10 +117,10 @@ jobs:
         if: matrix.mode == 'accessibility' || matrix.mode == 'atspi-ownership' || matrix.mode == 'atspi-distinct-content'
         working-directory: atspi-reader
         run: |
-          patch="$GITHUB_WORKSPACE/smoke-tooling/.github/reader-overlays/716-final-public.patch"
-          printf '%s  %s\n' b517c7cd4bf9769c1f668a7ae8858cffedc885975d3d65ecb540da2d1ff0cfb6 "$patch" | sha256sum -c -
+          patch="$GITHUB_WORKSPACE/smoke-tooling/.github/reader-overlays/716-b1-cached-owner.patch"
+          printf '%s  %s\n' 4c9a0bc47b2ab891a90ce90adb73e10e5a226e6143d13b4c791f98855a969edd "$patch" | sha256sum -c -
           git apply --index "$patch"
-          test "$(git write-tree)" = b363f7911f4c7f0a1742e4ecfe80e337630c5e19
+          test "$(git write-tree)" = aeb2ad047bcf2a8c6b8d082a8ad94bd39c1f8d3c
 
       - name: Check out native accessibility fixture
         if: matrix.mode == 'accessibility' || matrix.mode == 'atspi-ownership' || matrix.mode == 'atspi-distinct-content'
