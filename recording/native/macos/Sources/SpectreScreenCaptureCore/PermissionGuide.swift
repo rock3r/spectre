@@ -23,7 +23,8 @@ public enum PermissionGuideCopy {
 
     public static let firstRunBody =
         "Spectre uses this helper only when you or an agent asks to capture a window or screen. "
-        + "Grant Screen & System Audio Recording to Spectre Capture Helper in System Settings."
+        + "Grant Screen & System Audio Recording and Accessibility to Spectre Capture Helper "
+        + "in System Settings. The guide opens Accessibility after Screen Recording is enabled."
 
     public static let reapprovalBody =
         "macOS sometimes asks again after updates or when a previous grant lapses. "
@@ -31,7 +32,7 @@ public enum PermissionGuideCopy {
 
     /// Compact bar line (Codex-style): drag into the list Settings is showing.
     public static let dragHint =
-        "Drag Spectre Capture Helper to the list above to allow Screen Recording"
+        "Drag Spectre Capture Helper to the list above to allow Screen Recording; then enable Accessibility"
     /// When the helper row already exists but is off (reapproval / re-enable).
     public static let reapprovalDragHint =
         "Turn Spectre Capture Helper back on in the list above to allow Screen Recording"
@@ -936,10 +937,21 @@ public enum PermissionGuideApp {
         app.setActivationPolicy(.accessory)
 
         let appURL = Bundle.main.bundleURL
+        var openedAccessibility = false
         let model = PermissionGuideModel(
             binaryPath: binaryPath,
             reapproval: reapproval,
-            preflight: { CGPreflightScreenCaptureAccess() },
+            preflight: {
+                let screenRecording = CGPreflightScreenCaptureAccess()
+                let accessibility = AXIsProcessTrusted()
+                if screenRecording, !accessibility, !openedAccessibility {
+                    openedAccessibility = true
+                    if let url = URL(string: accessibilityDeepLink) {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                return screenRecording && accessibility
+            },
             openSettings: {
                 if let url = URL(string: ScreenCaptureAccess.deepLink) {
                     NSWorkspace.shared.open(url)
@@ -1197,7 +1209,7 @@ public enum PermissionGuideApp {
             state.placementTimer?.invalidate()
             state.placementTimer = nil
             // Exit code / JSON always reflect real TCC preflight, not HUD state.
-            let granted = CGPreflightScreenCaptureAccess()
+            let granted = CGPreflightScreenCaptureAccess() && AXIsProcessTrusted()
             let result = ScreenCaptureAccess.result(granted: granted, binaryPath: binaryPath)
             FileHandle.standardOutput.write(Data(result.jsonLine.utf8))
             exit(granted ? 0 : 6)
@@ -1218,7 +1230,7 @@ public enum PermissionGuideApp {
         ) { _ in
             state.placementTimer?.invalidate()
             state.placementTimer = nil
-            let granted = CGPreflightScreenCaptureAccess()
+            let granted = CGPreflightScreenCaptureAccess() && AXIsProcessTrusted()
             let result = ScreenCaptureAccess.result(granted: granted, binaryPath: binaryPath)
             FileHandle.standardOutput.write(Data(result.jsonLine.utf8))
             exit(granted ? 0 : 6)
