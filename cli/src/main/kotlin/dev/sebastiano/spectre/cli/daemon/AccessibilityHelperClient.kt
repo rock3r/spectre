@@ -232,20 +232,29 @@ private fun cleanup(
     executor: java.util.concurrent.ExecutorService,
 ): CleanupResult {
     var interrupted = Thread.interrupted()
-    val cleanupDeadline = deadlineAfterMillis(PROCESS_GRACE_MS)
     val descendants = process.descendants().toList().asReversed()
-    descendants.forEach { it.destroyForcibly() }
-    // Start every owned process terminating before spending the shared grace period waiting. In
-    // particular, ProcessHandle's exit notification can precede Process.waitFor updating the
-    // Process object on Windows, so reap the parent through Process itself below.
-    process.destroyForcibly()
-    descendants.forEach { interrupted = waitForExit(it, cleanupDeadline) || interrupted }
-    interrupted = waitForExit(process, cleanupDeadline) || interrupted
+
+    var attemptsRemaining = 2
+    while (attemptsRemaining-- > 0) {
+        descendants.filter { it.isAlive }.forEach { it.destroyForcibly() }
+        if (process.isAlive) process.destroyForcibly()
+
+        // Signal the entire owned tree before an I/O worker can close a pipe. On Windows a pipe
+        // close may wait for a process which still holds the other end. Poll descendants before
+        // using Process.waitFor to refresh the parent Process state, then retry the bounded
+        // termination once if native teardown is delayed.
+        val terminationDeadline = deadlineAfterMillis(PROCESS_GRACE_MS)
+        descendants.forEach { interrupted = waitForExit(it, terminationDeadline) || interrupted }
+        interrupted = waitForExit(process, terminationDeadline) || interrupted
+        if (!process.isAlive && descendants.none { it.isAlive }) break
+    }
+
     input.cancel(true)
     output.cancel(true)
     executor.shutdownNow()
+    val executorDeadline = deadlineAfterMillis(PROCESS_GRACE_MS)
     try {
-        executor.awaitTermination(remainingMillis(cleanupDeadline), TimeUnit.MILLISECONDS)
+        executor.awaitTermination(remainingMillis(executorDeadline), TimeUnit.MILLISECONDS)
     } catch (cleanupInterrupted: InterruptedException) {
         interrupted = true
     }

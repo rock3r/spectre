@@ -2,8 +2,10 @@ package dev.sebastiano.spectre.cli.daemon
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -117,17 +119,23 @@ class AccessibilityHelperClientTest {
     fun `real cross-platform helper and its descendant are forcibly bounded on timeout`(
         @TempDir directory: Path
     ) {
-        withReadyHelper(directory) { helper, child ->
-            val elapsed = measureTime {
-                val error =
-                    assertFailsWith<IllegalStateException> {
-                        exchangeWithHelper(helper, "{}", 2_000)
-                    }
-                assertEquals("Accessibility helper exceeded its 2000ms deadline", error.message)
+        val unrelated = ProcessBuilder(fixtureCommand("sleep")).start()
+        try {
+            withReadyHelper(directory) { helper, child ->
+                val elapsed = measureTime {
+                    val error =
+                        assertFailsWith<IllegalStateException> {
+                            exchangeWithHelper(helper, "{}", 2_000)
+                        }
+                    assertEquals("Accessibility helper exceeded its 2000ms deadline", error.message)
+                }
+                assertTrue(elapsed < 4.seconds, "helper took $elapsed to be reaped")
+                assertFalse(helper.isAlive, "helper survived timeout")
+                assertFalse(child.isAlive, "child survived timeout")
+                assertTrue(unrelated.isAlive, "cleanup killed an unrelated process")
             }
-            assertTrue(elapsed < 4.seconds, "helper took $elapsed to be reaped")
-            assertFalse(helper.isAlive, "helper survived timeout")
-            assertFalse(child.isAlive, "child survived timeout")
+        } finally {
+            unrelated.destroyForcibly()
         }
     }
 
@@ -188,6 +196,34 @@ class AccessibilityHelperClientTest {
             "Accessibility helper did not stop within its cleanup deadline",
             error.suppressed.single().message,
         )
+    }
+
+    @Test
+    fun `cleanup signals the process before waiting for a blocking pipe close`() {
+        val helper = ControlledProcess(exitOnDestroy = true, blockOutputCloseUntilDestroy = true)
+
+        val elapsed = measureTime {
+            val error =
+                assertFailsWith<IllegalStateException> { exchangeWithHelper(helper, "{}", 1) }
+            assertEquals("Accessibility helper exceeded its 1ms deadline", error.message)
+        }
+
+        assertTrue(elapsed < 2.seconds, "blocking pipe close delayed cleanup by $elapsed")
+        assertFalse(helper.isAlive, "helper survived cleanup")
+    }
+
+    @Test
+    fun `cleanup retries a slow parent within a second bounded grace period`() {
+        val helper = ControlledProcess(exitOnDestroyAttempt = 2)
+
+        val error = assertFailsWith<IllegalStateException> { exchangeWithHelper(helper, "{}", 1) }
+
+        assertEquals("Accessibility helper exceeded its 1ms deadline", error.message)
+        assertTrue(
+            error.suppressed.isEmpty(),
+            "slow parent should be reaped without cleanup failure",
+        )
+        assertFalse(helper.isAlive, "slow parent survived cleanup")
     }
 
     @Test
@@ -255,12 +291,28 @@ class AccessibilityHelperClientTest {
             .toString()
 
     private class ControlledProcess(
-        private val exitOnDestroy: Boolean,
+        exitOnDestroy: Boolean,
         initiallyAlive: Boolean = true,
+        private val blockOutputCloseUntilDestroy: Boolean = false,
+        private val exitOnDestroyAttempt: Int? = if (exitOnDestroy) 1 else null,
     ) : Process() {
-        private var alive = initiallyAlive
+        constructor(exitOnDestroyAttempt: Int) : this(false, true, false, exitOnDestroyAttempt)
 
-        override fun getOutputStream() = ByteArrayOutputStream()
+        private var alive = initiallyAlive
+        private var destroyAttempts = 0
+        private val destroyed = CountDownLatch(if (initiallyAlive) 1 else 0)
+
+        override fun getOutputStream(): OutputStream =
+            if (blockOutputCloseUntilDestroy) {
+                object : ByteArrayOutputStream() {
+                    override fun close() {
+                        destroyed.await()
+                        super.close()
+                    }
+                }
+            } else {
+                ByteArrayOutputStream()
+            }
 
         override fun getInputStream() = ByteArrayInputStream("response".toByteArray())
 
@@ -279,7 +331,11 @@ class AccessibilityHelperClientTest {
         }
 
         override fun destroy() {
-            if (exitOnDestroy) alive = false
+            destroyAttempts += 1
+            if (destroyAttempts == exitOnDestroyAttempt) {
+                alive = false
+                destroyed.countDown()
+            }
         }
 
         override fun destroyForcibly(): Process {
