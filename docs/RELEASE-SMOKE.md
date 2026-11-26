@@ -352,7 +352,7 @@ Shared across macOS / Linux / Windows entrypoints (`scripts/smoke_lib.py` → `R
 | `cli-native-helper-layout` | Native-helper layout in package |
 | `cli-user-flow` | Packaged CLI user flow (ps/attach/tree/input/screenshots/detach) |
 | `mcp-sdk-flow` | Packaged MCP attach/op/detach lifecycle + strict stdio |
-| `host-native-recording` | Host native recording smoke |
+| `host-native-recording` | Host native recording smoke; on signed-in Windows this also runs the untitled two-window native screenshot acceptance (target pixels, unchanged titles, same-frame ambiguity rejection) |
 | `maven-local-consumer` | Maven Local publication + fresh consumer |
 | `portal-token-warmup` | Linux Wayland: one interactive RemoteDesktop + monitor grant at run start through `WaylandPortalAccess.request` (the same operation as `spectre permissions request`), then reuse the stored restore token and running session. Hard `n/a` on macOS/Windows/Xvfb. |
 | `pointer-move` | In-process `moveTo` / `moveBy` hover without click (`:sample-desktop:validationTest --tests '*PointerMoveLive*'`). Hard `n/a` only if the verbs disappear from `ComposeAutomator`. On Windows, a post-green `MessageIOException` / `Could not write '/127.0.0.1:…'` after `exitApplication` teardown (#500 / #72) is a pass when the PointerMoveLive JUnit XML is green. |
@@ -600,7 +600,11 @@ release SHA.
   validate wiring; it is **not** a release GO.
 - **WGC / host-native-recording on Windows:** hard pass only from an **interactive desktop**
   console. SSH runs must record hard `n/a` with reason (`displayMode: windows-ssh`) — never
-  treat SSH as visual PASS evidence.
+  treat SSH as visual PASS evidence. The cell runs both the WGC region recording and the existing
+  untitled two-window native still acceptance, which verifies target pixels, unchanged window
+  titles, and fail-closed same-frame ambiguity. Hosted runtime-matrix Windows instead verifies the
+  explicit typed unavailable path selected by `RUNNER_ENVIRONMENT=github-hosted`; a helper startup
+  timeout is not desktop-capability evidence.
 - **`agent-attach-core` on Windows SSH:** `AgentAttachIntegration` e2e includes WGC node
   screenshots (#362). Under `windows-ssh` the harness records hard `n/a` with reason (same class
   as WGC recording). Re-run from an interactive console for hard PASS of attach screenshot parity.
@@ -707,8 +711,8 @@ daemons in the operator's Gradle user home.
 3. Agent UI e2e: `agent-attach-core`, `agent-inject`, `agent-launch-and-attach`
    (`-Pspectre.agent.attachE2e.allowWindows=true`, properly quoted for PowerShell;
    `agent-attach-core` also passes `-Pspectre.agent.realKeyboard=true`)
-4. `host-native-recording` — WGC region smoke only when `displayMode` is interactive
-   (SSH → hard `n/a` with reason, never fake PASS)
+4. `host-native-recording` — WGC region smoke plus untitled two-window native still acceptance only
+   when `displayMode` is interactive (SSH → hard `n/a` with reason, never fake PASS)
 5. `cli-packaged` / `cli-native-helper-layout` / packaged `spectre launch --once` as `cli-user-flow`
 6. optional `maven-local-consumer` via `verifyMavenLocalPublication`
 
