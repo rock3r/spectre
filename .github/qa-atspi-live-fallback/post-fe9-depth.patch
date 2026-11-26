@@ -1,30 +1,233 @@
 diff --git a/recording/native/linux/src/accessibility.rs b/recording/native/linux/src/accessibility.rs
-index c8a8a7a686b861c94590a967f06e3b42f3aa1bc3..9a8ecd3bdfbccbca394d818011515a23563ad744 100644
+index c8a8a7a6..516816fc 100644
 --- a/recording/native/linux/src/accessibility.rs
 +++ b/recording/native/linux/src/accessibility.rs
-@@ -1311,166 +1311,180 @@ fn walk_cached(
-             Some(key.clone()),
-             depth + 1,
-             request,
-             deadline,
-             window,
-             snapshot,
-         )?;
+@@ -309,7 +309,7 @@ fn capture_with_status(
+         .map_err(|e| timed_err(deadline, e))?;
+     check_deadline(deadline, None)?;
+     let bus = Arc::new(SyncConnection::new_address(&address).map_err(|e| timed_err(deadline, e))?);
+-    let window_address = find_window(&bus, request, deadline, changed)?;
++    let window_addresses = find_windows(&bus, request, deadline, changed)?;
+     let bounds_space = if std::env::var("XDG_SESSION_TYPE")
+         .map(|v| v.eq_ignore_ascii_case("wayland"))
+         .unwrap_or(false)
+@@ -330,70 +330,80 @@ fn capture_with_status(
+             Vec::new()
+         },
+     };
+-    let mut provider_nodes =
+-        provider_cache(&bus, &window_address, deadline).map_err(|e| timed_err(deadline, e))?;
+-    if let Some(nodes) = provider_nodes.as_mut() {
+-        enrich_cached_nodes(
+-            &bus,
+-            &window_address.bus,
+-            &window_address.path.to_string(),
+-            nodes,
+-            request.maximum_node_count,
+-            request.maximum_depth,
+-            deadline,
+-        )
+-        .map_err(|e| timed_err(deadline, e))?;
+-    }
+-    let root_data = if let Some(nodes) = provider_nodes.as_mut() {
+-        nodes
+-            .remove(&window_address.path.to_string())
+-            .ok_or_else(|| {
+-                err(
+-                    "no-accessibility-tree",
+-                    "the provider cache lost the selected AT-SPI root",
+-                )
+-            })?
+-    } else {
+-        retry_selected_root_read(deadline, || read_node(&bus, &window_address, deadline))
+-            .map_err(|e| timed_err(deadline, e))?
+-    };
+-    let window_bounds = root_data.bounds.clone().ok_or_else(|| {
+-        err(
+-            "no-accessibility-tree",
+-            "the target window did not provide required AT-SPI Component extents",
+-        )
+-    })?;
+-    snapshot.windows.push(Window {
+-        key: "w0".into(),
+-        title: root_data.name.clone(),
+-        bounds: window_bounds.clone(),
+-        bounds_space,
+-    });
+-    let root_key = format!("w0/{}", segment(root_data.id.as_deref(), 0, false));
+-    if let Some(nodes) = provider_nodes.as_mut() {
+-        walk_cached(
+-            nodes,
+-            root_data,
+-            root_key,
+-            None,
+-            0,
+-            request,
+-            deadline,
+-            &window_bounds,
+-            &mut snapshot,
+-        )?;
+-    } else {
+-        walk(
+-            &bus,
+-            root_data,
+-            root_key,
+-            None,
+-            0,
+-            request,
+-            deadline,
+-            &window_bounds,
+-            &mut snapshot,
+-        )?;
++    for (window_index, window_address) in window_addresses.into_iter().enumerate() {
++        check_deadline(deadline, Some(&mut snapshot))?;
++        if snapshot.nodes.len() >= request.maximum_node_count {
++            node_limit_error(request.maximum_node_count, &mut snapshot)?;
++        }
++        let mut provider_nodes =
++            provider_cache(&bus, &window_address, deadline).map_err(|e| timed_err(deadline, e))?;
++        if let Some(nodes) = provider_nodes.as_mut() {
++            enrich_cached_nodes(
++                &bus,
++                &window_address.bus,
++                &window_address.path.to_string(),
++                nodes,
++                request.maximum_node_count - snapshot.nodes.len(),
++                request.maximum_depth,
++                deadline,
++            )
++            .map_err(|e| timed_err(deadline, e))?;
++        }
++        let root_data = if let Some(nodes) = provider_nodes.as_mut() {
++            nodes
++                .remove(&window_address.path.to_string())
++                .ok_or_else(|| {
++                    err(
++                        "no-accessibility-tree",
++                        "the provider cache lost the selected AT-SPI root",
++                    )
++                })?
++        } else {
++            retry_selected_root_read(deadline, || read_node(&bus, &window_address, deadline))
++                .map_err(|e| timed_err(deadline, e))?
++        };
++        let window_bounds = root_data.bounds.clone().ok_or_else(|| {
++            err(
++                "no-accessibility-tree",
++                "the target window did not provide required AT-SPI Component extents",
++            )
++        })?;
++        let window_key = format!("w{window_index}");
++        snapshot.windows.push(Window {
++            key: window_key.clone(),
++            title: root_data.name.clone(),
++            bounds: window_bounds.clone(),
++            bounds_space,
++        });
++        let root_key = format!(
++            "{window_key}/{}",
++            segment(root_data.id.as_deref(), 0, false)
++        );
++        if let Some(nodes) = provider_nodes.as_mut() {
++            walk_cached(
++                nodes,
++                root_data,
++                root_key,
++                None,
++                0,
++                request,
++                deadline,
++                &window_bounds,
++                &mut snapshot,
++            )?;
++        } else {
++            walk(
++                &bus,
++                root_data,
++                root_key,
++                None,
++                0,
++                request,
++                deadline,
++                &window_bounds,
++                &mut snapshot,
++            )?;
++        }
      }
-     if children_truncated {
-         return node_limit_error(request.maximum_node_count, snapshot);
+     Ok(snapshot)
+ }
+@@ -916,14 +926,14 @@ fn optional_cached_call<T>(
      }
-     Ok(())
  }
  
- #[allow(clippy::too_many_arguments)]
- fn walk(
-     bus: &Arc<SyncConnection>,
-     data: NodeData,
-     key: String,
-     parent: Option<String>,
-     depth: usize,
+-fn find_window(
++fn find_windows(
+     bus: &SyncConnection,
      request: &Request,
+     deadline: Instant,
+     status_changed: bool,
+-) -> std::result::Result<Address, CaptureError> {
++) -> std::result::Result<Vec<Address>, CaptureError> {
+     if let Target::WindowId { value } = &request.target {
+-        return parse_window_id(value).ok_or_else(|| {
++        return parse_window_id(value).map(|window| vec![window]).ok_or_else(|| {
+             (
+                 "target-not-found",
+                 "Linux window-id must be an AT-SPI unique bus name and object path separated by | (for example :1.42|/org/a11y/atspi/accessible/7)".into(),
+@@ -963,6 +973,7 @@ fn find_window(
+         }
+         let apps = children(bus, &root, deadline).map_err(|e| timed_err(deadline, e))?;
+         let mut title_matches = Vec::new();
++        let mut process_matches = Vec::new();
+         let mut traversal_authoritative = true;
+         for app in apps {
+             if Instant::now() >= deadline {
+@@ -989,7 +1000,7 @@ fn find_window(
+             };
+             for window in windows {
+                 match &request.target {
+-                    Target::ProcessId { .. } => return Ok(window),
++                    Target::ProcessId { .. } => process_matches.push(window),
+                     Target::WindowTitle { value, .. } => {
+                         match find_window_title(bus, &window, deadline)? {
+                             TitleRead::Value(title) if title == *value => {
+@@ -1004,6 +1015,12 @@ fn find_window(
+             }
+         }
+         completed_authoritative_traversal |= traversal_authoritative;
++        if matches!(request.target, Target::ProcessId { .. }) {
++            if let Some(windows) = completed_process_scan(process_matches, traversal_authoritative)
++            {
++                return Ok(windows);
++            }
++        }
+         if let Target::WindowTitle { value, .. } = &request.target {
+             match unscoped_title_decision(
+                 title_matches,
+@@ -1012,7 +1029,7 @@ fn find_window(
+                 unique_title_seen,
+                 Instant::now(),
+             ) {
+-                TitleDecision::Accept(window) => return Ok(window),
++                TitleDecision::Accept(window) => return Ok(vec![window]),
+                 TitleDecision::Ambiguous(count) => {
+                     return Err((
+                         "target-not-found",
+@@ -1033,6 +1050,13 @@ fn find_window(
+     Err(find_window_expired(request))
+ }
+ 
++fn completed_process_scan(
++    matches: Vec<Address>,
++    traversal_authoritative: bool,
++) -> Option<Vec<Address>> {
++    (traversal_authoritative && !matches.is_empty()).then_some(matches)
++}
++
+ enum TitleDecision {
+     Accept(Address),
+     Ambiguous(usize),
+@@ -1333,6 +1357,31 @@ fn walk(
      deadline: Instant,
      window: &Rect,
      snapshot: &mut Snapshot,
@@ -56,43 +259,7 @@ index c8a8a7a686b861c94590a967f06e3b42f3aa1bc3..9a8ecd3bdfbccbca394d818011515a23
  ) -> std::result::Result<(), CaptureError> {
      check_deadline(deadline, Some(snapshot))?;
      if snapshot.nodes.len() >= request.maximum_node_count {
-         return Err((
-             "limit-reached",
-             format!("maximumNodeCount {} reached", request.maximum_node_count),
-             Some(std::mem::replace(snapshot, empty_snapshot())),
-         ));
-     }
-     let on_screen = data
-         .bounds
-         .as_ref()
-         .map(|bounds| intersects(bounds, window));
-     snapshot.nodes.push(Node {
-         key: key.clone(),
-         parent_key: parent,
-         id: data.id.clone(),
-         platform_role: data.platform_role,
-         role: data.raw_role.and_then(normalize_raw_role),
-         name: data.name,
-         states: data.states,
-         value: data.value,
-         on_screen,
-         bounds: data.bounds,
-     });
-     if depth >= request.maximum_depth && !data.children.is_empty() {
-         return Err((
-             "limit-reached",
-             format!("maximumDepth {} reached", request.maximum_depth),
-             Some(std::mem::replace(snapshot, empty_snapshot())),
-         ));
-     }
- 
-     let prefetch_count = child_prefetch_count(
-         snapshot.nodes.len(),
-         request.maximum_node_count,
-         data.children.len(),
-     );
-     if prefetch_count == 0 && !data.children.is_empty() {
-         return node_limit_error(request.maximum_node_count, snapshot);
+@@ -1376,72 +1425,48 @@ fn walk(
      }
      let children_truncated = prefetch_count < data.children.len();
  
@@ -197,7 +364,7 @@ index c8a8a7a686b861c94590a967f06e3b42f3aa1bc3..9a8ecd3bdfbccbca394d818011515a23
      }
      if children_truncated {
          return node_limit_error(request.maximum_node_count, snapshot);
-     }
+@@ -1449,6 +1474,19 @@ fn walk(
      Ok(())
  }
  
@@ -217,51 +384,21 @@ index c8a8a7a686b861c94590a967f06e3b42f3aa1bc3..9a8ecd3bdfbccbca394d818011515a23
  fn child_prefetch_count(current: usize, maximum: usize, child_count: usize) -> usize {
      maximum.saturating_sub(current).min(child_count)
  }
- 
- fn child_segment(id: Option<&str>, index: usize, duplicate: bool, truncated: bool) -> String {
-     // An unread sibling may repeat an apparently unique id. Positional keys make a partial
-     // snapshot agree with a complete traversal in that case.
-     segment(id, index, duplicate || truncated)
- }
- 
- fn node_limit_error(
-     maximum_node_count: usize,
-     snapshot: &mut Snapshot,
- ) -> std::result::Result<(), CaptureError> {
-     Err((
-         "limit-reached",
-         format!("maximumNodeCount {maximum_node_count} reached"),
-         Some(std::mem::replace(snapshot, empty_snapshot())),
-     ))
- }
- 
- fn structural_read_error(
-     error: impl std::fmt::Display,
-     deadline: Instant,
-     snapshot: &mut Snapshot,
-@@ -2497,50 +2511,240 @@ mod tests {
-             ["w0/root", "w0/root/0"]
-         );
- 
-         root.children.clear();
-         request.maximum_depth = 0;
-         let mut snapshot = empty_snapshot();
-         assert!(walk_cached(
-             &mut HashMap::new(),
-             root,
-             "w0/root".into(),
-             None,
-             0,
-             &request,
-             Instant::now() + Duration::from_secs(1),
-             &Rect {
-                 x: 0,
-                 y: 0,
-                 width: 1,
-                 height: 1
-             },
-             &mut snapshot,
+@@ -1483,11 +1521,8 @@ fn structural_read_error(
+             format!("failed to read an AT-SPI child: {error}"),
          )
+     };
+-    (
+-        code,
+-        message,
+-        Some(std::mem::replace(snapshot, empty_snapshot())),
+-    )
++    let partial = (code == "timeout").then(|| std::mem::replace(snapshot, empty_snapshot()));
++    (code, message, partial)
+ }
+ 
+ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Result<NodeData> {
+@@ -2519,6 +2554,196 @@ mod tests {
          .is_ok());
          assert_eq!(snapshot.nodes.len(), 1);
      }
@@ -458,25 +595,45 @@ index c8a8a7a686b861c94590a967f06e3b42f3aa1bc3..9a8ecd3bdfbccbca394d818011515a23
      #[test]
      fn rejects_process_target_outside_linux_pid_range() {
          let request: Request = serde_json::from_str(
-             r#"{"target":{"type":"process-id","value":2147483648},"maximumDepth":2,"maximumNodeCount":3,"timeoutMs":4}"#,
-         )
-         .unwrap();
-         assert!(validate(&request).is_err());
+@@ -2880,6 +3105,21 @@ mod tests {
+         assert!(error.1.contains("owned by process 4242"));
      }
-     #[test]
-     fn keys_escape_and_fall_back_for_duplicates() {
-         assert_eq!(segment(Some("a/b~c"), 0, false), "a~1b~0c");
-         assert_eq!(segment(Some("same"), 2, true), "2");
-         assert_eq!(segment(None, 3, false), "3");
-         assert_eq!(segment(Some("123"), 4, false), "~2123");
-     }
-     #[test]
-     fn tiny_budget_bounds_prefetch_and_keeps_repeated_sibling_key_stable() {
-         assert_eq!(child_prefetch_count(1, 1, 10), 0);
-         assert_eq!(child_prefetch_count(1, 3, 10), 2);
-         assert_eq!(child_prefetch_count(3, 3, 10), 0);
  
-         // A truncated sibling list cannot prove that an id is unique. Use the positional form
-         // that a complete traversal also uses when a later sibling repeats the id.
-         assert_eq!(child_segment(Some("repeated"), 0, false, true), "0");
-         assert_eq!(child_segment(Some("repeated"), 0, true, false), "0");
++    #[test]
++    fn process_scan_returns_every_window_in_registry_order() {
++        let windows = vec![test_address("/window/9"), test_address("/window/2")];
++        let selected = completed_process_scan(windows, true).unwrap();
++        assert_eq!(
++            selected
++                .iter()
++                .map(|window| window.path.to_string())
++                .collect::<Vec<_>>(),
++            ["/window/9", "/window/2"]
++        );
++        assert!(completed_process_scan(vec![test_address("/window/9")], false).is_none());
++        assert!(completed_process_scan(Vec::new(), true).is_none());
++    }
++
+     #[test]
+     fn unscoped_window_search_expiration_remains_timeout() {
+         let request: Request = serde_json::from_str(
+@@ -2936,7 +3176,7 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn structural_failure_keeps_the_available_partial_snapshot() {
++    fn structural_failure_discards_the_available_partial_snapshot() {
+         let mut snapshot = empty_snapshot();
+         snapshot.nodes.push(Node {
+             key: "w0/root".into(),
+@@ -2959,8 +3199,8 @@ mod tests {
+ 
+         assert_eq!(code, "no-accessibility-tree");
+         assert!(message.contains("StructuralFailure"));
+-        assert_eq!(partial.unwrap().nodes.len(), 1);
+-        assert!(snapshot.nodes.is_empty());
++        assert!(partial.is_none());
++        assert_eq!(snapshot.nodes.len(), 1);
+     }
+ 
+     #[test]

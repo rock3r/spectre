@@ -4,7 +4,7 @@ on:
   workflow_call:
   workflow_dispatch:
   push:
-    branches: [qa/atspi-multi-window-contract]
+    branches: [release-0.10/gnome-hosted-smoke]
     paths:
       - .github/workflows/qa-atspi-multi-window-package.yml
       - .github/qa-atspi-multi-window-package/**

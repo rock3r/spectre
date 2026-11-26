@@ -57,6 +57,11 @@ jobs:
             printf '%s\n' "$tree" >"$RUNNER_TEMP/candidate-full-tree.txt"
           fi
       - uses: dtolnay/rust-toolchain@stable
+      - name: Check candidate Rust formatting
+        id: rustfmt
+        if: hashFiles('candidate/recording/native/linux/Cargo.toml') != ''
+        continue-on-error: true
+        run: cargo fmt --manifest-path candidate/recording/native/linux/Cargo.toml -- --check
       - name: Install private desktop dependencies
         run: |
           sudo apt-get update
@@ -96,3 +101,6 @@ jobs:
             ${{ runner.temp }}/*-tree.txt
           if-no-files-found: warn
           retention-days: 14
+      - name: Require successful candidate formatting
+        if: always() && steps.rustfmt.outcome == 'failure'
+        run: exit 1
