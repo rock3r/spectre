@@ -236,7 +236,11 @@ if [[ "$SMOKE_MODE" == cli-recording-live || "$SMOKE_MODE" == cli-recording-rest
   test -s "$cli_zip"
   export SPECTRE_CLI_ZIP="$PWD/$cli_zip"
   export SPECTRE_CLI_HOME
-  SPECTRE_CLI_HOME="$(mktemp -d "$XDG_RUNTIME_DIR/spectre-packaged-cli-XXXXXX")/distribution"
+  if [[ -n "${SMOKE_GNOME_ATTACHED_DIAGNOSTIC:-}" ]]; then
+    SPECTRE_CLI_HOME="$(mktemp -d "$HOME/spectre-packaged-cli-XXXXXX")/distribution"
+  else
+    SPECTRE_CLI_HOME="$(mktemp -d "$XDG_RUNTIME_DIR/spectre-packaged-cli-XXXXXX")/distribution"
+  fi
   export SPECTRE_WAYLAND_SESSION_FOREGROUND=0
   export SPECTRE_WAYLAND_SESSION_DIR="$XDG_RUNTIME_DIR/spectre-cli-live-session"
   export SPECTRE_WAYLAND_RESTORE_TOKEN_DIR="$XDG_RUNTIME_DIR/spectre-cli-live-tokens"

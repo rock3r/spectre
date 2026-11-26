@@ -1,6 +1,8 @@
 """Compare the same packaged native capture on isolated and real disposable GNOME buses."""
 import contextlib
 import json
+import shutil
+import threading
 import os
 from pathlib import Path
 import runpy
@@ -25,6 +27,32 @@ classpath='/usr/share/java/java-atk-wrapper.jar:'+(out/'attached-fixture-classpa
 provider=next(Path(p) for p in subprocess.check_output(['dpkg-query','-L','libatk-wrapper-java-jni'],text=True).splitlines() if p.endswith('/libatk-wrapper.so'))
 java=Path(os.environ['JAVA_HOME'])/'bin/java'
 state_get=release['_linux_accessibility_enabled']
+# Keep ordinary host commands available while making a Java PATH fallback impossible.
+nojava=out.parent/'spectre-private-path-without-java'
+nojava.mkdir(exist_ok=True)
+for entry in os.get_exec_path():
+    directory=Path(entry)
+    if not directory.is_dir(): continue
+    for binary in directory.iterdir():
+        if binary.name in {'java','javaw','javac','jcmd','jshell'} or not binary.is_file() or not os.access(binary,os.X_OK): continue
+        target=nojava/binary.name
+        if not target.exists() and not target.is_symlink(): target.symlink_to(binary.resolve())
+assert shutil.which('java',path=str(nojava)) is None
+def observed_processes(mode, env, fixture_pid, mcp_pid):
+    relevant=[]
+    key=('SPECTRE_DAEMON_SOCKET_DIR='+env['SPECTRE_DAEMON_SOCKET_DIR']).encode()
+    for p in Path('/proc').glob('[0-9]*'):
+        try:
+            if key not in (p/'environ').read_bytes().split(b'\0'): continue
+            if int(p.name)==fixture_pid: continue
+            exe=os.readlink(p/'exe')
+            argv=(p/'cmdline').read_bytes().split(b'\0')
+            maps=[line.split()[-1] for line in (p/'maps').read_text().splitlines() if 'libjvm.so' in line]
+            if not maps and 'spectre' not in exe: continue
+            relevant.append({'pid':int(p.name),'exe':exe,'vm':sorted(set(maps)),
+                             'mcp':int(p.name)==mcp_pid,'daemon':any(b'daemon' in a.lower() for a in argv)})
+        except (FileNotFoundError,PermissionError,ProcessLookupError): pass
+    return relevant
 setcmd=['gdbus','call','--session','--dest','org.a11y.Bus','--object-path','/org/a11y/bus','--method','org.freedesktop.DBus.Properties.Set','org.a11y.Status','IsEnabled']
 note='enabled Linux accessibility for this snapshot; restored the previous setting afterwards'
 
@@ -45,6 +73,9 @@ def proof(mode):
             trace(mode,busService=name,hasOwner=subprocess.check_output(command,env=env,text=True).strip())
         app=None
         server=None
+        stop=threading.Event()
+        sampler=None
+        seen={}
         try:
             subprocess.run([*setcmd,'<false>'],env=env,check=True,stdout=subprocess.DEVNULL)
             assert state_get(env) is False
@@ -59,7 +90,18 @@ def proof(mode):
                 if app.poll() is not None or time.monotonic()>=deadline:
                     raise RuntimeError(f'{mode} fixture failed to start: {app_log.read_text()[-1500:]}')
                 time.sleep(.15)
+            env=dict(env)
+            for variable in ('JAVA_HOME','JDK_HOME','JRE_HOME','JAVA_TOOL_OPTIONS','JDK_JAVA_OPTIONS','_JAVA_OPTIONS'):
+                env.pop(variable,None)
+            env['PATH']=str(nojava)
             server=subprocess.Popen([cli,'mcp'],cwd=repo,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=(out/f'{mode}-mcp.stderr').open('w'),text=True,bufsize=1,start_new_session=True)
+            def sample():
+                while not stop.wait(.06):
+                    for item in observed_processes(mode,env,app.pid,server.pid):
+                        if item['pid'] not in seen or item['vm']:
+                            seen[item['pid']]=item
+            sampler=threading.Thread(target=sample,daemon=True)
+            sampler.start()
             def send(obj):
                 server.stdin.write(json.dumps(obj)+'\n')
                 server.stdin.flush()
@@ -111,8 +153,16 @@ def proof(mode):
                     assert note in data['notes']
                 if allow: actual.append(not bool(r.get('isError')))
             tool('detach',{'session_id':session})
+            verified=any(x['daemon'] and x['exe'].startswith(str(cli.parent/'runtime')+'/')
+                         and any(m.startswith(str(cli.parent/'runtime')+'/') for m in x['vm']) for x in seen.values())
+            assert verified, f'no bundled child daemon JVM in actual process paths: {seen}'
             return all(actual)
         finally:
+            stop.set()
+            if sampler: sampler.join(timeout=8)
+            trace(mode,nativeProcesses=list(seen.values()),javaOnPath=shutil.which('java',path=str(nojava)),
+                  afterDaemonModes={str(k.relative_to(cli.parent)):oct(k.stat().st_mode&0o777) for k in
+                    (cli.parent/'runtime/bin/java',cli.parent/'runtime/lib/jspawnhelper')})
             if server:
                 server.stdin.close()
                 try: server.wait(timeout=8)

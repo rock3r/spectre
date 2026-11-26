@@ -43,7 +43,18 @@ def extract_release(archive: Path, destination: Path) -> tuple[Path, Path]:
     runtimes = list(destination.glob("*/runtime/bin/java"))
     if len(launchers) != 1 or len(runtimes) != 1:
         raise RuntimeError(f"unexpected release layout: {launchers=}, {runtimes=}")
-    if not os.access(launchers[0], os.X_OK) or not os.access(runtimes[0], os.X_OK):
+    native_roast = bool(os.environ.get('SMOKE_GNOME_ATTACHED_DIAGNOSTIC'))
+    if native_roast:
+        observed = {}
+        paths=[launchers[0],runtimes[0],runtimes[0].parent.parent/'lib/jspawnhelper']
+        with zipfile.ZipFile(archive) as source:
+            for path in paths:
+                member=source.getinfo(str(path.relative_to(destination)))
+                observed[member.filename]={'createSystem':member.create_system,
+                    'archivedMode':oct((member.external_attr >> 16)&0o777),
+                    'extractedMode':oct(path.stat().st_mode&0o777),'canExecute':os.access(path,os.X_OK)}
+        (Path(os.environ['SMOKE_ARTIFACTS'])/'raw-package-modes.json').write_text(json.dumps(observed,indent=2)+'\n')
+    if not os.access(launchers[0], os.X_OK) or (not native_roast and not os.access(runtimes[0], os.X_OK)):
         raise RuntimeError("packaged launcher/runtime lost executable permissions")
     return launchers[0].resolve(), runtimes[0].resolve()
 
@@ -234,8 +245,9 @@ def main() -> None:
     cli, runtime_java = extract_release(archive, Path(os.environ["SPECTRE_CLI_HOME"]))
     version, _ = run_json([str(cli), "version", "--json"],
                           artifacts / "cli-version.json", artifacts / "cli-version.stderr")
-    java_version = subprocess.run([str(runtime_java), "-version"], text=True,
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    java_version = (subprocess.run([str(runtime_java), "-version"], text=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                    if os.access(runtime_java,os.X_OK) else None)
 
     bus = dbus.SessionBus()
     backend = portal.backend_pid(bus)
@@ -325,7 +337,8 @@ def main() -> None:
         "packagedCliVersion": version,
         "packagedLauncher": str(cli),
         "packagedRuntimeJava": str(runtime_java),
-        "packagedJavaVersion": (java_version.stderr or java_version.stdout).splitlines()[0],
+        "packagedJavaVersion": ((java_version.stderr or java_version.stdout).splitlines()[0]
+                                if java_version is not None else None),
         "portalInterfaceVersions": versions,
         "selectedSource": selected,
         "grant": {key: proof.get(key) for key in
