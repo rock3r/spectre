@@ -123,27 +123,7 @@ internal object NativeWindowCaptureBridge {
         val capture: (Rectangle, Int) -> BufferedImage = { local, index ->
             screenshotter.captureRegion(local, index)
         }
-        if (region == null) {
-            val target = primary.defaultConfiguration
-            return composeFullDesktop(
-                displays,
-                target.defaultTransform.scaleX,
-                target.defaultTransform.scaleY,
-                capture,
-            )
-        }
-        val center = java.awt.Point(region.x + region.width / 2, region.y + region.height / 2)
-        val target =
-            devices
-                .firstOrNull { it.defaultConfiguration.bounds.contains(center) }
-                ?.defaultConfiguration ?: primary.defaultConfiguration
-        return composeScreenRegion(
-            region,
-            displays,
-            target.defaultTransform.scaleX,
-            target.defaultTransform.scaleY,
-            capture = capture,
-        )
+        return composeScreenRegionOrDesktop(region, displays, capture)
     }
 
     /**
@@ -231,6 +211,30 @@ internal fun uniqueRegionDisplays(displays: List<RegionDisplay>): List<RegionDis
     displays
         .distinctBy { it.bounds }
         .mapIndexed { index, display -> display.copy(captureIndex = index) }
+
+/** Selects one output scale for both explicit regions and the full desktop by request centre. */
+internal fun composeScreenRegionOrDesktop(
+    region: Rectangle?,
+    displays: List<RegionDisplay>,
+    capture: (Rectangle, Int) -> BufferedImage,
+): BufferedImage {
+    require(displays.isNotEmpty()) { "macOS ScreenCaptureKit found no displays to capture" }
+    val captureRegion = region ?: displays.map { it.bounds }.reduce(Rectangle::union)
+    val center =
+        java.awt.Point(
+            captureRegion.x + captureRegion.width / 2,
+            captureRegion.y + captureRegion.height / 2,
+        )
+    val target = displays.firstOrNull { it.bounds.contains(center) } ?: displays.first()
+    return composeScreenRegion(
+        captureRegion,
+        displays,
+        target.scaleX,
+        target.scaleY,
+        requireCompleteCoverage = region != null,
+        capture = capture,
+    )
+}
 
 /**
  * Captures every real display and uses transparent black for points in their bounding rectangle

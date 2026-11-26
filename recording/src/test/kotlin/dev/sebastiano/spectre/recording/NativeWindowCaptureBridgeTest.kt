@@ -22,6 +22,35 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 
 class NativeWindowCaptureBridgeTest {
     @Test
+    fun `full desktop uses scale of display containing bounding rectangle center`() {
+        val displays =
+            listOf(
+                RegionDisplay(0, Rectangle(0, 0, 100, 50), 2.0, 2.0),
+                RegionDisplay(1, Rectangle(100, 0, 300, 100), 1.0, 1.0),
+            )
+
+        val image = composeScreenRegionOrDesktop(null, displays, ::captureSolidRegion)
+
+        assertEquals(400, image.width)
+        assertEquals(100, image.height)
+    }
+
+    @Test
+    fun `full desktop falls back to primary scale when bounding rectangle center is a gap`() {
+        val displays =
+            listOf(
+                RegionDisplay(0, Rectangle(0, 0, 100, 100), 2.0, 2.0),
+                RegionDisplay(1, Rectangle(300, 0, 100, 100), 1.0, 1.0),
+            )
+
+        val image = composeScreenRegionOrDesktop(null, displays, ::captureSolidRegion)
+
+        assertEquals(800, image.width)
+        assertEquals(200, image.height)
+        assertEquals(0, image.getRGB(400, 100), "physical gaps use transparent black padding")
+    }
+
+    @Test
     fun `full desktop permits gaps and pads them transparently`() {
         val displays =
             listOf(
@@ -74,6 +103,15 @@ class NativeWindowCaptureBridgeTest {
                 error("strict coverage must fail before capture")
             }
         }
+    }
+
+    private fun captureSolidRegion(local: Rectangle, index: Int): BufferedImage {
+        val scale = if (index == 0) 2 else 1
+        return BufferedImage(
+            local.width * scale,
+            local.height * scale,
+            BufferedImage.TYPE_INT_ARGB,
+        )
     }
 
     @Test
