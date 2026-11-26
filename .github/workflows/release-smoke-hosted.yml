@@ -7,6 +7,7 @@ on:
     paths:
       - .github/release-smoke-hosted.env
       - .github/workflows/release-smoke-hosted.yml
+      - .github/scripts/verify-atspi-depth-prefix.py
 
 # Verification only: do not grant publication, branch-update, or credential scopes.
 permissions:

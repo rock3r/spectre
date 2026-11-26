@@ -94,13 +94,52 @@ def names_for_pid(admin, pid):
     return matches
 
 
+def run_helper(label, helper, request, artifacts, sample_names, timeout=15):
+    """Run one helper without putting its potentially large reply behind a pipe."""
+    stdout_path = artifacts / f"depth-prefix-{label}.stdout.json"
+    stderr_path = artifacts / f"depth-prefix-{label}.stderr.log"
+    names = set()
+    deadline = time.monotonic() + timeout
+    timed_out = False
+    proc = None
+    # Open both literal per-request artifacts before spawning.  In particular, never
+    # replace these with PIPE: a full fixture reply is larger than a typical pipe.
+    with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
+        proc = subprocess.Popen(
+            [str(helper), "accessibility-snapshot"], stdin=subprocess.PIPE,
+            stdout=stdout, stderr=stderr, text=True,
+        )
+        try:
+            proc.stdin.write(request)
+            proc.stdin.close()
+            proc.stdin = None
+            while proc.poll() is None:
+                names.update(sample_names(proc.pid))
+                if time.monotonic() >= deadline:
+                    timed_out = True
+                    proc.kill()
+                    break
+                time.sleep(0.01)
+            proc.wait()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            stdout.flush()
+            stderr.flush()
+            os.fsync(stdout.fileno())
+            os.fsync(stderr.fileno())
+    return {"pid": proc.pid, "returncode": proc.returncode, "names": names,
+            "stdout": stdout_path, "stderr": stderr_path, "timedOut": timed_out}
+
+
 def monitored_request(label, helper, target_pid, depth, address, owner, admin, artifacts):
     trace = artifacts / f"depth-prefix-{label}.monitor.log"
     expression = f"type='method_call',destination='{owner}'"
     boundary = {"monitorStartedNs": time.monotonic_ns()}
     response = None
-    helper_names = set()
-    proc = None
+    helper_run = None
+    failure_reason = None
     with trace.open("w") as output:
         monitor = subprocess.Popen(
             ["dbus-monitor", "--address", address, expression],
@@ -108,26 +147,38 @@ def monitored_request(label, helper, target_pid, depth, address, owner, admin, a
         )
         try:
             time.sleep(0.25)
-            assert monitor.poll() is None, f"{label}: monitor did not start"
-            boundary["requestStartedNs"] = time.monotonic_ns()
-            proc = subprocess.Popen(
-                [str(helper), "accessibility-snapshot"], stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            )
-            proc.stdin.write(payload(target_pid, depth))
-            proc.stdin.close()
-            proc.stdin = None
-            while proc.poll() is None:
-                helper_names.update(names_for_pid(admin, proc.pid))
-            stdout, stderr = proc.communicate(timeout=15)
-            boundary["requestFinishedNs"] = time.monotonic_ns()
-            boundary["helperPid"] = proc.pid
-            boundary["helperReturnCode"] = proc.returncode
-            assert proc.returncode == 0, f"{label}: helper failed: {stderr}"
-            response = json.loads(stdout)
+            if monitor.poll() is not None:
+                failure_reason = f"monitor exited with status {monitor.returncode} before request"
+            else:
+                boundary["requestStartedNs"] = time.monotonic_ns()
+                try:
+                    helper_run = run_helper(
+                        label, helper, payload(target_pid, depth), artifacts,
+                        lambda pid: names_for_pid(admin, pid),
+                    )
+                    boundary["helperPid"] = helper_run["pid"]
+                    boundary["helperReturnCode"] = helper_run["returncode"]
+                    if helper_run["timedOut"]:
+                        failure_reason = "helper exceeded the 15 second monotonic deadline"
+                    elif helper_run["returncode"] != 0:
+                        failure_reason = f"helper exited with status {helper_run['returncode']}"
+                    else:
+                        try:
+                            response = json.loads(helper_run["stdout"].read_text())
+                        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+                            failure_reason = f"native reply was not valid JSON: {error}"
+                except (OSError, subprocess.SubprocessError) as error:
+                    failure_reason = f"could not run helper: {error}"
+                finally:
+                    boundary["requestFinishedNs"] = time.monotonic_ns()
         finally:
-            monitor.send_signal(signal.SIGINT)
-            monitor.wait(timeout=5)
+            if monitor.poll() is None:
+                monitor.send_signal(signal.SIGINT)
+                try:
+                    monitor.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    monitor.kill()
+                    monitor.wait()
             output.flush()
             os.fsync(output.fileno())
             boundary["monitorFlushedNs"] = time.monotonic_ns()
@@ -142,19 +193,29 @@ def monitored_request(label, helper, target_pid, depth, address, owner, admin, a
     enrichment = [call for call in calls
                   if (call["interface"], call["member"]) in ENRICHMENT_METHODS]
     traced_senders = {call["sender"] for call in enrichment}
+    helper_names = helper_run["names"] if helper_run else set()
     helper_senders = traced_senders & helper_names
-    assert len(helper_senders) == 1, (
-        f"{label}: could not tie enrichment sender to helper pid {proc.pid}: "
-        f"traced={traced_senders}, pidNames={helper_names}"
-    )
-    sender = next(iter(helper_senders))
-    enrichment = [call for call in enrichment if call["sender"] == sender]
-    assert enrichment, f"{label}: helper made no per-node enrichment calls"
-    assert all(call["destination"] == owner for call in enrichment)
+    sender = next(iter(helper_senders)) if len(helper_senders) == 1 else None
+    if sender:
+        enrichment = [call for call in enrichment if call["sender"] == sender]
+    method_counts = {}
+    for call in enrichment:
+        method_counts[call["member"]] = method_counts.get(call["member"], 0) + 1
     artifact = {"label": label, "depth": depth, "helperSender": sender,
                 "traceBoundary": boundary, "response": response, "calls": calls,
-                "enrichmentCalls": enrichment}
+                "enrichmentCalls": enrichment, "methodCounts": method_counts,
+                "uniquePaths": sorted(paths(enrichment)), "failureReason": failure_reason,
+                "nativeReply": f"depth-prefix-{label}.stdout.json",
+                "nativeStderr": f"depth-prefix-{label}.stderr.log"}
     (artifacts / f"depth-prefix-{label}.json").write_text(json.dumps(artifact, indent=2))
+    assert helper_run is not None, f"{label}: helper did not start"
+    assert failure_reason is None, f"{label}: {failure_reason}"
+    assert len(helper_senders) == 1, (
+        f"{label}: could not tie enrichment sender to helper pid {helper_run['pid']}: "
+        f"traced={traced_senders}, pidNames={helper_names}"
+    )
+    assert enrichment, f"{label}: helper made no per-node enrichment calls"
+    assert all(call["destination"] == owner for call in enrichment)
     return response, enrichment
 
 
