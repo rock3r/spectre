@@ -224,8 +224,13 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
             self.assertIn(contract, VERIFICATION_EXTENSION.read_text())
         self.assertIn("frameExtentsLeftRightTopBottom", probe)
         self.assertNotIn("frameExtentsLeftTopRightBottom", probe)
-        for contract in ("video/x-raw,format=RGBA", "snapshot=true", "gstreamer.log", "pipewire-monitor.stderr", 'f"{kind}-awt.json"'):
+        for contract in ("--all", "_NET_WM_WINDOW_TYPE_NORMAL", "selection-failures",
+                         "client-xwininfo", "frame-xwininfo", "videoconvert",
+                         "video/x-raw,format=RGBA", "snapshot=true", "gstreamer.log",
+                         "pipewire-monitor.stderr", 'f"{kind}-awt.json"'):
             self.assertIn(contract, probe)
+        self.assertIn("f.setBounds(x,y,480,320)", fixture)
+        self.assertNotIn("f.setBounds(x,y,480,283)", fixture)
 
     def test_geometry_extension_gates_pid_xid_and_ancestry(self):
         extension = VERIFICATION_EXTENSION.read_text()

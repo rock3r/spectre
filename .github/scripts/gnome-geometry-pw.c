@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
     pw_properties_new(PW_KEY_MEDIA_TYPE, "Video", PW_KEY_MEDIA_CATEGORY, "Capture", PW_KEY_MEDIA_ROLE, "Screen", NULL), &events, &s);
   uint8_t pod_buffer[2048]; struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(pod_buffer, sizeof(pod_buffer));
   const struct spa_pod *params[3];
-  struct spa_rectangle def_size = SPA_RECTANGLE(480, 283), min_size = SPA_RECTANGLE(1, 1), max_size = SPA_RECTANGLE(8192, 8192);
+  struct spa_rectangle def_size = SPA_RECTANGLE(480, 320), min_size = SPA_RECTANGLE(1, 1), max_size = SPA_RECTANGLE(8192, 8192);
   struct spa_fraction def_rate = SPA_FRACTION(30, 1), min_rate = SPA_FRACTION(0, 1), max_rate = SPA_FRACTION(120, 1);
   params[0] = spa_pod_builder_add_object(&builder, SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
     SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video),

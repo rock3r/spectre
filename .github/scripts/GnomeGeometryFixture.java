@@ -12,7 +12,7 @@ public final class GnomeGeometryFixture {
       JPanel stripe = new JPanel(); stripe.setBackground(new Color(3, 231, 97)); stripe.setPreferredSize(new Dimension(480, 13));
       JComponent center = new JComponent() { protected void paintComponent(Graphics g) { super.paintComponent(g); g.setColor(new Color(237,31,211)); g.fillRect(getWidth()/2-9,getHeight()/2-9,19,19); } };
       center.setOpaque(true); center.setBackground(new Color(20, 45, 210)); root.add(stripe, BorderLayout.NORTH); root.add(center, BorderLayout.CENTER);
-      f.setContentPane(root); f.setBounds(x,y,480,283); f.setVisible(true);
+      f.setContentPane(root); f.setBounds(x,y,480,320); f.setVisible(true);
       Toolkit.getDefaultToolkit().sync();
       Insets i=f.getInsets(); GraphicsConfiguration gc=f.getGraphicsConfiguration();
       System.out.printf("{\"schemaVersion\":1,\"units\":\"AWT user-space pixels\",\"kind\":\"%s\",\"pid\":%d,\"title\":\"%s\",\"topLevelBounds\":%s,\"topLevelLocationOnScreen\":%s,\"rootBounds\":%s,\"rootLocationOnScreen\":%s,\"contentBounds\":%s,\"contentLocationOnScreen\":%s,\"insets\":{\"top\":%d,\"left\":%d,\"bottom\":%d,\"right\":%d},\"defaultTransform\":{\"scaleX\":%.6f,\"scaleY\":%.6f,\"translateX\":%.6f,\"translateY\":%.6f},\"deviceBounds\":%s}%n",
