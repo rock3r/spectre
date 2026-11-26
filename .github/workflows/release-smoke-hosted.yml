@@ -77,8 +77,8 @@ jobs:
           printf '%s' "$AWT_FIXTURE_PATCH_GZIP_BASE64" | base64 -d | gzip -dc > "$RUNNER_TEMP/awt-test-fixture.patch"
           git apply --index "$RUNNER_TEMP/awt-test-fixture.patch"
           git diff --cached --check
-          test "$(git write-tree)" = 09db68eadf0541ef9b60f8ab8c1ce968b6d1ad21
-          GIT_AUTHOR_DATE=2026-11-26T00:00:00Z GIT_COMMITTER_DATE=2026-11-26T00:00:00Z git -c user.name=Verification -c user.email=verification@localhost commit -m "Rehearse the experimental desktop build service with the same fixtures"
+          test "$(git write-tree)" = d20e019cda80b29a3af7881f60dc3c26427cf303
+          GIT_AUTHOR_DATE=2026-11-26T00:00:00Z GIT_COMMITTER_DATE=2026-11-26T00:00:00Z git -c user.name=Verification -c user.email=verification@localhost commit -m "Rehearse the scoped native desktop test service with the same fixtures"
           test -z "$(git status --porcelain --untracked-files=all)"
           printf '%s\n' "$CANDIDATE_SHA" > "$RUNNER_TEMP/release-smoke-identity/original-sha.txt"
           git rev-parse HEAD > "$RUNNER_TEMP/release-smoke-identity/exact-sha.txt"
@@ -206,7 +206,7 @@ jobs:
           evidence.mkdir(exist_ok=True)
           seen = set()
           while True:
-              for module in ("agent", "cli", "core"):
+              for module in ("agent", "cli", "core", "recording"):
                   for xml in Path(module, "build/test-results").glob("*/TEST-*.xml"):
                       try:
                           st = xml.stat()
