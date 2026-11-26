@@ -1,6 +1,7 @@
 package dev.sebastiano.spectre.cli.mcp
 
 import dev.sebastiano.spectre.cli.SpectreBuildMetadata
+import dev.sebastiano.spectre.cli.daemon.DaemonCaptureSource
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
 import io.modelcontextprotocol.kotlin.sdk.server.Server
@@ -63,6 +64,7 @@ public object SpectreMcpServer {
 
     private fun registerTools(server: Server, request: (DaemonRequest) -> DaemonResponse) {
         registerDiscoveryTools(server, request)
+        registerAccessibilityTool(server, request)
         registerSessionTools(server, request)
         registerRecordingTools(server, request)
     }
@@ -389,6 +391,7 @@ public object SpectreMcpServer {
                     "window_index" to "integer",
                     "out_dir" to "string",
                     "include_image" to "boolean",
+                    "source" to "string",
                 )
                 .let { base ->
                     // session_id is required; other params are optional overrides.
@@ -412,47 +415,49 @@ public object SpectreMcpServer {
         request: (DaemonRequest) -> DaemonResponse,
     ): CallToolResult {
         val sessionId = call.requiredSessionId()
+        val source =
+            when (call.optionalString("source")) {
+                null,
+                "compose" -> DaemonCaptureSource.Compose
+                "accessibility" -> DaemonCaptureSource.Accessibility
+                else ->
+                    throw IllegalArgumentException(
+                        "MCP tool argument 'source' must be compose or accessibility"
+                    )
+            }
         val windowIndex = call.optionalInt("window_index") ?: 0
         val outDir = call.optionalString("out_dir")?.let(::normalizeRecordingOutputPath)
         val includeImage = call.optionalBoolean("include_image") ?: false
-        return when (
-            val response =
-                request(
-                    DaemonRequest.Capture(
-                        sessionId = sessionId,
-                        windowIndex = windowIndex,
-                        outDir = outDir,
-                    )
+        return request(
+                DaemonRequest.Capture(
+                    sessionId = sessionId,
+                    windowIndex = windowIndex,
+                    outDir = outDir,
+                    source = source,
                 )
-        ) {
+            )
+            .captureResult(includeImage)
+    }
+
+    private fun DaemonResponse.captureResult(includeImage: Boolean): CallToolResult =
+        when (this) {
             is DaemonResponse.Diagnosed -> {
-                val result =
-                    when (val operation = response.response) {
-                        is DaemonResponse.Capture -> captureToolResult(operation, includeImage)
-                        is DaemonResponse.Error ->
-                            CallToolResult(listOf(TextContent(operation.message)), isError = true)
-                        else ->
-                            CallToolResult(
-                                listOf(
-                                    TextContent("Spectre daemon returned an unexpected response.")
-                                ),
-                                isError = true,
-                            )
-                    }
-                result.copy(
-                    content = response.warnings.map { TextContent("warning: $it") } + result.content
-                )
+                val result = response.captureResult(includeImage)
+                result.copy(content = warnings.map { TextContent("warning: $it") } + result.content)
             }
-            is DaemonResponse.Capture -> captureToolResult(response, includeImage)
-            is DaemonResponse.Error ->
-                CallToolResult(listOf(TextContent(response.message)), isError = true)
+            is DaemonResponse.Capture -> captureToolResult(this, includeImage)
+            is DaemonResponse.AccessibilityErrorResult ->
+                CallToolResult(
+                    listOf(TextContent(MCP_JSON.encodeToString(error))),
+                    isError = true,
+                )
+            is DaemonResponse.Error -> CallToolResult(listOf(TextContent(message)), isError = true)
             else ->
                 CallToolResult(
                     listOf(TextContent("Spectre daemon returned an unexpected response.")),
                     isError = true,
                 )
         }
-    }
 
     private fun captureToolResult(
         response: DaemonResponse.Capture,
@@ -519,7 +524,8 @@ public object SpectreMcpServer {
         }
         server.addTool(
             name = "record_stop",
-            description = "Stop the active recording and return its final output path.",
+            description =
+                "Stop the active recording and return its final output path and backend diagnostics.",
             inputSchema = sessionSchema(),
         ) { call ->
             request(DaemonRequest.StopRecording(call.requiredSessionId())).asResult {
@@ -612,6 +618,108 @@ public object SpectreMcpServer {
     }
 }
 
+private fun registerAccessibilityTool(
+    server: Server,
+    request: (DaemonRequest) -> DaemonResponse,
+) {
+    val properties = buildJsonObject {
+        put("pid", buildJsonObject { put("type", "integer") })
+        put("window", buildJsonObject { put("type", "string") })
+        put("session_id", buildJsonObject { put("type", "string") })
+        put("window_index", buildJsonObject { put("type", "integer") })
+        put("maximum_depth", buildJsonObject { put("type", "integer") })
+        put("maximum_node_count", buildJsonObject { put("type", "integer") })
+        put("timeout_ms", buildJsonObject { put("type", "integer") })
+    }
+    server.addTool(
+        name = "accessibility_tree",
+        description =
+            "Show what a screen reader receives from a process, uniquely titled window, or " +
+                "selected attached-session window. This reads the OS accessibility tree " +
+                "without attaching to a target JVM.",
+        inputSchema = ToolSchema(properties = properties, required = emptyList()),
+    ) { call ->
+        val pid = call.accessibilityOptionalLong("pid")
+        val window = call.accessibilityOptionalString("window")
+        val sessionId = call.accessibilityOptionalString("session_id")
+        require(listOf(pid, window, sessionId).count { it != null } == 1) {
+            "accessibility_tree requires exactly one of pid, window, or session_id"
+        }
+        val windowIndex = call.accessibilityOptionalInt("window_index") ?: 0
+        val maximumDepth = call.accessibilityOptionalInt("maximum_depth") ?: 64
+        val maximumNodeCount = call.accessibilityOptionalInt("maximum_node_count") ?: 10_000
+        val timeoutMs = call.accessibilityOptionalLong("timeout_ms") ?: 750
+        require(pid == null || pid > 0) { "MCP tool argument 'pid' must be positive" }
+        require(windowIndex >= 0 && maximumDepth > 0 && maximumNodeCount > 0 && timeoutMs > 0) {
+            "MCP accessibility target and traversal budgets must be valid"
+        }
+        request(
+                DaemonRequest.AccessibilityTree(
+                    pid,
+                    window,
+                    sessionId,
+                    windowIndex,
+                    maximumDepth,
+                    maximumNodeCount,
+                    timeoutMs,
+                )
+            )
+            .accessibilityResult()
+    }
+}
+
+private fun DaemonResponse.accessibilityResult(): CallToolResult =
+    when (this) {
+        is DaemonResponse.Diagnosed -> {
+            val result = response.accessibilityResult()
+            result.copy(content = warnings.map { TextContent("warning: $it") } + result.content)
+        }
+        is DaemonResponse.AccessibilitySnapshotResult ->
+            CallToolResult(listOf(TextContent(MCP_JSON.encodeToString(snapshot))))
+        is DaemonResponse.AccessibilityErrorResult ->
+            CallToolResult(
+                listOf(TextContent(MCP_JSON.encodeToString(error))),
+                isError = true,
+            )
+        is DaemonResponse.Error -> CallToolResult(listOf(TextContent(message)), isError = true)
+        else ->
+            CallToolResult(
+                listOf(TextContent("Spectre daemon returned an unexpected response.")),
+                isError = true,
+            )
+    }
+
+private fun CallToolRequest.accessibilityOptionalString(name: String): String? {
+    validateKnownArguments()
+    val element = arguments?.get(name) ?: return null
+    val primitive =
+        element as? kotlinx.serialization.json.JsonPrimitive
+            ?: throw IllegalArgumentException("MCP tool argument '$name' must be a string")
+    require(primitive.isString && primitive.content.isNotBlank()) {
+        "MCP tool argument '$name' must be a non-blank string"
+    }
+    return primitive.content
+}
+
+private fun CallToolRequest.accessibilityOptionalLong(name: String): Long? {
+    validateKnownArguments()
+    val element = arguments?.get(name) ?: return null
+    val primitive =
+        element as? kotlinx.serialization.json.JsonPrimitive
+            ?: throw IllegalArgumentException("MCP tool argument '$name' must be an integer")
+    require(!primitive.isString) { "MCP tool argument '$name' must be an integer" }
+    return primitive.content.toLongOrNull()
+        ?: throw IllegalArgumentException("MCP tool argument '$name' must be an integer")
+}
+
+private fun CallToolRequest.accessibilityOptionalInt(name: String): Int? =
+    accessibilityOptionalLong(name)?.let { value ->
+        require(value in Int.MIN_VALUE..Int.MAX_VALUE) {
+            "MCP tool argument '$name' is outside the integer range"
+        }
+        value.toInt()
+    }
+
 private val MCP_ARGUMENT_NAMES: Map<String, Set<String>> =
     mapOf(
         "list_processes" to emptySet(),
@@ -645,7 +753,17 @@ private val MCP_ARGUMENT_NAMES: Map<String, Set<String>> =
         "focus_window" to setOf("session_id", "window_index"),
         "type_text" to setOf("session_id", "text"),
         "screenshot" to setOf("session_id", "window_index", "surface_id", "fullscreen"),
-        "capture" to setOf("session_id", "window_index", "out_dir", "include_image"),
+        "capture" to setOf("session_id", "window_index", "out_dir", "include_image", "source"),
+        "accessibility_tree" to
+            setOf(
+                "pid",
+                "window",
+                "session_id",
+                "window_index",
+                "maximum_depth",
+                "maximum_node_count",
+                "timeout_ms",
+            ),
         "record_start" to setOf("session_id", "output_path", "window_index", "fullscreen"),
         "record_stop" to setOf("session_id"),
         "record_status" to setOf("session_id"),

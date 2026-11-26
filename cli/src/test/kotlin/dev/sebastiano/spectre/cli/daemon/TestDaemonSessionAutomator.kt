@@ -3,13 +3,18 @@ package dev.sebastiano.spectre.cli.daemon
 import dev.sebastiano.spectre.agent.AtomicCaptureResult
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
+import dev.sebastiano.spectre.agent.transport.WindowIdentityDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
+import dev.sebastiano.spectre.recording.RecordingResult
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
 
 @OptIn(ExperimentalSpectreAgentApi::class)
 internal class TestDaemonSessionAutomator(
     private val windowsResult: () -> List<WindowSummaryDto> = { emptyList() },
+    private val windowIdentitiesResult: (Int?) -> List<WindowIdentityDto> = { emptyList() },
+    private val beginWindowChangeCaptureResult: () -> Long = { 1L },
+    private val endWindowChangeCaptureResult: (Long) -> Long = { 0L },
     private val nodesResult: () -> List<NodeSnapshotDto> = { emptyList() },
     private val findByTestTagResult: (String) -> List<NodeSnapshotDto> = { emptyList() },
     private val clickAction: (String) -> Unit = {},
@@ -63,6 +68,13 @@ internal class TestDaemonSessionAutomator(
         ensureOpen("windows")
         return windowsResult()
     }
+
+    override fun windowIdentities(windowIndex: Int?): List<WindowIdentityDto> =
+        windowIdentitiesResult(windowIndex)
+
+    override fun beginWindowChangeCapture(): Long = beginWindowChangeCaptureResult()
+
+    override fun endWindowChangeCapture(token: Long): Long = endWindowChangeCaptureResult(token)
 
     override fun allNodes(): List<NodeSnapshotDto> {
         ensureOpen("allNodes")
@@ -142,14 +154,15 @@ internal class TestDaemonSessionAutomator(
         fullscreen: Boolean,
     ): String = startRecordingAction(outputPath, windowIndex, fullscreen)
 
-    override fun stopRecording(liveSessionIds: Set<String>): String =
-        stopRecordingResult(liveSessionIds)
+    override fun stopRecording(liveSessionIds: Set<String>): RecordingResult =
+        RecordingResult(java.nio.file.Path.of(stopRecordingResult(liveSessionIds)))
 
     override fun recordingStatus(): RecordingStatus = recordingStatusResult()
 
-    override fun finalizeRecording(remainingLiveSessionIds: Set<String>) {
+    override fun finalizeRecording(remainingLiveSessionIds: Set<String>): RecordingResult? {
         finalizeCount.incrementAndGet()
         finalizeRecordingAction(remainingLiveSessionIds)
+        return null
     }
 
     override fun close() {

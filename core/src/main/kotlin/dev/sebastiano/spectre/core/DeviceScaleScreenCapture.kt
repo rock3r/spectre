@@ -20,10 +20,9 @@ import java.awt.image.MultiResolutionImage
  * each intersecting display at its own scale and composing them would lift that limit; it is not
  * something variant selection can fix.
  *
- * Window-scoped stills escape it only while the native still bridge is present, since those helpers
- * use the target window's own screen scale. Without `spectre-recording` on the target's classpath
- * the window still is a Robot region capture too, so a window straddling displays of different
- * densities shares the limit above.
+ * Window-scoped stills use a native backend and the target window's own screen scale. If that
+ * backend is unavailable (for example, because the platform recording artefact is absent), window
+ * capture fails instead of substituting a Robot region capture.
  *
  * [region] is the requested logical rectangle, used only to ask for a base variant when a backend
  * reports no variants at all.

@@ -5,7 +5,6 @@ import java.awt.Rectangle
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 class FramedWindowTest {
@@ -65,7 +64,6 @@ class FramedWindowTest {
             )
 
         assertNull(window.title)
-        assertFalse(window.requiresTitleDiscriminator)
         assertEquals(Rectangle(10, 20, 300, 200), window.bounds)
         assertFailsWith<UnsupportedOperationException> { window.title = "renamed" }
     }

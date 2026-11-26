@@ -10,12 +10,73 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 import kotlin.test.Test
-import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.io.TempDir
 
 class ScreenCaptureKitScreenshotterTest {
+    @TempDir lateinit var tempDir: Path
+
+    @Test
+    fun `captureRegion invokes ScreenCaptureKit region source without cursor`() {
+        val factory = ScreenshotHelperProcessFactory()
+        var accessChecks = 0
+        val screenshotter =
+            ScreenCaptureKitScreenshotter(
+                helperExtractor = testExtractor(tempDir),
+                processFactory = factory,
+                requireScreenCaptureAccess = { accessChecks += 1 },
+            )
+
+        val image = screenshotter.captureRegion(Rectangle(12, 34, 56, 78), displayIndex = 2)
+
+        assertEquals(4, image.width)
+        assertEquals(3, image.height)
+        assertEquals(1, accessChecks)
+        assertContainsSequence(factory.lastArgv, listOf("--source", "region"))
+        assertContainsSequence(factory.lastArgv, listOf("--region", "12,34,56,78"))
+        assertContainsSequence(factory.lastArgv, listOf("--display-index", "2"))
+        assertContainsSequence(factory.lastArgv, listOf("--cursor", "false"))
+    }
+
+    @Test
+    fun `captureRegion forcibly stops a helper that times out`() {
+        val process = ScreenshotHelperProcess(waitResults = ArrayDeque(listOf(false, true)))
+        val screenshotter =
+            ScreenCaptureKitScreenshotter(
+                helperExtractor = testExtractor(tempDir),
+                processFactory = ScreenshotHelperProcessFactory(process),
+                requireScreenCaptureAccess = {},
+            )
+
+        val error =
+            assertFailsWith<IllegalStateException> {
+                screenshotter.captureRegion(Rectangle(1, 2, 3, 4), displayIndex = 0)
+            }
+
+        assertTrue(error.message.orEmpty().contains("15 seconds"), error.message)
+        assertEquals(listOf(15L to TimeUnit.SECONDS, 1L to TimeUnit.SECONDS), process.waits)
+        assertTrue(process.destroyedForcibly)
+    }
+
+    @Test
+    fun `captureRegion explains a helper failure`() {
+        val screenshotter =
+            ScreenCaptureKitScreenshotter(
+                helperExtractor = testExtractor(tempDir),
+                processFactory = ScreenshotHelperProcessFactory(ScreenshotHelperProcess(exit = 5)),
+                requireScreenCaptureAccess = {},
+            )
+
+        val error =
+            assertFailsWith<IllegalStateException> {
+                screenshotter.captureRegion(Rectangle(1, 2, 3, 4), displayIndex = 0)
+            }
+
+        assertTrue(error.message.orEmpty().contains("pipeline failed (exit 5)"), error.message)
+        assertTrue(error.message.orEmpty().contains("output at"), error.message)
+    }
 
     @Test
     fun `captureWindow explains a frame that matches several windows`() {
@@ -30,7 +91,7 @@ class ScreenCaptureKitScreenshotterTest {
                         materialLocator = {
                             helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf())
                         },
-                        targetDirProvider = { Path.of("/tmp") },
+                        targetDirProvider = { tempDir },
                     ),
                 processFactory = factory,
                 requireScreenCaptureAccess = {},
@@ -46,116 +107,6 @@ class ScreenCaptureKitScreenshotterTest {
 
         assertTrue(error.message.orEmpty().contains("more than one window"), error.message)
     }
-
-    @Test
-    fun `captureWindow spawns helper in screenshot mode and restores title`() {
-        val factory = ScreenshotHelperProcessFactory()
-        val extractor =
-            HelperBinaryExtractor(
-                envLookup = { null },
-                sysPropLookup = { null },
-                materialLocator = {
-                    helperAppBundleMaterial(
-                        executable = byteArrayOf(0x01),
-                        infoPlist = byteArrayOf(),
-                    )
-                },
-                targetDirProvider = { Path.of("/tmp") },
-            )
-        val screenshotter =
-            ScreenCaptureKitScreenshotter(
-                helperExtractor = extractor,
-                processFactory = factory,
-                requireScreenCaptureAccess = {},
-            )
-        val window = ScreenshotFakeTitledWindow(initialTitle = "MyApp")
-
-        val image = screenshotter.captureWindow(window = window, windowOwnerPid = 4242L)
-
-        assertEquals(4, image.width)
-        assertEquals(3, image.height)
-        assertEquals("MyApp", window.title)
-        val argv = factory.lastArgv
-        assertContainsSequence(argv, listOf("--mode", "screenshot"))
-        assertContainsSequence(argv, listOf("--pid", "4242"))
-        assertContains(argv, "--title-contains")
-        assertContainsSequence(argv, listOf("--cursor", "false"))
-        assertEquals(
-            "png",
-            Path.of(argv[argv.indexOf("--output") + 1]).fileName.toString().substringAfterLast('.'),
-        )
-    }
-
-    @Test
-    fun `captureWindow destroys helper when wait is interrupted and restores title`() {
-        val process = InterruptingScreenshotHelperProcess()
-        val factory = ScreenshotHelperProcessFactory(process)
-        val extractor =
-            HelperBinaryExtractor(
-                envLookup = { null },
-                sysPropLookup = { null },
-                materialLocator = {
-                    helperAppBundleMaterial(
-                        executable = byteArrayOf(0x01),
-                        infoPlist = byteArrayOf(),
-                    )
-                },
-                targetDirProvider = { Path.of("/tmp") },
-            )
-        val screenshotter =
-            ScreenCaptureKitScreenshotter(
-                helperExtractor = extractor,
-                processFactory = factory,
-                requireScreenCaptureAccess = {},
-            )
-        val window = ScreenshotFakeTitledWindow(initialTitle = "MyApp")
-
-        try {
-            assertFailsWith<InterruptedException> {
-                screenshotter.captureWindow(window = window, windowOwnerPid = 4242L)
-            }
-            assertTrue(process.destroyedForcibly)
-            assertEquals("MyApp", window.title)
-        } finally {
-            Thread.interrupted()
-        }
-    }
-
-    @Test
-    fun `captureWindow allows discovery and first-frame budget before timing out`() {
-        val process = TimedOutScreenshotHelperProcess()
-        val screenshotter =
-            ScreenCaptureKitScreenshotter(
-                helperExtractor =
-                    HelperBinaryExtractor(
-                        envLookup = { null },
-                        sysPropLookup = { null },
-                        materialLocator = {
-                            helperAppBundleMaterial(
-                                executable = byteArrayOf(0x01),
-                                infoPlist = byteArrayOf(),
-                            )
-                        },
-                        targetDirProvider = { Path.of("/tmp") },
-                    ),
-                processFactory = ScreenshotHelperProcessFactory(process),
-                requireScreenCaptureAccess = {},
-            )
-
-        val failure =
-            assertFailsWith<IllegalStateException> {
-                screenshotter.captureWindow(ScreenshotFakeTitledWindow("MyApp"), 4242L)
-            }
-
-        assertEquals(listOf(15L, 1L), process.waitTimeoutSeconds)
-        assertTrue(process.destroyedForcibly)
-        assertContains(failure.message.orEmpty(), "timed out after 15s")
-    }
-}
-
-private class ScreenshotFakeTitledWindow(initialTitle: String?) : TitledWindow {
-    override var title: String? = initialTitle
-    override val bounds: Rectangle = Rectangle(0, 0, 100, 100)
 }
 
 private class ScreenshotHelperProcessFactory(
@@ -197,8 +148,12 @@ private class SuccessfulScreenshotHelperProcess(private val exit: Int = 0) : Pro
     override fun onExit(): CompletableFuture<Process> = CompletableFuture.completedFuture(this)
 }
 
-private class InterruptingScreenshotHelperProcess : Process() {
-    var destroyedForcibly: Boolean = false
+private class ScreenshotHelperProcess(
+    private val exit: Int = 0,
+    private val waitResults: ArrayDeque<Boolean> = ArrayDeque(listOf(true)),
+) : Process() {
+    val waits = mutableListOf<Pair<Long, TimeUnit>>()
+    var destroyedForcibly = false
         private set
 
     override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
@@ -207,15 +162,14 @@ private class InterruptingScreenshotHelperProcess : Process() {
 
     override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
 
-    override fun waitFor(): Int {
-        throw InterruptedException("interrupted")
-    }
+    override fun waitFor(): Int = exit
 
     override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
-        throw InterruptedException("interrupted")
+        waits += timeout to unit
+        return waitResults.removeFirst()
     }
 
-    override fun exitValue(): Int = throw IllegalThreadStateException("still running")
+    override fun exitValue(): Int = exit
 
     override fun destroy() = Unit
 
@@ -225,55 +179,17 @@ private class InterruptingScreenshotHelperProcess : Process() {
     }
 
     override fun isAlive(): Boolean = !destroyedForcibly
-
-    override fun pid(): Long = 0
-
-    override fun toHandle(): ProcessHandle = ProcessHandle.current()
-
-    override fun onExit(): CompletableFuture<Process> = CompletableFuture.completedFuture(this)
 }
 
-private class TimedOutScreenshotHelperProcess : Process() {
-    var destroyedForcibly: Boolean = false
-        private set
-
-    val waitTimeoutSeconds: MutableList<Long> = mutableListOf()
-
-    override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
-
-    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
-
-    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
-
-    override fun waitFor(): Int = throw IllegalThreadStateException("still running")
-
-    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
-        waitTimeoutSeconds += unit.toSeconds(timeout)
-        return destroyedForcibly
-    }
-
-    override fun exitValue(): Int = throw IllegalThreadStateException("still running")
-
-    override fun destroy() = Unit
-
-    override fun destroyForcibly(): Process {
-        destroyedForcibly = true
-        return this
-    }
-
-    override fun isAlive(): Boolean = !destroyedForcibly
-
-    override fun pid(): Long = 0
-
-    override fun toHandle(): ProcessHandle = ProcessHandle.current()
-
-    override fun onExit(): CompletableFuture<Process> = CompletableFuture.completedFuture(this)
-}
+private fun testExtractor(tempDir: Path): HelperBinaryExtractor =
+    HelperBinaryExtractor(
+        envLookup = { null },
+        sysPropLookup = { null },
+        materialLocator = { helperAppBundleMaterial(byteArrayOf(0x01), byteArrayOf()) },
+        targetDirProvider = { tempDir },
+    )
 
 private fun assertContainsSequence(actual: List<String>, expected: List<String>) {
-    val window =
-        actual.windowed(size = expected.size, step = 1, partialWindows = false).firstOrNull {
-            it == expected
-        }
-    assertTrue(window != null, "Expected argv to contain $expected, got $actual")
+    val start = actual.windowed(expected.size).indexOf(expected)
+    assertTrue(start >= 0, "Expected $actual to contain $expected")
 }

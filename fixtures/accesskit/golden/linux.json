@@ -1,0 +1,17 @@
+{
+  "windowRole": { "id": 23, "name": "frame" },
+  "buttonRole": { "id": 43, "name": "button" },
+  "checkboxRole": { "id": 7, "name": "check box" },
+  "textRole": { "id": 79, "name": "entry" },
+  "textValue": null,
+  "popoverRole": { "id": 16, "name": "dialog" },
+  "checkedState": true,
+  "disabledButton": {
+    "label": "Unavailable action",
+    "role": { "id": 43, "name": "button" }
+  },
+  "offscreenButton": {
+    "label": "Scrolled away",
+    "role": { "id": 43, "name": "button" }
+  }
+}

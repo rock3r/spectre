@@ -3,6 +3,7 @@ package dev.sebastiano.spectre.recording
 import dev.sebastiano.spectre.recording.portal.MutterWindowRecorder
 import dev.sebastiano.spectre.recording.portal.WaylandPortalRecorder
 import dev.sebastiano.spectre.recording.portal.WaylandWindowSourceRecorder
+import dev.sebastiano.spectre.recording.screencapturekit.FramedWindow
 import dev.sebastiano.spectre.recording.screencapturekit.HelperNotBundledException
 import dev.sebastiano.spectre.recording.screencapturekit.ScreenCaptureKitRecorder
 import dev.sebastiano.spectre.recording.screencapturekit.TitledWindow
@@ -113,9 +114,13 @@ internal constructor(
         scaleX: Double = 1.0,
         scaleY: Double = 1.0,
     ): RecordingHandle {
+        val nativeTarget =
+            (window as? dev.sebastiano.spectre.recording.screencapturekit.AwtWindowBacked)
+                ?.awtWindow
+                ?.let(NativeWindowCaptureBridge::captureTargetFor) ?: window
         if (cropInWindow != null) {
             return startWindowCropped(
-                window,
+                nativeTarget,
                 cropInWindow,
                 output,
                 options,
@@ -131,12 +136,12 @@ internal constructor(
                         "Wayland window capture",
                         waylandPortalWindowRecorderFailure,
                     )
-            return recorder.start(window, window.bounds, output, options)
+            return recorder.start(nativeTarget, nativeTarget.bounds, output, options)
         }
         if (isMacOs()) {
             return try {
                 sckRecorder.start(
-                    window = window,
+                    window = nativeTarget,
                     windowOwnerPid = windowOwnerPid,
                     output = output,
                     options = options,
@@ -145,22 +150,20 @@ internal constructor(
                 throw unavailable("macOS window capture", e)
             }
         }
-        val title = window.title
+        val title = nativeTarget.title
         val recorder = windowsWindowRecorder
         if (isWindows()) {
-            require(!title.isNullOrBlank()) {
-                "AutoRecorder.startWindow requires a non-blank window title on Windows. " +
-                    "Use startRegion(...) explicitly if region capture is what you want."
+            require(nativeTarget is FramedWindow || !title.isNullOrBlank()) {
+                "AutoRecorder.startWindow requires a title or frame selector on Windows."
             }
-            return recorder?.start(window, windowOwnerPid, output, options)
+            return recorder?.start(nativeTarget, windowOwnerPid, output, options)
                 ?: throw unavailable("Windows window capture", null)
         }
         if (isLinux()) {
-            require(!title.isNullOrBlank()) {
-                "AutoRecorder.startWindow requires a non-blank window title on Linux X11. " +
-                    "Use startRegion(...) explicitly if region capture is what you want."
+            require(nativeTarget is FramedWindow || !title.isNullOrBlank()) {
+                "AutoRecorder.startWindow requires a title or frame selector on Linux X11."
             }
-            return linuxWindowRecorder?.start(window, windowOwnerPid, output, options)
+            return linuxWindowRecorder?.start(nativeTarget, windowOwnerPid, output, options)
                 ?: throw unavailable("Linux X11 window capture", null)
         }
         throw unsupportedWindowCapture()
@@ -168,8 +171,8 @@ internal constructor(
 
     /**
      * Window-targeted capture for an out-of-process window identified by title + owner pid (daemon
-     * attach / #185). Does not stamp a local AWT title discriminator — the [title] must already
-     * uniquely identify the target among windows of [windowOwnerPid].
+     * attach / #185). The helper requires [title] to identify exactly one visible window of
+     * [windowOwnerPid]; ambiguity fails instead of selecting the first match.
      *
      * When [cropInWindow] is set, applies window+crop (#186). Prefer this over [startRegion] for
      * attached targets.
@@ -270,9 +273,8 @@ internal constructor(
             }
         }
         if (isWindows()) {
-            val title = window.title
-            require(!title.isNullOrBlank()) {
-                "AutoRecorder.startWindow (cropped) requires a non-blank window title on Windows."
+            require(window is FramedWindow || !window.title.isNullOrBlank()) {
+                "AutoRecorder.startWindow (cropped) requires a title or frame selector on Windows."
             }
             val recorder =
                 windowsWindowRecorder ?: throw unavailable("Windows window+crop capture", null)
@@ -413,9 +415,9 @@ internal constructor(
         }
 
         /**
-         * Lazily resolves both portal recorders once per JVM (the first time the public no-arg
-         * `AutoRecorder` constructor's defaults fire). Captures any construction failure so the
-         * router can surface it via the fallback warning instead of silently dropping it.
+         * Lazily resolves the Wayland region and window recorders once per JVM (the first time the
+         * public no-arg `AutoRecorder` constructor's defaults fire). Captures any construction
+         * failure so the router can include the cause when the requested backend is unavailable.
          *
          * Tests bypass this entirely by going through the internal constructor.
          */
@@ -440,15 +442,14 @@ internal data class WaylandPortalRecorders(
     companion object {
 
         /**
-         * Constructs the default portal recorders on Linux; returns all-null on other hosts.
+         * Constructs the default Wayland recorders on Linux; returns all-null on other hosts.
          *
          * dbus-java + gst-launch are no-ops on macOS / Windows (the gst-launch binary doesn't exist
          * there, the D-Bus session bus isn't running) — gating on `isLinux` keeps cross-host
          * distribution jars from triggering construction-time failures. On Linux, failures
          * resolving the gst-launch path or constructing either recorder are captured rather than
          * dropped, so a Linux host without GStreamer installed can still instantiate AutoRecorder
-         * for non-Wayland flows but a user who triggers Wayland recording sees the diagnostic via
-         * the stderr fallback warning.
+         * for non-Wayland flows. Requesting the unavailable backend raises a capture error.
          */
         @Suppress("TooGenericExceptionCaught")
         fun resolveDefaults(isLinux: () -> Boolean): WaylandPortalRecorders {

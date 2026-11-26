@@ -3,6 +3,7 @@
 package dev.sebastiano.spectre.core
 
 import java.awt.Rectangle
+import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.lang.reflect.InvocationTargetException
 
@@ -10,7 +11,7 @@ internal fun detectLinux(): Boolean = System.getProperty("os.name").lowercase().
 
 internal fun defaultRealOsRobotAdapter(
     isLinux: Boolean = detectLinux(),
-    wayland: Boolean = isWaylandSession(),
+    wayland: Boolean = isLinux && isWaylandSession(),
     waylandAdapter: () -> RobotAdapter? = ::loadWaylandRobotAdapter,
     awtAdapter: () -> RobotAdapter = { AwtRobotAdapter() },
 ): RobotAdapter {
@@ -121,15 +122,14 @@ private class WaylandBridgeRobotAdapter(private val bridge: Class<*>) : RobotAda
     override fun createScreenCapture(region: Rectangle): BufferedImage {
         val method = bridge.getMethod("createScreenCapture", Rectangle::class.java)
         try {
-            val captured = method.invoke(null, region) as BufferedImage
-            return screenshotToLogicalSize(captured, region)
+            return method.invoke(null, region) as BufferedImage
         } catch (e: InvocationTargetException) {
             throw unwrapBridge(e)
         }
     }
 
     override fun createDeviceScaleScreenCapture(region: Rectangle): BufferedImage {
-        val method = bridge.getMethod("createScreenCapture", Rectangle::class.java)
+        val method = bridge.getMethod("createDeviceScaleScreenCapture", Rectangle::class.java)
         try {
             return method.invoke(null, region) as BufferedImage
         } catch (e: InvocationTargetException) {
@@ -164,13 +164,28 @@ private class WaylandBridgeRobotAdapter(private val bridge: Class<*>) : RobotAda
     }
 }
 
-internal fun screenshotToLogicalSize(image: BufferedImage, region: Rectangle): BufferedImage {
+internal fun screenshotToLogicalSize(
+    image: BufferedImage,
+    region: Rectangle,
+    verifiedCrop: Rectangle,
+): BufferedImage {
+    check(image.width == verifiedCrop.width && image.height == verifiedCrop.height) {
+        "Wayland screenshot returned ${image.width}x${image.height}, but the helper verified crop " +
+            "was ${verifiedCrop.width}x${verifiedCrop.height}; refusing a clipped capture."
+    }
     if (image.width == region.width && image.height == region.height) return image
-    val scaled = BufferedImage(region.width, region.height, BufferedImage.TYPE_INT_ARGB)
-    val graphics = scaled.createGraphics()
-    graphics.drawImage(image, 0, 0, region.width, region.height, null)
-    graphics.dispose()
-    return scaled
+    return BufferedImage(region.width, region.height, BufferedImage.TYPE_INT_ARGB).also { logical ->
+        val graphics = logical.createGraphics()
+        try {
+            graphics.setRenderingHint(
+                RenderingHints.KEY_INTERPOLATION,
+                RenderingHints.VALUE_INTERPOLATION_BILINEAR,
+            )
+            graphics.drawImage(image, 0, 0, region.width, region.height, null)
+        } finally {
+            graphics.dispose()
+        }
+    }
 }
 
 internal fun awtLockingKeyState(keyCode: Int): Boolean? =

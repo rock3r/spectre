@@ -24,7 +24,7 @@ import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
 2. **Fail-closed real input across processes:** add `spectre-input-coordinator-server` at runtime (`spectre-testing`
    already brings it in) and pass `RobotDriver(InputLeasePolicy.Required)`. Keep no-arg `RobotDriver()` uncoordinated;
    do not imply its default is changing.
-3. **Other policies:** use `InputLeasePolicy.Auto` only for opportunistic coordination, and `InputLeasePolicy.Off` only
+3. **Other policies:** use `InputLeasePolicy.Auto` only when proceeding without an installed provider is acceptable, and `InputLeasePolicy.Off` only
    when an external runner already serialises desktop access.
 4. **JUnit whole-test leases:** pass `InputIsolationConfig.perTest()` when setup, failure capture, or teardown can alter
    focus (covers factory creation, test body, failure evidence, and teardown; default `perInteraction()` covers single
@@ -32,9 +32,9 @@ import dev.sebastiano.spectre.input.ExperimentalSpectreInputCoordinationApi
    JVM already coordinates operations, so an outer lease self-deadlocks).
 5. **Multi-step critical sections:** wrap coupled actions (including screenshots/recordings, which do not acquire leases
    automatically) in reentrant `automator.withExclusiveInput { ... }`.
-6. **Agent attach skew:** attach starts the coordinator on a best-effort basis so read-only tree inspection still works
-   if the coordinator cannot launch; current target cores use `Required` for real input and fail closed, whereas legacy
-   pre-coordination target cores fall back to uncoordinated `RobotDriver`.
+6. **Agent attach skew:** current target cores must expose `InputLeasePolicy` and
+   `RobotDriver.synthetic(policy)`. Attach fails when either is absent; it never substitutes the
+   legacy real-OS driver or drops the requested policy.
 
 ## Inspecting and revoking stuck leases
 

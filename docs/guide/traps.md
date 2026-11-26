@@ -297,7 +297,10 @@ Wayland session. See [Recording](recording.md).
 <!-- aliases: black image, locked screen, tcc, screen recording permission -->
 
 A locked macOS console returns black pixels even with Screen Recording permission.
-Unlock the session and retry. See [Troubleshooting](troubleshooting.md).
+Unlock the session and retry. A black native window image is not by itself a
+permission denial: ScreenCaptureKit permission belongs to Spectre's signed helper,
+while Robot permission belongs to the app that launched the JVM. See
+[Troubleshooting](troubleshooting.md).
 
 ## Quick reference
 

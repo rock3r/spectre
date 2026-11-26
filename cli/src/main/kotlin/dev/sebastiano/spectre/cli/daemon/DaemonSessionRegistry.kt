@@ -12,6 +12,7 @@ import dev.sebastiano.spectre.cli.hotreload.ReloadAwareKeyGuard
 import dev.sebastiano.spectre.cli.hotreload.ReloadSettleErrorCategory
 import dev.sebastiano.spectre.cli.hotreload.mapReloadSettleOutcome
 import dev.sebastiano.spectre.cli.jdkPreflightError
+import dev.sebastiano.spectre.recording.RecordingResult
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -24,6 +25,7 @@ internal constructor(
     private val hotReloadSessionFactory: (Long) -> HotReloadCapability? = { targetPid ->
         defaultHotReloadCapability(targetPid)
     },
+    accessibilityHelperClient: AccessibilityHelperClient = AccessibilityHelperClient(),
     // Last so trailing-lambda call sites keep meaning attachAutomator.
     private val attachAutomator: (Long) -> DaemonSessionAutomator = { targetPid ->
         installEmbeddedAgentRuntimeIfNeeded()
@@ -33,6 +35,7 @@ internal constructor(
 ) : AutoCloseable {
     private val startupConfiguration: Map<String, String?> = daemonConfiguration()
     private val sessionsByPid: MutableMap<Long, DaemonSession> = linkedMapOf()
+    private val accessibilityHandler = AccessibilityDaemonHandler(accessibilityHelperClient)
     /**
      * PIDs whose agent teardown is still running after the session left [sessionsByPid]. Same-PID
      * re-attach waits on these latches so it does not race an in-flight agent Detach (#413).
@@ -46,6 +49,20 @@ internal constructor(
         @Synchronized get() = sessionsByPid.isNotEmpty()
 
     private var shutdown: Boolean = false
+    private val shutdownLock = Any()
+    private var shutdownRecordingOutcomes: List<DaemonResponse.FinalizedRecording>? = null
+    private val attachedAccessibility =
+        AttachedAccessibilityOperations(
+            accessibilityHandler,
+            acquire = { sessionId ->
+                synchronized(this) {
+                    acquireAttachedAccessibilitySession(shutdown, sessionsByPid, sessionId)
+                }
+            },
+            liveSessionIds = {
+                synchronized(this) { sessionsByPid.values.map { it.sessionId }.toSet() }
+            },
+        )
 
     /**
      * Dispatches a daemon request. Long waits (#201), attach (may wait on same-PID detach), and
@@ -59,11 +76,22 @@ internal constructor(
             is DaemonRequest.WaitForVisualIdle,
             is DaemonRequest.WaitForReloadSettled -> handleWaitOutsideLock(request)
             is DaemonRequest.Attach -> attach(request.targetPid)
+            is DaemonRequest.AccessibilityTree -> attachedAccessibility.handle(request)
+            is DaemonRequest.Capture ->
+                if (request.source == DaemonCaptureSource.Accessibility) {
+                    attachedAccessibility.capture(request)
+                } else {
+                    handleSynchronized(request)
+                }
             is DaemonRequest.Detach -> handleDetachOutsideLock(request.sessionId)
             // close() tears down outside the monitor; must not run under @Synchronized.
             DaemonRequest.Shutdown -> {
                 close()
-                DaemonResponse.ShuttingDown
+                shutdownRecordingOutcomes
+                    .orEmpty()
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { DaemonResponse.ShuttingDownWithRecordings(it) }
+                    ?: DaemonResponse.ShuttingDown
             }
             else -> handleSynchronized(request)
         }
@@ -95,6 +123,7 @@ internal constructor(
                             emptyList()
                         },
                 )
+            is DaemonRequest.AccessibilityTree -> error("accessibility tree must use handle()")
             is DaemonRequest.Attach -> error("attach must use attach() outside the monitor")
             is DaemonRequest.Detach -> error("detach must use handleDetachOutsideLock")
             DaemonRequest.ListSessions ->
@@ -166,7 +195,7 @@ internal constructor(
                 found
             }
         return try {
-            runWaitRequest(session, request)
+            runWaitRequest(session, request, hotReloadSessionFactory)
         } catch (exception: IOException) {
             DaemonResponse.Error(
                 code = DaemonErrorCode.OperationFailed,
@@ -176,56 +205,6 @@ internal constructor(
             session.activeWaits.decrementAndGet()
         }
     }
-
-    private fun runWaitRequest(session: DaemonSession, request: DaemonRequest): DaemonResponse =
-        when (request) {
-            is DaemonRequest.WaitForNode -> {
-                val gen = session.keyGuard?.snapshotGeneration() ?: 0L
-                val rawNode =
-                    session.automator.waitForNode(
-                        tag = request.tag,
-                        text = request.text,
-                        timeoutMs = request.timeoutMs,
-                        pollIntervalMs = request.pollIntervalMs,
-                    )
-                val stamped =
-                    stampNodeIfCurrentGeneration(session.keyGuard, gen, rawNode)
-                        ?: return DaemonResponse.Error(
-                            code = DaemonErrorCode.OperationFailed,
-                            message =
-                                "No node found with key=${rawNode.key} (reload settled during wait)",
-                            category = "nodeNotFound",
-                        )
-                DaemonResponse.Nodes(request.sessionId, listOf(stamped))
-            }
-            is DaemonRequest.WaitUntilGone -> waitUntilGoneResponse(session.automator, request)
-            is DaemonRequest.WaitForVisualIdle -> {
-                session.automator.waitForVisualIdle(
-                    timeoutMs = request.timeoutMs,
-                    stableFrames = request.stableFrames,
-                    pollIntervalMs = request.pollIntervalMs,
-                )
-                DaemonResponse.Completed(request.sessionId)
-            }
-            is DaemonRequest.WaitForReloadSettled -> {
-                val hotReload =
-                    session.hotReloadSession ?: discoverHotReload(session, hotReloadSessionFactory)
-                if (hotReload == null) {
-                    DaemonResponse.Error(
-                        code = DaemonErrorCode.HotReloadUnavailable,
-                        message = "hot reload is not available for this session",
-                        category = ReloadSettleErrorCategory.HOT_RELOAD_UNAVAILABLE,
-                    )
-                } else {
-                    mapReloadSettleOutcome(
-                        hotReload.waitForReloadSettled(request.timeoutMs),
-                        request.sessionId,
-                        request.timeoutMs,
-                    )
-                }
-            }
-            else -> error("not a wait request: ${request::class.simpleName}")
-        }
 
     private fun handleSessionCommand(request: DaemonRequest): DaemonResponse =
         when (request) {
@@ -265,11 +244,11 @@ internal constructor(
                 }
             is DaemonRequest.Capture ->
                 invoke(request.sessionId) { automator ->
-                    CaptureArtifactStore.write(
-                        sessionId = request.sessionId,
-                        result = automator.capture(request.windowIndex),
-                        outDir = request.outDir,
-                        liveSessionIds = sessionsByPid.values.map { it.sessionId }.toSet(),
+                    writeCapture(
+                        request,
+                        automator,
+                        sessionsByPid.values.map { it.sessionId }.toSet(),
+                        accessibilityHandler,
                     )
                 }
             is DaemonRequest.StartRecording ->
@@ -285,10 +264,10 @@ internal constructor(
                 }
             is DaemonRequest.StopRecording ->
                 invoke(request.sessionId) { automator ->
-                    DaemonResponse.RecordingStopped(
-                        request.sessionId,
-                        automator.stopRecording(sessionsByPid.values.map { it.sessionId }.toSet()),
-                    )
+                    val result =
+                        automator.stopRecording(sessionsByPid.values.map { it.sessionId }.toSet())
+                    DaemonResponse.RecordingStopped(request.sessionId, result.output.toString())
+                        .also { it.diagnostics = result.toDiagnostics() }
                 }
             is DaemonRequest.RecordingStatus ->
                 invoke(request.sessionId) { automator ->
@@ -328,6 +307,7 @@ internal constructor(
                 return@synchronized DaemonResponse.Attached(
                     sessionId = session.summary.sessionId,
                     targetPid = session.summary.targetPid,
+                    sessionInfo = session.summary.sessionInfo,
                 )
             }
             // Another detach may have started after we waited; re-check under the monitor.
@@ -366,7 +346,7 @@ internal constructor(
         (hotReload as? HotReloadSession)?.start()
         val session =
             DaemonSession(
-                summary = sessionSummaryFor(targetPid),
+                summary = sessionSummaryFor(targetPid, attached.sessionInfo),
                 automator = attached,
                 hotReloadSession = hotReload,
                 keyGuard = keyGuard,
@@ -375,6 +355,7 @@ internal constructor(
         return DaemonResponse.Attached(
             sessionId = session.summary.sessionId,
             targetPid = session.summary.targetPid,
+            sessionInfo = session.summary.sessionInfo,
         )
     }
 
@@ -410,14 +391,25 @@ internal constructor(
         }
         val hotReload = session.retire()
         try {
+            session.awaitIdleAccessibility()
             // Finalize while other sessions remain known live (#185); then close so in-flight waits
             // observe a closed automator and fail closed instead of hanging on the full wait
             // budget.
-            session.automator.finalizeRecording(remainingLive)
+            val finalized = session.automator.finalizeWithReport(sessionId, remainingLive)
             hotReload?.close()
             session.automator.close()
             session.awaitIdleWaits()
-            return CaptureSessionReport.forDetach(sessionId)
+            return CaptureSessionReport.forDetach(
+                    sessionId,
+                    finalizedRecordingPath = finalized?.takeIf { it.error == null }?.outputPath,
+                )
+                .also {
+                    it.diagnostics = finalized?.diagnostics
+                    it.recordingError =
+                        finalized?.error?.let { error ->
+                            "Could not finalize ${finalized.outputPath}: $error"
+                        }
+                }
         } finally {
             RequestDiagnostics.forget(sessionId)
             synchronized(this) {
@@ -570,62 +562,123 @@ internal constructor(
         }
     }
 
-    override fun close() {
-        RequestDiagnostics.clear()
-        val snapshot: List<Pair<Long, DaemonSession>>
-        val ownedGates: List<Pair<Long, CountDownLatch>>
-        val waitGates: List<CountDownLatch>
-        synchronized(this) {
-            shutdown = true
-            snapshot = sessionsByPid.entries.map { it.key to it.value }
-            sessionsByPid.clear()
-            val owned = mutableListOf<Pair<Long, CountDownLatch>>()
-            for ((pid, _) in snapshot) {
-                // Do not overwrite a gate owned by an in-flight per-session detach.
-                if (!detachingByPid.containsKey(pid)) {
-                    val gate = CountDownLatch(1)
-                    detachingByPid[pid] = gate
-                    owned += pid to gate
+    override fun close(): Unit =
+        synchronized(shutdownLock) {
+            if (shutdownRecordingOutcomes != null) return
+            RequestDiagnostics.clear()
+            val snapshot: List<Pair<Long, DaemonSession>>
+            val ownedGates: List<Pair<Long, CountDownLatch>>
+            val waitGates: List<CountDownLatch>
+            synchronized(this) {
+                shutdown = true
+                snapshot = sessionsByPid.entries.map { it.key to it.value }
+                sessionsByPid.clear()
+                val owned = mutableListOf<Pair<Long, CountDownLatch>>()
+                for ((pid, _) in snapshot) {
+                    // Do not overwrite a gate owned by an in-flight per-session detach.
+                    if (!detachingByPid.containsKey(pid)) {
+                        val gate = CountDownLatch(1)
+                        detachingByPid[pid] = gate
+                        owned += pid to gate
+                    }
+                }
+                ownedGates = owned
+                waitGates = detachingByPid.values.toList()
+            }
+            val ownedPids = ownedGates.map { it.first }.toSet()
+            val recordingOutcomes = mutableListOf<DaemonResponse.FinalizedRecording>()
+            // Outside the monitor after clear so wait finally-blocks and sibling work can finish.
+            snapshot.forEach { (pid, session) ->
+                if (pid !in ownedPids) return@forEach
+                val ownedGate = ownedGates.first { it.first == pid }.second
+                val hotReload = session.retire()
+                try {
+                    session.awaitIdleAccessibility()
+                    session.automator
+                        .finalizeWithReport(session.sessionId, emptySet())
+                        ?.let(recordingOutcomes::add)
+                    hotReload?.close()
+                    session.automator.close()
+                    session.awaitIdleWaits()
+                } finally {
+                    synchronized(this) {
+                        if (detachingByPid[pid] === ownedGate) detachingByPid.remove(pid)
+                    }
+                    ownedGate.countDown()
                 }
             }
-            ownedGates = owned
-            waitGates = detachingByPid.values.toList()
-        }
-        val ownedPids = ownedGates.map { it.first }.toSet()
-        // Outside the monitor after clear so wait finally-blocks and sibling work can finish.
-        snapshot.forEach { (pid, session) ->
-            if (pid !in ownedPids) return@forEach
-            val ownedGate = ownedGates.first { it.first == pid }.second
-            val hotReload = session.retire()
-            try {
-                runCatching { session.automator.finalizeRecording(emptySet()) }
-                hotReload?.close()
-                session.automator.close()
-                session.awaitIdleWaits()
-            } finally {
-                synchronized(this) {
-                    if (detachingByPid[pid] === ownedGate) detachingByPid.remove(pid)
-                }
-                ownedGate.countDown()
+            // Join concurrent detach teardowns so Shutdown does not race agent close.
+            waitGates.forEach { gate ->
+                runCatching { gate.await(ATTACH_WAIT_DETACH_TIMEOUT_MS, TimeUnit.MILLISECONDS) }
             }
+            shutdownRecordingOutcomes = recordingOutcomes
         }
-        // Join concurrent detach teardowns so Shutdown does not race agent close.
-        waitGates.forEach { gate ->
-            runCatching { gate.await(ATTACH_WAIT_DETACH_TIMEOUT_MS, TimeUnit.MILLISECONDS) }
-        }
-    }
 }
 
-private const val WAIT_DRAIN_TIMEOUT_MS: Long = 90_000
-private const val WAIT_DRAIN_MARGIN_MS: Long = 5_000
-private const val WAIT_DRAIN_POLL_MS: Long = 10
+internal const val WAIT_DRAIN_TIMEOUT_MS: Long = 90_000
+internal const val WAIT_DRAIN_MARGIN_MS: Long = 5_000
+internal const val WAIT_DRAIN_POLL_MS: Long = 10
 /**
  * Attach must outlive detach's [DaemonSession.awaitIdleWaits] budget: max(default drain, tracked
  * wait remaining + margin). Headroom covers long client wait timeouts still draining after close.
  */
 private const val ATTACH_WAIT_DETACH_TIMEOUT_MS: Long =
     WAIT_DRAIN_TIMEOUT_MS + WAIT_DRAIN_MARGIN_MS + 120_000
-private const val NANOS_PER_MS: Long = 1_000_000
+internal const val NANOS_PER_MS: Long = 1_000_000
+
+private fun runWaitRequest(
+    session: DaemonSession,
+    request: DaemonRequest,
+    hotReloadSessionFactory: (Long) -> HotReloadCapability?,
+): DaemonResponse =
+    when (request) {
+        is DaemonRequest.WaitForNode -> {
+            val gen = session.keyGuard?.snapshotGeneration() ?: 0L
+            val rawNode =
+                session.automator.waitForNode(
+                    tag = request.tag,
+                    text = request.text,
+                    timeoutMs = request.timeoutMs,
+                    pollIntervalMs = request.pollIntervalMs,
+                )
+            val stamped =
+                stampNodeIfCurrentGeneration(session.keyGuard, gen, rawNode)
+                    ?: return DaemonResponse.Error(
+                        code = DaemonErrorCode.OperationFailed,
+                        message =
+                            "No node found with key=${rawNode.key} (reload settled during wait)",
+                        category = "nodeNotFound",
+                    )
+            DaemonResponse.Nodes(request.sessionId, listOf(stamped))
+        }
+        is DaemonRequest.WaitUntilGone -> waitUntilGoneResponse(session.automator, request)
+        is DaemonRequest.WaitForVisualIdle -> {
+            session.automator.waitForVisualIdle(
+                timeoutMs = request.timeoutMs,
+                stableFrames = request.stableFrames,
+                pollIntervalMs = request.pollIntervalMs,
+            )
+            DaemonResponse.Completed(request.sessionId)
+        }
+        is DaemonRequest.WaitForReloadSettled -> {
+            val hotReload =
+                session.hotReloadSession ?: discoverHotReload(session, hotReloadSessionFactory)
+            if (hotReload == null) {
+                DaemonResponse.Error(
+                    code = DaemonErrorCode.HotReloadUnavailable,
+                    message = "hot reload is not available for this session",
+                    category = ReloadSettleErrorCategory.HOT_RELOAD_UNAVAILABLE,
+                )
+            } else {
+                mapReloadSettleOutcome(
+                    hotReload.waitForReloadSettled(request.timeoutMs),
+                    request.sessionId,
+                    request.timeoutMs,
+                )
+            }
+        }
+        else -> error("not a wait request: ${request::class.simpleName}")
+    }
 
 private fun discoverHotReload(
     session: DaemonSession,
@@ -643,43 +696,6 @@ private fun discoverHotReload(
         session.hotReloadSession = discovered
         discovered
     }
-
-private data class DaemonSession(
-    val summary: DaemonSessionSummary,
-    val automator: DaemonSessionAutomator,
-    var hotReloadSession: HotReloadCapability? = null,
-    var keyGuard: ReloadAwareKeyGuard? = null,
-    var retired: Boolean = false,
-    val activeWaits: java.util.concurrent.atomic.AtomicInteger =
-        java.util.concurrent.atomic.AtomicInteger(0),
-    /** Absolute nanoTime deadline for the longest currently tracked outside-lock wait. */
-    val waitDeadlineNs: java.util.concurrent.atomic.AtomicLong =
-        java.util.concurrent.atomic.AtomicLong(0),
-) {
-    val sessionId: String
-        get() = summary.sessionId
-
-    fun noteWaitStarted(timeoutMs: Long) {
-        val candidate = System.nanoTime() + timeoutMs.coerceAtLeast(0) * NANOS_PER_MS
-        waitDeadlineNs.updateAndGet { current -> maxOf(current, candidate) }
-    }
-
-    fun retire(): HotReloadCapability? =
-        synchronized(this) {
-            retired = true
-            hotReloadSession
-        }
-
-    fun awaitIdleWaits(timeoutMs: Long = WAIT_DRAIN_TIMEOUT_MS) {
-        val trackedRemainingMs =
-            ((waitDeadlineNs.get() - System.nanoTime()) / NANOS_PER_MS).coerceAtLeast(0)
-        val budgetMs = maxOf(timeoutMs, trackedRemainingMs + WAIT_DRAIN_MARGIN_MS)
-        val deadline = System.nanoTime() + budgetMs * NANOS_PER_MS
-        while (activeWaits.get() > 0 && System.nanoTime() < deadline) {
-            Thread.sleep(WAIT_DRAIN_POLL_MS)
-        }
-    }
-}
 
 private const val AGENT_RUNTIME_JAR_PROPERTY: String = "dev.sebastiano.spectre.agent.runtimeJar"
 
@@ -730,7 +746,7 @@ private fun attachPreflightFailure(): DaemonResponse.Error? =
         DaemonResponse.Error(code = DaemonErrorCode.AttachFailed, message = message)
     }
 
-private fun sessionNotFound(sessionId: String): DaemonResponse.Error =
+internal fun sessionNotFound(sessionId: String): DaemonResponse.Error =
     DaemonResponse.Error(
         code = DaemonErrorCode.SessionNotFound,
         message = "session not found: $sessionId",
@@ -747,14 +763,85 @@ private fun stillDetachingError(targetPid: Long): DaemonResponse.Error =
  * latch is still present.
  */
 private fun awaitCountDownLatch(timeoutMs: Long, latch: () -> CountDownLatch?): Boolean {
-    val deadlineNs = System.nanoTime() + timeoutMs * NANOS_PER_MS
+    val deadlineNs = deadlineAfterMillis(timeoutMs)
     while (true) {
         val gate = latch() ?: return true
-        val remainingMs = ((deadlineNs - System.nanoTime()) / NANOS_PER_MS).coerceAtLeast(0)
+        val remainingMs = remainingRegistryMillis(deadlineNs)
         if (remainingMs == 0L) return false
         if (!gate.await(remainingMs, TimeUnit.MILLISECONDS)) return false
     }
 }
 
-private fun sessionSummaryFor(targetPid: Long): DaemonSessionSummary =
-    DaemonSessionSummary(sessionId = "pid-$targetPid", targetPid = targetPid)
+internal fun writeCapture(
+    request: DaemonRequest.Capture,
+    automator: DaemonSessionAutomator,
+    liveSessionIds: Set<String>,
+    accessibilityHandler: AccessibilityDaemonHandler,
+    sessionTarget: ((Int) -> SessionAccessibilityTarget?)? = null,
+    verifyAccessibilityTarget: (() -> DaemonResponse?)? = null,
+): DaemonResponse {
+    if (request.source == DaemonCaptureSource.Compose) {
+        return CaptureArtifactStore.write(
+            request.sessionId,
+            automator.capture(request.windowIndex),
+            request.outDir,
+            liveSessionIds,
+        )
+    }
+    val treeRequest =
+        DaemonRequest.AccessibilityTree(
+            sessionId = request.sessionId,
+            windowIndex = request.windowIndex,
+        )
+    val tree =
+        sessionTarget?.let { resolver ->
+            accessibilityHandler.handle(treeRequest) { _, index -> resolver(index) }
+        } ?: accessibilityHandler.handle(treeRequest)
+    return when (tree) {
+        is DaemonResponse.AccessibilitySnapshotResult -> {
+            val pngBytes = automator.capture(request.windowIndex).pngBytes
+            verifyAccessibilityTarget?.invoke()
+                ?: CaptureArtifactStore.writeAccessibility(
+                    sessionId = request.sessionId,
+                    windowIndex = request.windowIndex,
+                    pngBytes = pngBytes,
+                    snapshot = tree.snapshot,
+                    outDir = request.outDir,
+                    liveSessionIds = liveSessionIds,
+                )
+        }
+        is DaemonResponse.AccessibilityErrorResult,
+        is DaemonResponse.Error -> verifyAccessibilityTarget?.invoke() ?: tree
+        else -> error("unexpected accessibility response")
+    }
+}
+
+private fun sessionSummaryFor(
+    targetPid: Long,
+    sessionInfo: DaemonSessionInfo? = null,
+): DaemonSessionSummary =
+    DaemonSessionSummary(
+        sessionId = "pid-$targetPid",
+        targetPid = targetPid,
+        sessionInfo = sessionInfo,
+    )
+
+private fun RecordingResult.toDiagnostics(): DaemonResponse.RecordingDiagnostics =
+    DaemonResponse.RecordingDiagnostics(droppedFrames, cropFixedAtStart)
+
+private fun DaemonSessionAutomator.finalizeWithReport(
+    sessionId: String,
+    remainingLive: Set<String>,
+): DaemonResponse.FinalizedRecording? {
+    val path = recordingStatus().outputPath
+    val finalized = runCatching { finalizeRecording(remainingLive) }
+    val result = finalized.getOrNull()
+    val output = result?.output?.toString() ?: path ?: return null
+    val error = finalized.exceptionOrNull()
+    return DaemonResponse.FinalizedRecording(
+            sessionId,
+            output,
+            error?.message ?: error?.javaClass?.simpleName,
+        )
+        .also { it.diagnostics = result?.toDiagnostics() }
+}

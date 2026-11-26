@@ -55,10 +55,12 @@ internal data class WindowCapture(val image: BufferedImage, val boundsOnScreen: 
  */
 internal fun windowStillForRegion(capture: WindowCapture, region: Rectangle): WindowCapture {
     if (capture.boundsOnScreen == region) return capture
-    val visibleRegion = region.intersection(capture.boundsOnScreen)
+    require(capture.boundsOnScreen.contains(region)) {
+        "Requested region $region must be fully inside captured window ${capture.boundsOnScreen}."
+    }
     return WindowCapture(
-        image = cropImageToScreenRegion(capture.image, visibleRegion, capture.boundsOnScreen),
-        boundsOnScreen = visibleRegion,
+        image = cropImageToScreenRegion(capture.image, region, capture.boundsOnScreen),
+        boundsOnScreen = region,
     )
 }
 
@@ -79,7 +81,6 @@ internal class PlatformScreenCaptureBackend(
                 osName = System.getProperty("os.name"),
                 windowBounds = windowBounds,
                 insets = frameInsets,
-                isWayland = isWaylandSession(),
             )
         },
     private val deviceScaleRegionCapture: (Rectangle?) -> BufferedImage = regionCapture,
@@ -145,7 +146,7 @@ internal class PlatformScreenCaptureBackend(
     private fun ambiguousNativeIdentity(window: Window, selectsByFrame: Boolean): List<String>? {
         val title = window.title
         if (title.isNullOrBlank()) return null
-        val sameTitle = Window.getWindows().filter { it.isDisplayable && it.title == title }
+        val sameTitle = Window.getWindows().filter { it.isShowing && it.title == title }
         val matches =
             if (selectsByFrame) sameTitle.filter { it.bounds == window.bounds } else sameTitle
         return matches
@@ -164,11 +165,10 @@ internal class PlatformScreenCaptureBackend(
         }
 
         /**
-         * macOS tells shared titles apart in its helper. Linux Wayland binds a Mutter window stream
-         * to the window itself, so titles do not select anything there.
+         * Linux Wayland binds a Mutter window stream to the window itself, so titles do not select
+         * anything there. Every title-selecting backend must reject ambiguous identities.
          */
-        fun defaultNativeCaptureDisambiguatesTitles(): Boolean =
-            System.getProperty("os.name").contains("mac", ignoreCase = true) || isWaylandSession()
+        fun defaultNativeCaptureDisambiguatesTitles(): Boolean = isWaylandSession()
     }
 }
 
@@ -180,7 +180,7 @@ internal fun nativeWindowCaptureBounds(
     osName: String,
     windowBounds: Rectangle,
     insets: java.awt.Insets,
-    isWayland: Boolean,
+    isWayland: Boolean = isWaylandSession(osName),
 ): Rectangle {
     if (!osName.contains("linux", ignoreCase = true) || isWayland) return Rectangle(windowBounds)
     return Rectangle(
@@ -209,38 +209,70 @@ internal fun nativeWindowCaptureBounds(
  * the capture helper does (#635).
  */
 @InternalSpectreApi
-@Suppress("ReturnCount")
 public fun isWaylandSession(
     getenv: (String) -> String? = defaultLinuxGetenv,
     runtimeDirHasWaylandSocket: (Path) -> Boolean = ::runtimeDirHasWaylandSocket,
     displayIsPureX11: (String) -> Boolean = ::defaultDisplayIsPureX11,
     displayIsXwayland: (String) -> Boolean = ::defaultDisplayIsXwayland,
     waylandSocketExists: (Path) -> Boolean = ::isWaylandSocket,
+): Boolean =
+    isWaylandSession(
+        System.getProperty("os.name").orEmpty(),
+        getenv,
+        runtimeDirHasWaylandSocket,
+        displayIsPureX11,
+        displayIsXwayland,
+        waylandSocketExists,
+    )
+
+/** Resolves capture for [osName]. Only Linux requires evidence about the display server. */
+@InternalSpectreApi
+@Suppress("ReturnCount")
+public fun isWaylandSession(
+    osName: String,
+    getenv: (String) -> String? = defaultLinuxGetenv,
+    runtimeDirHasWaylandSocket: (Path) -> Boolean = ::runtimeDirHasWaylandSocket,
+    displayIsPureX11: (String) -> Boolean = ::defaultDisplayIsPureX11,
+    displayIsXwayland: (String) -> Boolean = ::defaultDisplayIsXwayland,
+    waylandSocketExists: (Path) -> Boolean = ::isWaylandSocket,
 ): Boolean {
-    when (getenv("SPECTRE_CAPTURE_BACKEND")?.trim()?.lowercase()) {
-        "x11",
-        "xorg",
-        "xvfb" -> return false
-        "wayland",
-        "portal" -> return true
+    if (!osName.contains("linux", ignoreCase = true)) return false
+    explicitLinuxSession(getenv)?.let {
+        return it
     }
     val display = getenv("DISPLAY")?.takeIf { it.isNotBlank() }
-    val sessionIsWayland = getenv("XDG_SESSION_TYPE").equals("wayland", ignoreCase = true)
+    val sessionType = getenv("XDG_SESSION_TYPE")?.trim()?.lowercase()
+    val sessionIsWayland = sessionType == "wayland"
     val waylandDisplay = getenv("WAYLAND_DISPLAY")?.takeIf { it.isNotBlank() }
+    if (sessionType == "x11") return false
     if (display == null) {
         if (sessionIsWayland || waylandDisplay != null) return true
-        return getenv("XDG_RUNTIME_DIR")?.let(Path::of)?.let {
-            runCatching { runtimeDirHasWaylandSocket(it) }.getOrDefault(false)
-        } == true
+        val socketProvesWayland =
+            getenv("XDG_RUNTIME_DIR")?.let(Path::of)?.let {
+                runCatching { runtimeDirHasWaylandSocket(it) }.getOrDefault(false)
+            } == true
+        if (socketProvesWayland) return true
+        unprovenLinuxSession(display)
     }
     // DISPLAY is set. Xwayland is a Wayland seat even when SSH carried no Wayland env (#607).
     if (displayIsXwayland(display)) return true
     // Residual sockets alone never override DISPLAY (#397).
-    if (!sessionIsWayland && waylandDisplay == null) return false
     if (displayIsPureX11(display)) return false
-    val socket = resolveWaylandSocket(waylandDisplay, getenv("XDG_RUNTIME_DIR")) ?: return false
-    return runCatching { waylandSocketExists(socket) }.getOrDefault(false)
+    if (!sessionIsWayland && waylandDisplay == null) unprovenLinuxSession(display)
+    val socket =
+        resolveWaylandSocket(waylandDisplay, getenv("XDG_RUNTIME_DIR"))
+            ?: unprovenLinuxSession(display)
+    if (probeWaylandSocket(socket, waylandSocketExists)) return true
+    unprovenLinuxSession(display)
 }
+
+private fun unprovenLinuxSession(display: String?): Nothing =
+    error(
+        "Spectre could not prove the Linux session type. " +
+            "DISPLAY=${display ?: "<unset>"}; XDG_SESSION_TYPE, WAYLAND_DISPLAY and the " +
+            "Wayland socket did not prove Wayland, while /proc and xdpyinfo did not prove " +
+            "Xorg or Xwayland. Set SPECTRE_CAPTURE_BACKEND=x11 or wayland explicitly."
+    )
 
 private fun runtimeDirHasWaylandSocket(runtimeDir: Path): Boolean =
     Files.isDirectory(runtimeDir) &&
@@ -278,6 +310,48 @@ internal fun nativeWindowCaptureFor(classLoader: ClassLoader): ((Window) -> Buff
     }
 }
 
+internal fun nativeScreenRegionCaptureFor(
+    classLoader: ClassLoader
+): ((Rectangle) -> BufferedImage)? {
+    val bridge =
+        try {
+            Class.forName(NATIVE_WINDOW_CAPTURE_BRIDGE, false, classLoader)
+        } catch (_: ClassNotFoundException) {
+            return null
+        }
+    val capture =
+        try {
+            bridge.getMethod("captureScreenRegion", Rectangle::class.java)
+        } catch (_: NoSuchMethodException) {
+            return null
+        }
+    return { region ->
+        try {
+            capture.invoke(null, region) as BufferedImage
+        } catch (e: InvocationTargetException) {
+            val cause = e.cause ?: e
+            if (cause is RuntimeException) throw cause
+            throw IllegalStateException("Native screen-region capture bridge failed", cause)
+        }
+    }
+}
+
+internal fun BufferedImage.scaledTo(width: Int, height: Int): BufferedImage {
+    if (this.width == width && this.height == height) return this
+    val scaled = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+    val graphics = scaled.createGraphics()
+    try {
+        graphics.drawImage(this, 0, 0, width, height, null)
+    } finally {
+        graphics.dispose()
+    }
+    return scaled
+}
+
+internal fun macOsRegionCaptureUnavailable(): String =
+    "macOS screen-region capture requires spectre-recording and spectre-recording-macos " +
+        "on the runtime classpath."
+
 private val Window.title: String?
     get() =
         when (this) {
@@ -303,3 +377,18 @@ internal fun normalizeNativeImage(image: BufferedImage): BufferedImage {
 }
 
 private fun String?.quoteForMessage(): String = "\"${this.orEmpty()}\""
+
+private fun explicitLinuxSession(getenv: (String) -> String?): Boolean? =
+    when (getenv("SPECTRE_CAPTURE_BACKEND")?.trim()?.lowercase()) {
+        "x11",
+        "xorg",
+        "xvfb" -> false
+        "wayland",
+        "portal" -> true
+        else -> null
+    }
+
+private fun probeWaylandSocket(path: Path, exists: (Path) -> Boolean): Boolean = runCatching {
+    exists(path)
+}
+    .getOrDefault(false)

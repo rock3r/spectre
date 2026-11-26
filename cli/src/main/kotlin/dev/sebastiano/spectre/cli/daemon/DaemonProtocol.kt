@@ -12,7 +12,7 @@ import kotlinx.serialization.cbor.Cbor
 /** Shared client/daemon wire protocol metadata for Spectre's agent-facing entrypoints. */
 @OptIn(ExperimentalSerializationApi::class)
 public object DaemonProtocol {
-    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 15)
+    public val CurrentVersion: DaemonProtocolVersion = DaemonProtocolVersion(major = 1, minor = 17)
 
     public val cbor: Cbor = Cbor {
         ignoreUnknownKeys = true
@@ -48,8 +48,18 @@ public object DaemonProtocol {
             handshake.minor < SCREEN_PIXEL_STILLS_INTRODUCED_MINOR
 
     internal fun minimumDaemonVersion(request: DaemonRequest): DaemonProtocolVersion =
+        if (request is DaemonRequest.AccessibilityTree) {
+            versionFor(ACCESSIBILITY_INTRODUCED_MINOR)
+        } else {
+            minimumDaemonVersionBeforeAccessibility(request)
+        }
+
+    private fun minimumDaemonVersionBeforeAccessibility(
+        request: DaemonRequest
+    ): DaemonProtocolVersion =
         when (request) {
-            is DaemonRequest.Hello -> versionFor(MINIMUM_PROTOCOL_MINOR)
+            is DaemonRequest.Hello,
+            is DaemonRequest.AccessibilityTree -> versionFor(MINIMUM_PROTOCOL_MINOR)
             is DaemonRequest.Attach,
             is DaemonRequest.Detach,
             DaemonRequest.ListSessions,
@@ -78,8 +88,7 @@ public object DaemonProtocol {
             is DaemonRequest.RecordingStatus -> versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
             // Each still op needs the minor that introduced it *and* the minor its pixels
             // changed in: an older daemon answers these "successfully" but with dp-sized stills.
-            is DaemonRequest.Capture ->
-                versionFor(maxOf(CAPTURE_INTRODUCED_MINOR, SCREEN_PIXEL_STILLS_INTRODUCED_MINOR))
+            is DaemonRequest.Capture -> captureVersion(request)
             is DaemonRequest.Screenshot ->
                 versionFor(
                     maxOf(
@@ -93,7 +102,21 @@ public object DaemonProtocol {
      * Negotiates connection-wide configuration and diagnostics for every operation but shutdown.
      */
     internal fun clientHandshakeVersion(request: DaemonRequest): DaemonProtocolVersion =
-        if (request is DaemonRequest.Shutdown) minimumDaemonVersion(request) else CurrentVersion
+        when (request) {
+            DaemonRequest.Shutdown -> minimumDaemonVersion(request)
+            is DaemonRequest.StopRecording -> versionFor(RECORDING_RESULTS_INTRODUCED_MINOR)
+            else ->
+                versionFor(
+                    maxOf(
+                        minimumDaemonVersion(request).minor,
+                        DIAGNOSTICS_INTRODUCED_MINOR,
+                    )
+                )
+        }
+
+    /** Whether this negotiated client can decode operation-level diagnosed envelopes. */
+    internal fun supportsDiagnosedResponses(handshake: DaemonProtocolVersion): Boolean =
+        handshake.major == CurrentVersion.major && handshake.minor >= DIAGNOSTICS_INTRODUCED_MINOR
 
     /** Full-desktop recording needs a newer daemon than window recording. */
     private fun startRecordingVersion(
@@ -103,6 +126,14 @@ public object DaemonProtocol {
             versionFor(RECORDING_FULLSCREEN_INTRODUCED_MINOR)
         } else {
             versionFor(RECORDING_SESSION_INTRODUCED_MINOR)
+        }
+
+    /** Accessibility is a 1.17 source; Compose keeps its historical screen-pixel floor. */
+    private fun captureVersion(request: DaemonRequest.Capture): DaemonProtocolVersion =
+        if (request.source == DaemonCaptureSource.Accessibility) {
+            versionFor(ACCESSIBILITY_INTRODUCED_MINOR)
+        } else {
+            versionFor(maxOf(CAPTURE_INTRODUCED_MINOR, SCREEN_PIXEL_STILLS_INTRODUCED_MINOR))
         }
 
     private fun versionFor(minor: Int): DaemonProtocolVersion =
@@ -154,6 +185,12 @@ public object DaemonProtocol {
      * before it rejects the new discriminator.
      */
     private const val FOCUS_WINDOW_INTRODUCED_MINOR: Int = 14
+    /** Configuration negotiation and diagnosed operation envelopes (#673). */
+    private const val DIAGNOSTICS_INTRODUCED_MINOR: Int = 15
+    /** Recording finalization results and shutdown recording summaries (#715). */
+    private const val RECORDING_RESULTS_INTRODUCED_MINOR: Int = 16
+    /** Native accessibility snapshots and accessibility-backed captures (#718). */
+    private const val ACCESSIBILITY_INTRODUCED_MINOR: Int = 17
 }
 
 @Serializable public data class DaemonProtocolVersion(public val major: Int, public val minor: Int)
@@ -172,10 +209,30 @@ public sealed interface DaemonRequest {
     }
 
     @Serializable
+    @SerialName("accessibilityTree")
+    public data class AccessibilityTree(
+        public val processId: Long? = null,
+        public val windowTitle: String? = null,
+        public val sessionId: String? = null,
+        public val windowIndex: Int = 0,
+        public val maximumDepth: Int = 64,
+        public val maximumNodeCount: Int = 10_000,
+        public val timeoutMs: Long = 750,
+    ) : DaemonRequest
+
+    @Serializable
     public data class Hello(
         public val clientVersion: DaemonProtocolVersion,
         public val configuration: Map<String, String?> = emptyMap(),
-    ) : DaemonRequest
+    ) : DaemonRequest {
+        /** Older clients only recognize the original singleton shutdown acknowledgement. */
+        public var acceptsShutdownRecordings: Boolean = false
+            internal set
+
+        /** Diagnosed envelopes are an additive response shape and require explicit opt-in. */
+        public var acceptsDiagnosedResponses: Boolean = false
+            internal set
+    }
 
     @Serializable
     @SerialName("attach")
@@ -359,6 +416,7 @@ public sealed interface DaemonRequest {
         public override val sessionId: String,
         public val windowIndex: Int = 0,
         public val outDir: String? = null,
+        public val source: DaemonCaptureSource = DaemonCaptureSource.Compose,
     ) : SessionRequest
 
     @Serializable
@@ -391,6 +449,16 @@ public sealed interface DaemonRequest {
 @OptIn(ExperimentalSpectreAgentApi::class)
 @Serializable
 public sealed interface DaemonResponse {
+    @Serializable
+    @SerialName("accessibilitySnapshot")
+    public data class AccessibilitySnapshotResult(public val snapshot: AccessibilitySnapshot) :
+        DaemonResponse
+
+    @Serializable
+    @SerialName("accessibilityError")
+    public data class AccessibilityErrorResult(public val error: AccessibilityError) :
+        DaemonResponse
+
     /**
      * @property maxFrameBytes the frame write budget this daemon booted with. `null` from a daemon
      *   that predates budget reporting, which is indistinguishable from "not the budget you asked
@@ -421,13 +489,18 @@ public sealed interface DaemonResponse {
 
     @Serializable
     @SerialName("attached")
-    public data class Attached(public val sessionId: String, public val targetPid: Long) :
-        DaemonResponse
+    public data class Attached(
+        public val sessionId: String,
+        public val targetPid: Long,
+        public val sessionInfo: DaemonSessionInfo? = null,
+    ) : DaemonResponse
 
     @Serializable
     @SerialName("detached")
     public data class Detached(
         public val sessionId: String,
+        /** Recording finalized automatically while detaching, if one was active. */
+        public val finalizedRecordingPath: String? = null,
         /** Captures this session left on disk (existing directories only). */
         public val captureCount: Int = 0,
         public val captureBytes: Long = 0L,
@@ -436,7 +509,13 @@ public sealed interface DaemonResponse {
         public val pruneCommand: String? = null,
         /** Agent skill name that documents capture.json + jq workflows. */
         public val skillHint: String? = null,
-    ) : DaemonResponse
+    ) : DaemonResponse {
+        public var diagnostics: RecordingDiagnostics? = null
+            internal set
+
+        public var recordingError: String? = null
+            internal set
+    }
 
     @Serializable
     @SerialName("sessions")
@@ -506,11 +585,20 @@ public sealed interface DaemonResponse {
     ) : DaemonResponse
 
     @Serializable
+    public data class RecordingDiagnostics(
+        public val droppedFrames: Long? = null,
+        public val cropFixedAtStart: Boolean? = null,
+    )
+
+    @Serializable
     @SerialName("recordingStopped")
     public data class RecordingStopped(
         public val sessionId: String,
         public val outputPath: String,
-    ) : DaemonResponse
+    ) : DaemonResponse {
+        public var diagnostics: RecordingDiagnostics? = null
+            internal set
+    }
 
     @Serializable
     @SerialName("recordingStatus")
@@ -522,6 +610,21 @@ public sealed interface DaemonResponse {
     ) : DaemonResponse
 
     @Serializable @SerialName("shuttingDown") public data object ShuttingDown : DaemonResponse
+
+    @Serializable
+    @SerialName("shuttingDownWithRecordings")
+    public data class ShuttingDownWithRecordings(public val recordings: List<FinalizedRecording>) :
+        DaemonResponse
+
+    @Serializable
+    public data class FinalizedRecording(
+        public val sessionId: String,
+        public val outputPath: String,
+        public val error: String? = null,
+    ) {
+        public var diagnostics: RecordingDiagnostics? = null
+            internal set
+    }
 
     @Serializable
     @SerialName("error")
@@ -537,9 +640,28 @@ public sealed interface DaemonResponse {
 }
 
 @Serializable
-public data class DaemonSessionSummary(public val sessionId: String, public val targetPid: Long)
+public data class DaemonSessionSummary(
+    public val sessionId: String,
+    public val targetPid: Long,
+    public val sessionInfo: DaemonSessionInfo? = null,
+)
+
+@Serializable
+public data class DaemonSessionInfo(
+    public val driverKind: String,
+    public val inputLeasePolicy: String,
+    public val coreProvenance: String,
+    public val coreVersion: String? = null,
+    public val warnings: List<String> = emptyList(),
+)
 
 /** A JVM process that can be targeted through the local daemon. */
+@Serializable
+public enum class DaemonCaptureSource {
+    @SerialName("compose") Compose,
+    @SerialName("accessibility") Accessibility,
+}
+
 @Serializable
 public data class DaemonJvmProcessSummary(public val pid: Long, public val displayName: String)
 

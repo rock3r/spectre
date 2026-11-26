@@ -25,11 +25,8 @@ package dev.sebastiano.spectre.agent
  * keyboard at the same time. Two runs interleaving real input produce failures that look like
  * anything but their cause, which is why this is an explicit choice and not a fallback.
  *
- * Not offered here: a best-effort middle ground. `InputLeasePolicy.Auto` degrades for exactly two
- * error codes — `COORDINATOR_PROVIDER_MISSING` and `COORDINATOR_SESSION_UNAVAILABLE` — and a wedged
- * coordinator is neither: the launching provider's startup timeout arrives as `COORDINATOR_IO`. So
- * `Auto` would hard-fail the very situation this exists for, while also weakening every case where
- * coordination is merely absent. Opting out means opting out.
+ * In-process `InputLeasePolicy.Auto` permits uncoordinated input only when the coordinator provider
+ * is missing. A provider that cannot establish a session reports an error.
  */
 @ExperimentalSpectreAgentApi
 public enum class AttachInputCoordination(

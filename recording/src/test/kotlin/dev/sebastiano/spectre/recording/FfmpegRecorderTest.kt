@@ -25,6 +25,7 @@ class FfmpegRecorderTest {
         val factory = RecordingProcessFactory()
         val recorder = ffmpegRecorderForBackend(FfmpegBackend.MacOsAvfoundation, factory)
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         try {
             recorder.start(Rectangle(0, 0, 100, 100), output, RecordingOptions())
 
@@ -46,6 +47,7 @@ class FfmpegRecorderTest {
         val factory = RecordingProcessFactory()
         val recorder = ffmpegRecorderForBackend(FfmpegBackend.WindowsGdigrab, factory)
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         try {
             recorder.start(Rectangle(0, 0, 100, 100), output, RecordingOptions())
 
@@ -84,10 +86,12 @@ class FfmpegRecorderTest {
         val factory = ProcessFactoryReturning(process)
         val recorder = ffmpegRecorderForBackend(FfmpegBackend.MacOsAvfoundation, factory)
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         try {
             val handle = recorder.start(Rectangle(0, 0, 50, 50), output, RecordingOptions())
             assertFalse(handle.isStopped)
 
+            Files.write(output, byteArrayOf(1, 2))
             handle.stop()
 
             assertTrue(handle.isStopped)
@@ -107,8 +111,10 @@ class FfmpegRecorderTest {
                 ProcessFactoryReturning(process),
             )
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         try {
             val handle = recorder.start(Rectangle(0, 0, 10, 10), output, RecordingOptions())
+            Files.write(output, byteArrayOf(1, 2))
             handle.stop()
             handle.stop() // second call must not throw or send a second 'q'
             assertEquals("q", process.stdinSentText, "Stop should send 'q' exactly once")
@@ -126,9 +132,10 @@ class FfmpegRecorderTest {
                 ProcessFactoryReturning(process),
             )
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         try {
             val handle = recorder.start(Rectangle(0, 0, 10, 10), output, RecordingOptions())
-            handle.use { /* AutoCloseable scope */ }
+            handle.use { Files.write(output, byteArrayOf(1, 2)) }
             assertTrue(handle.isStopped)
         } finally {
             output.deleteIfExists()
@@ -161,6 +168,7 @@ class FfmpegRecorderTest {
                 ProcessFactoryReturning(process),
             )
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         try {
             val handle = recorder.start(Rectangle(0, 0, 50, 50), output, RecordingOptions())
             // Drive the crash *after* start succeeded — start's own probe reports the process
@@ -186,6 +194,7 @@ class FfmpegRecorderTest {
                 ProcessFactoryReturning(InstantlyExitingFakeProcess()),
             )
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         try {
             kotlin.test
                 .assertFailsWith<IllegalStateException> {
@@ -212,6 +221,7 @@ class FfmpegRecorderTest {
         assertEquals(0, resolveCount, "Backend must be resolved lazily, not at construction time")
         // Sanity: the resolver does fire on first start(), preserving the failure surface.
         val output = Files.createTempFile("spectre-recording-test-", ".mp4")
+        Files.write(output, byteArrayOf(1))
         try {
             kotlin.test.assertFailsWith<UnsupportedOperationException> {
                 recorder.start(Rectangle(0, 0, 10, 10), output, RecordingOptions())

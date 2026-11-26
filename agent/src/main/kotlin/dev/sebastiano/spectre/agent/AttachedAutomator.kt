@@ -32,6 +32,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 public class AttachedAutomator
 internal constructor(
     public val pid: Long,
+    public val sessionInfo: AttachedSessionInfo =
+        AttachedSessionInfo("unknown", "unknown", "unknown", null),
     private val client: IpcClient,
     private val detacher: Runnable,
 ) : AutoCloseable {
@@ -377,6 +379,18 @@ internal constructor(
         val resp = exchange(AgentRequest.WindowIdentity(windowIndex))
         return (resp as? AgentResponse.WindowIdentities)?.windows
             ?: throw wireMismatch("WindowIdentities", resp)
+    }
+
+    public fun beginWindowChangeCapture(): Long {
+        val response = exchange(AgentRequest.BeginWindowChangeCapture)
+        return (response as? AgentResponse.WindowChangeCapture)?.token
+            ?: throw wireMismatch("WindowChangeCapture", response)
+    }
+
+    public fun endWindowChangeCapture(token: Long): Long {
+        val response = exchange(AgentRequest.EndWindowChangeCapture(token))
+        return (response as? AgentResponse.WindowChangeCapture)?.generation
+            ?: throw wireMismatch("WindowChangeCapture", response)
     }
 
     /**

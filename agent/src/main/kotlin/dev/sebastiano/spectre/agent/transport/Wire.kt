@@ -250,6 +250,14 @@ internal sealed interface AgentRequest {
     @SerialName("windowIdentity")
     data class WindowIdentity(val windowIndex: Int? = null) : AgentRequest
 
+    @Serializable
+    @SerialName("beginWindowChangeCapture")
+    data object BeginWindowChangeCapture : AgentRequest
+
+    @Serializable
+    @SerialName("endWindowChangeCapture")
+    data class EndWindowChangeCapture(val token: Long) : AgentRequest
+
     /**
      * Signal the agent runtime to drain in-flight requests, stop accepting new ones, release the
      * in-target `ComposeAutomator`, unlink the UDS path, and remove its shutdown hook. Server
@@ -372,6 +380,8 @@ internal val AgentRequest.logLabel: String
             is AgentRequest.CaptureWithWindowStill -> "captureWithWindowStill"
             is AgentRequest.CaptureWithUntitledWindowStill -> "captureWithUntitledWindowStill"
             is AgentRequest.WindowIdentity -> "windowIdentity"
+            AgentRequest.BeginWindowChangeCapture -> "beginWindowChangeCapture"
+            is AgentRequest.EndWindowChangeCapture -> "endWindowChangeCapture"
             AgentRequest.Detach -> "detach"
             is AgentRequest.Hello -> "hello"
             is AgentRequest.Cancel -> "cancel"
@@ -406,6 +416,8 @@ internal val AgentRequest.requiresInputLane: Boolean
             is AgentRequest.CaptureWithWindowStill,
             is AgentRequest.CaptureWithUntitledWindowStill,
             is AgentRequest.WindowIdentity,
+            AgentRequest.BeginWindowChangeCapture,
+            is AgentRequest.EndWindowChangeCapture,
             AgentRequest.Detach,
             is AgentRequest.Hello,
             is AgentRequest.Cancel,
@@ -508,6 +520,10 @@ internal sealed interface AgentResponse {
     @SerialName("windowIdentities")
     data class WindowIdentities(val windows: List<WindowIdentityDto>) : AgentResponse
 
+    @Serializable
+    @SerialName("windowChangeCapture")
+    data class WindowChangeCapture(val token: Long, val generation: Long) : AgentResponse
+
     /**
      * Server-side failure with a stable [category] from the #199 error taxonomy plus a
      * human-readable [message].
@@ -532,8 +548,20 @@ internal sealed interface AgentResponse {
     @Serializable
     @SerialName("helloAck")
     // No default — see [AgentRequest.Hello] (must be on the wire for exact-match).
-    data class HelloAck(val protocolVersion: Int) : AgentResponse
+    data class HelloAck(
+        val protocolVersion: Int,
+        val sessionInfo: AgentSessionInfoDto? = null,
+    ) : AgentResponse
 }
+
+@Serializable
+internal data class AgentSessionInfoDto(
+    val driverKind: String,
+    val inputLeasePolicy: String,
+    val coreProvenance: String,
+    val coreVersion: String? = null,
+    val warnings: List<String> = emptyList(),
+)
 
 /**
  * Compact summary of one tracked window — the only window-level data the agent transport exposes.

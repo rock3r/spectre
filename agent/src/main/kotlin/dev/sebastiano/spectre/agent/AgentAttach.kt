@@ -69,7 +69,48 @@ public object AgentAttach {
 
     /** Attach to the JVM identified by [pid] and return a connected [AttachedAutomator]. */
     @Throws(SpectreAttachException::class)
-    public fun attach(pid: Long, options: AttachOptions = AttachOptions()): AttachedAutomator {
+    public fun attach(pid: Long, options: AttachOptions = AttachOptions()): AttachedAutomator =
+        attachInternal(pid, options, { options.attachTimeoutMs }) { agentJar, agentArgs ->
+            attachAndLoadDirect(pid, agentJar, agentArgs)
+        }
+
+    internal fun attachLaunched(
+        pid: Long,
+        options: AttachOptions,
+        nativeOpenTimeoutMs: Long,
+    ): AttachedAutomator {
+        val startedAt = System.nanoTime()
+        val isWindows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+        fun remainingBudgetMs(): Long =
+            (nativeOpenTimeoutMs -
+                    java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
+                        System.nanoTime() - startedAt
+                    ))
+                .coerceAtLeast(1L)
+        return attachInternal(
+            pid,
+            options,
+            if (isWindows) ::remainingBudgetMs else ({ options.attachTimeoutMs }),
+        ) { agentJar, agentArgs ->
+            if (isWindows) {
+                val result =
+                    BoundedAttachOperation.run(
+                        WindowsAttachHelper.command(pid, agentJar, agentArgs),
+                        remainingBudgetMs(),
+                        { ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false) },
+                        setOf(0, 2),
+                    )
+                WindowsAttachHelper.failure(result)?.let { throw it }
+            } else attachAndLoadDirect(pid, agentJar, agentArgs)
+        }
+    }
+
+    private fun attachInternal(
+        pid: Long,
+        options: AttachOptions,
+        udsWaitTimeoutMs: () -> Long,
+        attachAndLoad: (Path, String) -> Unit,
+    ): AttachedAutomator {
         AttachRuntimePreflight.requireSupported()
         AgentPlatformPreflight.requireSupported()
         // Resolve and length-check the UDS path before anything expensive: the agent binds it
@@ -96,23 +137,22 @@ public object AgentAttach {
         // coordinated session into a broken one, in the name of an opt-out it never received.
         // Five seconds on an already-broken host is the cheaper side of that trade. Codex caught
         // this on the first review of #472.
-        val coordinatorClient = runCatching(::ensureInputCoordinator).getOrNull()
+        var coordinatorWarning: String? = null
+        val coordinatorClient =
+            runCatching(::ensureInputCoordinator)
+                .onFailure { error ->
+                    coordinatorWarning =
+                        "Input coordinator could not be started: " +
+                            "${error.javaClass.simpleName}: ${error.message}; " +
+                            "Required input will fail closed"
+                }
+                .getOrNull()
         var coordinatorOwnedByResult = false
         try {
 
-            val (vmClass, vm) = openVirtualMachine(pid)
-            try {
-                loadAgentReflectively(
-                    vmClass,
-                    vm,
-                    agentJar.toString(),
-                    agentArgsFor(options, udsPath, inputCoordination),
-                )
-            } finally {
-                detachVirtualMachine(vmClass, vm)
-            }
+            attachAndLoad(agentJar, agentArgsFor(options, udsPath, inputCoordination))
 
-            waitForUdsPath(udsPath, options.attachTimeoutMs)
+            waitForUdsPath(udsPath, udsWaitTimeoutMs())
 
             val client =
                 try {
@@ -127,8 +167,20 @@ public object AgentAttach {
                     )
                 }
 
+            val info = client.sessionInfo
             val attached =
-                AttachedAutomator(pid = pid, client = client) {
+                AttachedAutomator(
+                    pid = pid,
+                    sessionInfo =
+                        AttachedSessionInfo(
+                            driverKind = info.driverKind,
+                            inputLeasePolicy = info.inputLeasePolicy,
+                            coreProvenance = info.coreProvenance,
+                            coreVersion = info.coreVersion,
+                            warnings = info.warnings + listOfNotNull(coordinatorWarning),
+                        ),
+                    client = client,
+                ) {
                     coordinatorClient?.close()
                     // Detacher: best-effort UDS cleanup after the AttachedAutomator closes. The
                     // agent's own shutdown hook handles crash cleanup.
@@ -138,6 +190,15 @@ public object AgentAttach {
             return attached
         } finally {
             if (!coordinatorOwnedByResult) coordinatorClient?.close()
+        }
+    }
+
+    internal fun attachAndLoadDirect(pid: Long, agentJar: Path, agentArgs: String) {
+        val (vmClass, vm) = openVirtualMachine(pid)
+        try {
+            loadAgentReflectively(vmClass, vm, agentJar.toString(), agentArgs)
+        } finally {
+            detachVirtualMachine(vmClass, vm)
         }
     }
 
@@ -271,7 +332,7 @@ public object AgentAttach {
 
 /** Internal concrete subclass — sealed parent prevents downstream subclassing. */
 @OptIn(ExperimentalSpectreAgentApi::class)
-private class SpectreAttachExceptionImpl(message: String, cause: Throwable?) :
+internal class SpectreAttachExceptionImpl(message: String, cause: Throwable?) :
     SpectreAttachException(message, cause)
 
 /**

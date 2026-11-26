@@ -6,7 +6,7 @@ import java.awt.Rectangle
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
+import kotlin.test.assertFailsWith
 import org.junit.jupiter.api.Assumptions.assumeFalse
 
 class WaylandPortalStartCommandFactoryTest {
@@ -25,13 +25,16 @@ class WaylandPortalStartCommandFactoryTest {
     }
 
     @Test
-    fun `window start does not send AWT screen size`() {
-        val command =
-            WaylandPortalRecorder.defaultStartCommandFactory(listOf(SourceType.WINDOW))(
-                Rectangle(25, 25, 480, 240),
-                Path.of("/tmp/out.mp4"),
-                RecordingOptions(),
-            )
-        assertNull(command.screenSize)
+    fun `window sources cannot request a portal grant`() {
+        for (sources in
+            listOf(listOf(SourceType.WINDOW), listOf(SourceType.MONITOR, SourceType.WINDOW))) {
+            assertFailsWith<IllegalArgumentException> {
+                WaylandPortalRecorder.defaultStartCommandFactory(sources)(
+                    Rectangle(25, 25, 480, 240),
+                    Path.of("/tmp/out.mp4"),
+                    RecordingOptions(),
+                )
+            }
+        }
     }
 }

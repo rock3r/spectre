@@ -37,8 +37,27 @@ class DocsGuidanceContractTest {
         assertContains(docs, "spectre-input-coordinator-server")
         assertContains(docs, "InputIsolationConfig.perTest()")
         assertContains(docs, "unsafeTakeover=true")
-        assertContains(docs, "best-effort attempt")
+        assertContains(docs, "RobotDriver.synthetic(policy)")
+        assertContains(docs, "never substitutes")
+        assertContains(docs, "legacy real-OS driver")
         assertContains(docs, "does not rewrite the Windows ACL")
+    }
+
+    @Test
+    fun `capture KDoc does not promise silent region fallbacks`() {
+        val sources =
+            listOf(
+                    "core/src/main/kotlin/dev/sebastiano/spectre/core/RobotDriver.kt",
+                    "core/src/main/kotlin/dev/sebastiano/spectre/core/DeviceScaleScreenCapture.kt",
+                    "core/src/main/kotlin/dev/sebastiano/spectre/core/NativeWindowHandle.kt",
+                )
+                .joinToString(separator = "\n") { root.resolve(it).readText() }
+
+        assertFalse(sources.contains("until Spectre grows native window-capture backends"))
+        assertFalse(sources.contains("Robot fallback used when it is absent"))
+        assertFalse(sources.contains("the window still is a Robot region capture too"))
+        assertFalse(sources.contains("or region capture"))
+        assertContains(sources, "fails instead of substituting a Robot region")
     }
 
     @Test
@@ -51,6 +70,37 @@ class DocsGuidanceContractTest {
             skill.contains("falls back to `Robot` region capture"),
             "waitForVisualIdle must not promise an implicit Robot region fallback",
         )
+    }
+
+    @Test
+    fun `recording guide and published skill agree on region and Wayland contracts`() {
+        val guide = root.resolve("docs/guide/recording.md").readText()
+        val skill = root.resolve("skills/spectre/references/recording.md").readText()
+        val skillOverview = root.resolve("skills/spectre/SKILL.md").readText()
+        val evals = root.resolve("skills/spectre/evals/evals.json").readText()
+        val packageJson = root.resolve("skills/spectre/package.json").readText()
+
+        listOf(guide, skill).forEach { recordingDocs ->
+            assertContains(recordingDocs, "spectre-recording-macos")
+            assertContains(recordingDocs, "ScreenCaptureKit")
+            assertContains(recordingDocs, "live session")
+            assertContains(recordingDocs, "restore token")
+            assertContains(recordingDocs, "PID")
+            assertContains(recordingDocs, "XID")
+            assertContains(recordingDocs, "select or focus")
+        }
+
+        assertContains(skill, "Xorg/Xvfb")
+        assertContains(skill, "`JWindow` popups")
+        assertFalse(skill.contains("use `java.awt.Robot` directly"))
+        assertFalse(skill.contains("tick Remember"))
+        assertFalse(skill.contains("briefly activates the window"))
+        assertFalse(skill.contains("one-time grant"))
+        assertFalse(skillOverview.contains("unsupported Wayland `JWindow` popup"))
+        assertFalse(skillOverview.contains("| `Robot` capture; no `:recording` needed"))
+        assertFalse(evals.contains("untitled JWindow popups unsupported"))
+        assertFalse(evals.contains("store the long-lived Wayland portal grant"))
+        assertContains(packageJson, "\"version\": \"0.7.0\"")
     }
 
     private fun assertContains(haystack: String, needle: String) {

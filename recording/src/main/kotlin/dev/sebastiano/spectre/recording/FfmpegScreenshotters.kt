@@ -77,7 +77,10 @@ internal constructor(
                 ffmpegPath = ffmpegPath,
                 region = region,
                 output = output,
-                displayName = displayNameProvider()?.takeIf { it.isNotBlank() } ?: ":0.0",
+                displayName =
+                    requireNotNull(displayNameProvider()?.takeIf { it.isNotBlank() }) {
+                        "DISPLAY is unset; ffmpeg x11grab cannot identify the X11 display to capture."
+                    },
             )
         }
 }

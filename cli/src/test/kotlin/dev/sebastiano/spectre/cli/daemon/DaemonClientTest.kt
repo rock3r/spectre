@@ -3,22 +3,121 @@ package dev.sebastiano.spectre.cli.daemon
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.cli.SpectreCli
 import java.io.File
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.Channels
+import java.nio.channels.ServerSocketChannel
 import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 
 @OptIn(ExperimentalSpectreAgentApi::class)
 class DaemonClientTest {
+    @Test
+    fun `operation exceptions preserve diagnostics without leaking them to later requests`() {
+        val failures =
+            ArrayDeque<RuntimeException>().apply {
+                add(SecurityException("OS discovery denied"))
+                add(IllegalArgumentException("invalid VM identifier"))
+            }
+        val socketPath = temporaryDaemonClientSocketPath()
+        val registry = DaemonSessionRegistry {
+            val failure = failures.removeFirst()
+            RequestDiagnostics.report("attach warning: ${failure.message}")
+            throw failure
+        }
+        val server = DaemonServer(socketPath, registry)
+        val client = DaemonClient(socketPath, retainDiagnostics = true)
+
+        try {
+            listOf(
+                    SecurityException("OS discovery denied"),
+                    IllegalArgumentException("invalid VM identifier"),
+                )
+                .forEachIndexed { index, failure ->
+                    assertEquals(
+                        DaemonResponse.Diagnosed(
+                            response =
+                                DaemonResponse.Error(
+                                    DaemonErrorCode.OperationFailed,
+                                    "${failure.javaClass.simpleName}: ${failure.message}",
+                                ),
+                            warnings = listOf("attach warning: ${failure.message}"),
+                        ),
+                        client.request(DaemonRequest.Attach(index.toLong() + 1)),
+                    )
+                }
+
+            assertEquals(
+                DaemonResponse.Sessions(emptyList()),
+                client.request(DaemonRequest.ListSessions),
+            )
+        } finally {
+            server.close()
+            assertTrue(server.awaitTermination())
+            deleteTemporaryDaemonClientSocketPath(socketPath)
+        }
+    }
+
+    @Test
+    fun `accessibility capture rejects an old daemon before sending the capture request`() {
+        val socketPath = temporaryDaemonClientSocketPath()
+        val receivedAfterHello = AtomicReference<DaemonRequest?>()
+        Files.createDirectories(socketPath.parent)
+        ServerSocketChannel.open(StandardProtocolFamily.UNIX).use { server ->
+            server.bind(UnixDomainSocketAddress.of(socketPath))
+            val daemon = Thread {
+                server.accept().use { channel ->
+                    val input = Channels.newInputStream(channel)
+                    val output = Channels.newOutputStream(channel)
+                    assertEquals(
+                        DaemonRequest.Hello(
+                            DaemonProtocolVersion(1, 17),
+                            daemonConfiguration(),
+                        ),
+                        DaemonWireCodec.readRequest(input),
+                    )
+                    DaemonWireCodec.writeResponse(
+                        output,
+                        DaemonResponse.Hello(
+                            daemonVersion = DaemonProtocolVersion(1, 16),
+                            maxFrameBytes = null,
+                            inputCoordination = null,
+                        ),
+                    )
+                    receivedAfterHello.set(DaemonWireCodec.readRequest(input))
+                }
+            }
+            daemon.start()
+
+            assertFailsWith<java.io.IOException> {
+                DaemonClient(socketPath)
+                    .request(
+                        DaemonRequest.Capture(
+                            sessionId = "pid-42",
+                            source = DaemonCaptureSource.Accessibility,
+                        )
+                    )
+            }
+            daemon.join(2_000)
+            assertTrue(!daemon.isAlive, "fake daemon did not observe the rejected connection close")
+            assertNull(receivedAfterHello.get(), "capture must not reach an incompatible daemon")
+        }
+        deleteTemporaryDaemonClientSocketPath(socketPath)
+    }
+
     @Test
     fun `public CLI prints hello and operation warnings and fails partial operation`() {
         val property = DaemonProcessLauncher.PROCESS_GROUP_ISOLATED_PROPERTY

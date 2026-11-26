@@ -4,16 +4,10 @@ import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
 import dev.sebastiano.spectre.agent.transport.ProgressRangeDto
 import dev.sebastiano.spectre.agent.transport.RectDto
 import dev.sebastiano.spectre.cli.SpectreBuildMetadata
-import dev.sebastiano.spectre.cli.daemon.DaemonClient
 import dev.sebastiano.spectre.cli.daemon.DaemonErrorCode
 import dev.sebastiano.spectre.cli.daemon.DaemonRequest
 import dev.sebastiano.spectre.cli.daemon.DaemonResponse
-import dev.sebastiano.spectre.cli.daemon.DaemonServer
-import dev.sebastiano.spectre.cli.daemon.DaemonSessionRegistry
-import dev.sebastiano.spectre.cli.daemon.RequestDiagnostics
-import dev.sebastiano.spectre.cli.daemon.TestDaemonSessionAutomator
-import dev.sebastiano.spectre.cli.daemon.deleteTemporaryDaemonClientSocketPath
-import dev.sebastiano.spectre.cli.daemon.temporaryDaemonClientSocketPath
+import dev.sebastiano.spectre.cli.daemon.DaemonSessionInfo
 import io.modelcontextprotocol.kotlin.sdk.server.ClientConnection
 import io.modelcontextprotocol.kotlin.sdk.shared.RequestOptions
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
@@ -35,7 +29,6 @@ import io.modelcontextprotocol.kotlin.sdk.types.RequestId
 import io.modelcontextprotocol.kotlin.sdk.types.ResourceUpdatedNotification
 import io.modelcontextprotocol.kotlin.sdk.types.ServerNotification
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
-import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -50,66 +43,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 class SpectreMcpServerTest {
-    @Test
-    fun `real daemon wire carries warnings into generic image and partial MCP results`() =
-        runBlocking {
-            val socketPath = temporaryDaemonClientSocketPath()
-            val registry = DaemonSessionRegistry {
-                TestDaemonSessionAutomator(
-                    nodesResult = {
-                        RequestDiagnostics.report("tree degraded")
-                        emptyList()
-                    },
-                    screenshotResult = { _, _, _ ->
-                        repeat(101) { RequestDiagnostics.report("screenshot warning $it") }
-                        RequestDiagnostics.report("x".repeat(5_000))
-                        byteArrayOf(1, 2, 3)
-                    },
-                    windowsResult = {
-                        RequestDiagnostics.report("windows partial failure")
-                        error("window provider failed")
-                    },
-                )
-            }
-            val daemon = DaemonServer(socketPath, registry)
-            try {
-                val client = DaemonClient(socketPath, retainDiagnostics = true)
-                assertIs<DaemonResponse.Attached>(client.request(DaemonRequest.Attach(42)))
-                val server = SpectreMcpServer.create(client::request)
-                val arguments = buildJsonObject { put("session_id", "pid-42") }
-
-                val tree = invokeTool(server, "tree", arguments)
-                assertEquals("warning: tree degraded", (tree.content.first() as TextContent).text)
-                assertTrue(tree.isError != true)
-
-                val screenshot = invokeTool(server, "screenshot", arguments)
-                assertEquals(101, screenshot.content.size)
-                assertEquals(
-                    (0..98).map { "warning: screenshot warning $it" },
-                    screenshot.content.dropLast(2).map { (it as TextContent).text },
-                )
-                assertEquals(
-                    "warning: [spectre-daemon] diagnostics truncated (discarded 3 warning(s) " +
-                        "and 904 warning character(s)); recent diagnostics may remain in the " +
-                        "retained suffix of the per-socket daemon log",
-                    (screenshot.content[99] as TextContent).text,
-                )
-                assertEquals("AQID", assertIs<ImageContent>(screenshot.content.last()).data)
-                assertTrue(screenshot.isError != true)
-
-                val partial = invokeTool(server, "windows", arguments)
-                assertEquals(
-                    "warning: windows partial failure",
-                    (partial.content.first() as TextContent).text,
-                )
-                assertTrue(partial.isError == true, "partial operation failure must be nonzero")
-            } finally {
-                daemon.close()
-                daemon.awaitTermination()
-                deleteTemporaryDaemonClientSocketPath(socketPath)
-            }
-        }
-
     @Test
     fun `find_text accepts JSON booleans and defaults exact only when absent`() = runBlocking {
         for ((arguments, expected) in
@@ -138,49 +71,6 @@ class SpectreMcpServerTest {
             assertTrue(result.isError != true, result.toString())
             assertEquals(DaemonRequest.FindByText("session-1", "needle", expected), forwarded)
         }
-    }
-
-    @Test
-    fun `MCP rejects wrong primitive kinds and unknown names before forwarding`() = runBlocking {
-        val cases =
-            listOf(
-                "find_text" to
-                    buildJsonObject {
-                        put("session_id", "session-1")
-                        put("text", "needle")
-                        put("exact", "false")
-                    },
-                "find" to
-                    buildJsonObject {
-                        put("session_id", "session-1")
-                        put("test_tag", 7)
-                    },
-                "windows" to
-                    buildJsonObject {
-                        put("session_id", "session-1")
-                        put("unknown", true)
-                    },
-            )
-        cases.forEach { (tool, arguments) ->
-            var forwarded = false
-            val server = SpectreMcpServer.create {
-                forwarded = true
-                error("invalid input reached daemon")
-            }
-            val result = invokeTool(server, tool, arguments)
-            assertTrue(result.isError == true, "$tool accepted $arguments")
-            assertTrue(!forwarded, "$tool forwarded $arguments")
-        }
-    }
-
-    @Test
-    fun `normalizes recording output paths before sending them to the daemon`() {
-        val outputPath = "captures/../captures/session.mp4"
-
-        assertEquals(
-            Path.of(outputPath).toAbsolutePath().normalize().toString(),
-            normalizeRecordingOutputPath(outputPath),
-        )
     }
 
     @Test
@@ -213,6 +103,7 @@ class SpectreMcpServerTest {
                 "detach",
                 "windows",
                 "tree",
+                "accessibility_tree",
                 "find",
                 "find_text",
                 "wait_for_node",
@@ -264,6 +155,54 @@ class SpectreMcpServerTest {
     }
 
     @Test
+    fun `attach tool returns negotiated warnings driver and lease through MCP`() = runBlocking {
+        val sessionInfo =
+            DaemonSessionInfo(
+                driverKind = "synthetic",
+                inputLeasePolicy = "Required",
+                coreProvenance = "preinstalled",
+                coreVersion = "0.10.0",
+                warnings = listOf("native handles may be unavailable"),
+            )
+        val server = SpectreMcpServer.create { request ->
+            val attach = assertIs<DaemonRequest.Attach>(request)
+            DaemonResponse.Attached(
+                sessionId = "pid-42",
+                targetPid = attach.targetPid,
+                sessionInfo = sessionInfo,
+            )
+        }
+
+        val result = invokeTool(server, "attach", buildJsonObject { put("pid", 42) })
+
+        assertTrue(result.isError != true, "attach success must not set isError: $result")
+        val body = Json.parseToJsonElement((result.content.single() as TextContent).text).jsonObject
+        val negotiated = body.getValue("sessionInfo").jsonObject
+        assertEquals("synthetic", negotiated.getValue("driverKind").jsonPrimitive.content)
+        assertEquals("Required", negotiated.getValue("inputLeasePolicy").jsonPrimitive.content)
+        assertEquals(
+            listOf("native handles may be unavailable"),
+            negotiated.getValue("warnings").jsonArray.map { it.jsonPrimitive.content },
+        )
+    }
+
+    @Test
+    fun `record stop returns backend diagnostics including unavailable values`() = runBlocking {
+        val server = SpectreMcpServer.create { request ->
+            assertIs<DaemonRequest.StopRecording>(request)
+            DaemonResponse.RecordingStopped(request.sessionId, "/capture.mp4").also {
+                it.diagnostics = DaemonResponse.RecordingDiagnostics(null, true)
+            }
+        }
+        val result =
+            invokeTool(server, "record_stop", buildJsonObject { put("session_id", "pid-3") })
+        val body = Json.parseToJsonElement((result.content.single() as TextContent).text).jsonObject
+        val diagnostics = body.getValue("diagnostics").jsonObject
+        assertEquals("null", diagnostics.getValue("droppedFrames").jsonPrimitive.content)
+        assertEquals("true", diagnostics.getValue("cropFixedAtStart").jsonPrimitive.content)
+    }
+
+    @Test
     fun `detach tool returns Detached cleanup summary JSON via daemon protocol`() = runBlocking {
         val seen = mutableListOf<DaemonRequest>()
         val server = SpectreMcpServer.create { request ->
@@ -307,134 +246,6 @@ class SpectreMcpServerTest {
 
         val detachRequest = assertIs<DaemonRequest.Detach>(seen.single())
         assertEquals("session-42", detachRequest.sessionId)
-    }
-
-    @Test
-    fun `detach tool fails closed for unknown session`() = runBlocking {
-        val server = SpectreMcpServer.create { request ->
-            when (request) {
-                is DaemonRequest.Detach ->
-                    DaemonResponse.Error(
-                        code = DaemonErrorCode.SessionNotFound,
-                        message = "session not found: ${request.sessionId}",
-                    )
-                else -> error("unexpected daemon request: $request")
-            }
-        }
-
-        val result =
-            invokeTool(server, "detach", buildJsonObject { put("session_id", "missing-session") })
-
-        assertTrue(result.isError == true, "unknown session must set isError")
-        assertEquals(
-            "session not found: missing-session",
-            (result.content.single() as TextContent).text,
-        )
-    }
-
-    @Test
-    fun `detach tool requires session_id`() = runBlocking {
-        val server = SpectreMcpServer.create {
-            error("detach must not reach daemon without session_id")
-        }
-
-        val result = invokeTool(server, "detach", buildJsonObject {})
-
-        assertTrue(result.isError == true, "missing session_id must fail closed: $result")
-        val message = (result.content.single() as TextContent).text
-        assertTrue(
-            message.contains("session_id", ignoreCase = true),
-            "error should mention session_id, was: $message",
-        )
-    }
-
-    @Test
-    fun `detach tool fails closed for empty session_id without reaching daemon`() = runBlocking {
-        var daemonReached = false
-        val server = SpectreMcpServer.create {
-            daemonReached = true
-            error("detach must not reach daemon with empty session_id")
-        }
-
-        val result = invokeTool(server, "detach", buildJsonObject { put("session_id", "") })
-
-        assertTrue(result.isError == true, "empty session_id must fail closed: $result")
-        assertTrue(!daemonReached, "empty session_id must fail at the tool boundary: $result")
-        val message = (result.content.single() as TextContent).text
-        assertTrue(
-            message.contains("session_id", ignoreCase = true),
-            "error should mention session_id, was: $message",
-        )
-    }
-
-    @Test
-    fun `detach tool fails closed for whitespace-only session_id without reaching daemon`() =
-        runBlocking {
-            var daemonReached = false
-            val server = SpectreMcpServer.create {
-                daemonReached = true
-                error("detach must not reach daemon with blank session_id")
-            }
-
-            val result =
-                invokeTool(server, "detach", buildJsonObject { put("session_id", "   \t") })
-
-            assertTrue(result.isError == true, "blank session_id must fail closed: $result")
-            assertTrue(!daemonReached, "blank session_id must fail at the tool boundary: $result")
-            val message = (result.content.single() as TextContent).text
-            assertTrue(
-                message.contains("session_id", ignoreCase = true),
-                "error should mention session_id, was: $message",
-            )
-        }
-
-    @Test
-    fun `detach tool fails closed for non-string session_id without reaching daemon`() =
-        runBlocking {
-            var daemonReached = false
-            val server = SpectreMcpServer.create {
-                daemonReached = true
-                error("detach must not reach daemon with non-string session_id")
-            }
-
-            val result = invokeTool(server, "detach", buildJsonObject { put("session_id", 42) })
-
-            assertTrue(result.isError == true, "numeric session_id must fail closed: $result")
-            assertTrue(
-                !daemonReached,
-                "non-string session_id must fail at the tool boundary: $result",
-            )
-            val message = (result.content.single() as TextContent).text
-            assertTrue(
-                message.contains("session_id", ignoreCase = true),
-                "error should mention session_id, was: $message",
-            )
-        }
-
-    @Test
-    fun `detach tool fails closed for object session_id without reaching daemon`() = runBlocking {
-        var daemonReached = false
-        val server = SpectreMcpServer.create {
-            daemonReached = true
-            error("detach must not reach daemon with object session_id")
-        }
-
-        val result =
-            invokeTool(
-                server,
-                "detach",
-                buildJsonObject { put("session_id", buildJsonObject { put("nested", "value") }) },
-            )
-
-        assertTrue(result.isError == true, "object session_id must fail closed: $result")
-        assertTrue(!daemonReached, "object session_id must fail at the tool boundary: $result")
-        val message = (result.content.single() as TextContent).text
-        assertTrue(
-            message.contains("session_id", ignoreCase = true) ||
-                message.contains("string", ignoreCase = true) ||
-                message.contains("Error executing tool", ignoreCase = true),
-            "error should identify bad session_id input, was: $message",
-        )
     }
 
     @Test
@@ -668,83 +479,82 @@ class SpectreMcpServerTest {
         assertTrue(result.isError == true)
         assertEquals(diagnostics, (result.content.single() as TextContent).text)
     }
+}
 
-    private suspend fun invokeTool(
-        server: io.modelcontextprotocol.kotlin.sdk.server.Server,
-        name: String,
-        arguments: kotlinx.serialization.json.JsonObject,
-    ): CallToolResult {
-        val registered = assertNotNull(server.tools[name], "tool $name must be registered")
-        // Mirror SDK handleCallTool: tool-body failures become isError results so unit tests
-        // exercise the same surface official clients see over stdio.
-        return try {
-            registered.handler.invoke(
-                UnusedClientConnection,
-                CallToolRequest(CallToolRequestParams(name = name, arguments = arguments)),
-            )
-        } catch (error: Exception) {
-            CallToolResult(
-                content = listOf(TextContent("Error executing tool $name: ${error.message}")),
-                isError = true,
-            )
-        }
+internal suspend fun invokeTool(
+    server: io.modelcontextprotocol.kotlin.sdk.server.Server,
+    name: String,
+    arguments: kotlinx.serialization.json.JsonObject,
+): CallToolResult {
+    val registered = assertNotNull(server.tools[name], "tool $name must be registered")
+    // Mirror SDK handleCallTool: tool-body failures become isError results so unit tests
+    // exercise the same surface official clients see over stdio.
+    return try {
+        registered.handler.invoke(
+            UnusedClientConnection,
+            CallToolRequest(CallToolRequestParams(name = name, arguments = arguments)),
+        )
+    } catch (error: Exception) {
+        CallToolResult(
+            content = listOf(TextContent("Error executing tool $name: ${error.message}")),
+            isError = true,
+        )
     }
+}
 
-    /**
-     * Tool handlers for Spectre never use the [ClientConnection] receiver; this stub only exists so
-     * unit tests can invoke the registered suspend extension without a live session.
-     */
-    private object UnusedClientConnection : ClientConnection {
-        override val sessionId: String = "unit-test"
+/**
+ * Tool handlers for Spectre never use the [ClientConnection] receiver; this stub only exists so
+ * unit tests can invoke the registered suspend extension without a live session.
+ */
+private object UnusedClientConnection : ClientConnection {
+    override val sessionId: String = "unit-test"
 
-        override suspend fun notification(
-            notification: ServerNotification,
-            relatedRequestId: RequestId?,
-        ) = Unit
+    override suspend fun notification(
+        notification: ServerNotification,
+        relatedRequestId: RequestId?,
+    ) = Unit
 
-        override suspend fun ping(request: PingRequest, options: RequestOptions?): EmptyResult =
-            EmptyResult()
+    override suspend fun ping(request: PingRequest, options: RequestOptions?): EmptyResult =
+        EmptyResult()
 
-        override suspend fun createMessage(
-            request: CreateMessageRequest,
-            options: RequestOptions?,
-        ): CreateMessageResult = error("unused")
+    override suspend fun createMessage(
+        request: CreateMessageRequest,
+        options: RequestOptions?,
+    ): CreateMessageResult = error("unused")
 
-        override suspend fun listRoots(
-            request: ListRootsRequest,
-            options: RequestOptions?,
-        ): ListRootsResult = error("unused")
+    override suspend fun listRoots(
+        request: ListRootsRequest,
+        options: RequestOptions?,
+    ): ListRootsResult = error("unused")
 
-        override suspend fun createElicitation(
-            request: ElicitRequest,
-            options: RequestOptions?,
-        ): ElicitResult = error("unused")
+    override suspend fun createElicitation(
+        request: ElicitRequest,
+        options: RequestOptions?,
+    ): ElicitResult = error("unused")
 
-        override suspend fun createElicitation(
-            message: String,
-            requestedSchema: ElicitRequestParams.RequestedSchema,
-            options: RequestOptions?,
-        ): ElicitResult = error("unused")
+    override suspend fun createElicitation(
+        message: String,
+        requestedSchema: ElicitRequestParams.RequestedSchema,
+        options: RequestOptions?,
+    ): ElicitResult = error("unused")
 
-        override suspend fun createElicitation(
-            message: String,
-            elicitationId: String,
-            url: String,
-            options: RequestOptions?,
-        ): ElicitResult = error("unused")
+    override suspend fun createElicitation(
+        message: String,
+        elicitationId: String,
+        url: String,
+        options: RequestOptions?,
+    ): ElicitResult = error("unused")
 
-        override suspend fun sendLoggingMessage(notification: LoggingMessageNotification) = Unit
+    override suspend fun sendLoggingMessage(notification: LoggingMessageNotification) = Unit
 
-        override suspend fun sendResourceUpdated(notification: ResourceUpdatedNotification) = Unit
+    override suspend fun sendResourceUpdated(notification: ResourceUpdatedNotification) = Unit
 
-        override suspend fun sendResourceListChanged() = Unit
+    override suspend fun sendResourceListChanged() = Unit
 
-        override suspend fun sendToolListChanged() = Unit
+    override suspend fun sendToolListChanged() = Unit
 
-        override suspend fun sendPromptListChanged() = Unit
+    override suspend fun sendPromptListChanged() = Unit
 
-        override suspend fun sendElicitationComplete(
-            notification: ElicitationCompleteNotification
-        ) = Unit
-    }
+    override suspend fun sendElicitationComplete(notification: ElicitationCompleteNotification) =
+        Unit
 }

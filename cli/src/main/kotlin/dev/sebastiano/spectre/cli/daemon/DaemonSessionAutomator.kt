@@ -4,7 +4,9 @@ import dev.sebastiano.spectre.agent.AtomicCaptureResult
 import dev.sebastiano.spectre.agent.AttachedAutomator
 import dev.sebastiano.spectre.agent.ExperimentalSpectreAgentApi
 import dev.sebastiano.spectre.agent.transport.NodeSnapshotDto
+import dev.sebastiano.spectre.agent.transport.WindowIdentityDto
 import dev.sebastiano.spectre.agent.transport.WindowSummaryDto
+import dev.sebastiano.spectre.recording.RecordingResult
 import java.io.IOException
 import java.time.Clock
 
@@ -12,7 +14,22 @@ import java.time.Clock
 @OptIn(ExperimentalSpectreAgentApi::class)
 @Suppress("TooManyFunctions") // Session surface grows with transport parity (#203).
 internal interface DaemonSessionAutomator : AutoCloseable {
+    val sessionInfo: DaemonSessionInfo?
+        get() = null
+
     @Throws(IOException::class) fun windows(): List<WindowSummaryDto>
+
+    @Throws(IOException::class)
+    fun windowIdentities(windowIndex: Int? = null): List<WindowIdentityDto> =
+        throw UnsupportedOperationException("agent runtime lacks window identity capability")
+
+    @Throws(IOException::class)
+    fun beginWindowChangeCapture(): Long =
+        throw UnsupportedOperationException("agent runtime lacks atomic accessibility capability")
+
+    @Throws(IOException::class)
+    fun endWindowChangeCapture(token: Long): Long =
+        throw UnsupportedOperationException("agent runtime lacks atomic accessibility capability")
 
     @Throws(IOException::class) fun allNodes(): List<NodeSnapshotDto>
 
@@ -102,7 +119,7 @@ internal interface DaemonSessionAutomator : AutoCloseable {
         fullscreen: Boolean = false,
     ): String
 
-    @Throws(IOException::class) fun stopRecording(liveSessionIds: Set<String>): String
+    @Throws(IOException::class) fun stopRecording(liveSessionIds: Set<String>): RecordingResult
 
     /** Active recording path, or null when idle. */
     fun recordingStatus(): RecordingStatus
@@ -111,7 +128,7 @@ internal interface DaemonSessionAutomator : AutoCloseable {
      * Finalize any active recording before the session is dropped. [remainingLiveSessionIds] must
      * be every other still-attached session so retention does not delete their capture dirs.
      */
-    fun finalizeRecording(remainingLiveSessionIds: Set<String>)
+    fun finalizeRecording(remainingLiveSessionIds: Set<String>): RecordingResult?
 }
 
 @OptIn(ExperimentalSpectreAgentApi::class)
@@ -122,6 +139,24 @@ internal class AttachedDaemonSession(
     clock: Clock = Clock.systemUTC(),
     ledger: CaptureLedger = CaptureLifecycle.ledger(),
 ) : DaemonSessionAutomator {
+    override val sessionInfo: DaemonSessionInfo =
+        delegate.sessionInfo.let {
+            DaemonSessionInfo(
+                driverKind = it.driverKind,
+                inputLeasePolicy = it.inputLeasePolicy,
+                coreProvenance = it.coreProvenance,
+                coreVersion = it.coreVersion,
+                warnings = it.warnings,
+            )
+        }
+
+    override fun windowIdentities(windowIndex: Int?): List<WindowIdentityDto> =
+        delegate.windowIdentities(windowIndex)
+
+    override fun beginWindowChangeCapture(): Long = delegate.beginWindowChangeCapture()
+
+    override fun endWindowChangeCapture(token: Long): Long = delegate.endWindowChangeCapture(token)
+
     private val recording =
         DaemonSessionRecording(
             delegate = delegate,
@@ -222,13 +257,13 @@ internal class AttachedDaemonSession(
         fullscreen: Boolean,
     ): String = recording.start(outputPath, windowIndex, fullscreen)
 
-    override fun stopRecording(liveSessionIds: Set<String>): String = recording.stop(liveSessionIds)
+    override fun stopRecording(liveSessionIds: Set<String>): RecordingResult =
+        recording.stop(liveSessionIds)
 
     override fun recordingStatus(): RecordingStatus = recording.status()
 
-    override fun finalizeRecording(remainingLiveSessionIds: Set<String>) {
+    override fun finalizeRecording(remainingLiveSessionIds: Set<String>): RecordingResult? =
         recording.finalizeIfActive(remainingLiveSessionIds)
-    }
 
     override fun close() {
         try {

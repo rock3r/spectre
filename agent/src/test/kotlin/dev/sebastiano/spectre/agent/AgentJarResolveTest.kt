@@ -120,6 +120,42 @@ class AgentJarResolveTest {
     }
 
     @Test
+    fun `missing explicit path fails instead of selecting another runtime`() {
+        val fallback = Files.createTempFile("spectre-agent-runtime-", ".jar")
+        val missing = fallback.resolveSibling("requested-missing-agent.jar")
+
+        val error =
+            assertFailsWith<AgentJarNotFoundException> {
+                AgentJarResolution.resolveRuntimeJar(
+                    agentJarPath = missing,
+                    runtimeJarSystemProperty = null,
+                    classPath = fallback.toString(),
+                    cwd = Files.createTempDirectory("consumer-app"),
+                )
+            }
+        assertTrue(error.message!!.contains(missing.toString()))
+        assertFalse(error.message!!.contains(fallback.toString()))
+    }
+
+    @Test
+    fun `missing runtime property fails instead of selecting classpath runtime`() {
+        val fallback = Files.createTempFile("spectre-agent-runtime-", ".jar")
+        val missing = fallback.resolveSibling("property-missing-agent.jar")
+
+        val error =
+            assertFailsWith<AgentJarNotFoundException> {
+                AgentJarResolution.resolveRuntimeJar(
+                    agentJarPath = null,
+                    runtimeJarSystemProperty = missing.toString(),
+                    classPath = fallback.toString(),
+                    cwd = Files.createTempDirectory("consumer-app"),
+                )
+            }
+        assertTrue(error.message!!.contains(missing.toString()))
+        assertFalse(error.message!!.contains(fallback.toString()))
+    }
+
+    @Test
     fun `layout alone without spectre identity is not a checkout`() {
         val root = Files.createTempDirectory("lookalike")
         Files.writeString(root.resolve("settings.gradle.kts"), """rootProject.name = "Other"""")
