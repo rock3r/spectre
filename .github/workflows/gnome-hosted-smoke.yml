@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [accessibility, atspi-ownership]
+        mode: [capture]
 
     steps:
       - name: Check out temporary workflow tooling
@@ -75,7 +75,7 @@ jobs:
             git -C "$GITHUB_WORKSPACE/candidate" apply --3way --index "$PWD/$overlay"
           done < SHA256SUMS
           git -C "$GITHUB_WORKSPACE/candidate" diff --cached --check
-          git -C "$GITHUB_WORKSPACE/candidate" write-tree
+          test "$(git -C "$GITHUB_WORKSPACE/candidate" write-tree)" = 832a2a3a87b3d99025e5b31cb8e3761b4bc3c580
           git -C "$GITHUB_WORKSPACE/candidate" diff --cached --stat
 
       - name: Apply standalone caller-owned window identity candidate
