@@ -168,9 +168,10 @@ the JUnit failure artifacts below.
     `$SPECTRE_MAX_FRAME_BYTES` to get the full-resolution still — see
     [Agent — Payload limits](agent.md#payload-limits-204).
 
-    On macOS Spectre combines sequential display-scoped ScreenCaptureKit captures at the scale of
-    the display under the requested rectangle's centre. Windows and Linux X11 retain
-    `java.awt.Robot`'s equivalent centre-display scale behaviour.
+    On a **mixed-density multi-monitor** desktop, macOS combines sequential display-scoped
+    ScreenCaptureKit captures at the scale of the display under the requested rectangle's centre.
+    Windows and Linux X11 retain `java.awt.Robot`'s equivalent centre-display scale behaviour, so a
+    desktop centred on a 1x monitor downsamples the higher-density parts.
 
     Window-scoped stills, including every `capture`, do not have this limit, because the native
     helpers use the target window's own screen scale.
