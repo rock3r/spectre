@@ -23,6 +23,9 @@ object PublicWaylandRegionStills {
     private val artifacts = Path.of(requireNotNull(System.getenv("SMOKE_ARTIFACTS")))
     private val receipts = artifacts.resolve("region-java-receipts.jsonl")
     private val stages = artifacts.resolve("region-stage-boundaries.jsonl")
+    private val socket = Path.of(requireNotNull(System.getenv("SPECTRE_REGION_SESSION_SOCKET")))
+    private val expectedOwner =
+        requireNotNull(System.getenv("SPECTRE_REGION_SESSION_OWNER_PID")).toLong()
     private val first = Rectangle(137, 91, 311, 173)
     private val second = Rectangle(604, 277, 229, 191)
     private val cyan = Rectangle(169, 153, 18, 18)
@@ -97,13 +100,8 @@ object PublicWaylandRegionStills {
 
             val shared = LinuxNativeScreenshotter()
             phase(shared, scene, screen, origin, changed = false)
-            val heldBeforeFresh = helperPids("before-fresh")
             val fresh = LinuxNativeScreenshotter()
             phase(shared, scene, screen, origin, changed = true, fresh = fresh)
-            val heldAfterFresh = helperPids("after-fresh")
-            check(heldBeforeFresh.isNotEmpty() && heldBeforeFresh == heldAfterFresh) {
-                "held helper changed across fresh caller: $heldBeforeFresh -> $heldAfterFresh"
-            }
         } finally {
             diagnostics("final")
             SwingUtilities.invokeAndWait { frame.dispose() }
@@ -144,6 +142,7 @@ object PublicWaylandRegionStills {
         stage("$phase-reference-retained")
 
         val firstClient = fresh ?: shared
+        if (fresh != null) socketOwner("before-fresh")
         crop(
             firstClient,
             reference,
@@ -153,6 +152,7 @@ object PublicWaylandRegionStills {
             32,
             62,
         )
+        if (fresh != null) socketOwner("after-fresh")
         crop(
             shared,
             reference,
@@ -332,7 +332,6 @@ object PublicWaylandRegionStills {
                 ),
                 listOf("gsettings", "get", "org.gnome.desktop.interface", "enable-animations"),
                 listOf("pw-dump"),
-                listOf("ps", "-eo", "pid,ppid,comm"),
             )
         if (xid != null) {
             commands += listOf("xwininfo", "-id", xid, "-stats", "-tree")
@@ -358,15 +357,39 @@ object PublicWaylandRegionStills {
         }
     }
 
-    private fun helperPids(label: String): Set<String> =
-        command("helper-$label.txt", "ps", "-eo", "pid,ppid,comm", required = false)
-            .lineSequence()
-            .filter {
-                it.contains("spectre", ignoreCase = true) &&
-                    it.contains("helper", ignoreCase = true)
-            }
-            .map { it.trim().substringBefore(' ') }
-            .toSet()
+    private fun socketOwner(label: String) {
+        val started = System.nanoTime()
+        val error = artifacts.resolve("socket-owner-$label.stderr")
+        val standard = artifacts.resolve("socket-owner-$label.stdout")
+        val process =
+            ProcessBuilder("fuser", socket.toString())
+                .redirectError(error.toFile())
+                .redirectOutput(standard.toFile())
+                .start()
+        val finished = process.waitFor(15, TimeUnit.SECONDS)
+        if (!finished) {
+            process.destroyForcibly()
+            process.waitFor(5, TimeUnit.SECONDS)
+        }
+        val exit = if (finished) process.exitValue() else null
+        val output = Files.readString(standard)
+        val owners = output.split(Regex("\\s+")).mapNotNull(String::toLongOrNull)
+        val live = owners.map { Files.isDirectory(Path.of("/proc/$it")) }
+        val valid = exit == 0 && owners == listOf(expectedOwner) && live == listOf(true)
+        Files.writeString(
+            receipts,
+            """{"name":"$label","kind":"socket-owner","startedNs":$started,"endedNs":${System.nanoTime()},"socket":"${json(socket.toString())}","expectedOwnerPid":$expectedOwner,"fuserExit":${exit ?: "null"},"owners":${owners.joinToString(prefix = "[", postfix = "]")},"ownersLive":${live.joinToString(prefix = "[", postfix = "]")},"valid":$valid}
+""",
+            StandardOpenOption.CREATE,
+            StandardOpenOption.APPEND,
+        )
+        check(valid) {
+            "exact session socket owner mismatch for $label: expected $expectedOwner, owners=$owners, live=$live, fuserExit=$exit"
+        }
+    }
+
+    private fun json(value: String) =
+        value.replace("\\", "\\\\").replace("\"", "\\\"")
 
     private fun command(name: String, vararg args: String, required: Boolean = true): String {
         stage("command-start", name)

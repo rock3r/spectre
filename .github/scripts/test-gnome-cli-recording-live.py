@@ -11,6 +11,7 @@ DRIVER = (ROOT / ".github/scripts/gnome-cli-recording-live.py").read_text()
 CROP = (ROOT / ".github/scripts/gnome-public-window-crop.py").read_text()
 REGION_DRIVER = (ROOT / ".github/scripts/gnome-cli-region-stills.py").read_text()
 REGION_FIXTURE = (ROOT / ".github/verification/wayland-cli-region-stills/PublicWaylandRegionStills.kt").read_text()
+REGION_BUILD = (ROOT / ".github/verification/wayland-cli-region-stills/build.init.gradle").read_text()
 
 
 def load_permission_verifier():
@@ -189,13 +190,24 @@ class CliRecordingLiveContractTest(unittest.TestCase):
         self.assertNotIn("read_bytes", DRIVER)
 
     def test_region_stills_settle_frames_and_preserve_client_contract(self):
+        truncated_linux_comm = "spectre-waylan"
+        self.assertNotIn("helper", truncated_linux_comm)
         self.assertEqual(2, REGION_FIXTURE.count("LinuxNativeScreenshotter()"))
         self.assertEqual(1, REGION_FIXTURE.count('"Escape"'))
         self.assertNotIn("Robot", REGION_FIXTURE.replace("not Robot", ""))
         self.assertIn("settleFrame", REGION_FIXTURE)
         self.assertIn("region-$phase-full-reference.png", REGION_FIXTURE)
         self.assertIn("reference.getRGB(request.x + x, request.y + y)", REGION_FIXTURE)
-        self.assertIn('listOf("ps", "-eo", "pid,ppid,comm")', REGION_FIXTURE)
+        self.assertNotIn("helperPids", REGION_FIXTURE)
+        self.assertNotIn('listOf("ps", "-eo", "pid,ppid,comm")', REGION_FIXTURE)
+        self.assertIn('System.getenv("SPECTRE_REGION_SESSION_SOCKET")', REGION_FIXTURE)
+        self.assertIn('System.getenv("SPECTRE_REGION_SESSION_OWNER_PID")', REGION_FIXTURE)
+        self.assertIn('ProcessBuilder("fuser", socket.toString())', REGION_FIXTURE)
+        self.assertIn('"kind":"socket-owner"', REGION_FIXTURE)
+        self.assertIn('env["SPECTRE_REGION_SESSION_SOCKET"] = str(socket)', DRIVER)
+        self.assertIn('env["SPECTRE_REGION_SESSION_OWNER_PID"] = str(helper_pid)', DRIVER)
+        self.assertIn("environment 'SPECTRE_REGION_SESSION_SOCKET'", REGION_BUILD)
+        self.assertIn("environment 'SPECTRE_REGION_SESSION_OWNER_PID'", REGION_BUILD)
         self.assertIn("GetCurrentState", REGION_FIXTURE)
         self.assertIn("xwininfo", REGION_FIXTURE)
         self.assertIn("region-stage-boundaries.jsonl", REGION_FIXTURE)

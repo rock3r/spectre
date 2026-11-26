@@ -321,6 +321,8 @@ def main() -> None:
     region_mode = os.environ.get("SMOKE_MODE") == "cli-region-stills"
     crop_script = Path(__file__).with_name("gnome-public-window-crop.py")
     if region_mode:
+        env["SPECTRE_REGION_SESSION_SOCKET"] = str(socket)
+        env["SPECTRE_REGION_SESSION_OWNER_PID"] = str(helper_pid)
         crop_script = Path(__file__).with_name("gnome-cli-region-stills.py")
     capture_started = time.monotonic()
     crop = subprocess.run([sys.executable, str(crop_script)], env=env, text=True,

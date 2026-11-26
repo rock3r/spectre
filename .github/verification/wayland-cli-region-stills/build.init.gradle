@@ -7,6 +7,10 @@ allprojects { candidate ->
                 group = 'verification'
                 classpath = candidate.sourceSets.test.runtimeClasspath
                 mainClass = 'verification.PublicWaylandRegionStills'
+                environment 'SPECTRE_REGION_SESSION_SOCKET',
+                    System.getenv('SPECTRE_REGION_SESSION_SOCKET')
+                environment 'SPECTRE_REGION_SESSION_OWNER_PID',
+                    System.getenv('SPECTRE_REGION_SESSION_OWNER_PID')
                 standardOutput = System.out
                 errorOutput = System.err
             }
