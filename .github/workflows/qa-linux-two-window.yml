@@ -44,14 +44,7 @@ jobs:
           git -C candidate fetch --quiet --no-tags --depth=1 origin "$CANDIDATE_SHA"
           git -C candidate checkout --quiet --detach FETCH_HEAD
           actual_sha=$(git -C candidate rev-parse HEAD)
-          base_tree=$(git -C candidate rev-parse 'HEAD^{tree}')
-          test "$base_tree" = b6672c347607c71135ddd27d14143f32ec5c8b6e
-          printf '%s  %s\n' ca4c41ae53ecb05615d4c7304a210217aa0fbc87e7ed15dff4f60db7858577ed "$QA_DIR/v5-runtime-source.patch" | sha256sum -c -
-          git -C candidate apply --index "$QA_DIR/v5-runtime-source.patch"
-          git -C candidate diff --cached --check
-          actual_tree=$(git -C candidate write-tree)
-          test "$actual_tree" = "$CANDIDATE_TREE"
-          git -C candidate -c user.name=Verification -c user.email=verification@localhost commit --quiet -m "Assemble verified v5 package source"
+          actual_tree=$(git -C candidate rev-parse 'HEAD^{tree}')
           test "$actual_sha" = "$CANDIDATE_SHA"
           test "$actual_tree" = "$CANDIDATE_TREE"
           test -z "$(git -C candidate status --porcelain=v1 --untracked-files=all)"
