@@ -251,5 +251,30 @@ class GnomeHostedSmokeContractTest(unittest.TestCase):
             self.assertIn(contract, extension)
 
 
+class PublicWindowCropContractTest(unittest.TestCase):
+    def test_public_crop_mode_is_standalone_and_fail_closed(self):
+        probe = (ROOT / ".github/scripts/gnome-public-window-crop.py").read_text()
+        fixture = (ROOT / ".github/verification/wayland-public-crop/PublicWaylandCropProof.kt").read_text()
+        init = (ROOT / ".github/verification/wayland-public-crop/build.init.gradle").read_text()
+        self.assertIn('SMOKE_MODE" == public-window-crop', SESSION.read_text())
+        self.assertIn("--mode helper", SESSION.read_text())
+        self.assertIn("runPublicWaylandCropProof", init)
+        self.assertIn("dependsOn candidate.tasks.named('testClasses')", init)
+        for contract in ("AutoScreenshotter", "AutoRecorder", "cropInWindow = crop",
+                         "defaultTransform", "content.x - top.x", "whole-public-still",
+                         "reference-crop-derived-from-public-still",
+                         "red-decorated", "green-undecorated"):
+            self.assertIn(contract, fixture)
+        for contract in ('"--all", "--name", TITLE', 'getwindowpid', 'dict.fromkeys',
+                         '"first-frame-0"', 'count // 2', 'count - 1', 'ffprobe',
+                         'public-window-crop-evidence.json', 'crop-orchestrator-receipts.json'):
+            self.assertIn(contract, probe)
+        self.assertIn(":recording:compileTestKotlin", probe)
+        self.assertIn("motionAcrossSamples", probe)
+        self.assertNotIn("Files.size(movie) > 10_000", fixture)
+        self.assertNotIn("gnome-cli-recording-live.py", probe)
+        self.assertNotIn("PublicWaylandCliRecordingLive", probe + fixture)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -77,23 +77,29 @@ def decoy_xid(pid: int, title: str, artifacts: Path) -> str:
     search = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(pid),
                              "--name", pattern], text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
-    candidates = [value for value in search.stdout.splitlines() if value.isdecimal()]
+    raw_candidates = [value for value in search.stdout.splitlines() if value.isdecimal()]
+    candidates = list(dict.fromkeys(int(value) for value in raw_candidates))
     metadata = []
     for xid in candidates:
-        props = subprocess.run(["xprop", "-id", xid, "_NET_WM_PID", "WM_CLASS", "WM_NAME",
+        props = subprocess.run(["xprop", "-id", str(xid), "_NET_WM_PID", "WM_CLASS", "WM_NAME",
                                 "_NET_WM_NAME"], text=True, stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT).stdout
         match = re.search(r"_NET_WM_PID\(CARDINAL\) = (\d+)", props)
-        metadata.append({"xid": xid, "netWmPid": int(match.group(1)) if match else None,
-                         "xprop": props})
+        actual_pid = int(match.group(1)) if match else None
+        decoy_class = "verification-BlueDecoy" in props
+        metadata.append({"xidNumeric": xid, "netWmPid": actual_pid,
+                         "decoyClass": decoy_class, "xprop": props,
+                         "accepted": actual_pid == pid and decoy_class})
     (artifacts / "decoy-x11-selection.json").write_text(json.dumps({
         "expectedPid": pid, "titlePattern": pattern, "searchExitCode": search.returncode,
-        "searchStderr": search.stderr, "candidates": metadata,
+        "searchStderr": search.stderr, "rawSearchResults": raw_candidates,
+        "distinctNumericXids": candidates, "candidates": metadata,
     }, indent=2) + "\n")
-    owned = [item["xid"] for item in metadata if item["netWmPid"] == pid]
-    if search.returncode != 0 or len(candidates) != 1 or len(owned) != 1:
-        raise RuntimeError(f"expected one visible client XID owned by decoy PID {pid}: {metadata}")
-    return owned[0]
+    owned = [item["xidNumeric"] for item in metadata if item["accepted"]]
+    if search.returncode != 0 or len(owned) != 1:
+        raise RuntimeError(
+            f"expected exactly one visible verified client XID owned by decoy PID {pid}: {metadata}")
+    return str(owned[0])
 
 
 def colors(path: Path) -> dict[str, float]:

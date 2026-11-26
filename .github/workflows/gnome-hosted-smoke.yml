@@ -10,6 +10,8 @@ on:
   push:
     branches: [release-0.10/gnome-hosted-smoke]
     paths-ignore:
+      - .github/reader-overlays/726-packaged-smoke.patch
+      - .github/workflows/a11y-packaged-release-cell.yml
       - .github/release-smoke-hosted.env
       - .github/workflows/release-smoke-hosted.yml
 
@@ -87,7 +89,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [geometry-calibration]
+        mode: [public-window-crop]
         replica: [1]
 
     steps:
@@ -130,7 +132,7 @@ jobs:
           path: fixture
 
       - name: Apply pinned cloud candidate overlays
-        if: matrix.mode == 'capture'
+        if: matrix.mode == 'capture' || matrix.mode == 'public-window-crop'
         working-directory: smoke-tooling/.github/smoke-overlays
         run: |
           sha256sum -c SHA256SUMS

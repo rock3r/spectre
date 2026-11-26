@@ -99,7 +99,7 @@ pw-cli info 0 >"$SMOKE_ARTIFACTS/pipewire-core.txt"
 # accessibility bus is enabled. Do this before either grant, and wait for both
 # the public broker and GNOME implementation rather than relying on activation
 # races hidden inside the test client.
-if [[ "$SMOKE_MODE" == portal || "$SMOKE_MODE" == capture || "$SMOKE_MODE" == geometry-calibration ]]; then
+if [[ "$SMOKE_MODE" == portal || "$SMOKE_MODE" == capture || "$SMOKE_MODE" == geometry-calibration || "$SMOKE_MODE" == public-window-crop ]]; then
   gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
     --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled '<true>'
   timeout 15s gdbus wait --session --activate org.freedesktop.portal.Desktop
@@ -125,6 +125,27 @@ if [[ "$SMOKE_MODE" == cli-recording-live ]]; then
   mkdir -m 0700 "$SPECTRE_WAYLAND_SESSION_DIR" "$SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"
   /usr/bin/python3 "$(dirname "$0")/gnome-cli-recording-live.py" \
     2> >(tee "$SMOKE_ARTIFACTS/cli-recording-live.stderr" >&2)
+  exit 0
+fi
+
+if [[ "$SMOKE_MODE" == public-window-crop ]]; then
+  export GDK_BACKEND=x11
+  cd "$SMOKE_REPO"
+  ./gradlew --no-daemon :recording:assembleWaylandHelper --console=plain \
+    2>&1 | tee "$SMOKE_ARTIFACTS/assemble-wayland-helper.log"
+  helper=$(find "$SMOKE_REPO/recording/build/generated/waylandHelper/native/linux" \
+    -type f -name spectre-wayland-helper -perm /111 -print -quit)
+  [[ -n "$helper" ]] || { echo "Candidate did not install spectre-wayland-helper" >&2; exit 1; }
+  export SPECTRE_WAYLAND_SESSION_FOREGROUND=1
+  export SPECTRE_WAYLAND_SESSION_DIR="$XDG_RUNTIME_DIR/spectre-public-crop-session"
+  export SPECTRE_WAYLAND_RESTORE_TOKEN_DIR="$XDG_RUNTIME_DIR/spectre-public-crop-tokens"
+  mkdir -m 0700 "$SPECTRE_WAYLAND_SESSION_DIR" "$SPECTRE_WAYLAND_RESTORE_TOKEN_DIR"
+  /usr/bin/python3 "$(dirname "$0")/gnome-portal-dialog-warmup.py" \
+    --mode helper --helper "$helper" --pid-file "$SMOKE_ARTIFACTS/helper.pid" \
+    --artifacts "$SMOKE_ARTIFACTS" 2>&1 | tee "$SMOKE_ARTIFACTS/helper-portal-flow.log"
+  export SPECTRE_WAYLAND_CONSENT_PROMPT=never
+  /usr/bin/python3 "$(dirname "$0")/gnome-public-window-crop.py" \
+    2>&1 | tee "$SMOKE_ARTIFACTS/public-window-crop.log"
   exit 0
 fi
 

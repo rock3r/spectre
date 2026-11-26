@@ -1,0 +1,19 @@
+allprojects { candidate ->
+    if (candidate.path == ':recording') {
+        candidate.plugins.withId('org.jetbrains.kotlin.jvm') {
+            candidate.kotlin.sourceSets.test.kotlin.srcDir(System.getenv('SPECTRE_CROP_VERIFICATION_SOURCE'))
+            candidate.tasks.register('runPublicWaylandCropProof', JavaExec) {
+                group = 'verification'
+                description = 'Runs the temporary public-API GNOME window crop proof.'
+                classpath = candidate.sourceSets.test.runtimeClasspath
+                dependsOn candidate.tasks.named('testClasses')
+                mainClass = 'verification.PublicWaylandCropProof'
+                standardOutput = System.out
+                errorOutput = System.err
+            }
+            candidate.tasks.named('compileTestKotlin').configure {
+                inputs.property('spectreCropVerificationSource', System.getenv('SPECTRE_CROP_VERIFICATION_SOURCE') ?: '')
+            }
+        }
+    }
+}
