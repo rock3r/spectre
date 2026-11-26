@@ -56,10 +56,10 @@ if [[ -n ${CORRECTED_HELPER:-} ]]; then
   # root's late sibling, including when that sibling is poisoned or slow.
   run_provider public-fe9-normal-count3 normal "$PREFETCH_HELPER" count-prefetch
   run_provider public-fe9-error-count3 error "$PREFETCH_HELPER" count-prefetch
-  run_provider public-fe9-slow-count3 slow "$PREFETCH_HELPER" count-prefetch
   run_provider corrected-normal-count3 normal "$CORRECTED_HELPER" count-cutoff
   run_provider corrected-error-count3 error "$CORRECTED_HELPER" count-cutoff
   run_provider corrected-slow-count3 slow "$CORRECTED_HELPER" count-cutoff
   # Ten independent complete reads share this one real, uncached provider PID.
   run_provider old-vs-corrected-five-each normal "$PREFETCH_HELPER" comparison "$CORRECTED_HELPER"
+  run_provider public-fe9-slow-count3 slow "$PREFETCH_HELPER" count-prefetch
 fi
