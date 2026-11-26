@@ -177,7 +177,11 @@ fn validate(r: &Request) -> Result<()> {
 }
 
 fn capture(request: Request) -> Response {
-    match capture_inner(&request) {
+    response_from_result(capture_inner(&request))
+}
+
+fn response_from_result(result: std::result::Result<Snapshot, CaptureError>) -> Response {
+    match result {
         Ok(snapshot) => Response {
             ok: true,
             snapshot: Some(snapshot),
@@ -216,9 +220,9 @@ fn capture_inner(request: &Request) -> std::result::Result<Snapshot, CaptureErro
         let enable_deadline = deadline
             .checked_sub(STATUS_RESTORE_BUDGET)
             .unwrap_or(deadline);
-        return with_status_restoration(
-            || {
-                let status = fresh_status_proxy(&session, enable_deadline)?;
+        return with_prepared_status_restoration(
+            || fresh_status_proxy(&session, enable_deadline),
+            |status| {
                 set_property(&status, "org.a11y.Status", "IsEnabled", true)
                     .map_err(|error| timed_err(enable_deadline, error))
             },
@@ -227,6 +231,16 @@ fn capture_inner(request: &Request) -> std::result::Result<Snapshot, CaptureErro
         );
     }
     capture_with_status(request, deadline, &session, changed)
+}
+
+fn with_prepared_status_restoration<P>(
+    prepare: impl FnOnce() -> std::result::Result<P, CaptureError>,
+    enable: impl FnOnce(P) -> std::result::Result<(), CaptureError>,
+    work: impl FnOnce() -> std::result::Result<Snapshot, CaptureError>,
+    restore: impl FnOnce() -> std::result::Result<(), String>,
+) -> std::result::Result<Snapshot, CaptureError> {
+    let prepared = prepare()?;
+    with_status_restoration(|| enable(prepared), work, restore)
 }
 
 fn restore_status(session: &Connection) -> std::result::Result<(), String> {
@@ -243,19 +257,16 @@ fn with_status_restoration(
     work: impl FnOnce() -> std::result::Result<Snapshot, CaptureError>,
     restore: impl FnOnce() -> std::result::Result<(), String>,
 ) -> std::result::Result<Snapshot, CaptureError> {
-    // The setter may have applied true even when its response was lost. Once it was attempted,
-    // restoration and readback are mandatory on every exit path.
     let result = enable().and_then(|()| work());
     if let Err(restore_error) = restore() {
         let outcome = match &result {
             Ok(_) => "snapshot succeeded".to_string(),
             Err((code, message, _)) => format!("snapshot failed with {code}: {message}"),
         };
-        let partial = result.ok();
         return Err((
             "restore-failed",
             format!("failed to restore org.a11y.Status.IsEnabled after {outcome}: {restore_error}"),
-            partial,
+            None,
         ));
     }
     result
@@ -960,8 +971,7 @@ fn find_window_title(
     window: &Address,
     deadline: Instant,
 ) -> std::result::Result<TitleRead, CaptureError> {
-    let timeout = call_timeout(deadline)?;
-    let proxy = bus.with_proxy(&window.bus, window.path.clone(), timeout);
+    let proxy = bus.with_proxy(&window.bus, window.path.clone(), call_timeout(deadline)?);
     match proxy.method_call::<(Variant<String>,), _, _, _>(
         "org.freedesktop.DBus.Properties",
         "Get",
@@ -2013,6 +2023,86 @@ mod tests {
             unscoped_title_decision(vec![candidate], false, false, None, Instant::now()),
             TitleDecision::Retry(None)
         ));
+    }
+
+    #[test]
+    fn preparation_failure_does_not_arm_restoration() {
+        use std::cell::Cell;
+        let enable_calls = Cell::new(0);
+        let restore_calls = Cell::new(0);
+        let result = with_prepared_status_restoration(
+            || Err::<(), _>(("timeout", "initial status read timed out".into(), None)),
+            |()| {
+                enable_calls.set(enable_calls.get() + 1);
+                Ok(())
+            },
+            || panic!("capture must not run"),
+            || {
+                restore_calls.set(restore_calls.get() + 1);
+                Ok(())
+            },
+        );
+        assert_eq!(result.unwrap_err().0, "timeout");
+        assert_eq!(enable_calls.get(), 0);
+        assert_eq!(restore_calls.get(), 0);
+    }
+
+    #[test]
+    fn attempted_enable_with_lost_reply_is_restored() {
+        use std::cell::Cell;
+        let restore_calls = Cell::new(0);
+        let result = with_prepared_status_restoration(
+            || Ok(()),
+            |()| Err(("timeout", "enable reply was lost".into(), None)),
+            || panic!("capture must not run"),
+            || {
+                restore_calls.set(restore_calls.get() + 1);
+                Ok(())
+            },
+        );
+        assert_eq!(result.unwrap_err().0, "timeout");
+        assert_eq!(restore_calls.get(), 1);
+    }
+
+    #[test]
+    fn restore_failure_wire_never_contains_a_partial_snapshot() {
+        let successful_capture = with_status_restoration(
+            || Ok(()),
+            || Ok(empty_snapshot()),
+            || Err("readback failed".into()),
+        );
+        let failed_capture = with_status_restoration(
+            || Ok(()),
+            || {
+                Err((
+                    "timeout",
+                    "capture timed out".into(),
+                    Some(empty_snapshot()),
+                ))
+            },
+            || Err("readback failed".into()),
+        );
+
+        for result in [successful_capture, failed_capture] {
+            let encoded = serde_json::to_value(response_from_result(result)).unwrap();
+            assert_eq!(encoded["ok"], false);
+            assert_eq!(encoded["error"]["code"], "restore-failed");
+            assert!(encoded["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("readback failed"));
+            assert!(
+                encoded["error"].get("partialSnapshot").is_none(),
+                "{encoded}"
+            );
+            assert!(encoded.get("snapshot").is_none(), "{encoded}");
+        }
+    }
+
+    #[test]
+    fn cleanup_budget_fits_the_daemon_grace_period() {
+        assert_eq!(STATUS_RESTORE_BUDGET, STATUS_RESTORE_TIMEOUT * 2);
+        assert!(STATUS_RESTORE_BUDGET < Duration::from_millis(250));
     }
 
     #[test]
