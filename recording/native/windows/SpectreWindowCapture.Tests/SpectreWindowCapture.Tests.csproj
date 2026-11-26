@@ -5,8 +5,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <UseWPF>true</UseWPF>
   </PropertyGroup>
   <ItemGroup>
+    <Using Include="System.IO" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
@@ -22,5 +25,7 @@
     <Compile Include="../SampleClock.cs" Link="SampleClock.cs" />
     <Compile Include="../StillsProtocol.cs" Link="StillsProtocol.cs" />
     <Compile Include="../CompressedWindowRecorder.cs" Link="CompressedWindowRecorder.cs" />
+    <Compile Include="../AccessibilitySnapshot.cs" Link="AccessibilitySnapshot.cs" />
+    <Compile Include="../WindowsUiaTreeReader.cs" Link="WindowsUiaTreeReader.cs" />
   </ItemGroup>
 </Project>
