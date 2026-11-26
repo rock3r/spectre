@@ -62,7 +62,7 @@ class FfmpegScreenshotterTest {
                 ffmpegPath = FfmpegRecorder.PROBE_PATH,
                 processFactory = factory,
                 displayNameProvider = { ":99" },
-                getenv = { null },
+                getenv = fakeEnv("SPECTRE_CAPTURE_BACKEND" to "x11"),
             )
 
         val image = screenshotter.captureRegion(Rectangle(10, 20, 30, 40))
@@ -85,7 +85,7 @@ class FfmpegScreenshotterTest {
                 ffmpegPath = FfmpegRecorder.PROBE_PATH,
                 processFactory = factory,
                 displayNameProvider = { null },
-                getenv = { null },
+                getenv = fakeEnv("SPECTRE_CAPTURE_BACKEND" to "x11"),
             )
 
         assertFailsWith<IllegalArgumentException> {

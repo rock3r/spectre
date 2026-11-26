@@ -78,7 +78,7 @@ internal fun externalWindowStill(
     expectedSurfaceId: String,
     liveSurfaceId: String,
     osName: String = System.getProperty("os.name").orEmpty(),
-    isWayland: Boolean = isWaylandSession(),
+    isWayland: Boolean = isWaylandSession(osName),
 ): WindowCapture {
     check(expectedSurfaceId == liveSurfaceId) {
         "The window list changed after the native window still was taken: the still shows " +
@@ -174,7 +174,7 @@ internal fun externalUntitledWindowStill(
     expectedSurfaceId: String,
     liveSurfaceId: String,
     osName: String = System.getProperty("os.name").orEmpty(),
-    isWayland: Boolean = isWaylandSession(),
+    isWayland: Boolean = isWaylandSession(osName),
 ): WindowCapture {
     check(expectedSurfaceId == liveSurfaceId) {
         "The window list changed after the native window still was taken: the still shows " +

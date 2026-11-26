@@ -7,10 +7,9 @@
 //! frame is a real window capture: other windows on top of it do not show, and the stream follows
 //! the window when it moves.
 //!
-//! Mutter selects the window by its internal id, and only `xdg-desktop-portal-gnome` may list
-//! those ids. Without an id, `RecordWindow` records the window that has keyboard focus. The JVM
-//! therefore focuses the window, binds it here, checks the first frame, and restores focus. A
-//! binding lasts as long as its Mutter session, so later frames need no focus change.
+//! Mutter selects the window by its internal id, supplied by Spectre's GNOME Shell extension.
+//! Without an id, `RecordWindow` records the window that has keyboard focus; that compatibility
+//! path is used only by the explicit `BindFocusedWindow` command.
 
 use crate::portal::{make_options, variant};
 use crate::protocol::CursorMode;
@@ -27,6 +26,9 @@ pub const MUTTER_SCREEN_CAST_BUS: &str = "org.gnome.Mutter.ScreenCast";
 const MUTTER_SCREEN_CAST_PATH: &str = "/org/gnome/Mutter/ScreenCast";
 const SESSION_INTERFACE: &str = "org.gnome.Mutter.ScreenCast.Session";
 const STREAM_INTERFACE: &str = "org.gnome.Mutter.ScreenCast.Stream";
+const IDENTITY_BUS: &str = "dev.sebastiano.Spectre.WindowIdentity";
+const IDENTITY_PATH: &str = "/dev/sebastiano/Spectre/WindowIdentity";
+const IDENTITY_INTERFACE: &str = "dev.sebastiano.Spectre.WindowIdentity";
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 const STREAM_ADDED_TIMEOUT: Duration = Duration::from_secs(10);
 /// Mutter's `cursor-mode`: 0 hidden, 1 embedded in the frames, 2 as PipeWire metadata.
@@ -69,6 +71,15 @@ pub fn error_kind(err: &anyhow::Error) -> &'static str {
 
 fn typed(kind: &'static str, message: String) -> anyhow::Error {
     anyhow::Error::new(WindowStreamError { kind, message })
+}
+
+/// Validate an XID while this process is still a child of its owning JVM.
+pub fn locate_window(owner_pid: u32, xid: u64) -> Result<String> {
+    let conn = Connection::new_session().context("opening the session bus for window identity")?;
+    let proxy = conn.with_proxy(IDENTITY_BUS, IDENTITY_PATH, CALL_TIMEOUT);
+    let (token,): (String,) = proxy.method_call(IDENTITY_INTERFACE, "LookupWindow", (owner_pid, xid))
+        .map_err(|e| typed(ERROR_KIND_MUTTER_UNAVAILABLE, format!("GNOME window identity service rejected the binding for PID {owner_pid}: {e}. Install and enable the bundled spectre-window-identity GNOME Shell extension.")))?;
+    Ok(token)
 }
 
 /// True when `message` (a D-Bus error) says nobody owns Mutter's ScreenCast name.
@@ -136,6 +147,27 @@ impl MutterWindowStreams {
         self.unbind(key);
         let conn = self.connection()?;
         let bound = bind_focused_window(conn, owner, cursor_mode)?;
+        self.windows.insert(key.to_string(), bound.clone());
+        Ok(bound)
+    }
+
+    pub fn bind_identity(
+        &mut self,
+        key: &str,
+        owner: u64,
+        owner_pid: u32,
+        binding_token: &str,
+        cursor_mode: CursorMode,
+    ) -> Result<BoundWindow> {
+        self.unbind(key);
+        let conn = self.connection()?;
+        let proxy = conn.with_proxy(IDENTITY_BUS, IDENTITY_PATH, CALL_TIMEOUT);
+        let (window_id,): (u64,) = proxy
+            .method_call(IDENTITY_INTERFACE, "RedeemWindow", (binding_token, owner_pid))
+            .map_err(|e| typed(ERROR_KIND_MUTTER_UNAVAILABLE, format!(
+                "GNOME window identity service rejected the binding for PID {owner_pid}: {e}. Install and enable the bundled spectre-window-identity GNOME Shell extension."
+            )))?;
+        let bound = bind_window_id(conn, owner, cursor_mode, window_id)?;
         self.windows.insert(key.to_string(), bound.clone());
         Ok(bound)
     }
@@ -213,15 +245,49 @@ fn bind_focused_window(
     }
 }
 
+fn bind_window_id(
+    conn: &Connection,
+    owner: u64,
+    cursor_mode: CursorMode,
+    window_id: u64,
+) -> Result<BoundWindow> {
+    let manager = conn.with_proxy(
+        MUTTER_SCREEN_CAST_BUS,
+        MUTTER_SCREEN_CAST_PATH,
+        CALL_TIMEOUT,
+    );
+    let empty: PropMap = HashMap::new();
+    let (session_path,): (DBusPath,) = manager
+        .method_call(MUTTER_SCREEN_CAST_BUS, "CreateSession", (empty,))
+        .map_err(|e| anyhow!("org.gnome.Mutter.ScreenCast.CreateSession: {e}"))?;
+    let session_path = session_path.to_string();
+    match record_and_start_with_id(conn, &session_path, owner, cursor_mode, Some(window_id)) {
+        Ok(bound) => Ok(bound),
+        Err(e) => {
+            stop_session(conn, &session_path);
+            Err(e)
+        }
+    }
+}
+
 fn record_and_start(
     conn: &Connection,
     session_path: &str,
     owner: u64,
     cursor_mode: CursorMode,
 ) -> Result<BoundWindow> {
+    record_and_start_with_id(conn, session_path, owner, cursor_mode, None)
+}
+
+fn record_and_start_with_id(
+    conn: &Connection,
+    session_path: &str,
+    owner: u64,
+    cursor_mode: CursorMode,
+    window_id: Option<u64>,
+) -> Result<BoundWindow> {
     let session = conn.with_proxy(MUTTER_SCREEN_CAST_BUS, session_path, CALL_TIMEOUT);
-    // No "window-id": Mutter records the window that has keyboard focus.
-    let properties = make_options([("cursor-mode", variant(mutter_cursor_mode(cursor_mode)))]);
+    let properties = record_window_properties(cursor_mode, window_id);
     let (stream_path,): (DBusPath,) = session
         .method_call(SESSION_INTERFACE, "RecordWindow", (properties,))
         .map_err(|e| anyhow!("org.gnome.Mutter.ScreenCast.Session.RecordWindow: {e}"))?;
@@ -255,6 +321,14 @@ fn record_and_start(
         logical_size: parse_size(&parameters).unwrap_or((0, 0)),
         owner,
     })
+}
+
+fn record_window_properties(cursor_mode: CursorMode, window_id: Option<u64>) -> PropMap {
+    let mut properties = make_options([("cursor-mode", variant(mutter_cursor_mode(cursor_mode)))]);
+    if let Some(window_id) = window_id {
+        properties.insert("window-id".into(), variant(window_id));
+    }
+    properties
 }
 
 fn wait_for_node(conn: &Connection, node: &Mutex<Option<u32>>, stream_path: &str) -> Result<u32> {
@@ -295,6 +369,24 @@ fn parse_size(parameters: &PropMap) -> Option<(i32, i32)> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn window_id_is_dbus_uint64_without_truncation() {
+        let window_id = u64::MAX - 1;
+        let properties = record_window_properties(CursorMode::Hidden, Some(window_id));
+        let message = dbus::Message::new_method_call(
+            MUTTER_SCREEN_CAST_BUS,
+            "/org/gnome/Mutter/ScreenCast/Session/u1",
+            SESSION_INTERFACE,
+            "RecordWindow",
+        )
+        .unwrap()
+        .append1(properties);
+        let serialized: PropMap = message.read1().unwrap();
+        let value = serialized.get("window-id").unwrap().0.as_ref();
+        assert_eq!(value.arg_type(), dbus::arg::ArgType::UInt64);
+        assert_eq!(value.as_u64(), Some(window_id));
+    }
+
     fn bound(owner: u64) -> BoundWindow {
         BoundWindow {
             session_path: format!("/org/gnome/Mutter/ScreenCast/Session/u{owner}"),
@@ -310,14 +402,18 @@ mod tests {
             "org.freedesktop.DBus.Error.ServiceUnknown: The name org.gnome.Mutter.ScreenCast was \
              not provided by any .service files"
         ));
-        assert!(is_service_missing("org.freedesktop.DBus.Error.NameHasNoOwner"));
-        assert!(!is_service_missing("org.freedesktop.DBus.Error.Failed: Window not found"));
+        assert!(is_service_missing(
+            "org.freedesktop.DBus.Error.NameHasNoOwner"
+        ));
+        assert!(!is_service_missing(
+            "org.freedesktop.DBus.Error.Failed: Window not found"
+        ));
     }
 
     #[test]
     fn typed_errors_keep_their_kind_under_context() {
-        let err = typed(ERROR_KIND_MUTTER_UNAVAILABLE, "no Mutter".into())
-            .context("binding window 'k'");
+        let err =
+            typed(ERROR_KIND_MUTTER_UNAVAILABLE, "no Mutter".into()).context("binding window 'k'");
         assert_eq!(error_kind(&err), ERROR_KIND_MUTTER_UNAVAILABLE);
         assert_eq!(error_kind(&anyhow!("gst failed")), "Helper");
     }

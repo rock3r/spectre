@@ -102,14 +102,15 @@ stays valid. What can still require a new approval:
 - The grant covers one monitor. A region on another monitor cannot be captured with it.
 - A desktop other than GNOME may not restore RemoteDesktop grants without a dialog.
 
-On GNOME, window stills, visual-idle samples, and window recording use Mutter window
-streams through the session helper. Starting the helper requires a RemoteDesktop grant.
-Binding a window through Mutter then needs no separate window-picker grant. The
-`spectre-window-identity@sebastiano.dev` GNOME Shell extension authorizes only the requester's
-own PID and exact Xwayland XID. It returns a short-lived, one-use token bound to that identity;
-the helper redeems it for Mutter's internal window ID and passes that ID as the actual `uint64`
-argument to `RecordWindow`. An absent or invalid token, or an absent or ambiguous identity,
-produces a capture error. Spectre never substitutes a monitor crop.
+On GNOME, window stills, `waitForVisualIdle()` samples, and window recording use Mutter's
+`org.gnome.Mutter.ScreenCast` window streams through the session helper. Starting the helper
+requires the RemoteDesktop grant, but binding a window needs no separate window-picker grant.
+The `spectre-window-identity@sebastiano.dev` GNOME Shell extension authorizes only the
+requester's own PID and exact Xwayland XID, then returns a short-lived, one-use token. The
+UID/PID-authenticated session connection redeems that token for Mutter's internal window ID and
+passes the ID as the actual `uint64` argument to `RecordWindow`; keyboard focus is neither read
+nor changed. An absent or invalid token, an absent or ambiguous identity, a missing extension,
+or a desktop other than GNOME produces a capture error. Spectre never substitutes a monitor crop.
 GNOME shows its screen-sharing indicator in the top bar while window streams run. Each bound
 stream lives until its window closes or the session helper's client disconnects.
 
@@ -221,8 +222,10 @@ X11, macOS, and Windows keep their input and capture paths.
   default, resolved under `XDG_RUNTIME_DIR` unless the value is an absolute path.
   With no `DISPLAY`, a residual compositor socket indicates Wayland,
   including SSH sessions into a Wayland host.
-  Real Wayland+XWayland still routes to the portal. Override with
-  `SPECTRE_CAPTURE_BACKEND=x11` or `wayland` when probes cannot decide.
+  If none of these probes proves a type, Spectre fails and names
+  `SPECTRE_CAPTURE_BACKEND=x11|wayland`; it never guesses. A proven Xwayland `DISPLAY` is refused
+  by the X11 path even when `x11` was explicitly requested, because successful black capture is
+  not a valid result.
 
   Native Wayland sessions with XWayland are different: Mutter does not expose the composited
   desktop through the XWayland root framebuffer, so root-region `ximagesrc` capture can be black
@@ -264,20 +267,16 @@ X11, macOS, and Windows keep their input and capture paths.
   window streams. In unattended SSH/headless runs without a grant, a capture fails with an
   error that names `spectre permissions request`. It never returns a silent blank PNG.
 
-  The smoke runner validated real-pixel MP4 capture on Ubuntu 22.04/GNOME 42,
-  Ubuntu 24.04/GNOME 46, and Ubuntu 26.04/GNOME 50 with Mutter.
-  Runs on 2026-05-02 and 2026-05-03 checked the 24.04 and 26.04 paths.
-  The [public Ubuntu 24.04/GNOME 46 run](https://github.com/rock3r/spectre/actions/runs/45737657330/job/139634678395)
-  at tree `d889d474eee688cbf3da4a141b3407777a313af8`, using the packaged GStreamer
-  1.24.2, confirmed that static, fully occluded target windows keep recording for the requested
-  duration without exposing the foreground window. Its three-second 480×320 H.264 recording had
-  91 frames over 3.033333 seconds at 30 fps; sampled start, middle, and end frames retained the
-  target's red pixels and no blue foreground pixels, and a fresh green target was also captured
-  correctly. The native `pipewiresrc` `keepalive-time` property, expressed in milliseconds,
-  maintains cadence when the target's contents do not change. The 24.04 cursor run confirmed that
-  `cursor_mode=Embedded` includes the system pointer when `RecordingOptions.captureCursor=true`.
-  The 26.04 run confirmed window-sized output, visible window decorations, and isolation from
-  other apps.
+  Public Ubuntu 24.04/GNOME 46 evidence validates the Mutter path. The
+  [static occluded-window run](https://github.com/rock3r/spectre/actions/runs/45737657330)
+  produced a 91-frame, 3.03-second movie without exposing the foreground window. The
+  [changing-crop run](https://github.com/rock3r/spectre/actions/runs/45739871299) produced
+  220×140 crops whose sampled frames changed from red to green, and the
+  [public CLI run](https://github.com/rock3r/spectre/actions/runs/45741500107) exercised the
+  packaged command-line path. These runs establish the behavior on GNOME 46; the separately
+  updated shared GNOME 42 installer is not evidence that GNOME 42 is fixed here. The native
+  `pipewiresrc` `keepalive-time` property, expressed in milliseconds, maintains cadence when a
+  target's contents do not change.
   Routine validation does not cover KDE Plasma, sway, wlroots, other distributions,
   or other Ubuntu versions.
   Use `WaylandPortalRecorder` for region capture until a compositor-specific lookup exists.

@@ -15,10 +15,22 @@ pub enum Command {
     Start(StartCommand),
     Screenshot(ScreenshotCommand),
     Stop,
-    PointerMove { x: i32, y: i32 },
-    PointerButton { button: i32, pressed: bool },
-    Key { key_code: i32, pressed: bool },
-    PointerAxis { axis: u32, steps: i32 },
+    PointerMove {
+        x: i32,
+        y: i32,
+    },
+    PointerButton {
+        button: i32,
+        pressed: bool,
+    },
+    Key {
+        key_code: i32,
+        pressed: bool,
+    },
+    PointerAxis {
+        axis: u32,
+        steps: i32,
+    },
     /// Session only. Bind a GNOME Mutter window stream to the window that has keyboard focus now,
     /// keep it under `key`, and write its first frame to `output` as an RGBA PNG. The JVM focuses
     /// the window first and checks the frame before it trusts the binding.
@@ -29,12 +41,30 @@ pub enum Command {
         #[serde(default = "hidden_cursor")]
         cursor_mode: CursorMode,
     },
+    BindWindow {
+        key: String,
+        output: String,
+        owner_pid: u32,
+        binding_token: String,
+        #[serde(default = "hidden_cursor")]
+        cursor_mode: CursorMode,
+    },
+    /// One-shot only: resolve an owned X11 window and obtain an opaque GNOME handoff token.
+    LocateWindow {
+        owner_pid: u32,
+        frame: Region,
+    },
     /// Session only. Write one RGBA PNG frame of the window bound under `key` to `output`.
-    WindowScreenshot { key: String, output: String },
+    WindowScreenshot {
+        key: String,
+        output: String,
+    },
     /// Session only. Record the window bound under `key`, cropped to `region` in stream pixels.
     StartWindowRecording(WindowRecordingCommand),
     /// Session only. Stop the Mutter stream bound under `key`.
-    UnbindWindow { key: String },
+    UnbindWindow {
+        key: String,
+    },
     /// Session only. Ask the window manager to activate the Xwayland client window whose
     /// root-relative geometry is `frame` (device pixels, client area), owned by `owner_pid`.
     /// GNOME ignores a Java window's own focus requests once another window holds focus; the
@@ -231,6 +261,8 @@ pub enum Event {
     /// The window manager was asked to activate the X11 window `xid`. The JVM still confirms
     /// focus itself: the request can be refused.
     WindowActivated { xid: u64 },
+    /// Opaque, one-use GNOME window binding created by the owning process (or its child).
+    WindowLocated { binding_token: String },
     /// Anything that didn't reach a Stopped state. `kind` is a coarse category the JVM can
     /// pattern-match for surfacing the right exception type; `message` is the human-readable
     /// detail.

@@ -300,6 +300,7 @@ fn run_x11(start: StartCommand, events: mpsc::Sender<Event>) -> Result<()> {
         crate::x11_window::validate_region_in_root(start.display_name.as_deref(), start.region)
             .context("validating X11 region before starting ximagesrc")?;
     }
+    crate::x11_window::reject_xwayland_display(start.display_name.as_deref())?;
     let (target, stream_size, stream_position) = match start.target {
         CaptureTarget::Region => (
             X11CaptureTarget::Region {

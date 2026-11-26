@@ -100,7 +100,8 @@ pub fn prompt_forbidden_error(what: &str, why: &str) -> anyhow::Error {
 
 /// Install the `.desktop` and `Registry.Register` this connection before any portal method.
 pub fn register_host_app(conn: &Connection, timeout: Duration) -> Result<()> {
-    crate::identity::install_desktop_file().context("installing Spectre .desktop for portal app_id")?;
+    crate::identity::install_desktop_file()
+        .context("installing Spectre .desktop for portal app_id")?;
     let proxy = conn.with_proxy(PORTAL_BUS, PORTAL_PATH, timeout);
     let options: PropMap = HashMap::new();
     match proxy.method_call::<(), _, _, _>(
@@ -110,24 +111,28 @@ pub fn register_host_app(conn: &Connection, timeout: Duration) -> Result<()> {
     ) {
         Ok(()) => Ok(()),
         Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("UnknownMethod")
-                || msg.contains("unknown method")
-                || msg.contains("does not exist")
-            {
+            if is_optional_host_registry_error(&e) {
                 eprintln!(
                     "spectre-wayland-helper: org.freedesktop.host.portal.Registry.Register is \
                      unavailable ({e:#}). Continuing without a host app_id — restore tokens \
                      may not stick across processes on this portal version."
                 );
                 Ok(())
-            } else if msg.to_lowercase().contains("already") {
-                Ok(())
             } else {
                 Err(anyhow::Error::from(e).context("Registry.Register"))
             }
         }
     }
+}
+
+fn is_optional_host_registry_error(error: &dbus::Error) -> bool {
+    matches!(
+        error.name(),
+        Some(
+            "org.freedesktop.DBus.Error.UnknownInterface"
+                | "org.freedesktop.DBus.Error.UnknownMethod"
+        )
+    )
 }
 
 /// One stream returned by `Start.Response.streams[]`. Spectre uses the first (and on
@@ -417,7 +422,10 @@ pub fn restore_token_state_dir() -> PathBuf {
     }
     if let Ok(home) = std::env::var("HOME") {
         if !home.is_empty() {
-            return PathBuf::from(home).join(".local").join("state").join("spectre");
+            return PathBuf::from(home)
+                .join(".local")
+                .join("state")
+                .join("spectre");
         }
     }
     // Fail closed: never store a bearer restore_token under a shared /tmp path.
@@ -440,10 +448,7 @@ pub fn restore_token_file_named(prefix: &str, token_key: &str) -> PathBuf {
         // Use SPECTRE_WAYLAND_RESTORE_TOKEN_DIR for directory-only overrides.
         let base = PathBuf::from(override_path);
         let parent = base.parent().unwrap_or_else(|| Path::new("."));
-        let name = base
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or(prefix);
+        let name = base.file_name().and_then(|s| s.to_str()).unwrap_or(prefix);
         // An operator who pasted the full token file path must not get `…-{key}-{key}`. Match
         // the whole `{prefix}-{key}` name: a bare key suffix would let the ScreenCast key
         // `monitor-embedded` reuse the RemoteDesktop `…-rd-monitor-embedded` file.
@@ -1018,8 +1023,7 @@ mod restore_token_tests {
 
     #[test]
     fn restore_token_key_is_stable_per_source_and_cursor() {
-        let monitor_embedded =
-            restore_token_key(&[SourceType::Monitor], CursorMode::Embedded);
+        let monitor_embedded = restore_token_key(&[SourceType::Monitor], CursorMode::Embedded);
         let monitor_hidden = restore_token_key(&[SourceType::Monitor], CursorMode::Hidden);
         let window_embedded = restore_token_key(&[SourceType::Window], CursorMode::Embedded);
         assert_eq!(monitor_embedded, "monitor-embedded");
@@ -1044,21 +1048,19 @@ mod restore_token_tests {
         assert!(!is_restore_token_rejection(&anyhow::anyhow!(
             "CreateSession rejected (response code 2)"
         )));
-    assert!(!is_restore_token_rejection(&anyhow::anyhow!(
-        "OpenPipeWireRemote failed"
-    )));
-    assert!(is_restore_token_rejection(&anyhow::anyhow!(
-        "SelectDevices rejected (response code 2): stored restore_token"
-    )));
-}
+        assert!(!is_restore_token_rejection(&anyhow::anyhow!(
+            "OpenPipeWireRemote failed"
+        )));
+        assert!(is_restore_token_rejection(&anyhow::anyhow!(
+            "SelectDevices rejected (response code 2): stored restore_token"
+        )));
+    }
 
     #[test]
     fn save_restore_token_is_atomic_and_does_not_leave_partial_files() {
         let _guard = ENV_LOCK.lock().unwrap();
-        let dir = std::env::temp_dir().join(format!(
-            "spectre-restore-atomic-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("spectre-restore-atomic-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         std::env::set_var("SPECTRE_WAYLAND_RESTORE_TOKEN_DIR", &dir);
@@ -1137,13 +1139,19 @@ mod consent_tests {
         assert_eq!(consent_timeout_from(Some("")), DEFAULT_RESPONSE_TIMEOUT);
         assert_eq!(consent_timeout_from(Some("soon")), DEFAULT_RESPONSE_TIMEOUT);
         assert_eq!(consent_timeout_from(Some("0")), DEFAULT_RESPONSE_TIMEOUT);
-        assert_eq!(consent_timeout_from(Some("86400")), DEFAULT_RESPONSE_TIMEOUT);
+        assert_eq!(
+            consent_timeout_from(Some("86400")),
+            DEFAULT_RESPONSE_TIMEOUT
+        );
     }
 
     #[test]
     fn consent_timeout_accepts_an_attended_wait() {
         assert_eq!(consent_timeout_from(Some("300")), Duration::from_secs(300));
-        assert_eq!(consent_timeout_from(Some(" 600 ")), Duration::from_secs(600));
+        assert_eq!(
+            consent_timeout_from(Some(" 600 ")),
+            Duration::from_secs(600)
+        );
     }
 
     #[test]
@@ -1163,5 +1171,31 @@ mod consent_tests {
         let message = format!("{err:#}");
         assert!(message.contains("spectre permissions request"), "{message}");
         assert!(message.contains(CONSENT_PROMPT_ENV), "{message}");
+    }
+}
+
+#[cfg(test)]
+mod host_registry_error_tests {
+    use super::*;
+    #[test]
+    fn only_missing_dbus_api_errors_make_host_registration_optional() {
+        for name in [
+            "org.freedesktop.DBus.Error.UnknownInterface",
+            "org.freedesktop.DBus.Error.UnknownMethod",
+        ] {
+            assert!(is_optional_host_registry_error(&dbus::Error::new_custom(
+                name,
+                "permission denied"
+            )));
+        }
+        for name in [
+            "org.freedesktop.DBus.Error.AccessDenied",
+            "org.freedesktop.portal.Error.NotAllowed",
+        ] {
+            assert!(!is_optional_host_registry_error(&dbus::Error::new_custom(
+                name,
+                "unknown method"
+            )));
+        }
     }
 }

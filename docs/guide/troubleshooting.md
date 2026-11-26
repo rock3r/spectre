@@ -544,20 +544,36 @@ See [Linux Wayland consent](recording.md#linux-wayland-consent).
 
 ## "Linux Wayland window capture fails: could not bind a GNOME Mutter window stream"
 
-On Linux Wayland, Spectre captures a window through a GNOME Mutter window stream. Mutter
-records the window that has keyboard focus, so Spectre focuses the window for a moment the
-first time, and checks that the recorded window has the expected size. The error means the
-window did not get focus (for example a modal dialog held it), another window was recorded,
-the window is translucent, or the first capture ran on the AWT event dispatch thread.
+On Linux Wayland, Spectre captures a window through a GNOME Mutter window stream. Install the
+GNOME Shell extension bundled in the `spectre-recording-linux` jar, then enable it and start a new
+GNOME session. These commands preserve the UUID directory expected by GNOME Shell:
 
-- Make sure the window can take focus, and that nothing else grabs focus at that moment. When
-  the window's own focus request is ignored, Spectre asks the window manager to activate the
-  window. If the message ends with "window-manager activation failed", that request could not be
-  sent; the text after it says why.
+```shell
+jar xf spectre-recording-linux-<version>.jar \
+  native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev
+mkdir -p ~/.local/share/gnome-shell/extensions
+cp -R native/linux/gnome-shell-extension/spectre-window-identity@sebastiano.dev \
+  ~/.local/share/gnome-shell/extensions/
+gnome-extensions enable spectre-window-identity@sebastiano.dev
+```
+
+On a seated GNOME Wayland terminal (not SSH and not Xvfb), run the exact hard smoke below. It opens
+two same-title, same-size windows, keeps the blue decoy focused before and after binding, checks the
+covered red window's pixels, records it, and binds a third window. It must print `PASS`, open no
+Share dialog, and leave its evidence in `/tmp/spectre-mutter-window-smoke/`:
+
+```shell
+echo "$XDG_SESSION_TYPE $WAYLAND_DISPLAY $DISPLAY"
+gnome-extensions info spectre-window-identity@sebastiano.dev
+./gradlew --no-daemon :recording:runWaylandMutterWindowSmoke
+```
+
+Spectre resolves the JVM PID and exact Xwayland XID through that extension and passes the returned
+Mutter id to `RecordWindow`. It does not focus the window. The error means the extension is absent,
+the PID/XID was missing or ambiguous, the first frame did not match, or the window was translucent.
+
+- Confirm `gnome-extensions info spectre-window-identity@sebastiano.dev` reports `State: ENABLED`.
 - Translucent windows cannot be bound yet. Capture a screen region instead.
-- Popup windows (a `JWindow`, or any window that is not a `Frame` or `Dialog`) fail with an
-  `UnsupportedOperationException` that names [#640](https://github.com/rock3r/spectre/issues/640):
-  AWT keeps their keyboard focus on the owner frame. Capture the owner window or a region.
 - On a desktop other than GNOME there is no Mutter API, and window capture fails with an
   error. Use `screenshot(region)`, `startRegion`, or X11/Xvfb.
 

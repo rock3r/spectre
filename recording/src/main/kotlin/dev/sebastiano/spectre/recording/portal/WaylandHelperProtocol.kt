@@ -103,6 +103,25 @@ internal sealed interface Command {
         @SerialName("cursor_mode") val cursorMode: CursorMode = CursorMode.HIDDEN,
     ) : Command
 
+    /** Binds the window resolved by the Spectre GNOME Shell identity service. */
+    @Serializable
+    @SerialName("bind_window")
+    data class BindWindow(
+        @SerialName("key") val key: String,
+        @SerialName("output") val output: String,
+        @SerialName("owner_pid") val ownerPid: Long,
+        @SerialName("binding_token") val bindingToken: String,
+        @SerialName("cursor_mode") val cursorMode: CursorMode = CursorMode.HIDDEN,
+    ) : Command
+
+    /** One-shot helper: validates an owned X11 window and returns an opaque handoff token. */
+    @Serializable
+    @SerialName("locate_window")
+    data class LocateWindow(
+        @SerialName("owner_pid") val ownerPid: Long,
+        @SerialName("frame") val frame: Region,
+    ) : Command
+
     /** Session only. Writes one RGBA PNG frame of the window bound under [key]. */
     @Serializable
     @SerialName("window_screenshot")
@@ -202,6 +221,10 @@ internal sealed interface Event {
     @Serializable
     @SerialName("window_activated")
     data class WindowActivated(@SerialName("xid") val xid: Long) : Event
+
+    @Serializable
+    @SerialName("window_located")
+    data class WindowLocated(@SerialName("binding_token") val bindingToken: String) : Event
 }
 
 /** Helper error kind for a desktop without GNOME Mutter's ScreenCast API. */

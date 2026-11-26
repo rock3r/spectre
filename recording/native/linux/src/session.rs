@@ -8,7 +8,8 @@ use crate::session_lock::{self, acquire_session_lock, SessionLock};
 use anyhow::{Context, Result};
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
 use nix::sys::signal::{kill, Signal};
-use nix::unistd::Pid;
+use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
+use nix::unistd::{geteuid, Pid};
 use std::collections::{BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -253,6 +254,15 @@ fn handle_client(
     windows: &Mutex<MutterWindowStreams>,
     client_id: u64,
 ) -> Result<()> {
+    let credentials =
+        getsockopt(&stream, PeerCredentials).context("reading session peer credentials")?;
+    if credentials.uid() != geteuid().as_raw() {
+        anyhow::bail!(
+            "refusing Wayland session client from uid {}",
+            credentials.uid()
+        );
+    }
+    let peer_pid = u32::try_from(credentials.pid()).context("invalid session peer pid")?;
     let _reap = DisconnectReap {
         state,
         windows,
@@ -269,7 +279,7 @@ fn handle_client(
         }
         let command: Command = serde_json::from_str(line.trim())
             .with_context(|| format!("parsing session command: {}", line.trim()))?;
-        let event = dispatch(command, state, windows, client_id);
+        let event = dispatch(command, state, windows, client_id, peer_pid);
         write_event(&mut writer, event)?;
     }
 }
@@ -321,6 +331,7 @@ fn dispatch(
     state: &Mutex<SessionState>,
     windows: &Mutex<MutterWindowStreams>,
     client_id: u64,
+    peer_pid: u32,
 ) -> Event {
     match command {
         Command::BindFocusedWindow {
@@ -334,6 +345,36 @@ fn dispatch(
             cursor_mode,
             client_id,
         )),
+        Command::BindWindow {
+            key,
+            output,
+            owner_pid,
+            binding_token,
+            cursor_mode,
+        } => {
+            if owner_pid != peer_pid {
+                Event::Error {
+                    kind: "Identity".into(),
+                    message: format!(
+                        "window owner PID {owner_pid} is not authenticated peer PID {peer_pid}"
+                    ),
+                }
+            } else {
+                window_event(bind_identity_window(
+                    windows,
+                    &key,
+                    &output,
+                    owner_pid,
+                    &binding_token,
+                    cursor_mode,
+                    client_id,
+                ))
+            }
+        }
+        Command::LocateWindow { .. } => Event::Error {
+            kind: "Protocol".into(),
+            message: "locate_window requires a one-shot child helper".into(),
+        },
         Command::WindowScreenshot { key, output } => {
             window_event(window_screenshot(windows, &key, &output))
         }
@@ -544,7 +585,9 @@ fn run_recording_start(
         start.region,
         stream.position,
         stream.size,
-        start.screen_size.and_then(crate::stream_region::screen_size_to_region),
+        start
+            .screen_size
+            .and_then(crate::stream_region::screen_size_to_region),
     )?;
     let argv = crate::gst::build_pipewire_argv(
         stream.node_id,
@@ -638,6 +681,35 @@ fn bind_focused_window(
             guard.unbind(key);
         }
         return Err(e.context("reading the first frame of the bound window"));
+    }
+    Ok(Event::WindowBound {
+        key: key.to_string(),
+        node_id: bound.node_id,
+        logical_size: [bound.logical_size.0, bound.logical_size.1],
+    })
+}
+
+fn bind_identity_window(
+    windows: &Mutex<MutterWindowStreams>,
+    key: &str,
+    output: &str,
+    owner_pid: u32,
+    binding_token: &str,
+    cursor_mode: crate::protocol::CursorMode,
+    client_id: u64,
+) -> Result<Event> {
+    let bound = {
+        let mut guard = windows
+            .lock()
+            .map_err(|e| anyhow::anyhow!("window stream mutex poisoned: {e}"))?;
+        guard.bind_identity(key, client_id, owner_pid, binding_token, cursor_mode)?
+    };
+    let output = PathBuf::from(output);
+    if let Err(e) = write_window_frame(bound.node_id, &output) {
+        if let Ok(mut guard) = windows.lock() {
+            guard.unbind(key);
+        }
+        return Err(e.context("reading the first frame of the identity-bound window"));
     }
     Ok(Event::WindowBound {
         key: key.to_string(),
@@ -814,13 +886,19 @@ mod tests {
     #[test]
     fn consent_failures_exit_with_the_consent_status() {
         let err = response_timeout_error(Duration::from_secs(60), "/request/path");
-        assert_eq!(portal_failure_exit_code(&err), Some(CONSENT_NOT_GRANTED_EXIT));
+        assert_eq!(
+            portal_failure_exit_code(&err),
+            Some(CONSENT_NOT_GRANTED_EXIT)
+        );
         assert_eq!(CONSENT_NOT_GRANTED_EXIT, 77);
     }
 
     #[test]
     fn other_portal_failures_keep_the_generic_error_exit() {
-        assert_eq!(portal_failure_exit_code(&anyhow::anyhow!("opening session bus")), None);
+        assert_eq!(
+            portal_failure_exit_code(&anyhow::anyhow!("opening session bus")),
+            None
+        );
     }
 
     #[test]
@@ -833,19 +911,9 @@ mod tests {
     #[test]
     fn disconnect_releases_that_clients_held_button_and_modifier() {
         let mut holds = HashMap::new();
-        apply_held_input(
-            &mut holds,
-            3,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
+        apply_held_input(&mut holds, 3, HeldInput::PointerButton(0x110), true);
         apply_held_input(&mut holds, 3, HeldInput::Key(0xffe3), true);
-        apply_held_input(
-            &mut holds,
-            9,
-            HeldInput::PointerButton(0x111),
-            true,
-        );
+        apply_held_input(&mut holds, 9, HeldInput::PointerButton(0x111), true);
 
         let cleanup = disconnect_cleanup(None, 3, &mut holds);
         assert!(!cleanup.reap_recording);
@@ -857,8 +925,7 @@ mod tests {
             }
         );
         assert_eq!(
-            cleanup.portal_releases,
-            cleanup.held_input,
+            cleanup.portal_releases, cleanup.held_input,
             "sole owner must notify the portal on disconnect"
         );
         assert_eq!(
@@ -872,19 +939,9 @@ mod tests {
     #[test]
     fn disconnect_does_not_release_input_still_held_by_another_client() {
         let mut holds = HashMap::new();
-        apply_held_input(
-            &mut holds,
-            3,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
+        apply_held_input(&mut holds, 3, HeldInput::PointerButton(0x110), true);
         apply_held_input(&mut holds, 3, HeldInput::Key(0xffe3), true);
-        apply_held_input(
-            &mut holds,
-            9,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
+        apply_held_input(&mut holds, 9, HeldInput::PointerButton(0x110), true);
         apply_held_input(&mut holds, 9, HeldInput::Key(0xffe1), true);
 
         let cleanup = disconnect_cleanup(None, 3, &mut holds);
@@ -906,18 +963,8 @@ mod tests {
     #[test]
     fn matching_release_leaves_nothing_to_unwind_on_disconnect() {
         let mut holds = HashMap::new();
-        apply_held_input(
-            &mut holds,
-            4,
-            HeldInput::PointerButton(0x110),
-            true,
-        );
-        apply_held_input(
-            &mut holds,
-            4,
-            HeldInput::PointerButton(0x110),
-            false,
-        );
+        apply_held_input(&mut holds, 4, HeldInput::PointerButton(0x110), true);
+        apply_held_input(&mut holds, 4, HeldInput::PointerButton(0x110), false);
         apply_held_input(&mut holds, 4, HeldInput::Key(0xffe3), true);
         apply_held_input(&mut holds, 4, HeldInput::Key(0xffe3), false);
 

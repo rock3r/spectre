@@ -24,11 +24,12 @@ class AutomatorFactoryTrailingLambdaTest {
 
     @JvmField
     @RegisterExtension
-    val automatorExt = ComposeAutomatorExtension {
-        val instance = newHeadlessAutomator()
-        extensionInstances += instance
-        instance
-    }
+    val automatorExt =
+        ComposeAutomatorExtension(failureArtifacts = FailureArtifactsConfig(enabled = false)) {
+            val instance = newHeadlessAutomator()
+            extensionInstances += instance
+            instance
+        }
 
     @Test
     fun `extension accepts a trailing-lambda factory`() {
@@ -39,7 +40,10 @@ class AutomatorFactoryTrailingLambdaTest {
     fun `rule accepts a trailing-lambda factory`() {
         // JUnit 4 rule constructed directly (not via @Rule) so this stays a JUnit 5 test class;
         // constructing it is enough to pin the source shape.
-        val rule = ComposeAutomatorRule { newHeadlessAutomator() }
+        val rule =
+            ComposeAutomatorRule(failureArtifacts = FailureArtifactsConfig(enabled = false)) {
+                newHeadlessAutomator()
+            }
         rule
             .apply(
                 object : org.junit.runners.model.Statement() {
