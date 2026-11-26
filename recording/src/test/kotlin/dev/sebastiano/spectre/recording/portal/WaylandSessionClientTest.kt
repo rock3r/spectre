@@ -15,6 +15,10 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import org.junit.jupiter.api.io.TempDir
 
 /** Session helper start-up: consent memo (#634) and runtime-dir environment (#635). */
@@ -23,7 +27,7 @@ class WaylandSessionClientTest {
     @TempDir lateinit var tempDir: Path
 
     @Test
-    fun `screenshot leaves cursor mode unspecified because the session stream is embedded`() {
+    fun `screenshot sends embedded cursor mode for a reused legacy session`() {
         var command: Command.Screenshot? = null
         val client =
             WaylandSessionClient(
@@ -45,14 +49,67 @@ class WaylandSessionClientTest {
                 },
             )
 
-        val image = client.screenshot(Rectangle(10, 20, 2, 3))
+        val image = client.screenshot(Rectangle(-10, 20, 2, 3))
 
         assertEquals(2, image.width)
         assertEquals(3, image.height)
-        assertEquals(null, command?.cursorMode)
+        assertEquals(CursorMode.EMBEDDED, command?.cursorMode)
         val payload = Json.encodeToString<Command>(requireNotNull(command))
-        assertTrue(!payload.contains("cursor_mode"), payload)
+        val fields = Json.parseToJsonElement(payload).jsonObject.toMutableMap()
+        fields.remove("screen_size")
+        fields.remove("output")
+        fields["screen_size"] = JsonArray(listOf(-100, 0, 100, 100).map(::JsonPrimitive))
+        fields["output"] = JsonPrimitive("OUTPUT")
+        assertEquals(
+            javaClass.getResource("/protocol/v0.9/session-screenshot.json")!!.readText().trim(),
+            JsonObject(fields).toString(),
+        )
     }
+
+    @Test
+    fun `legacy screenshot response explains how to replace the held helper`() {
+        val client = screenshotClient(Event.ScreenshotSaved(outputSizeBytes = 1))
+
+        val error =
+            assertFailsWith<IllegalStateException> { client.screenshot(Rectangle(10, 20, 2, 3)) }
+
+        val message = error.message.orEmpty()
+        assertTrue(message.contains("capture_region"), message)
+        assertTrue(message.contains("upgrade"), message)
+        assertTrue(message.contains("restart all Spectre"), message)
+        assertTrue(message.contains("spectre permissions request"), message)
+        assertTrue(message.contains("Share picker"), message)
+    }
+
+    @Test
+    fun `verified crop whose size differs from PNG fails closed`() {
+        val client =
+            screenshotClient(
+                Event.ScreenshotSaved(outputSizeBytes = 1, captureRegion = listOf(5, 6, 3, 3))
+            )
+
+        val error =
+            assertFailsWith<IllegalStateException> { client.screenshot(Rectangle(10, 20, 2, 3)) }
+
+        assertTrue(error.message.orEmpty().contains("refusing a clipped capture"), error.message)
+    }
+
+    private fun screenshotClient(event: Event.ScreenshotSaved): WaylandSessionClient =
+        WaylandSessionClient(
+            helperExtractor = extractor(),
+            envLookup = sessionDirEnv(),
+            processFactory = RecordingProcessFactory(exitCode = 0),
+            waitForSocket = { _, _ -> false },
+            screenshotSender = {
+                val command = it as Command.Screenshot
+                ImageIO.write(
+                    BufferedImage(2, 3, BufferedImage.TYPE_INT_ARGB),
+                    "png",
+                    Path.of(command.output).toFile(),
+                )
+                event
+            },
+        )
 
     @Test
     fun `a consent timeout or denial is not prompted again in the same client`() {

@@ -255,11 +255,20 @@ X11, macOS, and Windows keep their input and capture paths.
   Region stills taken by `LinuxNativeScreenshotter.captureRegion()` and the shared Wayland
   session use that session's compositor-provided `Embedded` cursor stream. Consequently, these
   ordinary APIs capture the cursor when the compositor supplies it; they do **not** promise a
-  cursor-free image. Their protocol command deliberately omits `cursor_mode`, meaning “use the
-  active session's cursor semantics.” An explicit `Embedded` request is accepted. Explicit
-  `Hidden` and `Metadata` requests fail rather than silently returning pixels with different
-  cursor semantics, because a cursor mode cannot be changed after the portal stream is opened.
-  X11 still capture continues to request a hidden cursor explicitly.
+  cursor-free image. Default held-session requests send `cursor_mode=Embedded`, matching the
+  active session's cursor policy and remaining compatible with released 0.9.0 helpers. The new
+  helper also accepts an omitted cursor mode as `Embedded`. Explicit `Hidden` and `Metadata`
+  requests fail rather than silently returning pixels with different cursor semantics, because a
+  cursor mode cannot be changed after the portal stream is opened. X11 still capture continues to
+  request a hidden cursor explicitly.
+
+  Region screenshots require the held helper to return its verified stream-relative crop; the PNG
+  dimensions alone cannot prove that the requested pixels were not shifted or clipped. A new
+  client therefore rejects a screenshot response from a running 0.9.0 helper instead of inferring
+  a crop from the PNG. Upgrade every Spectre client and restart all applications using the held
+  session, then run `spectre permissions request` before retrying. Spectre does not terminate the
+  old helper while other clients may still hold its grant. Older portals may show a new Share
+  picker because the replacement helper needs a new grant.
 
   **`WaylandPortalWindowRecorder` needs `xprop` on `PATH` and GTK/Mutter frame extents.**
   Mutter includes invisible shadows in window streams, often 25 px per side for

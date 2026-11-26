@@ -38,7 +38,7 @@ it in-band.
 
 The skill covers:
 
-- schemaVersion **1** field reference
+- schemaVersion **2** field reference
 - ready-made `jq` recipes (clickable nodes by text, bounds by test tag, tree diffs)
 - capture → act → capture → diff workflow
 - node-key lifetime (re-capture after navigation / re-attach / hot reload settle)
@@ -50,6 +50,16 @@ For reload settle and generation-stamped keys, see
 [Compose Hot Reload awareness](hot-reload.md).
 
 ## Schema versioning
+
+Version 2 adds document `source`, snapshot-local `parentKey`/`id`, raw `platformRole`, normalised
+`states`, `value`, computed `onScreen`, and window `boundsSpace`. Compose captures use
+`compose-semantics`, fill `id` from `testTag`, and leave OS-only values null. Accessibility captures
+use `os-accessibility`. Keys are valid for one snapshot only; stable identity across captures is
+not part of the contract. Never interpret `boundsSpace: "window"` as screen coordinates.
+
+The daemon/native-reader wire contract, including target and limit requests, structured errors,
+partial trees, escaping, and key construction, is in
+[Native accessibility helper protocol](../architecture/accessibility-helper-protocol.md).
 
 `capture.json` is stable API. When `schemaVersion` bumps:
 
@@ -142,33 +152,21 @@ This applies to every still Spectre writes — `spectre capture`, `spectre scree
 in-process `screenshot(windowIndex)` / `screenshot(node)` / `screenshotAtDeviceScale(region)`, and
 the JUnit failure artifacts below.
 
-!!! warning "One exception: an older `spectre-core` in the target application"
+!!! warning "Older target cores cannot provide an attached fullscreen still"
 
     On the attach path the pixels come from the `spectre-core` already on the **target's**
     classpath, not from the CLI. A target running a core older than screen-pixel stills has no
-    `screenshotAtDeviceScale`, so `screenshot --fullscreen` falls back to its logical-size
-    `screenshot(region)` and returns a **dp-sized** PNG. This is deliberate: refusing would break
-    attach against applications Spectre otherwise drives fine. `capture` is different: a target
-    core too old to accept the daemon's window still makes `capture` fail with a message that
-    asks you to update it.
+    `screenshotAtDeviceScale`. Spectre now fails this request and asks you to update `spectre-core`;
+    it never returns an unannounced logical-resolution PNG.
 
-    `capture.json` still describes what you actually got, so the check is the same one as always —
-    compare `window.imageWidth` against `window.boundsScreen.width`. Bump the `spectre-core`
-    dependency in the target application to get screen-pixel stills.
-
-!!! note "Oversized fullscreen stills degrade instead of failing"
+!!! note "Oversized fullscreen stills fail exactly"
 
     `spectre screenshot --fullscreen` is the one still whose size nothing bounds — a multi-monitor
     HiDPI desktop can encode past the attach transport's frame budget (64 MiB by default, which
-    holds a worst-case 4K desktop). When the screen-pixel PNG would not fit, Spectre drops to a
-    **logical**-resolution desktop still rather than failing the command. Compare the PNG size
-    against your desktop's logical bounds if you need to know which one you got, and raise
-    `--max-frame-bytes` / `$SPECTRE_MAX_FRAME_BYTES` to get the full-resolution still — see
+    holds a worst-case 4K desktop). When the screen-pixel PNG would not fit, Spectre returns
+    `payloadTooLarge`; it does not silently change resolution. Raise `--max-frame-bytes` /
+    `$SPECTRE_MAX_FRAME_BYTES` to get the full-resolution still — see
     [Agent — Payload limits](agent.md#payload-limits-204).
-
-    That drop is best-effort, not a guarantee: below a certain budget no desktop screenshot fits at
-    any resolution, so there is nothing to degrade to. If even the logical still overruns you get a
-    `payloadTooLarge` error naming the flag that fixes it, rather than a silent failure.
 
     On a **mixed-density multi-monitor** desktop a fullscreen still is also bounded by
     `java.awt.Robot`, which derives one scale from the display under the centre of the captured

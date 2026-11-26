@@ -201,26 +201,75 @@ public object AutomatorContractCorpus {
         Skipped,
     }
 
-    public data class ScenarioResult(
+    public class ScenarioResult(
         public val id: String,
         public val transport: AutomatorTransport,
-        public val outcome: ScenarioOutcome,
+        passed: Boolean,
         public val detail: String = "",
     ) {
+        private var storedOutcome: ScenarioOutcome =
+            if (passed) ScenarioOutcome.Passed else ScenarioOutcome.Failed
+
         public constructor(
             id: String,
             transport: AutomatorTransport,
-            passed: Boolean,
+            outcome: ScenarioOutcome,
             detail: String = "",
-        ) : this(
-            id,
-            transport,
-            if (passed) ScenarioOutcome.Passed else ScenarioOutcome.Failed,
-            detail,
-        )
+        ) : this(id, transport, outcome == ScenarioOutcome.Passed, detail) {
+            storedOutcome = outcome
+        }
+
+        public val outcome: ScenarioOutcome
+            get() = storedOutcome
 
         public val passed: Boolean
             get() = outcome == ScenarioOutcome.Passed
+
+        public operator fun component1(): String = id
+
+        public operator fun component2(): AutomatorTransport = transport
+
+        public operator fun component3(): Boolean = passed
+
+        public operator fun component4(): String = detail
+
+        public fun copy(
+            id: String = this.id,
+            transport: AutomatorTransport = this.transport,
+            passed: Boolean = this.passed,
+            detail: String = this.detail,
+        ): ScenarioResult {
+            val copiedOutcome =
+                if (passed == this.passed) outcome
+                else if (passed) ScenarioOutcome.Passed else ScenarioOutcome.Failed
+            return ScenarioResult(id, transport, copiedOutcome, detail)
+        }
+
+        public fun withOutcome(
+            outcome: ScenarioOutcome,
+            id: String = this.id,
+            transport: AutomatorTransport = this.transport,
+            detail: String = this.detail,
+        ): ScenarioResult = ScenarioResult(id, transport, outcome, detail)
+
+        override fun equals(other: Any?): Boolean =
+            this === other ||
+                (other is ScenarioResult &&
+                    id == other.id &&
+                    transport == other.transport &&
+                    outcome == other.outcome &&
+                    detail == other.detail)
+
+        override fun hashCode(): Int {
+            var result = id.hashCode()
+            result = 31 * result + transport.hashCode()
+            result = 31 * result + outcome.hashCode()
+            result = 31 * result + detail.hashCode()
+            return result
+        }
+
+        override fun toString(): String =
+            "ScenarioResult(id=$id, transport=$transport, outcome=$outcome, detail=$detail)"
     }
 
     public data class RunResult(

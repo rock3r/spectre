@@ -72,6 +72,7 @@ internal constructor(
     private val leaseFactory: InputTestLeaseFactory = ProductionInputTestLeaseFactory,
     private val acquireBeforeAutoFactory: Boolean = false,
     private val managedFactory: ManagedAutomatorFactory? = null,
+    private val enforceFactoryPolicy: Boolean = false,
     private val factory: AutomatorFactory,
 ) : ExternalResource() {
 
@@ -93,6 +94,7 @@ internal constructor(
         inputIsolation = inputIsolation,
         acquireBeforeAutoFactory = true,
         managedFactory = defaultManagedAutomatorFactory(inputIsolation),
+        enforceFactoryPolicy = true,
         factory = { ComposeAutomator.inProcess() },
     )
 
@@ -107,6 +109,7 @@ internal constructor(
         failureVideo = failureVideo,
         videoStarter = AutoFailureVideoStarter,
         inputIsolation = inputIsolation,
+        enforceFactoryPolicy = true,
         factory = factory,
     )
 
@@ -185,6 +188,7 @@ internal constructor(
                         acquireBeforeAutoFactory = acquireBeforeAutoFactory,
                         ownerLabel = ownerLabel(description),
                         leaseFactory = leaseFactory,
+                        enforceFactoryPolicy = enforceFactoryPolicy,
                     )
                 var primaryFailure: Throwable? = null
                 try {

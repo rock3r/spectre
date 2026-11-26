@@ -1,9 +1,11 @@
 package dev.sebastiano.spectre.testing
 
 import dev.sebastiano.spectre.core.capture.AtomicCapture
+import dev.sebastiano.spectre.core.capture.BoundsSpace
 import dev.sebastiano.spectre.core.capture.CaptureArtifactsWriter
 import dev.sebastiano.spectre.core.capture.CaptureDocument
 import dev.sebastiano.spectre.core.capture.CaptureRect
+import dev.sebastiano.spectre.core.capture.CaptureSource
 import dev.sebastiano.spectre.core.capture.CaptureSummary
 import dev.sebastiano.spectre.core.capture.CaptureWindow
 import java.awt.image.BufferedImage
@@ -137,6 +139,7 @@ class FailureArtifactCaptureTest {
         val document =
             CaptureDocument(
                 schemaVersion = CaptureDocument.SCHEMA_VERSION,
+                source = CaptureSource.ComposeSemantics,
                 capturedAt = "2026-01-01T00:00:00Z",
                 window =
                     CaptureWindow(
@@ -145,6 +148,7 @@ class FailureArtifactCaptureTest {
                         title = "Window $windowIndex",
                         isPopup = false,
                         boundsScreen = CaptureRect(0, 0, 4, 4),
+                        boundsSpace = BoundsSpace.Screen,
                         densityScaleX = 1.0,
                         densityScaleY = 1.0,
                         imageWidth = 4,

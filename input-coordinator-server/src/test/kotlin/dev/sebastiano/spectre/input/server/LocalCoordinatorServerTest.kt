@@ -15,6 +15,7 @@ import java.nio.channels.SocketChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
@@ -335,6 +336,36 @@ class LocalCoordinatorServerTest {
         executor.submit { server.awaitTermination() }.get(2, TimeUnit.SECONDS)
 
         assertFalse(Files.exists(endpoint.socketPath))
+    }
+
+    @Test
+    fun `connection above the active limit receives a structured busy error`() {
+        val accepted = CountDownLatch(1)
+        val server =
+            LocalCoordinatorServer(
+                endpoint = endpoint,
+                idleTimeout = Duration.ofMinutes(1),
+                activeConnectionLimit = 1,
+                connectionAccepted = accepted::countDown,
+            )
+        server.start()
+        resources += server
+        val stalled = SocketChannel.open(StandardProtocolFamily.UNIX)
+        stalled.connect(UnixDomainSocketAddress.of(endpoint.socketPath))
+        resources += stalled
+        assertTrue(accepted.await(1, TimeUnit.SECONDS), "server did not accept stalled connection")
+        assertEquals(1, server.activeConnectionCount)
+        val codec = dev.sebastiano.spectre.input.CoordinatorWireCodec()
+        val overflow = SocketChannel.open(StandardProtocolFamily.UNIX)
+        resources += overflow
+        overflow.connect(UnixDomainSocketAddress.of(endpoint.socketPath))
+
+        val response = codec.read(overflow)
+
+        assertFalse(response.ok)
+        assertEquals("CONNECTION_LIMIT_EXCEEDED", response.errorCode)
+        assertTrue(stalled.isOpen)
+        assertEquals(1, server.activeConnectionCount)
     }
 
     @Test

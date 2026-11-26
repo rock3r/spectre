@@ -87,6 +87,7 @@ internal constructor(
                         backend = CaptureBackend.WAYLAND_PORTAL,
                         target = CaptureTarget.REGION,
                         sourceTypes = listOf(SourceType.MONITOR),
+                        cursorMode = CursorMode.EMBEDDED,
                         region = Region(region.x, region.y, region.width, region.height),
                         screenSize = awtDisplayBoundsContaining(region)?.toWire(),
                         output = output.toAbsolutePath().toString(),
@@ -97,7 +98,15 @@ internal constructor(
             }
             val crop =
                 event.captureRegion?.takeIf { it.size == 4 }
-                    ?: error("Wayland session helper did not report its verified capture_region")
+                    ?: error(
+                        "The running Wayland session helper did not report the verified " +
+                            "capture_region required for safe region screenshots. Please upgrade " +
+                            "Spectre in every client, then restart all Spectre applications " +
+                            "using this session so the old helper can exit without interrupting " +
+                            "another client's live grant. Run `spectre permissions request` " +
+                            "before capturing again; older portals may show a new Share picker " +
+                            "when the replacement helper creates its grant."
+                    )
             val image =
                 ImageIO.read(output.toFile())
                     ?: error("Wayland session helper did not produce a readable PNG at $output")

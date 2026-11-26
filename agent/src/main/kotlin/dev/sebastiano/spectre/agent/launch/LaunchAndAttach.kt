@@ -6,6 +6,7 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
+import java.util.UUID
 
 /**
  * Launch a command, wait through staged readiness, attach Spectre, and return a [LaunchedSession]
@@ -46,7 +47,13 @@ public object LaunchAndAttach {
         // admitting a stale candidate, which pid ordering and the name filter still narrow;
         // erring late would reject the real app JVM on every poll until the stage times out.
         val launchedAt = Instant.now()
-        val process = startProcess(prepared.command, spec, prepared.stdoutPath, prepared.stderrPath)
+        val process =
+            startProcess(
+                prepared.command,
+                spec,
+                prepared.stdoutPath,
+                prepared.stderrPath,
+            )
         // Read the OS start time at the earliest point the process exists: a gradle-ish client can
         // be reaped almost immediately, and a reaped process reports no start instant at all.
         val launchBoundary =
@@ -66,24 +73,32 @@ public object LaunchAndAttach {
         val warnings: List<String>,
         val stdoutPath: Path,
         val stderrPath: Path,
+        val launchMarker: String?,
     )
 
     private fun prepareLaunch(spec: LaunchSpec): PreparedLaunch {
         val gradleish = LaunchCommandRewriter.isGradleishLaunch(spec.command)
         val warnings =
             if (gradleish) listOf(LaunchCommandRewriter.gradleLaunchWarning()) else emptyList()
-        val command = rewriteCommand(spec)
-        maybeRequireSpectreCore(spec, command)
         val captureDir =
             (spec.captureDirectory ?: Files.createTempDirectory("spectre-launch-")).also {
                 Files.createDirectories(it)
             }
+        val launchMarker = if (gradleish) UUID.randomUUID().toString() else null
+        val command =
+            if (launchMarker == null) {
+                rewriteCommand(spec)
+            } else {
+                prepareGradleLaunchCommand(spec.command, captureDir, launchMarker)
+            }
+        maybeRequireSpectreCore(spec, command)
         return PreparedLaunch(
             command = command,
             gradleish = gradleish,
             warnings = warnings,
             stdoutPath = captureDir.resolve("stdout.log"),
             stderrPath = captureDir.resolve("stderr.log"),
+            launchMarker = launchMarker,
         )
     }
 
@@ -166,6 +181,7 @@ public object LaunchAndAttach {
                     launchedPid = launchedPid,
                     gradleish = prepared.gradleish,
                     nameFilter = spec.appJvmNameFilter,
+                    launchMarker = prepared.launchMarker,
                     timeoutMs = stageTimeouts.jvmAttachableMs,
                     stdoutPath = prepared.stdoutPath,
                     stderrPath = prepared.stderrPath,
@@ -239,5 +255,44 @@ public object LaunchAndAttach {
         if (process.isAlive) {
             process.destroyForcibly()
         }
+    }
+
+    internal const val LAUNCH_MARKER_PROPERTY = "dev.sebastiano.spectre.launch.id"
+}
+
+/**
+ * Installs a per-invocation Gradle init script that adds the ownership marker to every JavaExec
+ * fork's real JVM argument list. Environment-level JVM options are deliberately insufficient: the
+ * JVM consumes JAVA_TOOL_OPTIONS without adding those tokens to the OS argv on macOS.
+ */
+@OptIn(ExperimentalSpectreAgentApi::class)
+internal fun prepareGradleLaunchCommand(
+    command: List<String>,
+    captureDirectory: Path,
+    marker: String,
+): List<String> {
+    require(LaunchCommandRewriter.isGradleishLaunch(command)) { "command must be Gradle-ish" }
+    val initScript = Files.createTempFile(captureDirectory, "spectre-launch-marker-", ".gradle")
+    val markerArgument = "-D${LaunchAndAttach.LAUNCH_MARKER_PROPERTY}=$marker"
+    Files.writeString(
+        initScript,
+        """
+        |gradle.projectsEvaluated {
+        |    gradle.rootProject.allprojects { project ->
+        |        project.tasks.withType(org.gradle.api.tasks.JavaExec).configureEach { task ->
+        |            task.doFirst {
+        |                task.jvmArgs('$markerArgument')
+        |            }
+        |        }
+        |    }
+        |}
+        """
+            .trimMargin(),
+    )
+    return buildList {
+        add(command.first())
+        add("--init-script")
+        add(initScript.toAbsolutePath().toString())
+        addAll(command.drop(1))
     }
 }

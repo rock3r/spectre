@@ -20,7 +20,16 @@ import java.awt.image.BufferedImage
 
 /** Selectors, tree snapshot, printTree, and screenshot (#202, #96). */
 internal fun Route.spectreQueryRoutes(automator: ComposeAutomator) {
+    selectorRoutes(automator)
+    snapshotRoutes(automator)
+}
+
+private fun Route.selectorRoutes(automator: ComposeAutomator) {
     get("/nodes") {
+        if (!call.hasOnlyQueryParameters(NODE_QUERY_PARAMETERS)) {
+            respondInvalidSelector(call)
+            return@get
+        }
         automator.refreshWindows()
         val nodes = selectNodes(automator, call.request.queryParameters)
         if (nodes == null) {
@@ -31,6 +40,10 @@ internal fun Route.spectreQueryRoutes(automator: ComposeAutomator) {
     }
 
     get("/node") {
+        if (!call.hasOnlyQueryParameters(NODE_QUERY_PARAMETERS)) {
+            respondInvalidSelector(call)
+            return@get
+        }
         automator.refreshWindows()
         val selectorCount =
             listOfNotNull(
@@ -51,8 +64,14 @@ internal fun Route.spectreQueryRoutes(automator: ComposeAutomator) {
         }
         call.respond(NodeResponse(node = nodes.firstOrNull()?.toDto()))
     }
+}
 
+private fun Route.snapshotRoutes(automator: ComposeAutomator) {
     get("/tree") {
+        if (!call.hasOnlyQueryParameters(setOf("windowIndex"))) {
+            respondInvalidSelector(call)
+            return@get
+        }
         val indexParam = call.request.queryParameters["windowIndex"]
         val tree = automator.tree()
         if (indexParam == null) {
@@ -67,18 +86,42 @@ internal fun Route.spectreQueryRoutes(automator: ComposeAutomator) {
         call.respond(TreeResponse(windows = listOf(tree.window(index).toDto())))
     }
 
-    get("/printTree") { call.respond(PrintTreeResponse(dump = automator.printTree())) }
+    get("/printTree") {
+        if (!call.hasOnlyQueryParameters(emptySet())) {
+            respondInvalidSelector(call)
+            return@get
+        }
+        call.respond(PrintTreeResponse(dump = automator.printTree()))
+    }
 
     get("/screenshot") {
+        if (!call.hasOnlyQueryParameters(setOf("nodeKey", "fullscreen"))) {
+            respondInvalidSelector(call)
+            return@get
+        }
         val nodeKey = call.request.queryParameters["nodeKey"]
         if (nodeKey != null) {
+            if (call.request.queryParameters["fullscreen"] != null || nodeKey.isBlank()) {
+                respondInvalidSelector(call)
+                return@get
+            }
             automator.refreshWindows()
             val node = resolveNodeOrRespond(call, automator, nodeKey) ?: return@get
             respondScreenshot(call) { automator.screenshot(node) }
-        } else {
+        } else if (call.request.queryParameters["fullscreen"] == "true") {
             respondScreenshot(call) { automator.screenshot() }
+        } else {
+            respondInvalidSelector(call)
         }
     }
+}
+
+private val NODE_QUERY_PARAMETERS =
+    setOf("testTag", "text", "contentDescription", "role", "exact", "matchType", "ignoreCase")
+
+internal fun ApplicationCall.hasOnlyQueryParameters(allowed: Set<String>): Boolean {
+    val parameters = request.queryParameters
+    return parameters.names().all { it in allowed && parameters.getAll(it)?.size == 1 }
 }
 
 private suspend fun respondScreenshot(call: ApplicationCall, capture: () -> BufferedImage) {
@@ -132,6 +175,7 @@ private fun selectNodes(
     val matchType = params["matchType"]
     val ignoreCaseParam = params["ignoreCase"]
     if (listOfNotNull(testTag, text, contentDescription, role).size > 1) return null
+    if (params["exact"] != null && text == null) return null
     if ((matchType != null || ignoreCaseParam != null) && text == null) return null
     return when {
         testTag != null -> automator.findByTestTag(testTag)
