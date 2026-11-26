@@ -99,7 +99,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            at-spi2-core dbus-x11 xauth xvfb x11-utils xdotool openbox \
+            at-spi2-core dbus-x11 python3-dbus xauth xvfb x11-utils xdotool openbox \
             libatk-wrapper-java libatk-wrapper-java-jni libatspi2.0-0 libatspi2.0-dev \
             libdbus-1-dev libgtk-3-0t64 libxkbcommon-x11-0 libxcursor1 libxrandr2 \
             libxinerama1 libxi6 libxtst6 libgl1-mesa-dri pkg-config clang \
@@ -110,6 +110,7 @@ jobs:
           # intentionally no dependency on a fictitious java-atk-wrapper apt package.
           dpkg-query -W libatk-wrapper-java libatk-wrapper-java-jni | tee "$TWO_WINDOW_EVIDENCE/atk-packages.txt"
           test -f /usr/share/java/java-atk-wrapper.jar
+          /usr/bin/python3 -c 'import dbus'
           for command in dbus-run-session Xvfb openbox ffmpeg gst-inspect-1.0; do command -v "$command"; done
           for element in ximagesrc x264enc h264parse mp4mux pngenc; do
             gst-inspect-1.0 "$element" > "$TWO_WINDOW_EVIDENCE/gstreamer-$element.txt"

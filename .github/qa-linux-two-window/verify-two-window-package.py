@@ -42,6 +42,97 @@ def read(*args):
 def all_text(doc):
     return json.dumps(doc, ensure_ascii=False)
 
+def wait_for_atspi_windows(pid, expected_titles, limit=70):
+    probe = r'''
+import json
+import sys
+import time
+
+import dbus
+
+pid = int(sys.argv[1])
+deadline = time.monotonic() + int(sys.argv[2])
+expected = set(sys.argv[3:])
+accessible = "org.a11y.atspi.Accessible"
+observations = []
+errors = []
+session_bus = dbus.SessionBus()
+bus_address = session_bus.get_object("org.a11y.Bus", "/org/a11y/bus").GetAddress(
+    dbus_interface="org.a11y.Bus")
+bus = dbus.bus.BusConnection(str(bus_address))
+admin = dbus.Interface(bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus"),
+                       "org.freedesktop.DBus")
+
+while time.monotonic() < deadline:
+    try:
+        registry_object = bus.get_object("org.a11y.atspi.Registry",
+                                         "/org/a11y/atspi/accessible/root")
+        applications = dbus.Interface(registry_object, accessible).GetChildren()
+        matches = []
+        for advertised_service, application_path in applications:
+            advertised_service = str(advertised_service)
+            owner = str(admin.GetNameOwner(advertised_service))
+            owner_pid = int(admin.GetConnectionUnixProcessID(owner))
+            if owner_pid != pid:
+                continue
+            if not owner.startswith(":"):
+                raise AssertionError("AT-SPI application owner is not a unique bus name: " + owner)
+            application = dbus.Interface(bus.get_object(owner, str(application_path)), accessible)
+            windows = []
+            for child_service, child_path in application.GetChildren():
+                child_service = str(child_service)
+                child_path = str(child_path)
+                child_owner = str(admin.GetNameOwner(child_service))
+                child = bus.get_object(child_owner, child_path)
+                properties = dbus.Interface(child, "org.freedesktop.DBus.Properties")
+                name = str(properties.Get(accessible, "Name"))
+                try:
+                    role = str(dbus.Interface(child, accessible).GetRoleName())
+                except Exception as error:
+                    role = None
+                    errors.append({"operation": "GetRoleName", "service": child_owner,
+                                   "path": child_path, "error": repr(error)})
+                child_pid = int(admin.GetConnectionUnixProcessID(child_owner))
+                windows.append({"name": name, "path": child_path, "service": child_owner,
+                                "pid": child_pid,
+                                "roleName": role})
+            matches.append({"advertisedService": advertised_service, "service": owner,
+                            "pid": owner_pid, "applicationPath": str(application_path),
+                            "windows": windows})
+        observation = {"applications": matches}
+        observations.append(observation)
+        observations = observations[-20:]
+        names = {window["name"] for match in matches for window in match["windows"]
+                 if window["pid"] == pid}
+        if len(matches) == 1 and expected <= names:
+            print(json.dumps({"matched": True, "expectedTitles": sorted(expected),
+                              "observation": observation, "observations": observations,
+                              "errors": errors}, indent=2))
+            sys.exit(0)
+    except Exception as error:
+        errors.append({"operation": "registry-enumeration", "error": repr(error)})
+    time.sleep(.3)
+
+print(json.dumps({"matched": False, "expectedTitles": sorted(expected),
+                  "observations": observations, "errors": errors}, indent=2))
+sys.exit(1)
+'''
+    args = ["/usr/bin/python3", "-c", probe, str(pid), str(limit), *sorted(expected_titles)]
+    result = subprocess.run(args, env=env, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, encoding="utf-8", errors="replace", timeout=limit + 5)
+    evidence = out / "atspi-registration.raw.json"
+    evidence.write_text(result.stdout or json.dumps({"matched": False, "stderr": result.stderr}, indent=2))
+    command_log.write(f"$ /usr/bin/python3 -c <AT-SPI registration probe> {pid}\n"
+                      f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}\n")
+    command_log.flush()
+    try:
+        registration = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise AssertionError(f"ATSPIROOT_PID_OWNER_REGISTRATION_INVALID: {result.stderr[-2400:]}") from error
+    if result.returncode or not registration.get("matched"):
+        raise AssertionError(f"ATSPIROOT_PID_OWNER_REGISTRATION_FAILED: {registration}")
+    return registration
+
 sample_cp = (root / "sample-desktop/build/two-window-qa-classpath.txt").read_text()
 session = None
 fixture = None
@@ -51,21 +142,9 @@ try:
             "dev.sebastiano.spectre.sample.validation.AttachedTwoWindowFixtureKt"],
             stdout=log, stderr=subprocess.STDOUT, env=fixture_env)
     print("verifying packaged CLI", cli, "fixture PID", fixture.pid, "evidence", out, flush=True)
-    deadline = time.monotonic() + 70
-    registration = None
-    while time.monotonic() < deadline:
-        if fixture.poll() is not None:
-            raise RuntimeError("FIXTURE_EXITED " + (out / "fixture.log").read_text()[-2400:])
-        try:
-            registration = read("a11y", "tree", "--pid", str(fixture.pid), "--timeout-ms", "3000")
-            if titles.keys() <= {w.get("title") for w in registration.get("windows", [])}:
-                break
-        except (RuntimeError, json.JSONDecodeError):
-            pass
-        time.sleep(.3)
-    else:
-        raise AssertionError("ATSPIROOT_PID_OWNER_REGISTRATION_FAILED: two titled windows were not registered for the exact fixture PID")
-    (out / "atspiroot-registration.raw.json").write_text(json.dumps(registration, indent=2, ensure_ascii=False))
+    registration = wait_for_atspi_windows(fixture.pid, titles)
+    if fixture.poll() is not None:
+        raise RuntimeError("FIXTURE_EXITED " + (out / "fixture.log").read_text()[-2400:])
 
     session = read("attach", "--json", str(fixture.pid))["sessionId"]
     for _ in range(40):
