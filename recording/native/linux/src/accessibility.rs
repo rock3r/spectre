@@ -19,6 +19,7 @@ const STATUS_RESTORE_TIMEOUT: Duration = Duration::from_millis(100);
 // AT-SPI has no registration-complete signal after IsEnabled changes.
 const REGISTRY_SETTLE_TIME: Duration = Duration::from_millis(300);
 const REGISTRY_POLL_TIME: Duration = Duration::from_millis(20);
+const ROOT_READ_ATTEMPTS: usize = 3;
 const ATSPI_ROOT: &str = "/org/a11y/atspi/accessible/root";
 
 #[derive(Debug, Deserialize)]
@@ -252,7 +253,8 @@ fn capture_with_status(
         },
     };
     let root_data =
-        read_node(&bus, &window_address, deadline).map_err(|e| timed_err(deadline, e))?;
+        retry_selected_root_read(deadline, || read_node(&bus, &window_address, deadline))
+            .map_err(|e| timed_err(deadline, e))?;
     let window_bounds = root_data.bounds.clone().ok_or_else(|| {
         err(
             "no-accessibility-tree",
@@ -382,6 +384,7 @@ fn find_window(
             match unscoped_title_decision(
                 title_matches,
                 settle_unscoped_title,
+                traversal_authoritative,
                 unique_title_seen,
                 Instant::now(),
             ) {
@@ -415,11 +418,17 @@ enum TitleDecision {
 fn unscoped_title_decision(
     mut matches: Vec<Address>,
     settle: bool,
+    traversal_authoritative: bool,
     previous: Option<(Address, Instant)>,
     now: Instant,
 ) -> TitleDecision {
+    if matches.len() > 1 {
+        return TitleDecision::Ambiguous(matches.len());
+    }
+    if !traversal_authoritative {
+        return TitleDecision::Retry(None);
+    }
     match matches.len() {
-        count if count > 1 => TitleDecision::Ambiguous(count),
         1 if !settle => TitleDecision::Accept(matches.remove(0)),
         1 => {
             let candidate = matches.remove(0);
@@ -463,6 +472,32 @@ fn is_transient_registration_error(error: &anyhow::Error) -> bool {
         .downcast_ref::<dbus::Error>()
         .and_then(dbus::Error::name)
         .is_some_and(|name| name == "org.freedesktop.DBus.Error.UnknownInterface")
+}
+
+fn is_transient_selected_root_error(error: &anyhow::Error) -> bool {
+    is_transient_registration_error(error)
+        && error.to_string().contains("org.a11y.atspi.Accessible")
+}
+
+fn retry_selected_root_read<T>(
+    deadline: Instant,
+    mut read: impl FnMut() -> Result<T>,
+) -> Result<T> {
+    for attempt in 0..ROOT_READ_ATTEMPTS {
+        if Instant::now() >= deadline {
+            anyhow::bail!("deadline exceeded while reading the selected AT-SPI root")
+        }
+        match read() {
+            Ok(value) => return Ok(value),
+            Err(error)
+                if attempt + 1 < ROOT_READ_ATTEMPTS && is_transient_selected_root_error(&error) =>
+            {
+                std::thread::sleep(REGISTRY_POLL_TIME.min(remaining(deadline)));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!()
 }
 
 fn restore_result(
@@ -1245,11 +1280,12 @@ mod tests {
         };
         let first_seen = Instant::now();
         assert!(
-            matches!(unscoped_title_decision(vec![candidate.clone()], true, Some((candidate.clone(), first_seen)), first_seen + REGISTRY_SETTLE_TIME / 2), TitleDecision::Retry(Some((_, seen))) if seen == first_seen)
+            matches!(unscoped_title_decision(vec![candidate.clone()], true, true, Some((candidate.clone(), first_seen)), first_seen + REGISTRY_SETTLE_TIME / 2), TitleDecision::Retry(Some((_, seen))) if seen == first_seen)
         );
         assert!(matches!(
             unscoped_title_decision(
                 vec![candidate.clone()],
+                true,
                 true,
                 Some((candidate, first_seen)),
                 first_seen + REGISTRY_SETTLE_TIME
@@ -1271,9 +1307,103 @@ mod tests {
             },
         ];
         assert!(matches!(
-            unscoped_title_decision(matches, true, None, Instant::now()),
+            unscoped_title_decision(matches, true, false, None, Instant::now()),
             TitleDecision::Ambiguous(2)
         ));
+    }
+
+    #[test]
+    fn incomplete_title_scan_clears_singleton_stability_before_later_ambiguity() {
+        let candidate = Address {
+            bus: ":1.7".into(),
+            path: "/window/1".into(),
+        };
+        let first_seen = Instant::now() - REGISTRY_SETTLE_TIME;
+        assert!(matches!(
+            unscoped_title_decision(
+                vec![candidate.clone()],
+                true,
+                false,
+                Some((candidate, first_seen)),
+                Instant::now()
+            ),
+            TitleDecision::Retry(None)
+        ));
+
+        let matches = vec![
+            Address {
+                bus: ":1.7".into(),
+                path: "/window/1".into(),
+            },
+            Address {
+                bus: ":1.8".into(),
+                path: "/window/1".into(),
+            },
+        ];
+        assert!(matches!(
+            unscoped_title_decision(matches, true, true, None, Instant::now()),
+            TitleDecision::Ambiguous(2)
+        ));
+    }
+
+    #[test]
+    fn complete_singleton_title_scan_can_be_accepted() {
+        let candidate = Address {
+            bus: ":1.7".into(),
+            path: "/window/1".into(),
+        };
+        assert!(matches!(
+            unscoped_title_decision(vec![candidate], false, true, None, Instant::now()),
+            TitleDecision::Accept(_)
+        ));
+    }
+
+    #[test]
+    fn selected_root_retries_only_accessible_unknown_interface() {
+        let mut calls = 0;
+        let result = retry_selected_root_read(Instant::now() + Duration::from_secs(1), || {
+            calls += 1;
+            if calls == 1 {
+                Err(anyhow::Error::new(dbus::Error::new_custom(
+                    "org.freedesktop.DBus.Error.UnknownInterface",
+                    "No such interface 'org.a11y.atspi.Accessible'",
+                )))
+            } else {
+                Ok(42)
+            }
+        });
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(calls, 2);
+
+        for (name, message) in [
+            (
+                "org.freedesktop.DBus.Error.UnknownInterface",
+                "org.a11y.atspi.Component",
+            ),
+            (
+                "org.freedesktop.DBus.Error.AccessDenied",
+                "org.a11y.atspi.Accessible",
+            ),
+        ] {
+            let mut calls = 0;
+            let result = retry_selected_root_read(Instant::now() + Duration::from_secs(1), || {
+                calls += 1;
+                Err::<(), _>(anyhow::Error::new(dbus::Error::new_custom(name, message)))
+            });
+            assert!(result.is_err());
+            assert_eq!(calls, 1);
+        }
+    }
+
+    #[test]
+    fn selected_root_retry_respects_expired_deadline() {
+        let mut calls = 0;
+        let result = retry_selected_root_read(Instant::now(), || {
+            calls += 1;
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert_eq!(calls, 0);
     }
 
     #[test]
