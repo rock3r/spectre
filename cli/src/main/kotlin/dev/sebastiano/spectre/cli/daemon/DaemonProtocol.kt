@@ -435,8 +435,11 @@ public sealed interface DaemonResponse {
 
     @Serializable
     @SerialName("attached")
-    public data class Attached(public val sessionId: String, public val targetPid: Long) :
-        DaemonResponse
+    public data class Attached(
+        public val sessionId: String,
+        public val targetPid: Long,
+        public val sessionInfo: DaemonSessionInfo? = null,
+    ) : DaemonResponse
 
     @Serializable
     @SerialName("detached")
@@ -551,7 +554,20 @@ public sealed interface DaemonResponse {
 }
 
 @Serializable
-public data class DaemonSessionSummary(public val sessionId: String, public val targetPid: Long)
+public data class DaemonSessionSummary(
+    public val sessionId: String,
+    public val targetPid: Long,
+    public val sessionInfo: DaemonSessionInfo? = null,
+)
+
+@Serializable
+public data class DaemonSessionInfo(
+    public val driverKind: String,
+    public val inputLeasePolicy: String,
+    public val coreProvenance: String,
+    public val coreVersion: String? = null,
+    public val warnings: List<String> = emptyList(),
+)
 
 /** A JVM process that can be targeted through the local daemon. */
 @Serializable

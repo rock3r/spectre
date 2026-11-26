@@ -36,7 +36,9 @@ class DocsGuidanceContractTest {
         assertContains(docs, "spectre-input-coordinator-server")
         assertContains(docs, "InputIsolationConfig.perTest()")
         assertContains(docs, "unsafeTakeover=true")
-        assertContains(docs, "best-effort attempt")
+        assertContains(docs, "RobotDriver.synthetic(policy)")
+        assertContains(docs, "never substitutes")
+        assertContains(docs, "legacy real-OS driver")
         assertContains(docs, "does not rewrite the Windows ACL")
     }
 

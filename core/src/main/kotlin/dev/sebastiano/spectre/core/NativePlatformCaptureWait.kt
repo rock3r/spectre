@@ -66,6 +66,13 @@ internal class NativeCaptureWaitScope(
             platformCaptureUsable = { isNativePlatformCaptureUsable(it, waitId) },
         )
 
+    fun unavailableReason(): String? =
+        visualIdleNativeCaptureUnavailableReason(
+            classLoader = classLoader,
+            allowsPlatformCapture = allowsPlatformCapture,
+            platformCaptureUsable = { isNativePlatformCaptureUsable(it, waitId) },
+        )
+
     override fun close() {
         endNativePlatformCaptureWait(classLoader, waitId)
     }

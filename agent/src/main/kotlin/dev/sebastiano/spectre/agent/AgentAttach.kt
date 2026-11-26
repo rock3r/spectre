@@ -96,7 +96,16 @@ public object AgentAttach {
         // coordinated session into a broken one, in the name of an opt-out it never received.
         // Five seconds on an already-broken host is the cheaper side of that trade. Codex caught
         // this on the first review of #472.
-        val coordinatorClient = runCatching(::ensureInputCoordinator).getOrNull()
+        var coordinatorWarning: String? = null
+        val coordinatorClient =
+            runCatching(::ensureInputCoordinator)
+                .onFailure { error ->
+                    coordinatorWarning =
+                        "Input coordinator could not be started: " +
+                            "${error.javaClass.simpleName}: ${error.message}; " +
+                            "Required input will fail closed"
+                }
+                .getOrNull()
         var coordinatorOwnedByResult = false
         try {
 
@@ -127,8 +136,20 @@ public object AgentAttach {
                     )
                 }
 
+            val info = client.sessionInfo
             val attached =
-                AttachedAutomator(pid = pid, client = client) {
+                AttachedAutomator(
+                    pid = pid,
+                    sessionInfo =
+                        AttachedSessionInfo(
+                            driverKind = info.driverKind,
+                            inputLeasePolicy = info.inputLeasePolicy,
+                            coreProvenance = info.coreProvenance,
+                            coreVersion = info.coreVersion,
+                            warnings = info.warnings + listOfNotNull(coordinatorWarning),
+                        ),
+                    client = client,
+                ) {
                     coordinatorClient?.close()
                     // Detacher: best-effort UDS cleanup after the AttachedAutomator closes. The
                     // agent's own shutdown hook handles crash cleanup.

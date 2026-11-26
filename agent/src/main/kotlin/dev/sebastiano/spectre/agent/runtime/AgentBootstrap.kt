@@ -42,11 +42,17 @@ internal data class SpectreBootstrapResult(
     val classLoader: ClassLoader,
     val injectJar: Path? = null,
     val injectClassLoader: SpectreInjectClassLoader? = null,
+    val provenance: SpectreCoreProvenance = SpectreCoreProvenance.Preinstalled,
 ) {
     fun releaseInjectResources() {
         runCatching { injectClassLoader?.close() }
         injectJar?.let { path -> runCatching { java.nio.file.Files.deleteIfExists(path) } }
     }
+}
+
+internal enum class SpectreCoreProvenance {
+    Preinstalled,
+    Injected,
 }
 
 internal object AgentBootstrap {
@@ -181,6 +187,7 @@ internal object AgentBootstrap {
                     classLoader = injectLoader,
                     injectJar = injectJar,
                     injectClassLoader = injectLoader,
+                    provenance = SpectreCoreProvenance.Injected,
                 )
             } catch (@Suppress("TooGenericExceptionCaught") error: Exception) {
                 // Cleanup must run for any failure after extract (classloader open, loadClass).
