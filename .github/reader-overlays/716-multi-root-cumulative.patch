@@ -1,5 +1,5 @@
 diff --git a/recording/native/linux/src/accessibility.rs b/recording/native/linux/src/accessibility.rs
-index 596b071a..516816fc 100644
+index 596b071a..d2fc8887 100644
 --- a/recording/native/linux/src/accessibility.rs
 +++ b/recording/native/linux/src/accessibility.rs
 @@ -7,6 +7,7 @@
@@ -1057,7 +1057,7 @@ index 596b071a..516816fc 100644
              child_key,
              Some(key.clone()),
              depth + 1,
-@@ -726,12 +1346,153 @@ fn walk(
+@@ -726,13 +1346,154 @@ fn walk(
      Ok(())
  }
  
@@ -1067,6 +1067,7 @@ index 596b071a..516816fc 100644
 -
 -fn child_segment(id: Option<&str>, index: usize, duplicate: bool, truncated: bool) -> String {
 -    // An unread sibling may repeat an apparently unique id. Positional keys make a partial
+-    // snapshot agree with a complete traversal in that case.
 +#[allow(clippy::too_many_arguments)]
 +fn walk(
 +    bus: &Arc<SyncConnection>,
@@ -1214,10 +1215,11 @@ index 596b071a..516816fc 100644
 +
 +fn child_segment(id: Option<&str>, index: usize, duplicate: bool, truncated: bool) -> String {
 +    // An unread sibling may repeat an apparently unique id. Positional keys make a partial
-     // snapshot agree with a complete traversal in that case.
++    // snapshot agree with a complete traversal in that case.
      segment(id, index, duplicate || truncated)
  }
-@@ -760,11 +1521,8 @@ fn structural_read_error(
+ 
+@@ -760,129 +1521,267 @@ fn structural_read_error(
              format!("failed to read an AT-SPI child: {error}"),
          )
      };
@@ -1228,13 +1230,84 @@ index 596b071a..516816fc 100644
 -    )
 +    let partial = (code == "timeout").then(|| std::mem::replace(snapshot, empty_snapshot()));
 +    (code, message, partial)
++}
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++enum UncachedCallKind {
++    Name,
++    Attributes,
++    Role,
++    RoleName,
++    Children,
++    State,
++    Interfaces,
++    Bounds,
++    Text,
++}
++
++fn uncached_call_kinds(include_text: bool) -> Vec<UncachedCallKind> {
++    let mut kinds = vec![
++        UncachedCallKind::Name,
++        UncachedCallKind::Attributes,
++        UncachedCallKind::Role,
++        UncachedCallKind::RoleName,
++        UncachedCallKind::Children,
++        UncachedCallKind::State,
++        UncachedCallKind::Interfaces,
++        UncachedCallKind::Bounds,
++    ];
++    if include_text {
++        kinds.push(UncachedCallKind::Text);
++    }
++    kinds
++}
++
++#[derive(Default)]
++struct UncachedReplies {
++    name: Option<String>,
++    attributes: HashMap<String, String>,
++    raw_role: Option<u32>,
++    role_name: Option<String>,
++    children: Option<Vec<Address>>,
++    state_words: Option<Vec<u32>>,
++    interfaces: Vec<String>,
++    bounds: Option<Rect>,
++    value: Option<String>,
++}
++
++fn dispatch_until(deadline: Instant, mut poll: impl FnMut() -> Result<bool>) -> Result<()> {
++    loop {
++        if Instant::now() >= deadline {
++            anyhow::bail!("deadline exceeded waiting for AT-SPI replies")
++        }
++        if poll()? {
++            return Ok(());
++        }
++    }
  }
  
  fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Result<NodeData> {
-@@ -789,20 +1547,23 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
-                 .unwrap_or_default()
-             });
-             let role = scope.spawn(|| {
+     if Instant::now() >= deadline {
+         anyhow::bail!("deadline exceeded")
+     }
+-    let (name, attributes, role, children_result, state_words, interfaces, bounds) =
+-        std::thread::scope(|scope| {
+-            let name = scope.spawn(|| {
+-                let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
+-                property_string_sync(&p, "org.a11y.atspi.Accessible", "Name")
+-            });
+-            let attributes = scope.spawn(|| {
+-                let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
+-                p.method_call::<(HashMap<String, String>,), _, _, _>(
+-                    "org.a11y.atspi.Accessible",
+-                    "GetAttributes",
+-                    (),
+-                )
+-                .ok()
+-                .map(|v| v.0)
+-                .unwrap_or_default()
+-            });
+-            let role = scope.spawn(|| {
 -                let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
 -                let raw = p
 -                    .method_call::<(u32,), _, _, _>("org.a11y.atspi.Accessible", "GetRole", ())
@@ -1242,55 +1315,296 @@ index 596b071a..516816fc 100644
 -                    .map(|value| value.0);
 -                let native_name = p
 -                    .method_call::<(String,), _, _, _>(
-+                let raw = optional_role_call(deadline, || {
-+                    let p = bus.with_proxy(&a.bus, a.path.clone(), call_timeout_anyhow(deadline)?);
-+                    p.method_call::<(u32,), _, _, _>("org.a11y.atspi.Accessible", "GetRole", ())
-+                        .map(|value| value.0)
-+                        .map_err(Into::into)
-+                })?;
-+                let native_name = optional_role_call(deadline, || {
-+                    let p = bus.with_proxy(&a.bus, a.path.clone(), call_timeout_anyhow(deadline)?);
-+                    p.method_call::<(String,), _, _, _>(
-                         "org.a11y.atspi.Accessible",
-                         "GetRoleName",
-                         (),
-                     )
+-                        "org.a11y.atspi.Accessible",
+-                        "GetRoleName",
+-                        (),
+-                    )
 -                    .ok()
 -                    .map(|value| value.0);
 -                (raw, native_name)
-+                    .map(|value| value.0)
-+                    .map_err(Into::into)
-+                })?;
-+                Ok::<_, anyhow::Error>((raw, native_name))
-             });
-             let children_result = scope.spawn(|| children(bus, a, deadline));
-             let state_words = scope.spawn(|| {
-@@ -869,17 +1630,17 @@ fn read_node(bus: &Arc<SyncConnection>, a: &Address, deadline: Instant) -> Resul
-     } else {
-         None
-     };
-+    let (raw_role, native_role_name) = role.context("AT-SPI role reads failed")?;
+-            });
+-            let children_result = scope.spawn(|| children(bus, a, deadline));
+-            let state_words = scope.spawn(|| {
+-                let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
+-                p.method_call::<(Vec<u32>,), _, _, _>("org.a11y.atspi.Accessible", "GetState", ())
+-                    .ok()
+-                    .map(|v| v.0)
+-            });
+-            let interfaces = scope.spawn(|| {
+-                let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
+-                p.method_call::<(Vec<String>,), _, _, _>(
+-                    "org.a11y.atspi.Accessible",
+-                    "GetInterfaces",
+-                    (),
+-                )
+-                .ok()
+-                .map(|v| v.0)
+-                .unwrap_or_default()
+-            });
+-            let bounds = scope.spawn(|| {
+-                let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
+-                p.method_call::<((i32, i32, i32, i32),), _, _, _>(
+-                    "org.a11y.atspi.Component",
+-                    "GetExtents",
+-                    (0u32,),
+-                )
+-                .ok()
+-                .map(|v| Rect {
+-                    x: v.0 .0,
+-                    y: v.0 .1,
+-                    width: v.0 .2,
+-                    height: v.0 .3,
+-                })
+-            });
+-            (
+-                name.join().unwrap(),
+-                attributes.join().unwrap(),
+-                role.join().unwrap(),
+-                children_result.join().unwrap(),
+-                state_words.join().unwrap(),
+-                interfaces.join().unwrap(),
+-                bounds.join().unwrap(),
+-            )
+-        });
+-    check_deadline(deadline, None).map_err(|(_, message, _)| anyhow::anyhow!(message))?;
+-    let id = attributes
+-        .get("id")
+-        .or_else(|| attributes.get("accessible_id"))
+-        .cloned()
+-        .filter(|v| !v.is_empty());
+-    let states = state_words
+-        .as_deref()
+-        .map(decode_states)
+-        .unwrap_or_default();
+-    let value = if interfaces
++    let mut replies = UncachedReplies::default();
++    read_uncached_batch(bus, a, &uncached_call_kinds(false), deadline, &mut replies)?;
++    if replies
++        .interfaces
+         .iter()
+         .any(|interface| interface.ends_with(".Text"))
+     {
+-        let p = bus.with_proxy(&a.bus, a.path.clone(), remaining(deadline));
+-        p.method_call::<(String,), _, _, _>("org.a11y.atspi.Text", "GetText", (0i32, -1i32))
+-            .ok()
+-            .map(|v| v.0)
+-            .filter(|v| !v.is_empty())
+-    } else {
+-        None
+-    };
++        read_uncached_batch(bus, a, &[UncachedCallKind::Text], deadline, &mut replies)?;
++    }
++    let id = replies
++        .attributes
++        .get("id")
++        .or_else(|| replies.attributes.get("accessible_id"))
++        .cloned()
++        .filter(|value| !value.is_empty());
      Ok(NodeData {
          id,
 -        raw_role: role.0,
 -        platform_role: role
 -            .1
 -            .or_else(|| role.0.and_then(role_name).map(str::to_owned)),
-+        raw_role,
-+        platform_role: native_role_name.or_else(|| raw_role.and_then(role_name).map(str::to_owned)),
-         name,
-         states,
-         value,
-         bounds,
-         children: children_result.context("AT-SPI GetChildren failed")?,
-+        interfaces,
+-        name,
+-        states,
+-        value,
+-        bounds,
+-        children: children_result.context("AT-SPI GetChildren failed")?,
++        raw_role: replies.raw_role,
++        platform_role: replies
++            .role_name
++            .or_else(|| replies.raw_role.and_then(role_name).map(str::to_owned)),
++        name: replies.name,
++        states: replies
++            .state_words
++            .as_deref()
++            .map(decode_states)
++            .unwrap_or_default(),
++        value: replies.value.filter(|value| !value.is_empty()),
++        bounds: replies.bounds,
++        children: replies.children.context("AT-SPI GetChildren failed")?,
++        interfaces: replies.interfaces,
++    })
++}
++
++fn read_uncached_batch(
++    bus: &SyncConnection,
++    address: &Address,
++    kinds: &[UncachedCallKind],
++    deadline: Instant,
++    replies: &mut UncachedReplies,
++) -> Result<()> {
++    let mut pending = HashMap::new();
++    for &kind in kinds {
++        if Instant::now() >= deadline {
++            anyhow::bail!("deadline exceeded before queuing AT-SPI node reads")
++        }
++        let message = uncached_message(address, kind);
++        let serial = bus
++            .channel()
++            .send(message)
++            .map_err(|()| anyhow::anyhow!("failed to queue AT-SPI {kind:?} call"))?;
++        pending.insert(serial, kind);
++    }
++    // Sending only queues bytes in libdbus; dispatch is the potentially blocking phase. One flush
++    // and one absolute deadline bound the whole group, rather than one proxy timeout per thread.
++    bus.channel().flush();
++    dispatch_until(deadline, || {
++        let Some(mut message) = bus
++            .channel()
++            .blocking_pop_message(call_timeout_anyhow(deadline)?)?
++        else {
++            return Ok(false);
++        };
++        if !matches!(
++            message.msg_type(),
++            MessageType::MethodReturn | MessageType::Error
++        ) {
++            return Ok(false);
++        }
++        let Some(serial) = message.get_reply_serial() else {
++            return Ok(false);
++        };
++        let Some(kind) = pending.remove(&serial) else {
++            return Ok(false);
++        };
++        if !cached_reply_matches(
++            message.msg_type(),
++            message.sender().as_deref(),
++            &address.bus,
++        ) {
++            pending.insert(serial, kind);
++            return Ok(false);
++        }
++        match message.as_result() {
++            Ok(message) => decode_uncached_reply(message, kind, replies)?,
++            Err(error) if is_dbus_timeout_error(&error) || Instant::now() >= deadline => {
++                return Err(error.into())
++            }
++            Err(error) if kind == UncachedCallKind::Children => return Err(error.into()),
++            Err(_) => {}
++        }
++        Ok(pending.is_empty())
      })
  }
  
-@@ -926,6 +1687,63 @@ fn property_string_sync(p: &Proxy<&SyncConnection>, interface: &str, name: &str)
-         .ok()?;
-     Some(value.0)
++fn uncached_message(address: &Address, kind: UncachedCallKind) -> Message {
++    match kind {
++        UncachedCallKind::Name => Message::call_with_args(
++            &address.bus,
++            &address.path,
++            "org.freedesktop.DBus.Properties",
++            "Get",
++            ("org.a11y.atspi.Accessible", "Name"),
++        ),
++        UncachedCallKind::Attributes => Message::call_with_args(
++            &address.bus,
++            &address.path,
++            "org.a11y.atspi.Accessible",
++            "GetAttributes",
++            (),
++        ),
++        UncachedCallKind::Role => Message::call_with_args(
++            &address.bus,
++            &address.path,
++            "org.a11y.atspi.Accessible",
++            "GetRole",
++            (),
++        ),
++        UncachedCallKind::RoleName => Message::call_with_args(
++            &address.bus,
++            &address.path,
++            "org.a11y.atspi.Accessible",
++            "GetRoleName",
++            (),
++        ),
++        UncachedCallKind::Children => Message::call_with_args(
++            &address.bus,
++            &address.path,
++            "org.a11y.atspi.Accessible",
++            "GetChildren",
++            (),
++        ),
++        UncachedCallKind::State => Message::call_with_args(
++            &address.bus,
++            &address.path,
++            "org.a11y.atspi.Accessible",
++            "GetState",
++            (),
++        ),
++        UncachedCallKind::Interfaces => Message::call_with_args(
++            &address.bus,
++            &address.path,
++            "org.a11y.atspi.Accessible",
++            "GetInterfaces",
++            (),
++        ),
++        UncachedCallKind::Bounds => Message::call_with_args(
++            &address.bus,
++            &address.path,
++            "org.a11y.atspi.Component",
++            "GetExtents",
++            (0u32,),
++        ),
++        UncachedCallKind::Text => Message::call_with_args(
++            &address.bus,
++            &address.path,
++            "org.a11y.atspi.Text",
++            "GetText",
++            (0i32, -1i32),
++        ),
++    }
++}
++
++fn decode_uncached_reply(
++    message: &Message,
++    kind: UncachedCallKind,
++    replies: &mut UncachedReplies,
++) -> Result<()> {
++    match kind {
++        UncachedCallKind::Name => replies.name = Some(message.read1::<Variant<String>>()?.0),
++        UncachedCallKind::Attributes => replies.attributes = message.read1()?,
++        UncachedCallKind::Role => replies.raw_role = Some(message.read1()?),
++        UncachedCallKind::RoleName => replies.role_name = Some(message.read1()?),
++        UncachedCallKind::Children => {
++            let items: Vec<(String, dbus::Path<'static>)> = message.read1()?;
++            replies.children = Some(
++                items
++                    .into_iter()
++                    .filter(|(bus, path)| !bus.is_empty() && path.to_string() != "/")
++                    .map(|(bus, path)| Address { bus, path })
++                    .collect(),
++            );
++        }
++        UncachedCallKind::State => replies.state_words = Some(message.read1()?),
++        UncachedCallKind::Interfaces => replies.interfaces = message.read1()?,
++        UncachedCallKind::Bounds => {
++            let (x, y, width, height) = message.read1::<(i32, i32, i32, i32)>()?;
++            replies.bounds = Some(Rect {
++                x,
++                y,
++                width,
++                height,
++            });
++        }
++        UncachedCallKind::Text => replies.value = Some(message.read1()?),
++    }
++    Ok(())
++}
++
+ fn children(bus: &SyncConnection, a: &Address, deadline: Instant) -> Result<Vec<Address>> {
+     let timeout = remaining(deadline);
+     if timeout.is_zero() {
+@@ -920,11 +1819,49 @@ fn set_property<T: RefArg + dbus::arg::Arg + dbus::arg::Append + 'static>(
+     )?;
+     Ok(())
  }
+-fn property_string_sync(p: &Proxy<&SyncConnection>, interface: &str, name: &str) -> Option<String> {
+-    let (value,): (Variant<String>,) = p
+-        .method_call("org.freedesktop.DBus.Properties", "Get", (interface, name))
+-        .ok()?;
+-    Some(value.0)
 +fn fresh_status_proxy(
 +    session: &Connection,
 +    deadline: Instant,
@@ -1311,19 +1625,6 @@ index 596b071a..516816fc 100644
 +        anyhow::bail!("deadline exceeded before AT-SPI role read")
 +    }
 +    Ok(timeout)
-+}
-+fn optional_role_call<T>(deadline: Instant, call: impl FnOnce() -> Result<T>) -> Result<Option<T>> {
-+    match call() {
-+        Ok(value) => Ok(Some(value)),
-+        Err(error) => {
-+            let timed_out = Instant::now() >= deadline || is_timeout_error(&error);
-+            if timed_out {
-+                Err(error)
-+            } else {
-+                Ok(None)
-+            }
-+        }
-+    }
 +}
 +fn is_dbus_timeout_error(error: &dbus::Error) -> bool {
 +    error.name().is_some_and(|name| {
@@ -1347,11 +1648,10 @@ index 596b071a..516816fc 100644
 +                    | "org.freedesktop.DBus.Error.TimedOut"
 +            )
 +        })
-+}
+ }
  fn remaining(deadline: Instant) -> Duration {
      deadline
-         .saturating_duration_since(Instant::now())
-@@ -934,16 +1752,7 @@ fn remaining(deadline: Instant) -> Duration {
+@@ -934,16 +1871,7 @@ fn remaining(deadline: Instant) -> Duration {
  fn timed_err(deadline: Instant, error: impl Into<anyhow::Error>) -> CaptureError {
      let error = error.into();
      // libdbus uses millisecond timeouts and can report expiration before the Rust deadline.
@@ -1369,7 +1669,52 @@ index 596b071a..516816fc 100644
      if dbus_timeout || Instant::now() >= deadline {
          ("timeout", "accessibility snapshot timed out".into(), None)
      } else {
-@@ -1367,7 +2176,8 @@ mod tests {
+@@ -1227,6 +2155,44 @@ fn decode_states(words: &[u32]) -> Vec<String> {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    #[test]
++    fn uncached_node_reads_use_one_bounded_dispatch_batch() {
++        let kinds = uncached_call_kinds(false);
++        assert_eq!(
++            kinds,
++            [
++                UncachedCallKind::Name,
++                UncachedCallKind::Attributes,
++                UncachedCallKind::Role,
++                UncachedCallKind::RoleName,
++                UncachedCallKind::Children,
++                UncachedCallKind::State,
++                UncachedCallKind::Interfaces,
++                UncachedCallKind::Bounds,
++            ]
++        );
++        assert_eq!(
++            uncached_call_kinds(true).last(),
++            Some(&UncachedCallKind::Text),
++            "text is dispatched only after interfaces advertise it"
++        );
++    }
++
++    #[test]
++    fn bounded_dispatch_stops_at_one_deadline_instead_of_joining_delayed_calls() {
++        let deadline = Instant::now() + Duration::from_millis(40);
++        let started = Instant::now();
++        let mut polls = 0;
++        let result = dispatch_until(deadline, || {
++            polls += 1;
++            std::thread::sleep(Duration::from_millis(15));
++            Ok::<_, anyhow::Error>(false)
++        });
++        assert!(result.is_err());
++        assert!(started.elapsed() < Duration::from_millis(90));
++        assert!(polls <= 4, "one deadline must bound every outstanding call");
++    }
++
+     #[test]
+     fn atspi_roles_cover_protocol_constants_without_aliasing_distinct_widgets() {
+         let cases = [
+@@ -1367,7 +2333,8 @@ mod tests {
                  Err(anyhow::Error::new(dbus::Error::new_custom(
                      "org.freedesktop.DBus.Error.UnknownInterface",
                      "No such interface 'org.a11y.atspi.Accessible'",
@@ -1379,7 +1724,7 @@ index 596b071a..516816fc 100644
              } else {
                  Ok(42)
              }
-@@ -1384,11 +2194,18 @@ mod tests {
+@@ -1384,11 +2351,18 @@ mod tests {
                  "org.freedesktop.DBus.Error.AccessDenied",
                  "org.a11y.atspi.Accessible",
              ),
@@ -1399,7 +1744,7 @@ index 596b071a..516816fc 100644
              });
              assert!(result.is_err());
              assert_eq!(calls, 1);
-@@ -1423,6 +2240,144 @@ mod tests {
+@@ -1423,6 +2397,144 @@ mod tests {
          assert!(restore_result(true, Err("read failed".into())).is_err());
      }
  
@@ -1544,7 +1889,7 @@ index 596b071a..516816fc 100644
      #[test]
      fn unknown_interface_is_transient_only_during_registration() {
          let unknown = anyhow::Error::new(dbus::Error::new_custom(
-@@ -1469,6 +2424,326 @@ mod tests {
+@@ -1469,6 +2581,326 @@ mod tests {
          r.maximum_node_count = 0;
          assert!(validate(&r).is_err());
      }
@@ -1871,7 +2216,7 @@ index 596b071a..516816fc 100644
      #[test]
      fn rejects_process_target_outside_linux_pid_range() {
          let request: Request = serde_json::from_str(
-@@ -1503,6 +2778,291 @@ mod tests {
+@@ -1503,6 +2935,291 @@ mod tests {
          assert!(parse_window_id("org.example.App|/window/7").is_none());
          assert!(parse_window_id(":1.42|not-a-path").is_none());
      }
@@ -2163,7 +2508,7 @@ index 596b071a..516816fc 100644
      #[test]
      fn window_title_target_deserializes() {
          let request: Request = serde_json::from_str(
-@@ -1545,6 +3105,21 @@ mod tests {
+@@ -1545,6 +3262,21 @@ mod tests {
          assert!(error.1.contains("owned by process 4242"));
      }
  
@@ -2185,7 +2530,7 @@ index 596b071a..516816fc 100644
      #[test]
      fn unscoped_window_search_expiration_remains_timeout() {
          let request: Request = serde_json::from_str(
-@@ -1601,7 +3176,7 @@ mod tests {
+@@ -1601,7 +3333,7 @@ mod tests {
      }
  
      #[test]
@@ -2194,7 +2539,7 @@ index 596b071a..516816fc 100644
          let mut snapshot = empty_snapshot();
          snapshot.nodes.push(Node {
              key: "w0/root".into(),
-@@ -1624,8 +3199,8 @@ mod tests {
+@@ -1624,8 +3356,8 @@ mod tests {
  
          assert_eq!(code, "no-accessibility-tree");
          assert!(message.contains("StructuralFailure"));

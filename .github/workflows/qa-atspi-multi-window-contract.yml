@@ -61,7 +61,14 @@ jobs:
         id: rustfmt
         if: hashFiles('candidate/recording/native/linux/Cargo.toml') != ''
         continue-on-error: true
-        run: cargo fmt --manifest-path candidate/recording/native/linux/Cargo.toml -- --check
+        run: |
+          set -euo pipefail
+          for checkout in product candidate; do
+            cargo fmt --manifest-path "$checkout/recording/native/linux/Cargo.toml" -- --check > "$RUNNER_TEMP/$checkout-crate-fmt.log" || test -s "$RUNNER_TEMP/$checkout-crate-fmt.log"
+            sed "s|$GITHUB_WORKSPACE/$checkout/|PROJECT/|g" "$RUNNER_TEMP/$checkout-crate-fmt.log" > "$RUNNER_TEMP/$checkout-fmt-normalized.txt"
+          done
+          diff -u "$RUNNER_TEMP/product-fmt-normalized.txt" "$RUNNER_TEMP/candidate-fmt-normalized.txt"
+          rustfmt --edition 2021 --check candidate/recording/native/linux/src/accessibility.rs
       - name: Install private desktop dependencies
         run: |
           sudo apt-get update
@@ -81,6 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/qa-atspi-multi-window"
+          source qa/.github/qa-atspi-multi-window-contract/candidate.env
           candidate=
           [[ ! -d candidate ]] || candidate="$GITHUB_WORKSPACE/candidate/recording/native/linux/target/release/spectre-wayland-helper"
           dbus-run-session -- xvfb-run -a sh -c 'openbox >/tmp/openbox.log 2>&1 & exec env "$@"' sh \
@@ -88,6 +96,7 @@ jobs:
             QA_ROOT="$GITHUB_WORKSPACE/qa/.github/qa-atspi-multi-window-contract" \
             ARTIFACTS="$RUNNER_TEMP/qa-atspi-multi-window" \
             BASELINE_HELPER="$GITHUB_WORKSPACE/product/recording/native/linux/target/release/spectre-wayland-helper" \
+            DEADLINE_ACCEPTANCE="$DEADLINE_ACCEPTANCE" \
             CANDIDATE_HELPER="$candidate" \
             "$GITHUB_WORKSPACE/qa/.github/qa-atspi-multi-window-contract/run-session.sh"
       - name: Preserve machine-readable native evidence

@@ -8,6 +8,12 @@ Baseline assertions are observations: all three independent providers run even w
 selects only its first PID-owned window or returns a populated partial snapshot for an ordinary
 structural error. Candidate assertions are acceptance requirements and make the job fail.
 
+Every valid invocation retains the independent cache failure, provider monotonic dispatch journal,
+and parsed raw bus call/reply serials and timestamps. Slow requests use three fresh providers. The
+optional deadline gate is deliberately separate: leave `DEADLINE_ACCEPTANCE=false` for the
+multi-window/context review, then enable it only with the final deadline-fix pin. It accepts the
+650 ms request plus an explicit 400 ms bootstrap/AT-SPI restoration grace.
+
 To test a review, set exactly one selector in `candidate.env`. `CANDIDATE_SHA` must be a subsequent
 exact commit. Alternatively, `CANDIDATE_PATCH` names a cumulative patch in this directory which is
 applied with `git apply --index` to the baseline. Record both the resulting full repository tree and

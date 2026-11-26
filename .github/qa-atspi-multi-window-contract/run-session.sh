@@ -12,7 +12,7 @@ run_case() {
   if [[ ! -s $ready ]]; then fail=1; return; fi
   owner=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["owner"])' "$ready")
   address=$(gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.a11y.Bus.GetAddress | sed "s/^('//;s/',)$//")
-  dbus-monitor --address "$address" "destination='$owner'" "sender='$owner'" >"$ARTIFACTS/$label-wire.log" 2>&1 & monitor=$!
+  stdbuf -oL dbus-monitor --address "$address" "destination='$owner'" "sender='$owner'" >"$ARTIFACTS/$label-wire.log" 2>&1 & monitor=$!
   python3 - "$ready" "$ARTIFACTS/$label-x11.json" <<'PY'
 import json,subprocess,sys
 r=json.load(open(sys.argv[1])); observations=[]
@@ -22,16 +22,18 @@ for xid in r["xids"]:
 json.dump({"fixturePid":r["pid"],"distinctXids":len(set(r["xids"]))==2,"windows":observations},open(sys.argv[2],"w"),indent=2)
 PY
   sha256sum "$helper" >"$ARTIFACTS/$label-helper.sha256"
-  args=(); [[ $candidate == true ]] && args+=(--candidate)
+  args=(--wire "$ARTIFACTS/$label-wire.log")
+  [[ $candidate == true ]] && args+=(--candidate)
+  [[ $candidate == true && ${DEADLINE_ACCEPTANCE:-false} == true && $fault == slow ]] && args+=(--deadline-acceptance)
   if ! timeout --signal=KILL 90s /usr/bin/python3 "$QA_ROOT/verify.py" --helper "$helper" --ready "$ready" --journal "$journal" --artifacts "$ARTIFACTS" --label "$label" "${args[@]}" >"$ARTIFACTS/$label-verify.stdout" 2>"$ARTIFACTS/$label-verify.stderr"; then fail=1; fi
   kill "$monitor" "$provider" 2>/dev/null || true; wait "$monitor" 2>/dev/null || true; wait "$provider" 2>/dev/null || true
 }
 trap 'kill ${monitor:-} ${provider:-} 2>/dev/null || true' EXIT
 # Every baseline scenario runs independently. Observed old behavior is evidence, never a reason to
 # skip the remaining controls or suppress their native receipts.
-for spec in regular:none early:error timeout:slow; do run_case "baseline-${spec%%:*}" "${spec#*:}" "$BASELINE_HELPER" false; done
+for spec in regular:none early:error timeout-1:slow timeout-2:slow timeout-3:slow; do run_case "baseline-${spec%%:*}" "${spec#*:}" "$BASELINE_HELPER" false; done
 if [[ -n ${CANDIDATE_HELPER:-} ]]; then
-  for spec in regular:none early:error timeout:slow; do run_case "candidate-${spec%%:*}" "${spec#*:}" "$CANDIDATE_HELPER" true; done
+  for spec in regular:none early:error timeout-1:slow timeout-2:slow timeout-3:slow; do run_case "candidate-${spec%%:*}" "${spec#*:}" "$CANDIDATE_HELPER" true; done
 fi
 python3 - "$ARTIFACTS" <<'PY'
 import json,sys,tarfile

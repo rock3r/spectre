@@ -418,8 +418,8 @@ jobs:
           git -C baseline apply --index "$GITHUB_WORKSPACE/baseline-control/.github/reader-overlays/716-b1-cached-owner.patch"
           test "$(git -C baseline write-tree)" = 93dcbb2ae2302e04ca0a3f316b1a90b669cef7fe
           git -C product apply --index "$GITHUB_WORKSPACE/control/.github/reader-overlays/716-multi-root-cumulative.patch"
-          test "$(git -C product write-tree)" = 83b279b893579d7ace48d48d9baba0c5d85f6429
-          test "$(git -C product hash-object recording/native/linux/src/accessibility.rs)" = 516816fc5e6e9d0027700deb98938021b75ec8dd
+          test "$(git -C product write-tree)" = 157176b3c4e9d1ce0308651ef837d159ad013505
+          test "$(git -C product hash-object recording/native/linux/src/accessibility.rs)" = d2fc888729dcfc2c6e5a8cb97b2c4029e5023410
           test "$(git -C pre-cutoff rev-parse HEAD)" = 5f96c5779da47d093c1e31497ecd8e1e785726ea
           test "$(git -C pre-cutoff rev-parse HEAD^{tree})" = 97b3c15a0c0d15b8d964c10c6f60c58d0d53b8cb
           test "$(git -C pre-cutoff hash-object recording/native/linux/src/accessibility.rs)" = 333266f35e03084ac892d0281b1861724ce6a48c

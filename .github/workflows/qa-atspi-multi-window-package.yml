@@ -100,7 +100,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/qa-atspi-multi-window"
           baseline_cli=$(cat "$RUNNER_TEMP/baseline-cli-path.txt")
           candidate_cli=; [[ ! -f "$RUNNER_TEMP/candidate-cli-path.txt" ]] || candidate_cli=$(cat "$RUNNER_TEMP/candidate-cli-path.txt")
-          dbus-run-session -- xvfb-run -a sh -c 'openbox >/tmp/openbox.log 2>&1 & exec env "$@"' sh \
+          dbus-run-session -- xvfb-run -a sh -c 'openbox >/tmp/openbox.log 2>&1 & gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled "<true>" && exec env "$@"' sh \
             NO_AT_BRIDGE=0 GTK_MODULES=gail:atk-bridge \
             QA_ROOT="$GITHUB_WORKSPACE/qa/.github/qa-atspi-multi-window-package" \
             ARTIFACTS="$RUNNER_TEMP/qa-atspi-multi-window" \
