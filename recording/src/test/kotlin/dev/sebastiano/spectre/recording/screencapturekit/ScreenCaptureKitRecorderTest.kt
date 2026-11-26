@@ -70,7 +70,7 @@ class ScreenCaptureKitRecorderTest {
                         .use {
                             val argv = factory.lastArgv
                             assertFalse("--title-contains" in argv)
-                            assertEquals("10,20,300,200", argv[argv.indexOf("--frame") + 1])
+                            assertEquals("40,80,300,200", argv[argv.indexOf("--frame") + 1])
                             assertEquals(pid.toString(), argv[argv.indexOf("--pid") + 1])
                         }
                 }
