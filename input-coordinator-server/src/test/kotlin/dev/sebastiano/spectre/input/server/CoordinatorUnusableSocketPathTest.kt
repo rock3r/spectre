@@ -2,10 +2,12 @@
 
 package dev.sebastiano.spectre.input.server
 
+import dev.sebastiano.spectre.input.CoordinatorControlResult
 import dev.sebastiano.spectre.input.CoordinatorEndpoint
 import dev.sebastiano.spectre.input.CoordinatorSocketCandidates
 import dev.sebastiano.spectre.input.DesktopResourceKey
 import dev.sebastiano.spectre.input.LocalInputCoordinatorClient
+import dev.sebastiano.spectre.input.LocalInputCoordinatorControl
 import java.io.IOException
 import java.nio.channels.OverlappingFileLockException
 import java.nio.file.Files
@@ -86,6 +88,20 @@ class CoordinatorUnusableSocketPathTest {
         resources += client
 
         assertTrue(client.coordinatorEpoch.isNotBlank(), "the session should be fully open")
+        assertNotEquals(socketPath, server.boundSocketPath)
+    }
+
+    @Test
+    fun `status reaches a coordinator after a known non-socket candidate`() {
+        blockPath(socketPath)
+        val server = LocalCoordinatorServer(endpoint, idleTimeout = Duration.ofMinutes(1))
+        resources += server
+        server.start()
+
+        val result = LocalInputCoordinatorControl(endpoint).status(resource)
+
+        assertTrue(result is CoordinatorControlResult.Active)
+        assertEquals(resource, result.status.resourceKey)
         assertNotEquals(socketPath, server.boundSocketPath)
     }
 

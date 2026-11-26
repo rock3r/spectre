@@ -4,7 +4,7 @@ description: >
   Use when inspecting, diffing, or pruning Spectre atomic captures (`capture.json` + `screenshot.png` from
   `spectre capture`, MCP `capture`, or `ComposeAutomator.capture`). Use `spectre` for general UI automation.
 license: Apache-2.0
-compatibility: Requires the Spectre CLI (or in-process capture API) and schemaVersion 1 captures.
+compatibility: Requires the Spectre CLI (or in-process capture API) and schemaVersion 2 captures.
 ---
 
 # Spectre capture output
@@ -40,13 +40,14 @@ spectre captures prune --older-than 7d
 - Live sessions are never touched without `--force`.
 - Captures written via `--out-dir` / MCP `out_dir` are never auto-pruned without `--include-out-dir`.
 
-## `capture.json` schema (`schemaVersion 1`)
+## `capture.json` schema (`schemaVersion 2`)
 
 A `schemaVersion` bump also requires bumping this skill's version.
 
 ```jsonc
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "source": "compose-semantics",
   "capturedAt": "ISO-8601 UTC",
   "window": {
     "index": 0,
@@ -54,12 +55,13 @@ A `schemaVersion` bump also requires bumping this skill's version.
     "title": "…",
     "isPopup": false,
     "boundsScreen": { "x": 0, "y": 0, "width": 0, "height": 0 },
+    "boundsSpace": "screen",
     "densityScaleX": 1.0,
     "densityScaleY": 1.0,
     "imageWidth": 800,
     "imageHeight": 600
   },
-  "nodes": [ /* flat DFS list; no parent/child edges in v1 */ ],
+  "nodes": [ /* flat pre-order list; parentKey rebuilds the tree */ ],
   "summary": {
     "nodeCount": 0,
     "taggedNodeCount": 0,
@@ -73,14 +75,17 @@ A `schemaVersion` bump also requires bumping this skill's version.
 
 | Node field | Meaning |
 |---|---|
-| `key` | Owner-scoped node key for `click`/input on the **same attach session** |
+| `key` / `parentKey` | Snapshot-local id/index path and its parent (`null` at a root) |
+| `id` | Platform identifier; Compose fills it from `testTag`; nullable and not globally unique |
 | `testTag` | Compose `Modifier.testTag` |
 | `text` / `texts` | Visible text (`summary.textedNodeCount` counts non-empty `text` **or** `editableText`) |
 | `editableText` | Text-field contents when present |
 | `contentDescription` / `role` | Accessibility description and semantics role string |
+| `platformRole` / `states` / `value` | Raw OS role, normalised state strings, and current value |
 | `enabled` / `clickable` / `focused` / `selected` | Boolean state flags |
 | `boundsImage` | **Primary** — device-pixel coordinates inside `screenshot.png` |
 | `boundsScreen` | Secondary — logical screen coordinates for input targeting |
+| `onScreen` | Bounds/window intersection, never a copied platform visibility flag |
 
 `screenshot.png` is in **device pixels** (e.g., 2× `boundsScreen` on Retina), so `window.imageWidth` can exceed
 `window.boundsScreen.width`. Use `boundsImage` for PNG inspection and `boundsScreen` for pointer coordinates.
@@ -97,7 +102,7 @@ jq -r --arg q 'save' '
   | "\(.key)\t\(.testTag // "-")\t\(.text // .editableText // "")"
 ' "$CAP"
 
-# Resolve clickable key and image/screen bounds by testTag
+# Resolve snapshot key and image/screen bounds by testTag
 KEY=$(jq -r --arg tag 'submit' '.nodes[] | select(.testTag == $tag and .clickable) | .key' "$CAP" | head -n1)
 jq -r --arg tag 'submit' '.nodes[] | select(.testTag == $tag) | "\(.key) image=\(.boundsImage) screen=\(.boundsScreen)"' "$CAP"
 
@@ -110,11 +115,12 @@ diff -u \
 ## Workflow (`capture → act → capture → diff`) and key lifetime
 
 1. **Settle the UI first** (`waitForIdle`/`waitForVisualIdle` or app-level wait); `capture` does not auto-idle.
-2. **Capture before** (`spectre capture <session-id> --json`), locate a target key in `capture.json` via `jq`, and
-   **act** (`spectre click <session-id> "$KEY"`).
+2. **Capture before** (`spectre capture <session-id> --json`), locate a target by `id`/`testTag` via `jq`, resolve its
+   current actionable key with `spectre find`, and act with that live key. Snapshot keys are structural evidence, not
+   durable action handles.
 3. **Capture after**, verify the diff, and **prune** (`spectre captures prune --session <session-id>`) when finished.
 
-Node keys belong to the **current attach session and tree snapshot**:
+Node keys belong to exactly **one tree snapshot**:
 
 - Re-capture and re-resolve keys after navigation, recomposition, scrolling, or re-attach.
 - **Compose Hot Reload:** start `spectre wait --reload-settled <session-id>` (or MCP `wait_for_reload_settled`) *before*

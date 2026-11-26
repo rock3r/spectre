@@ -277,35 +277,49 @@ internal data class PreCaptureSnapshot(
     val nodeSnapshots: List<CaptureNodeSnapshot>,
 )
 
+internal data class PreCaptureGeometry(
+    val captureRegion: Rectangle,
+    val windowBounds: Rectangle,
+    val frameInsets: Insets,
+    val densityScaleX: Double,
+    val densityScaleY: Double,
+)
+
 /** Reads a [PreCaptureSnapshot] of [trackedWindow]. Call it on the EDT. */
 internal fun readPreCaptureSnapshot(
     trackedWindow: TrackedWindow,
-    semanticsReader: SemanticsReader,
+    treeSource: dev.sebastiano.spectre.core.capture.TreeSource,
 ): PreCaptureSnapshot {
-    val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
+    return readPreCaptureSnapshot(
+        trackedWindows = listOf(trackedWindow),
+        geometry = readPreCaptureGeometry(trackedWindow),
+        treeSource = treeSource,
+    )
+}
+
+internal fun readPreCaptureSnapshot(
+    trackedWindows: List<TrackedWindow>,
+    geometry: PreCaptureGeometry,
+    treeSource: dev.sebastiano.spectre.core.capture.TreeSource,
+): PreCaptureSnapshot {
     return PreCaptureSnapshot(
+        captureRegion = geometry.captureRegion,
+        windowBounds = geometry.windowBounds,
+        frameInsets = geometry.frameInsets,
+        densityScaleX = geometry.densityScaleX,
+        densityScaleY = geometry.densityScaleY,
+        nodeSnapshots = treeSource.snapshot(trackedWindows),
+    )
+}
+
+private fun readPreCaptureGeometry(trackedWindow: TrackedWindow): PreCaptureGeometry {
+    val transform = trackedWindow.window.graphicsConfiguration.defaultTransform
+    return PreCaptureGeometry(
         captureRegion = trackedWindow.composeSurfaceBoundsOnScreen,
         windowBounds = Rectangle(trackedWindow.window.bounds),
         frameInsets = windowInsets(trackedWindow.window),
         densityScaleX = transform.scaleX,
         densityScaleY = transform.scaleY,
-        nodeSnapshots =
-            semanticsReader.readAllNodes(listOf(trackedWindow)).map { node ->
-                CaptureNodeSnapshot(
-                    key = node.key.toString(),
-                    testTag = node.testTag,
-                    text = node.text,
-                    texts = node.texts,
-                    editableText = node.editableText,
-                    contentDescription = node.contentDescription,
-                    role = node.role?.toString(),
-                    enabled = !node.isDisabled,
-                    clickable = node.isClickable,
-                    focused = node.isFocused,
-                    selected = node.isSelected,
-                    boundsScreen = node.bothBounds().onScreen,
-                )
-            },
     )
 }
 

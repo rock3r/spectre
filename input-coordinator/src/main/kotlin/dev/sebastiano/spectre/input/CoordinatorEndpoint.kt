@@ -53,13 +53,11 @@ public data class CoordinatorEndpoint(public val directory: Path, public val soc
 /** Resolves a short endpoint that is independent of the launching process's environment. */
 @ExperimentalSpectreInputCoordinationApi
 public object CoordinatorEndpointResolver {
-    /** Creates the canonical endpoint names without touching the filesystem. */
+    /** Creates canonical endpoint names, resolving the existing prefix of [baseDirectory]. */
     @Throws(IOException::class)
     public fun resolve(baseDirectory: Path, effectiveUserId: String): CoordinatorEndpoint {
         require(effectiveUserId.isNotBlank()) { "Effective user ID must not be blank" }
-        val canonicalBase =
-            if (Files.exists(baseDirectory)) baseDirectory.toRealPath()
-            else baseDirectory.normalize()
+        val canonicalBase = canonicalizeProspectivePath(baseDirectory)
         val userHash = stableHash(effectiveUserId)
         val directory = canonicalBase.resolve("spectre-input-$userHash")
         val socketPath = directory.resolve("input-v1-${userHash.take(SOCKET_HASH_LENGTH)}.sock")
@@ -86,6 +84,29 @@ public object CoordinatorEndpointResolver {
     private const val SOCKET_HASH_LENGTH: Int = 8
 }
 
+/** Canonicalizes the existing prefix and retains only genuinely missing path components. */
+internal fun canonicalizeProspectivePath(path: Path): Path {
+    val unresolved = ArrayDeque<Path>()
+    var candidate = path.toAbsolutePath()
+    while (true) {
+        try {
+            Files.readAttributes(candidate, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+            break
+        } catch (_: NoSuchFileException) {
+            unresolved.addFirst(
+                candidate.fileName
+                    ?: throw IOException("Cannot find an existing ancestor for endpoint root $path")
+            )
+            candidate =
+                candidate.parent
+                    ?: throw IOException("Cannot find an existing ancestor for endpoint root $path")
+        }
+    }
+    var canonical = candidate.toRealPath()
+    unresolved.forEach { canonical = canonical.resolve(it) }
+    return canonical
+}
+
 /** Enforces the same-user trust boundary for a coordinator endpoint and its socket file. */
 @ExperimentalSpectreInputCoordinationApi
 public sealed interface OwnerOnlyEndpointProtection {
@@ -101,9 +122,11 @@ public sealed interface OwnerOnlyEndpointProtection {
      * How much a concurrent substitution can do depends on the host. Where the JDK exposes an
      * `openat`-backed [SecureDirectoryStream] — Linux in practice — the components are walked with
      * a descent that resolves each of them exactly once ([prepareEndpointDirectory]). Where it does
-     * not — Windows, and macOS, which never reports the capability — the walk is lexical and
-     * re-resolves the path on every call, so a component accepted a moment ago can still be swapped
-     * before the next call reaches through it (#487).
+     * not, Windows uses its existing lexical protection and macOS deliberately uses the documented
+     * lexical POSIX mode. Any other POSIX provider without secure traversal fails closed rather
+     * than silently weakening the guarantee. A lexical walk re-resolves the path on every call, so
+     * a component accepted a moment ago can still be swapped before the next call reaches it
+     * (#487).
      */
     @Throws(IOException::class) public fun prepareDirectory(socketPath: Path)
 
@@ -114,7 +137,8 @@ public sealed interface OwnerOnlyEndpointProtection {
         /** Selects protection from the filesystem that will contain [path]. */
         public fun forPath(path: Path): OwnerOnlyEndpointProtection {
             val existingAncestor =
-                generateSequence(path.toAbsolutePath()) { it.parent }.first(Files::exists)
+                generateSequence(path.toAbsolutePath()) { it.parent }
+                    .first(::pathExistsWithoutFollowingLinks)
             return if (Files.getFileStore(existingAncestor).supportsFileAttributeView("posix")) {
                 PosixOwnerOnlyEndpointProtection
             } else {
@@ -146,7 +170,7 @@ private object BasicOwnerOnlyEndpointProtection : OwnerOnlyEndpointProtection {
         // Parents may be missing: on Windows the base is %LOCALAPPDATA%\Temp, which is absent on
         // profiles whose temp directory has been redirected (#462).
         prepareAncestors(directory) { ancestor -> Files.createDirectory(ancestor) }
-        if (Files.exists(directory, NOFOLLOW_LINKS)) {
+        if (pathExistsWithoutFollowingLinks(directory)) {
             rejectSubstituted(directory, role = "directory")
         } else {
             Files.createDirectory(directory)
@@ -208,10 +232,15 @@ internal fun prepareEndpointDirectory(directory: Path, afterDescendingInto: (Pat
     val lastIndex = absolute.nameCount - 1
     var current =
         openRootDirectory(root)
-            ?: run {
-                // No openat on this host (macOS); keep the pre-#487 guarantees rather than refuse.
+            ?: if (isMacOs()) {
+                // Darwin's JDK deliberately has no SecureDirectoryStream. Its supported mode is
+                // the pre-#487 owner-only, link-rejecting lexical POSIX walk documented above.
                 prepareEndpointDirectoryLexically(directory)
                 return
+            } else {
+                throw IOException(
+                    "Filesystem provider for $root does not support secure directory traversal"
+                )
             }
     var currentPath = root
     try {
@@ -342,23 +371,14 @@ private fun SecureDirectoryStream<Path>.readAttributesOrNull(
     }
 
 /**
- * Opens the filesystem root, which is the only component the descent takes on trust.
- *
- * Fails closed when the provider does not hand back a [SecureDirectoryStream]: without one there is
- * no fd-relative open to descend with, and silently falling back to the lexical walk would leave
- * callers believing in a guarantee they no longer have. Every POSIX filesystem the coordinator
- * selects this protection for returns one.
- */
-/**
  * Opens the filesystem root as a [SecureDirectoryStream], or null where the platform has none.
  *
  * Not every POSIX host has one. The JDK sets its `SUPPORTS_OPENAT` capability only when all six of
  * `openat`, `fstatat`, `unlinkat`, `renameat`, `futimesat` and `fdopendir` resolve, and it does not
  * even look `futimesat` up under `_ALLBSD_SOURCE`, so macOS always returns a plain
- * `UnixDirectoryStream` and the descent is in practice a Linux one. Null means the caller falls
- * back to [prepareEndpointDirectoryLexically] rather than failing: refusing to prepare an endpoint
- * at all would take the coordinator off Darwin entirely, which is a far worse outcome than keeping
- * the guarantees that platform already had.
+ * `UnixDirectoryStream` and the descent is in practice a Linux one. Null is handled explicitly by
+ * [prepareEndpointDirectory]: macOS uses its documented lexical protection mode, while an
+ * unexpected provider fails closed.
  */
 private fun openRootDirectory(root: Path): SecureDirectoryStream<Path>? {
     val stream = Files.newDirectoryStream(root)
@@ -379,7 +399,7 @@ internal fun prepareEndpointDirectoryLexically(directory: Path) {
     val ownerOnly = PosixFilePermissions.asFileAttribute(OWNER_ONLY_DIRECTORY_PERMISSIONS)
     // Parents may legitimately be missing (#462); nothing is created when they all exist.
     prepareAncestors(directory) { ancestor -> Files.createDirectory(ancestor, ownerOnly) }
-    if (Files.exists(directory, NOFOLLOW_LINKS)) {
+    if (pathExistsWithoutFollowingLinks(directory)) {
         rejectSubstituted(directory, role = "directory")
         val permissions = Files.getPosixFilePermissions(directory, NOFOLLOW_LINKS)
         if (permissions != OWNER_ONLY_DIRECTORY_PERMISSIONS) {
@@ -424,7 +444,7 @@ private val OWNER_ONLY_DIRECTORY_PERMISSIONS: Set<PosixFilePermission> =
 private fun prepareAncestors(directory: Path, createDirectory: (Path) -> Unit) {
     val ancestors = generateSequence(directory.parent) { it.parent }.toList().asReversed()
     ancestors.forEach { ancestor ->
-        if (Files.exists(ancestor, NOFOLLOW_LINKS)) {
+        if (pathExistsWithoutFollowingLinks(ancestor)) {
             if (!isTrustedPrivateAlias(ancestor, ancestor.root)) {
                 rejectSubstituted(ancestor, role = "ancestor")
             }
@@ -437,6 +457,15 @@ private fun prepareAncestors(directory: Path, createDirectory: (Path) -> Unit) {
         }
     }
 }
+
+/** False only for ENOENT; access and provider failures remain observable to the caller. */
+private fun pathExistsWithoutFollowingLinks(path: Path): Boolean =
+    try {
+        Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+        true
+    } catch (_: NoSuchFileException) {
+        false
+    }
 
 /**
  * Whether [link] is one of the root-level aliases macOS ships — `/tmp`, `/var`, and `/etc`, each
