@@ -36,7 +36,7 @@ jobs:
           test "$(git -C prefetch rev-parse HEAD:recording/native/linux)" = "$PREFETCH_READER_TREE"
           printf '%s\n' "$PREFETCH_SHA" > "$RUNNER_TEMP/prefetch-sha.txt"
           if [[ -n "$CORRECTED_SHA$CORRECTED_PATCH" ]]; then
-            cp -a prefetch corrected
+            git -C prefetch worktree add --detach "$GITHUB_WORKSPACE/corrected" "$PREFETCH_SHA"
             if [[ -n "$CORRECTED_SHA" ]]; then
               git -C corrected fetch origin "$CORRECTED_SHA"
               git -C corrected checkout --detach "$CORRECTED_SHA"
@@ -46,6 +46,7 @@ jobs:
               git -C corrected apply --index "$GITHUB_WORKSPACE/qa/$CORRECTED_PATCH"
             fi
             staged_tree=$(git -C corrected write-tree)
+            test "$staged_tree" = "$CORRECTED_FULL_TREE"
             test "$(git -C corrected rev-parse "$staged_tree:recording/native/linux")" = "$CORRECTED_READER_TREE"
             git -C corrected rev-parse HEAD > "$RUNNER_TEMP/corrected-sha.txt"
             git -C corrected write-tree > "$RUNNER_TEMP/corrected-reader-tree.txt"
