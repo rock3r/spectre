@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import io
 import os
 from pathlib import Path
 import stat
@@ -18,6 +19,14 @@ def write_executable(path: Path, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+def make_jar(entries: list[tuple[str, bytes]]) -> bytes:
+    jar_bytes = io.BytesIO()
+    with zipfile.ZipFile(jar_bytes, "w") as archive:
+        for name, content in entries:
+            archive.writestr(name, content)
+    return jar_bytes.getvalue()
+
+
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
     jar = root / "cli.jar"
@@ -25,6 +34,19 @@ with tempfile.TemporaryDirectory() as directory:
     tools.mkdir()
     signed_log = root / "signed.log"
 
+    darwin_entries = [
+        ("com/sun/jna/darwin-aarch64/libjnidispatch.jnilib", b"\xfe\xed\xfa\xcfARM"),
+        ("com/sun/jna/darwin-x86-64/libjnidispatch.jnilib", b"\xfe\xed\xfa\xcfX64"),
+    ]
+    linux_entry = ("com/sun/jna/linux-x86-64/libjnidispatch.so", b"\x7fELFLINUX")
+    inject_entry = (
+        "META-INF/spectre/inject-runtime.jar",
+        make_jar([("spectre/inject.class", b"\xca\xfe\xba\xbeINJECT")]),
+    )
+    agent_runtime_entry = (
+        "spectre/agent-runtime.jar",
+        make_jar([*darwin_entries, linux_entry, inject_entry]),
+    )
     entries = [
         (
             "native/macos/SpectreCaptureHelper.app/Contents/MacOS/helper",
@@ -35,6 +57,7 @@ with tempfile.TemporaryDirectory() as directory:
         ("pkg/DebugProbesKt.bin", b"\xca\xfe\xba\xbeKOTLIN-BIN"),
         ("Case/Name.txt", b"upper"),
         ("case/name.txt", b"lower"),
+        agent_runtime_entry,
     ]
     with zipfile.ZipFile(jar, "w") as archive:
         archive.comment = b"archive-comment"
@@ -65,9 +88,20 @@ print('Mach-O 64-bit binary' if data.startswith(b'\\xfe\\xed\\xfa\\xcf') else 'c
         """#!/usr/bin/env python3
 import os, pathlib, sys
 path = pathlib.Path(sys.argv[-1])
+data = path.read_bytes()
+if sys.argv[1] == '--verify':
+    assert '--strict' in sys.argv
+    assert '--all-architectures' in sys.argv
+    assert data.endswith(b'-SIGNED')
+    operation = 'verified'
+else:
+    assert '--timestamp' in sys.argv
+    identity_index = sys.argv.index('--sign') + 1
+    assert sys.argv[identity_index] == 'Developer ID'
+    path.write_bytes(data + b'-SIGNED')
+    operation = 'signed'
 with open(os.environ['SIGNED_LOG'], 'a') as log:
-    log.write(path.name + '\\n')
-path.write_bytes(path.read_bytes() + b'-SIGNED')
+    log.write(f'{operation} {data[4:].removesuffix(b"-SIGNED").decode()}\\n')
 """,
     )
 
@@ -89,7 +123,19 @@ path.write_bytes(path.read_bytes() + b'-SIGNED')
         assert actual_info == original_info
         assert archive.read(entries[0][0]) == entries[0][1]
         assert archive.read(entries[1][0]) == entries[1][1] + b"-SIGNED"
-        for name, content in entries[2:]:
+        for name, content in entries[2:-1]:
             assert archive.read(name) == content
+        with zipfile.ZipFile(io.BytesIO(archive.read(agent_runtime_entry[0]))) as agent:
+            for name, content in darwin_entries:
+                assert agent.read(name) == content + b"-SIGNED", f"{name} was not signed"
+            for name, content in (linux_entry, inject_entry):
+                assert agent.read(name) == content
 
-    assert signed_log.read_text().splitlines() == ["entry-1"]
+    assert signed_log.read_text().splitlines() == [
+        "signed OTHER",
+        "verified OTHER",
+        "signed ARM",
+        "verified ARM",
+        "signed X64",
+        "verified X64",
+    ]

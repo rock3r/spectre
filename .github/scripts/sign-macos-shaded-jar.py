@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Sign Mach-O members of the shaded CLI jar without extracting the whole archive."""
+"""Sign and verify Mach-O members of the shaded CLI jar and its nested jars."""
 
 from __future__ import annotations
 
 import copy
+import io
 import os
 from pathlib import Path
 import shutil
@@ -39,6 +40,77 @@ def is_mach_o(path: Path) -> bool:
     return "Mach-O" in result.stdout
 
 
+def _write_archive(
+    source: zipfile.ZipFile,
+    destination: zipfile.ZipFile,
+    updates: dict[int, bytes],
+) -> None:
+    destination.comment = source.comment
+    for index, info in enumerate(source.infolist()):
+        content = updates[index] if index in updates else source.read(info)
+        destination.writestr(copy.copy(info), content)
+
+
+def _signed_members(
+    source: zipfile.ZipFile,
+    temp_directory: Path,
+    entitlements: str,
+    identity: str,
+    archive_name: str,
+) -> dict[int, bytes]:
+    updates: dict[int, bytes] = {}
+    for index, info in enumerate(source.infolist()):
+        if info.filename.startswith(HELPER_PREFIX):
+            continue  # This helper was signed and stapled as a separate app bundle.
+        if info.filename.endswith(".class"):
+            continue  # Java class headers collide with the universal Mach-O magic.
+        member_name = f"{archive_name}!/{info.filename}"
+        if info.filename.lower().endswith(".jar"):
+            with zipfile.ZipFile(io.BytesIO(source.read(info))) as nested:
+                nested_updates = _signed_members(
+                    nested, temp_directory, entitlements, identity, member_name
+                )
+                if nested_updates:
+                    buffer = io.BytesIO()
+                    with zipfile.ZipFile(buffer, "w") as destination:
+                        _write_archive(nested, destination, nested_updates)
+                    updates[index] = buffer.getvalue()
+            continue
+
+        with source.open(info) as member:
+            magic = member.read(4)
+            if magic not in MACH_O_MAGICS:
+                continue
+            entry_path = temp_directory / f"entry-{index}"
+            entry_path.write_bytes(magic + member.read())
+        if not is_mach_o(entry_path):
+            continue
+        try:
+            subprocess.run(
+                [
+                    "codesign",
+                    "--force",
+                    "--options",
+                    "runtime",
+                    "--timestamp",
+                    "--entitlements",
+                    entitlements,
+                    "--sign",
+                    identity,
+                    entry_path,
+                ],
+                check=True,
+            )
+            subprocess.run(
+                ["codesign", "--verify", "--strict", "--all-architectures", entry_path],
+                check=True,
+            )
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(f"codesign failed for {member_name}") from error
+        updates[index] = entry_path.read_bytes()
+    return updates
+
+
 def sign_jar(jar_path: Path, entitlements: str, identity: str) -> None:
     jar_mode = jar_path.stat().st_mode
     output_fd, output_name = tempfile.mkstemp(
@@ -48,37 +120,12 @@ def sign_jar(jar_path: Path, entitlements: str, identity: str) -> None:
     output_path = Path(output_name)
     try:
         with tempfile.TemporaryDirectory(prefix="spectre-jar-sign-") as temp_directory:
-            with zipfile.ZipFile(jar_path, "r") as source, zipfile.ZipFile(
-                output_path, "w"
-            ) as destination:
-                destination.comment = source.comment
-                for index, original_info in enumerate(source.infolist()):
-                    content = source.read(original_info)
-                    if (
-                        not original_info.filename.startswith(HELPER_PREFIX)
-                        and content[:4] in MACH_O_MAGICS
-                    ):
-                        entry_path = Path(temp_directory) / f"entry-{index}"
-                        entry_path.write_bytes(content)
-                        if is_mach_o(entry_path):
-                            subprocess.run(
-                                [
-                                    "codesign",
-                                    "--force",
-                                    "--options",
-                                    "runtime",
-                                    "--timestamp",
-                                    "--entitlements",
-                                    entitlements,
-                                    "--sign",
-                                    identity,
-                                    entry_path,
-                                ],
-                                check=True,
-                            )
-                            content = entry_path.read_bytes()
-
-                    destination.writestr(copy.copy(original_info), content)
+            with zipfile.ZipFile(jar_path, "r") as source:
+                updates = _signed_members(
+                    source, Path(temp_directory), entitlements, identity, str(jar_path)
+                )
+                with zipfile.ZipFile(output_path, "w") as destination:
+                    _write_archive(source, destination, updates)
         output_path.chmod(jar_mode)
         os.replace(output_path, jar_path)
     finally:
