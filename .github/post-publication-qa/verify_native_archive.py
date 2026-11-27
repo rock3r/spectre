@@ -162,8 +162,9 @@ def main():
                 sockets.mkdir(mode=0o700)
                 isolated_env["SPECTRE_DAEMON_SOCKET_DIR"] = str(sockets)
                 try:
-                    status=json.loads(run([exe,"daemon","status","--json"],log,env=isolated_env,timeout=60))
-                    assert status["sessions"] == []
+                    # ps issues ListJvmProcesses, which starts an absent daemon.
+                    status=json.loads(run([exe,"ps","--json"],log,env=isolated_env,timeout=60))
+                    assert isinstance(status["processes"], list)
                     expected_java=exe.parent/"runtime/bin/java"
                     expected_jvm=exe.parent/"runtime/lib/server/libjvm.so"
                     processes=[]
@@ -179,7 +180,8 @@ def main():
                     assert processes, "no live daemon backed by the extracted runtime and JVM"
                     (root/"bundled-daemon.json").write_text(json.dumps({"javaOnPath":False,"globalJavaHome":None,"processes":processes},indent=2)+"\n")
                 finally:
-                    run([exe,"daemon","kill"],log,env=isolated_env)
+                    if any(sockets.rglob("*.sock")):
+                        run([exe,"daemon","kill"],log,env=isolated_env)
             # Reuse the pre-launch diagnostic's exact entry instead of scanning bundled libraries again.
             packaged=[x for x in diagnostic["recordingHelpers"] if x["elfMachine"]==expected_elf]
             jar=unpacked/packaged[0]["jar"]; name=packaged[0]["path"]

