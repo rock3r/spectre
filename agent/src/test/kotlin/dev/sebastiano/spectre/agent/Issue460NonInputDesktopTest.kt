@@ -6,7 +6,6 @@ import dev.sebastiano.spectre.agent.fixture.BUTTON_CLICKED_PREFIX
 import dev.sebastiano.spectre.agent.fixture.READY_SENTINEL
 import dev.sebastiano.spectre.agent.fixture.TAG_BUTTON
 import dev.sebastiano.spectre.agent.fixture.TAG_TEXT_FIELD
-import dev.sebastiano.spectre.agent.transport.AgentErrorCategory
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.nio.file.Files
@@ -17,32 +16,17 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 
 /**
- * Regression guard for #460 — Robot-backed input is silently discarded when the target is not on
- * the **input desktop**, while attach, semantics reads, and composition all keep working.
+ * Regression guard for #460. Attached synthetic input must reach the tagged button and let the
+ * attacher read its effect on both the ordinary desktop and a second desktop in the same Windows
+ * window station. The fixture is launched on that second desktop without switching to it.
  *
- * Windows discards `SendInput` from a process whose desktop is not the session's input desktop, and
- * the JDK ignores that failure, so `click()` returns normally having done nothing. That is what
- * makes #460 present to users as "the semantics tree went stale" rather than "input was refused".
- * The condition is reached here by creating a second desktop inside the current window station and
- * launching the fixture onto it — no lock, no session 0, no elevation, no credentials.
- *
- * The two arms must be read together. **Control** is the same code on the ordinary desktop; if its
- * click does not land, the host is not usable for this test and the condition arm proves nothing.
- *
- * This is the end-to-end proof of #460's fix: the condition arm asserts that `click` now *raises*
- * rather than silently succeeding, and that the failure survives the whole chain — the `:core`
- * delivery guard, the wire taxonomy (`inputRejected`), and the attacher-side exception.
- *
- * Opt-in on Windows via [WindowsAttachE2eGate], like the other Robot-backed attach e2e tests:
+ * Opt-in on Windows via [WindowsAttachE2eGate]:
  * ```
  * ./gradlew :agent:test --tests '*Issue460NonInputDesktopTest*' \
  *   -Pspectre.agent.attachE2e.allowWindows=true
@@ -52,77 +36,40 @@ import org.junit.jupiter.api.condition.OS
 class Issue460NonInputDesktopTest {
 
     @Test
-    fun `input is discarded off the input desktop while reads keep working`() {
+    fun `attached clicks reach the tagged button on both Windows desktops`() {
         assumeFalse(java.awt.GraphicsEnvironment.isHeadless(), "needs a desktop")
         assumeTrue(
             WindowsAttachE2eGate.isAllowed(),
-            "Robot-backed attach e2e is opt-in on Windows " +
-                "(-P${"spectre.agent.attachE2e.allowWindows"}=true on a physical desktop).",
+            "Windows attach e2e is opt-in " +
+                "(-Pspectre.agent.attachE2e.allowWindows=true on a physical desktop).",
         )
         val agentJar = agentJar()
         assumeTrue(isPwshAvailable(), "the hidden-desktop launcher needs PowerShell 7 (pwsh)")
 
-        // Control first: if a click cannot land on the ordinary desktop right now, nothing this
-        // test observes on the hidden desktop is attributable to the desktop.
-        val control = clickOutcome(agentJar, desktop = null)
-        assertTrue(
-            control.textAfterClick.startsWith(BUTTON_CLICKED_PREFIX),
-            "control click did not land on the ordinary desktop (host unusable for this test): " +
-                "'${control.textBeforeClick}' -> '${control.textAfterClick}'",
-        )
-        assertNull(control.clickFailure, "a deliverable click must not be rejected")
-
-        val hidden = clickOutcome(agentJar, desktop = "spectre460-${System.nanoTime()}")
-
-        // Reads keep working: attach succeeded and the semantics tree came back populated.
-        assertTrue(
-            hidden.buttonNodes > 0,
-            "semantics read failed off the input desktop; expected the button node to be found",
-        )
-        // Input does not, and Spectre must now say so rather than returning normally.
-        val failure = hidden.clickFailure
-        assertNotNull(failure, "click() silently succeeded off the input desktop -- #460 regressed")
-        assertTrue(
-            failure is SpectreAgentException &&
-                failure.category == AgentErrorCategory.InputRejected,
-            "undeliverable input must surface as inputRejected, was: $failure",
-        )
-        assertTrue(
-            failure.message.orEmpty().contains("input desktop"),
-            "the failure must name the platform constraint, was: ${failure.message}",
-        )
-        assertEquals(
-            hidden.textBeforeClick,
-            hidden.textAfterClick,
-            "click was delivered off the input desktop; #460's premise no longer holds",
-        )
+        assertAttachedClickDelivered(agentJar, desktop = null)
+        assertAttachedClickDelivered(agentJar, desktop = "spectre460-${System.nanoTime()}")
     }
 
-    private class Outcome(
-        val textBeforeClick: String,
-        val textAfterClick: String,
-        val buttonNodes: Int,
-        val clickFailure: Throwable?,
-    )
-
-    /**
-     * Spawns the stock fixture (on [desktop], or the ordinary one when null), clicks, reads back.
-     */
-    private fun clickOutcome(agentJar: Path, desktop: String?): Outcome {
-        val process = spawnFixture(desktop)
+    private fun assertAttachedClickDelivered(agentJar: Path, desktop: String?) {
+        val (process, pid) = spawnFixture(desktop)
+        val location = desktop ?: "the ordinary desktop"
         try {
-            val pid = process.second
-            AgentAttach.attach(pid, attachOptions(agentJar, pid)).use { a ->
-                Thread.sleep(SETTLE_MS)
-                val before = a.findByTestTag(TAG_TEXT_FIELD).first().editableText.orEmpty()
-                val buttons = a.findByTestTag(TAG_BUTTON)
-                val clickFailure = runCatching { a.click(buttons.first()) }.exceptionOrNull()
-                Thread.sleep(SETTLE_MS)
-                val after = a.findByTestTag(TAG_TEXT_FIELD).first().editableText.orEmpty()
-                return Outcome(before, after, buttons.size, clickFailure)
+            AgentAttach.attach(pid, attachOptions(agentJar, pid)).use { attached ->
+                val before = attached.findByTestTag(TAG_TEXT_FIELD).single().editableText
+                assertEquals("", before, "unexpected fixture text before click on $location")
+
+                val button = attached.findByTestTag(TAG_BUTTON).single()
+                attached.click(button)
+                val expected = "$BUTTON_CLICKED_PREFIX$before"
+                val after = attached.waitForNode(tag = TAG_TEXT_FIELD, text = expected)
+                assertEquals(
+                    expected,
+                    after.editableText,
+                    "the tagged button did not update the fixture text on $location",
+                )
             }
         } finally {
-            killTree(process.first)
+            killTree(process)
         }
     }
 
