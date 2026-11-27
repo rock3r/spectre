@@ -141,13 +141,45 @@ def main():
         with (root/"commands.txt").open("w") as log:
             # A poisoned JAVA_HOME and restricted PATH make host-JDK substitution fail. Successful
             # startup therefore exercises the packaged launcher and its diagnosed bundled JVM.
-            isolated_env=os.environ.copy(); isolated_env.update({"JAVA_HOME":"/nonexistent-host-jdk","PATH":"/usr/bin:/bin"})
+            tools = pathlib.Path(temporary) / "host-tools-without-java"
+            tools.mkdir()
+            for binary in pathlib.Path("/usr/bin").iterdir():
+                if binary.name not in {"java","javaw","javac","jcmd","jshell"} and binary.is_file() and os.access(binary,os.X_OK):
+                    (tools/binary.name).symlink_to(binary.resolve())
+            isolated_env = os.environ.copy()
+            for key in ("JAVA_HOME", "JRE_HOME", "JDK_HOME", "JDK_JAVA_OPTIONS", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS"):
+                isolated_env.pop(key,None)
+            isolated_env["PATH"] = str(tools)
+            assert shutil.which("java", path=isolated_env["PATH"]) is None
             version_text=run([exe,"--version"],log,env=isolated_env)
             if version_text.strip()!=f"spectre {a.version}": raise SystemExit(f"CLI version mismatch: {version_text!r}")
             help_text=run([exe,"--help"],log,env=isolated_env)
             if not help_text.strip(): raise SystemExit("CLI --help output is empty")
             record_help=run([exe,"record","--help"],log,env=isolated_env)
             if not record_help.strip(): raise SystemExit("CLI record --help output is empty")
+            if a.version == "0.10.0":
+                sockets = pathlib.Path(temporary) / "daemon"
+                sockets.mkdir(mode=0o700)
+                isolated_env["SPECTRE_DAEMON_SOCKET_DIR"] = str(sockets)
+                try:
+                    status=json.loads(run([exe,"daemon","status","--json"],log,env=isolated_env,timeout=60))
+                    assert status["sessions"] == []
+                    expected_java=exe.parent/"runtime/bin/java"
+                    expected_jvm=exe.parent/"runtime/lib/server/libjvm.so"
+                    processes=[]
+                    for proc in pathlib.Path("/proc").glob("[0-9]*"):
+                        try:
+                            if (proc/"exe").resolve() != expected_java.resolve():
+                                continue
+                            mappings={row.split()[-1] for row in (proc/"maps").read_text().splitlines() if "libjvm.so" in row}
+                            if mappings == {str(expected_jvm.resolve())}:
+                                processes.append({"pid":int(proc.name),"exe":str(expected_java.resolve()),"mappedJVM":sorted(mappings)})
+                        except (PermissionError,FileNotFoundError,ProcessLookupError):
+                            continue
+                    assert processes, "no live daemon backed by the extracted runtime and JVM"
+                    (root/"bundled-daemon.json").write_text(json.dumps({"javaOnPath":False,"globalJavaHome":None,"processes":processes},indent=2)+"\n")
+                finally:
+                    run([exe,"daemon","kill"],log,env=isolated_env)
             # Reuse the pre-launch diagnostic's exact entry instead of scanning bundled libraries again.
             packaged=[x for x in diagnostic["recordingHelpers"] if x["elfMachine"]==expected_elf]
             jar=unpacked/packaged[0]["jar"]; name=packaged[0]["path"]
